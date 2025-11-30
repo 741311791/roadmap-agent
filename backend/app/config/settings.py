@@ -9,6 +9,12 @@
 - A4: 教程生成器 (GENERATOR_*)
 - A5: 资源推荐师 (RECOMMENDER_*)
 - A6: 测验生成器 (QUIZ_*)
+
+内容修改相关 Agent 配置（独立于生成器）：
+- 修改意图分析师 (MODIFICATION_ANALYZER_*)
+- 教程修改师 (TUTORIAL_MODIFIER_*)
+- 资源修改师 (RESOURCE_MODIFIER_*)
+- 测验修改师 (QUIZ_MODIFIER_*)
 """
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -106,6 +112,63 @@ class Settings(BaseSettings):
     QUIZ_MODEL: str = Field("gpt-4o-mini", description="模型名称")
     QUIZ_BASE_URL: str | None = None
     QUIZ_API_KEY: str = Field("your_openai_api_key_here", description="API 密钥")
+    
+    # ==================== Modifier Agents 配置（内容修改）====================
+    # 修改意图分析师（Modification Analyzer）
+    MODIFICATION_ANALYZER_PROVIDER: str = Field("openai", description="模型提供商")
+    MODIFICATION_ANALYZER_MODEL: str = Field("gpt-4o-mini", description="模型名称")
+    MODIFICATION_ANALYZER_BASE_URL: str | None = None
+    MODIFICATION_ANALYZER_API_KEY: str | None = Field(
+        None, description="API 密钥（默认复用 ANALYZER_API_KEY）"
+    )
+    
+    # 教程修改师（Tutorial Modifier）
+    # 注意：默认使用 OpenAI，如需使用 Anthropic 请在 .env 中配置：
+    #   TUTORIAL_MODIFIER_PROVIDER=anthropic
+    #   TUTORIAL_MODIFIER_MODEL=claude-3-5-sonnet-20241022
+    #   TUTORIAL_MODIFIER_API_KEY=your_anthropic_api_key
+    TUTORIAL_MODIFIER_PROVIDER: str = Field("openai", description="模型提供商")
+    TUTORIAL_MODIFIER_MODEL: str = Field("gpt-4o-mini", description="模型名称")
+    TUTORIAL_MODIFIER_BASE_URL: str | None = None
+    TUTORIAL_MODIFIER_API_KEY: str | None = Field(
+        None, description="API 密钥（默认复用 RECOMMENDER_API_KEY）"
+    )
+    
+    # 资源修改师（Resource Modifier）
+    RESOURCE_MODIFIER_PROVIDER: str = Field("openai", description="模型提供商")
+    RESOURCE_MODIFIER_MODEL: str = Field("gpt-4o-mini", description="模型名称")
+    RESOURCE_MODIFIER_BASE_URL: str | None = None
+    RESOURCE_MODIFIER_API_KEY: str | None = Field(
+        None, description="API 密钥（默认复用 RECOMMENDER_API_KEY）"
+    )
+    
+    # 测验修改师（Quiz Modifier）
+    QUIZ_MODIFIER_PROVIDER: str = Field("openai", description="模型提供商")
+    QUIZ_MODIFIER_MODEL: str = Field("gpt-4o-mini", description="模型名称")
+    QUIZ_MODIFIER_BASE_URL: str | None = None
+    QUIZ_MODIFIER_API_KEY: str | None = Field(
+        None, description="API 密钥（默认复用 QUIZ_API_KEY）"
+    )
+    
+    @property
+    def get_modification_analyzer_api_key(self) -> str:
+        """获取修改意图分析师 API 密钥（优先使用专用配置，否则复用 ANALYZER）"""
+        return self.MODIFICATION_ANALYZER_API_KEY or self.ANALYZER_API_KEY
+    
+    @property
+    def get_tutorial_modifier_api_key(self) -> str:
+        """获取教程修改师 API 密钥（优先使用专用配置，否则复用 RECOMMENDER/OpenAI）"""
+        return self.TUTORIAL_MODIFIER_API_KEY or self.RECOMMENDER_API_KEY
+    
+    @property
+    def get_resource_modifier_api_key(self) -> str:
+        """获取资源修改师 API 密钥（优先使用专用配置，否则复用 RECOMMENDER）"""
+        return self.RESOURCE_MODIFIER_API_KEY or self.RECOMMENDER_API_KEY
+    
+    @property
+    def get_quiz_modifier_api_key(self) -> str:
+        """获取测验修改师 API 密钥（优先使用专用配置，否则复用 QUIZ）"""
+        return self.QUIZ_MODIFIER_API_KEY or self.QUIZ_API_KEY
     
     # ==================== Redis 配置 ====================
     REDIS_HOST: str = Field("localhost", description="Redis 主机")

@@ -409,3 +409,160 @@ class S3DownloadResult(BaseModel):
     content_type: Optional[str] = Field(None, description="对象的 Content-Type")
     etag: Optional[str] = Field(None, description="对象的 ETag")
     last_modified: Optional[datetime] = Field(None, description="对象的最后修改时间")
+
+
+# ============================================================
+# 6. 内容修改相关模型（Modifier Agents）
+# ============================================================
+
+from enum import Enum
+
+
+class ModificationType(str, Enum):
+    """修改目标类型"""
+    TUTORIAL = "tutorial"
+    RESOURCES = "resources"
+    QUIZ = "quiz"
+    CONCEPT = "concept"
+
+
+class SingleModificationIntent(BaseModel):
+    """单个修改意图"""
+    modification_type: ModificationType = Field(..., description="修改目标类型")
+    target_id: str = Field(..., description="目标 ID（concept_id）")
+    target_name: str = Field(..., description="目标名称，便于展示")
+    specific_requirements: List[str] = Field(..., description="具体修改要求列表")
+    priority: Literal["high", "medium", "low"] = Field(
+        default="medium", description="优先级"
+    )
+
+
+class ModificationAnalysisInput(BaseModel):
+    """修改意图分析输入"""
+    user_message: str = Field(..., description="用户的自然语言修改意见")
+    roadmap_id: str = Field(..., description="路线图 ID")
+    current_context: Optional[Dict[str, Any]] = Field(
+        None, 
+        description="当前上下文（如用户正在查看的 concept_id）"
+    )
+
+
+class ModificationAnalysisOutput(BaseModel):
+    """修改意图分析输出（支持多目标）"""
+    intents: List[SingleModificationIntent] = Field(
+        ..., description="识别出的所有修改意图"
+    )
+    overall_confidence: float = Field(
+        ..., ge=0, le=1, description="整体置信度"
+    )
+    needs_clarification: bool = Field(
+        default=False, description="是否需要向用户澄清"
+    )
+    clarification_questions: List[str] = Field(
+        default=[], description="如果需要澄清，要问用户的问题"
+    )
+    analysis_reasoning: str = Field(..., description="分析推理过程")
+
+
+# --- Tutorial Modifier Agent ---
+
+class TutorialModificationInput(BaseModel):
+    """教程修改输入"""
+    concept: Concept = Field(..., description="要修改教程的概念")
+    context: Dict[str, Any] = Field(
+        default={}, description="上下文信息：所属阶段、模块等"
+    )
+    user_preferences: LearningPreferences = Field(..., description="用户偏好")
+    existing_content_url: str = Field(..., description="现有教程内容的 S3 URL")
+    modification_requirements: List[str] = Field(
+        ..., description="具体修改要求列表"
+    )
+
+
+class TutorialModificationOutput(BaseModel):
+    """教程修改输出"""
+    concept_id: str = Field(..., description="概念 ID")
+    tutorial_id: str = Field(..., description="新教程 ID（UUID 格式）")
+    title: str = Field(..., description="教程标题")
+    summary: str = Field(..., max_length=500, description="教程摘要")
+    content_url: str = Field(..., description="新版本的 S3 URL")
+    content_version: int = Field(..., description="新版本号")
+    modification_summary: str = Field(..., description="修改说明")
+    changes_made: List[str] = Field(..., description="具体修改点列表")
+    estimated_completion_time: int = Field(..., description="预估完成时间（分钟）")
+    generated_at: datetime = Field(default_factory=datetime.now)
+
+
+# --- Resource Modifier Agent ---
+
+class ResourceModificationInput(BaseModel):
+    """资源修改输入"""
+    concept: Concept = Field(..., description="要修改资源的概念")
+    context: Dict[str, Any] = Field(
+        default={}, description="上下文信息：所属阶段、模块等"
+    )
+    user_preferences: LearningPreferences = Field(..., description="用户偏好")
+    existing_resources: List[Resource] = Field(..., description="现有资源列表")
+    modification_requirements: List[str] = Field(
+        ..., description="具体修改要求列表"
+    )
+
+
+class ResourceModificationOutput(BaseModel):
+    """资源修改输出"""
+    id: str = Field(..., description="新资源推荐记录 ID（UUID 格式）")
+    concept_id: str = Field(..., description="概念 ID")
+    resources: List[Resource] = Field(..., description="修改后的资源列表")
+    modification_summary: str = Field(..., description="修改说明")
+    changes_made: List[str] = Field(..., description="具体修改点列表")
+    search_queries_used: List[str] = Field(
+        default=[], description="使用的搜索查询"
+    )
+    generated_at: datetime = Field(default_factory=datetime.now)
+
+
+# --- Quiz Modifier Agent ---
+
+class QuizModificationInput(BaseModel):
+    """测验修改输入"""
+    concept: Concept = Field(..., description="要修改测验的概念")
+    context: Dict[str, Any] = Field(
+        default={}, description="上下文信息：所属阶段、模块等"
+    )
+    user_preferences: LearningPreferences = Field(..., description="用户偏好")
+    existing_questions: List[QuizQuestion] = Field(..., description="现有题目列表")
+    modification_requirements: List[str] = Field(
+        ..., description="具体修改要求列表"
+    )
+
+
+class QuizModificationOutput(BaseModel):
+    """测验修改输出"""
+    concept_id: str = Field(..., description="概念 ID")
+    quiz_id: str = Field(..., description="新测验 ID（UUID 格式）")
+    questions: List[QuizQuestion] = Field(..., description="修改后的题目列表")
+    total_questions: int = Field(..., description="题目总数")
+    modification_summary: str = Field(..., description="修改说明")
+    changes_made: List[str] = Field(..., description="具体修改点列表")
+    generated_at: datetime = Field(default_factory=datetime.now)
+
+
+# --- 批量修改结果 ---
+
+class SingleModificationResult(BaseModel):
+    """单个修改结果"""
+    modification_type: ModificationType = Field(..., description="修改类型")
+    target_id: str = Field(..., description="目标 ID")
+    target_name: str = Field(..., description="目标名称")
+    success: bool = Field(..., description="是否成功")
+    modification_summary: str = Field(..., description="修改摘要")
+    new_version: Optional[int] = Field(None, description="新版本号（如果支持版本管理）")
+    error_message: Optional[str] = Field(None, description="错误信息（如果失败）")
+
+
+class BatchModificationResult(BaseModel):
+    """批量修改结果"""
+    results: List[SingleModificationResult] = Field(..., description="各项修改结果")
+    overall_success: bool = Field(..., description="是否全部成功")
+    partial_success: bool = Field(..., description="是否部分成功")
+    summary: str = Field(..., description="整体修改摘要")

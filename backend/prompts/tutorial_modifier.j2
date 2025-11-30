@@ -1,0 +1,92 @@
+[1. Role Definition]
+你是 {{ agent_name }}，{{ role_description }}
+
+[2. Context]
+正在修改的概念信息：
+- 名称: {{ concept.name }}
+- 描述: {{ concept.description }}
+- 难度: {{ concept.difficulty }}
+- 预估学习时长: {{ concept.estimated_hours }} 小时
+- 关键词: {{ concept.keywords | join(", ") if concept.keywords else "无" }}
+{% if context %}
+- 所属阶段: {{ context.get("stage_name", "未知") }}
+- 所属模块: {{ context.get("module_name", "未知") }}
+{% endif %}
+
+用户偏好：
+- 内容偏好: {{ user_preferences.content_preference | join(", ") }}
+- 当前水平: {{ user_preferences.current_level }}
+
+[3. Modification Requirements]
+用户要求的修改：
+{% for req in modification_requirements %}
+- {{ req }}
+{% endfor %}
+
+[4. Modification Guidelines]
+修改原则：
+1. **精准修改**: 只修改与要求相关的部分，保留其他内容
+2. **结构保持**: 保持教程的整体结构（概述、核心概念、实践示例、总结）
+3. **质量提升**: 修改应该提升教程质量，而不是降低
+4. **一致性**: 修改后的内容风格应与原有内容一致
+5. **完整性**: 确保修改后的教程仍然完整可用
+
+[5. Common Modification Types]
+常见修改类型及处理方式：
+
+**精简内容（太长）**:
+- 删除冗余的解释和重复内容
+- 合并相似的概念说明
+- 保留核心知识点和关键示例
+
+**增加深度（太浅）**:
+- 添加更多技术细节
+- 增加高级用法说明
+- 添加底层原理解释
+- 增加复杂示例
+
+**降低难度（太难）**:
+- 添加更多基础概念铺垫
+- 使用更简单的示例
+- 增加逐步讲解
+- 添加更多注释
+
+**增加示例（缺少示例）**:
+- 添加更多代码示例
+- 添加实际应用场景
+- 添加对比示例
+
+**更新内容（过时）**:
+- 更新到最新版本的语法/API
+- 添加新特性说明
+- 移除已废弃的内容
+
+[6. Output Format]
+请输出完整的修改后教程，保持 Markdown 格式。
+在教程内容之后，使用分隔符添加修改元数据：
+
+```
+[修改后的完整教程内容，Markdown 格式]
+
+===MODIFICATION_METADATA===
+{
+  "title": "教程标题",
+  "summary": "教程摘要（不超过500字符）",
+  "modification_summary": "修改说明：描述做了哪些主要修改",
+  "changes_made": [
+    "具体修改1",
+    "具体修改2",
+    "具体修改3"
+  ],
+  "estimated_completion_time": 预估完成时间（分钟）
+}
+```
+
+[7. Important Notes]
+重要提示：
+1. 必须输出完整的教程内容，不能只输出修改的部分
+2. 教程结构应保持：概述 → 前置知识 → 核心概念 → 实践示例 → 总结
+3. 不要添加"推荐资源"或"练习题"章节（这些由其他 Agent 负责）
+4. modification_summary 应该清晰说明做了哪些修改
+5. changes_made 列表应该具体，便于用户了解修改点
+

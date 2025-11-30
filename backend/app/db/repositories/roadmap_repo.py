@@ -516,7 +516,7 @@ class RoadmapRepository:
         roadmap_id: str,
     ) -> ResourceRecommendationMetadata:
         """
-        保存资源推荐元数据
+        保存资源推荐元数据（如果已存在则替换）
         
         Args:
             resource_output: 资源推荐输出
@@ -525,6 +525,15 @@ class RoadmapRepository:
         Returns:
             保存的元数据记录
         """
+        # 删除旧的资源推荐记录（如果存在）
+        from sqlalchemy import delete
+        await self.session.execute(
+            delete(ResourceRecommendationMetadata).where(
+                ResourceRecommendationMetadata.concept_id == resource_output.concept_id,
+                ResourceRecommendationMetadata.roadmap_id == roadmap_id,
+            )
+        )
+        
         metadata = ResourceRecommendationMetadata(
             id=resource_output.id,  # 使用 output 中的 ID，确保与 Concept 中的 resources_id 一致
             concept_id=resource_output.concept_id,
@@ -605,7 +614,7 @@ class RoadmapRepository:
         roadmap_id: str,
     ) -> QuizMetadata:
         """
-        保存测验元数据
+        保存测验元数据（如果已存在则替换）
         
         Args:
             quiz_output: 测验生成输出
@@ -614,6 +623,15 @@ class RoadmapRepository:
         Returns:
             保存的元数据记录
         """
+        # 删除旧的测验记录（如果存在）
+        from sqlalchemy import delete
+        await self.session.execute(
+            delete(QuizMetadata).where(
+                QuizMetadata.concept_id == quiz_output.concept_id,
+                QuizMetadata.roadmap_id == roadmap_id,
+            )
+        )
+        
         # 统计难度分布
         easy_count = sum(1 for q in quiz_output.questions if q.difficulty == "easy")
         medium_count = sum(1 for q in quiz_output.questions if q.difficulty == "medium")

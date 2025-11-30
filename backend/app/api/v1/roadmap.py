@@ -1021,3 +1021,1253 @@ async def get_tutorial_by_version(
         "generated_at": tutorial.generated_at.isoformat() if tutorial.generated_at else None,
     }
 
+
+# ============================================================
+# 资源和测验重新生成端点（复用现有 Generator Agent）
+# ============================================================
+
+from app.agents.resource_recommender import ResourceRecommenderAgent
+from app.agents.quiz_generator import QuizGeneratorAgent
+
+
+@router.post("/{roadmap_id}/concepts/{concept_id}/resources/regenerate")
+async def regenerate_resources(
+    roadmap_id: str,
+    concept_id: str,
+    request: RegenerateTutorialRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    重新生成指定概念的学习资源
+    
+    Args:
+        roadmap_id: 路线图 ID
+        concept_id: 概念 ID
+        request: 包含用户 ID 和学习偏好
+        
+    Returns:
+        新生成的资源推荐
+    """
+    logger.info(
+        "regenerate_resources_requested",
+        roadmap_id=roadmap_id,
+        concept_id=concept_id,
+        user_id=request.user_id,
+    )
+    
+    repo = RoadmapRepository(db)
+    
+    # 检查路线图是否存在
+    roadmap_metadata = await repo.get_roadmap_metadata(roadmap_id)
+    if not roadmap_metadata:
+        raise HTTPException(status_code=404, detail=f"路线图 {roadmap_id} 不存在")
+    
+    # 从路线图框架中获取概念信息
+    framework_data = roadmap_metadata.framework_data
+    concept_data, context = _find_concept_in_framework(framework_data, concept_id, roadmap_id)
+    
+    if not concept_data:
+        raise HTTPException(
+            status_code=404,
+            detail=f"概念 {concept_id} 在路线图 {roadmap_id} 中不存在"
+        )
+    
+    # 构建 Concept 对象
+    concept = Concept(
+        concept_id=concept_data.get("concept_id"),
+        name=concept_data.get("name"),
+        description=concept_data.get("description", ""),
+        estimated_hours=concept_data.get("estimated_hours", 1.0),
+        prerequisites=concept_data.get("prerequisites", []),
+        difficulty=concept_data.get("difficulty", "medium"),
+        keywords=concept_data.get("keywords", []),
+    )
+    
+    # 生成资源推荐
+    try:
+        from app.models.domain import ResourceRecommendationInput
+        
+        recommender = ResourceRecommenderAgent()
+        resource_output = await recommender.recommend(
+            concept=concept,
+            context=context,
+            user_preferences=request.preferences,
+        )
+        
+        # 保存到数据库
+        await repo.save_resource_recommendation_metadata(resource_output, roadmap_id)
+        await db.commit()
+        
+        logger.info(
+            "regenerate_resources_success",
+            roadmap_id=roadmap_id,
+            concept_id=concept_id,
+            resources_count=len(resource_output.resources),
+        )
+        
+        return {
+            "success": True,
+            "id": resource_output.id,
+            "concept_id": concept_id,
+            "roadmap_id": roadmap_id,
+            "resources_count": len(resource_output.resources),
+            "resources": [r.model_dump() for r in resource_output.resources],
+            "generated_at": resource_output.generated_at.isoformat(),
+        }
+        
+    except Exception as e:
+        logger.error(
+            "regenerate_resources_failed",
+            roadmap_id=roadmap_id,
+            concept_id=concept_id,
+            error=str(e),
+        )
+        raise HTTPException(status_code=500, detail=f"资源生成失败: {str(e)}")
+
+
+@router.post("/{roadmap_id}/concepts/{concept_id}/quiz/regenerate")
+async def regenerate_quiz(
+    roadmap_id: str,
+    concept_id: str,
+    request: RegenerateTutorialRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    重新生成指定概念的测验
+    
+    Args:
+        roadmap_id: 路线图 ID
+        concept_id: 概念 ID
+        request: 包含用户 ID 和学习偏好
+        
+    Returns:
+        新生成的测验
+    """
+    logger.info(
+        "regenerate_quiz_requested",
+        roadmap_id=roadmap_id,
+        concept_id=concept_id,
+        user_id=request.user_id,
+    )
+    
+    repo = RoadmapRepository(db)
+    
+    # 检查路线图是否存在
+    roadmap_metadata = await repo.get_roadmap_metadata(roadmap_id)
+    if not roadmap_metadata:
+        raise HTTPException(status_code=404, detail=f"路线图 {roadmap_id} 不存在")
+    
+    # 从路线图框架中获取概念信息
+    framework_data = roadmap_metadata.framework_data
+    concept_data, context = _find_concept_in_framework(framework_data, concept_id, roadmap_id)
+    
+    if not concept_data:
+        raise HTTPException(
+            status_code=404,
+            detail=f"概念 {concept_id} 在路线图 {roadmap_id} 中不存在"
+        )
+    
+    # 构建 Concept 对象
+    concept = Concept(
+        concept_id=concept_data.get("concept_id"),
+        name=concept_data.get("name"),
+        description=concept_data.get("description", ""),
+        estimated_hours=concept_data.get("estimated_hours", 1.0),
+        prerequisites=concept_data.get("prerequisites", []),
+        difficulty=concept_data.get("difficulty", "medium"),
+        keywords=concept_data.get("keywords", []),
+    )
+    
+    # 生成测验
+    try:
+        generator = QuizGeneratorAgent()
+        quiz_output = await generator.generate(
+            concept=concept,
+            context=context,
+            user_preferences=request.preferences,
+        )
+        
+        # 保存到数据库
+        await repo.save_quiz_metadata(quiz_output, roadmap_id)
+        await db.commit()
+        
+        logger.info(
+            "regenerate_quiz_success",
+            roadmap_id=roadmap_id,
+            concept_id=concept_id,
+            questions_count=quiz_output.total_questions,
+        )
+        
+        return {
+            "success": True,
+            "quiz_id": quiz_output.quiz_id,
+            "concept_id": concept_id,
+            "roadmap_id": roadmap_id,
+            "total_questions": quiz_output.total_questions,
+            "questions": [q.model_dump() for q in quiz_output.questions],
+            "generated_at": quiz_output.generated_at.isoformat(),
+        }
+        
+    except Exception as e:
+        logger.error(
+            "regenerate_quiz_failed",
+            roadmap_id=roadmap_id,
+            concept_id=concept_id,
+            error=str(e),
+        )
+        raise HTTPException(status_code=500, detail=f"测验生成失败: {str(e)}")
+
+
+def _find_concept_in_framework(
+    framework_data: dict,
+    concept_id: str,
+    roadmap_id: str,
+) -> tuple[dict | None, dict]:
+    """
+    在路线图框架中查找概念
+    
+    Returns:
+        (concept_data, context) 或 (None, {})
+    """
+    context = {"roadmap_id": roadmap_id}
+    
+    for stage in framework_data.get("stages", []):
+        for module in stage.get("modules", []):
+            for c in module.get("concepts", []):
+                if c.get("concept_id") == concept_id:
+                    context.update({
+                        "stage_id": stage.get("stage_id"),
+                        "stage_name": stage.get("name"),
+                        "module_id": module.get("module_id"),
+                        "module_name": module.get("name"),
+                    })
+                    return c, context
+    
+    return None, context
+
+
+# ============================================================
+# 内容修改端点（使用 Modifier Agent）
+# ============================================================
+
+from typing import List as TypingList
+from app.agents.modification_analyzer import ModificationAnalyzerAgent
+from app.agents.tutorial_modifier import TutorialModifierAgent
+from app.agents.resource_modifier import ResourceModifierAgent
+from app.agents.quiz_modifier import QuizModifierAgent
+from app.models.domain import (
+    TutorialModificationInput,
+    ResourceModificationInput,
+    QuizModificationInput,
+    Resource,
+    QuizQuestion,
+    ModificationType,
+    BatchModificationResult,
+    SingleModificationResult,
+)
+import asyncio
+
+
+class ModifyContentRequest(BaseModel):
+    """内容修改请求"""
+    user_id: str = Field(..., description="用户 ID")
+    preferences: LearningPreferences = Field(..., description="用户学习偏好")
+    requirements: TypingList[str] = Field(..., description="具体修改要求列表")
+
+
+class ChatModificationRequest(BaseModel):
+    """聊天修改请求"""
+    user_message: str = Field(..., description="用户的自然语言修改意见")
+    context: dict | None = Field(None, description="当前上下文（如正在查看的 concept_id）")
+    user_id: str = Field(..., description="用户 ID")
+    preferences: LearningPreferences = Field(..., description="用户学习偏好")
+
+
+@router.post("/{roadmap_id}/concepts/{concept_id}/tutorial/modify")
+async def modify_tutorial(
+    roadmap_id: str,
+    concept_id: str,
+    request: ModifyContentRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    修改指定概念的教程内容
+    
+    使用 TutorialModifierAgent 增量修改现有教程。
+    """
+    logger.info(
+        "modify_tutorial_requested",
+        roadmap_id=roadmap_id,
+        concept_id=concept_id,
+        requirements_count=len(request.requirements),
+    )
+    
+    repo = RoadmapRepository(db)
+    
+    # 获取路线图和概念
+    roadmap_metadata = await repo.get_roadmap_metadata(roadmap_id)
+    if not roadmap_metadata:
+        raise HTTPException(status_code=404, detail=f"路线图 {roadmap_id} 不存在")
+    
+    framework_data = roadmap_metadata.framework_data
+    concept_data, context = _find_concept_in_framework(framework_data, concept_id, roadmap_id)
+    
+    if not concept_data:
+        raise HTTPException(status_code=404, detail=f"概念 {concept_id} 不存在")
+    
+    # 获取现有教程
+    tutorial = await repo.get_latest_tutorial(roadmap_id, concept_id)
+    if not tutorial:
+        raise HTTPException(status_code=404, detail=f"概念 {concept_id} 没有教程，请先生成")
+    
+    # 构建 Concept 对象
+    concept = Concept(
+        concept_id=concept_data.get("concept_id"),
+        name=concept_data.get("name"),
+        description=concept_data.get("description", ""),
+        estimated_hours=concept_data.get("estimated_hours", 1.0),
+        prerequisites=concept_data.get("prerequisites", []),
+        difficulty=concept_data.get("difficulty", "medium"),
+        keywords=concept_data.get("keywords", []),
+    )
+    
+    # 添加版本信息到上下文
+    context["content_version"] = tutorial.content_version
+    
+    try:
+        modifier = TutorialModifierAgent()
+        
+        modification_input = TutorialModificationInput(
+            concept=concept,
+            context=context,
+            user_preferences=request.preferences,
+            existing_content_url=tutorial.content_url,
+            modification_requirements=request.requirements,
+        )
+        
+        result = await modifier.modify(modification_input)
+        
+        # 保存新版本到数据库
+        from app.models.domain import TutorialGenerationOutput
+        tutorial_output = TutorialGenerationOutput(
+            concept_id=result.concept_id,
+            tutorial_id=result.tutorial_id,
+            title=result.title,
+            summary=result.summary,
+            content_url=result.content_url,
+            content_status="completed",
+            content_version=result.content_version,
+            estimated_completion_time=result.estimated_completion_time,
+            generated_at=result.generated_at,
+        )
+        await repo.save_tutorial_metadata(tutorial_output, roadmap_id)
+        await db.commit()
+        
+        return {
+            "success": True,
+            "concept_id": result.concept_id,
+            "tutorial_id": result.tutorial_id,
+            "title": result.title,
+            "summary": result.summary,
+            "content_url": result.content_url,
+            "content_version": result.content_version,
+            "modification_summary": result.modification_summary,
+            "changes_made": result.changes_made,
+        }
+        
+    except Exception as e:
+        logger.error(
+            "modify_tutorial_failed",
+            roadmap_id=roadmap_id,
+            concept_id=concept_id,
+            error=str(e),
+        )
+        raise HTTPException(status_code=500, detail=f"教程修改失败: {str(e)}")
+
+
+@router.post("/{roadmap_id}/concepts/{concept_id}/resources/modify")
+async def modify_resources(
+    roadmap_id: str,
+    concept_id: str,
+    request: ModifyContentRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    修改指定概念的学习资源
+    
+    使用 ResourceModifierAgent 调整现有资源推荐。
+    """
+    logger.info(
+        "modify_resources_requested",
+        roadmap_id=roadmap_id,
+        concept_id=concept_id,
+        requirements_count=len(request.requirements),
+    )
+    
+    repo = RoadmapRepository(db)
+    
+    # 获取路线图和概念
+    roadmap_metadata = await repo.get_roadmap_metadata(roadmap_id)
+    if not roadmap_metadata:
+        raise HTTPException(status_code=404, detail=f"路线图 {roadmap_id} 不存在")
+    
+    framework_data = roadmap_metadata.framework_data
+    concept_data, context = _find_concept_in_framework(framework_data, concept_id, roadmap_id)
+    
+    if not concept_data:
+        raise HTTPException(status_code=404, detail=f"概念 {concept_id} 不存在")
+    
+    # 获取现有资源（从数据库）
+    resources_list = await repo.get_resource_recommendations_by_roadmap(roadmap_id)
+    existing_resources_data = None
+    for r in resources_list:
+        if r.concept_id == concept_id:
+            existing_resources_data = r
+            break
+    
+    if not existing_resources_data:
+        raise HTTPException(status_code=404, detail=f"概念 {concept_id} 没有资源推荐，请先生成")
+    
+    # 构建 Concept 和现有资源列表
+    concept = Concept(
+        concept_id=concept_data.get("concept_id"),
+        name=concept_data.get("name"),
+        description=concept_data.get("description", ""),
+        estimated_hours=concept_data.get("estimated_hours", 1.0),
+        prerequisites=concept_data.get("prerequisites", []),
+        difficulty=concept_data.get("difficulty", "medium"),
+        keywords=concept_data.get("keywords", []),
+    )
+    
+    existing_resources = [
+        Resource(**r) for r in existing_resources_data.resources
+    ]
+    
+    try:
+        modifier = ResourceModifierAgent()
+        
+        modification_input = ResourceModificationInput(
+            concept=concept,
+            context=context,
+            user_preferences=request.preferences,
+            existing_resources=existing_resources,
+            modification_requirements=request.requirements,
+        )
+        
+        result = await modifier.modify(modification_input)
+        
+        # 保存到数据库
+        from app.models.domain import ResourceRecommendationOutput
+        resource_output = ResourceRecommendationOutput(
+            id=result.id,
+            concept_id=result.concept_id,
+            resources=result.resources,
+            search_queries_used=result.search_queries_used,
+            generated_at=result.generated_at,
+        )
+        await repo.save_resource_recommendation_metadata(resource_output, roadmap_id)
+        await db.commit()
+        
+        return {
+            "success": True,
+            "id": result.id,
+            "concept_id": result.concept_id,
+            "resources_count": len(result.resources),
+            "resources": [r.model_dump() for r in result.resources],
+            "modification_summary": result.modification_summary,
+            "changes_made": result.changes_made,
+        }
+        
+    except Exception as e:
+        logger.error(
+            "modify_resources_failed",
+            roadmap_id=roadmap_id,
+            concept_id=concept_id,
+            error=str(e),
+        )
+        raise HTTPException(status_code=500, detail=f"资源修改失败: {str(e)}")
+
+
+@router.post("/{roadmap_id}/concepts/{concept_id}/quiz/modify")
+async def modify_quiz(
+    roadmap_id: str,
+    concept_id: str,
+    request: ModifyContentRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    修改指定概念的测验题目
+    
+    使用 QuizModifierAgent 调整现有测验。
+    """
+    logger.info(
+        "modify_quiz_requested",
+        roadmap_id=roadmap_id,
+        concept_id=concept_id,
+        requirements_count=len(request.requirements),
+    )
+    
+    repo = RoadmapRepository(db)
+    
+    # 获取路线图和概念
+    roadmap_metadata = await repo.get_roadmap_metadata(roadmap_id)
+    if not roadmap_metadata:
+        raise HTTPException(status_code=404, detail=f"路线图 {roadmap_id} 不存在")
+    
+    framework_data = roadmap_metadata.framework_data
+    concept_data, context = _find_concept_in_framework(framework_data, concept_id, roadmap_id)
+    
+    if not concept_data:
+        raise HTTPException(status_code=404, detail=f"概念 {concept_id} 不存在")
+    
+    # 获取现有测验
+    existing_quiz = await repo.get_quiz_by_concept(concept_id, roadmap_id)
+    if not existing_quiz:
+        raise HTTPException(status_code=404, detail=f"概念 {concept_id} 没有测验，请先生成")
+    
+    # 构建 Concept 和现有题目列表
+    concept = Concept(
+        concept_id=concept_data.get("concept_id"),
+        name=concept_data.get("name"),
+        description=concept_data.get("description", ""),
+        estimated_hours=concept_data.get("estimated_hours", 1.0),
+        prerequisites=concept_data.get("prerequisites", []),
+        difficulty=concept_data.get("difficulty", "medium"),
+        keywords=concept_data.get("keywords", []),
+    )
+    
+    existing_questions = [
+        QuizQuestion(**q) for q in existing_quiz.questions
+    ]
+    
+    try:
+        modifier = QuizModifierAgent()
+        
+        modification_input = QuizModificationInput(
+            concept=concept,
+            context=context,
+            user_preferences=request.preferences,
+            existing_questions=existing_questions,
+            modification_requirements=request.requirements,
+        )
+        
+        result = await modifier.modify(modification_input)
+        
+        # 保存到数据库
+        from app.models.domain import QuizGenerationOutput
+        quiz_output = QuizGenerationOutput(
+            concept_id=result.concept_id,
+            quiz_id=result.quiz_id,
+            questions=result.questions,
+            total_questions=result.total_questions,
+            generated_at=result.generated_at,
+        )
+        await repo.save_quiz_metadata(quiz_output, roadmap_id)
+        await db.commit()
+        
+        return {
+            "success": True,
+            "quiz_id": result.quiz_id,
+            "concept_id": result.concept_id,
+            "total_questions": result.total_questions,
+            "questions": [q.model_dump() for q in result.questions],
+            "modification_summary": result.modification_summary,
+            "changes_made": result.changes_made,
+        }
+        
+    except Exception as e:
+        logger.error(
+            "modify_quiz_failed",
+            roadmap_id=roadmap_id,
+            concept_id=concept_id,
+            error=str(e),
+        )
+        raise HTTPException(status_code=500, detail=f"测验修改失败: {str(e)}")
+
+
+# ============================================================
+# 聊天式修改端点（流式返回）
+# ============================================================
+
+def _sse_event(event_type: str, data: dict) -> str:
+    """构建 SSE 事件字符串"""
+    event_data = {"type": event_type, **data}
+    return f'data: {json.dumps(event_data, ensure_ascii=False)}\n\n'
+
+
+async def _chat_modification_stream(
+    roadmap_id: str,
+    request: ChatModificationRequest,
+) -> AsyncIterator[str]:
+    """
+    聊天式修改的流式处理
+    
+    流程：意图分析 → 并行执行修改 → 流式返回结果
+    
+    Yields:
+        SSE 格式的事件流
+        
+    事件类型：
+        - analyzing: 正在分析意图，包含 agent 和 step 信息
+        - intents: 意图分析完成，包含识别出的所有意图
+        - modifying: 正在执行某项修改
+        - agent_progress: Agent 执行进度（下载/LLM调用/上传等）
+        - result: 单个修改完成
+        - done: 全部完成
+        - error: 错误信息
+    """
+    import time
+    start_time = time.time()
+    
+    logger.info(
+        "chat_modification_stream_started",
+        roadmap_id=roadmap_id,
+        user_id=request.user_id,
+        message_preview=request.user_message[:50],
+    )
+    
+    try:
+        # 1. 获取路线图
+        yield _sse_event("analyzing", {
+            "agent": "system",
+            "step": "loading_roadmap",
+            "message": "正在加载路线图数据...",
+        })
+        
+        async with AsyncSessionLocal() as session:
+            repo = RoadmapRepository(session)
+            roadmap_metadata = await repo.get_roadmap_metadata(roadmap_id)
+            
+            if not roadmap_metadata:
+                yield _sse_event("error", {"message": f"路线图 {roadmap_id} 不存在"})
+                return
+            
+            framework = RoadmapFramework.model_validate(roadmap_metadata.framework_data)
+        
+        logger.info(
+            "chat_modification_roadmap_loaded",
+            roadmap_id=roadmap_id,
+            roadmap_title=framework.title,
+            stages_count=len(framework.stages),
+        )
+        
+        # 2. 分析修改意图
+        yield _sse_event("analyzing", {
+            "agent": "modification_analyzer",
+            "step": "analyzing_intent",
+            "message": "正在分析用户修改意图...",
+        })
+        
+        analyzer = ModificationAnalyzerAgent()
+        
+        logger.info(
+            "chat_modification_calling_analyzer",
+            roadmap_id=roadmap_id,
+            message_length=len(request.user_message),
+            has_context=request.context is not None,
+        )
+        
+        analysis_result = await analyzer.analyze(
+            user_message=request.user_message,
+            roadmap_framework=framework,
+            current_context=request.context,
+        )
+        
+        logger.info(
+            "chat_modification_analysis_complete",
+            roadmap_id=roadmap_id,
+            intents_count=len(analysis_result.intents),
+            confidence=analysis_result.overall_confidence,
+            needs_clarification=analysis_result.needs_clarification,
+            reasoning_preview=analysis_result.analysis_reasoning[:100] if analysis_result.analysis_reasoning else "",
+        )
+        
+        # 3. 发送意图分析结果
+        intents_event = {
+            "intents": [
+                {
+                    "modification_type": intent.modification_type.value,
+                    "target_id": intent.target_id,
+                    "target_name": intent.target_name,
+                    "specific_requirements": intent.specific_requirements,
+                    "priority": intent.priority,
+                }
+                for intent in analysis_result.intents
+            ],
+            "count": len(analysis_result.intents),
+            "overall_confidence": analysis_result.overall_confidence,
+            "needs_clarification": analysis_result.needs_clarification,
+            "clarification_questions": analysis_result.clarification_questions,
+            "analysis_reasoning": analysis_result.analysis_reasoning,
+        }
+        yield _sse_event("intents", intents_event)
+        
+        # 如果需要澄清，提前返回
+        if analysis_result.needs_clarification:
+            yield _sse_event("done", {
+                "overall_success": False,
+                "partial_success": False,
+                "summary": "需要更多信息来执行修改",
+                "results": [],
+                "duration_ms": int((time.time() - start_time) * 1000),
+            })
+            return
+        
+        # 如果没有识别出意图
+        if not analysis_result.intents:
+            yield _sse_event("done", {
+                "overall_success": False,
+                "partial_success": False,
+                "summary": "未能识别出修改意图",
+                "results": [],
+                "duration_ms": int((time.time() - start_time) * 1000),
+            })
+            return
+        
+        # 4. 执行修改
+        results: TypingList[SingleModificationResult] = []
+        
+        logger.info(
+            "chat_modification_executing",
+            roadmap_id=roadmap_id,
+            intents_count=len(analysis_result.intents),
+            intent_types=[i.modification_type.value for i in analysis_result.intents],
+        )
+        
+        async with AsyncSessionLocal() as session:
+            repo = RoadmapRepository(session)
+            
+            for idx, intent in enumerate(analysis_result.intents, 1):
+                # 发送正在修改事件
+                yield _sse_event("modifying", {
+                    "modification_type": intent.modification_type.value,
+                    "target_id": intent.target_id,
+                    "target_name": intent.target_name,
+                    "requirements": intent.specific_requirements,
+                    "progress": {"current": idx, "total": len(analysis_result.intents)},
+                })
+                
+                logger.info(
+                    "chat_modification_executing_intent",
+                    roadmap_id=roadmap_id,
+                    intent_idx=idx,
+                    modification_type=intent.modification_type.value,
+                    target_id=intent.target_id,
+                    target_name=intent.target_name,
+                )
+                
+                try:
+                    # 发送 Agent 进度事件：准备阶段
+                    yield _sse_event("agent_progress", {
+                        "agent": f"{intent.modification_type.value}_modifier",
+                        "step": "preparing",
+                        "details": f"准备修改 {intent.target_name}...",
+                    })
+                    
+                    result = await _execute_single_modification(
+                        repo=repo,
+                        roadmap_id=roadmap_id,
+                        framework_data=roadmap_metadata.framework_data,
+                        intent=intent,
+                        user_preferences=request.preferences,
+                    )
+                    results.append(result)
+                    
+                    logger.info(
+                        "chat_modification_intent_completed",
+                        roadmap_id=roadmap_id,
+                        intent_idx=idx,
+                        modification_type=intent.modification_type.value,
+                        target_id=intent.target_id,
+                        success=result.success,
+                        new_version=result.new_version,
+                    )
+                    
+                    # 发送单个修改完成事件
+                    yield _sse_event("result", {
+                        "modification_type": result.modification_type.value,
+                        "target_id": result.target_id,
+                        "target_name": result.target_name,
+                        "success": result.success,
+                        "modification_summary": result.modification_summary,
+                        "new_version": result.new_version,
+                        "error_message": result.error_message,
+                    })
+                    
+                except Exception as e:
+                    logger.error(
+                        "chat_modification_intent_failed",
+                        roadmap_id=roadmap_id,
+                        intent_idx=idx,
+                        modification_type=intent.modification_type.value,
+                        target_id=intent.target_id,
+                        error=str(e),
+                        error_type=type(e).__name__,
+                    )
+                    
+                    error_result = SingleModificationResult(
+                        modification_type=intent.modification_type,
+                        target_id=intent.target_id,
+                        target_name=intent.target_name,
+                        success=False,
+                        modification_summary="",
+                        error_message=str(e),
+                    )
+                    results.append(error_result)
+                    
+                    # 发送错误事件
+                    yield _sse_event("result", {
+                        "modification_type": intent.modification_type.value,
+                        "target_id": intent.target_id,
+                        "target_name": intent.target_name,
+                        "success": False,
+                        "error_message": str(e),
+                    })
+            
+            # 提交所有更改
+            await session.commit()
+        
+        # 5. 发送完成事件
+        success_count = sum(1 for r in results if r.success)
+        overall_success = success_count == len(results) and len(results) > 0
+        partial_success = 0 < success_count < len(results)
+        
+        total_duration = time.time() - start_time
+        
+        summary_parts = []
+        for r in results:
+            if r.success:
+                summary_parts.append(f"{r.target_name}: {r.modification_summary}")
+            else:
+                summary_parts.append(f"{r.target_name}: 失败 - {r.error_message}")
+        
+        logger.info(
+            "chat_modification_stream_completed",
+            roadmap_id=roadmap_id,
+            overall_success=overall_success,
+            partial_success=partial_success,
+            success_count=success_count,
+            total_count=len(results),
+            duration_seconds=total_duration,
+        )
+        
+        yield _sse_event("done", {
+            "overall_success": overall_success,
+            "partial_success": partial_success,
+            "summary": f"完成 {success_count}/{len(results)} 项修改。" + " ".join(summary_parts),
+            "results": [
+                {
+                    "modification_type": r.modification_type.value,
+                    "target_id": r.target_id,
+                    "target_name": r.target_name,
+                    "success": r.success,
+                    "modification_summary": r.modification_summary,
+                    "new_version": r.new_version,
+                    "error_message": r.error_message,
+                }
+                for r in results
+            ],
+            "duration_ms": int(total_duration * 1000),
+        })
+        
+    except Exception as e:
+        logger.error(
+            "chat_modification_stream_error",
+            roadmap_id=roadmap_id,
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+        yield _sse_event("error", {"message": f"处理过程发生错误: {str(e)}"})
+
+
+async def _execute_single_modification(
+    repo: RoadmapRepository,
+    roadmap_id: str,
+    framework_data: dict,
+    intent,  # SingleModificationIntent
+    user_preferences: LearningPreferences,
+) -> SingleModificationResult:
+    """
+    执行单个修改任务
+    
+    流程：
+    1. 查找概念信息
+    2. 获取现有内容
+    3. 调用对应的 Modifier Agent
+    4. 保存新版本
+    """
+    import time
+    start_time = time.time()
+    
+    logger.info(
+        "execute_single_modification_started",
+        roadmap_id=roadmap_id,
+        modification_type=intent.modification_type.value,
+        target_id=intent.target_id,
+        target_name=intent.target_name,
+        requirements_count=len(intent.specific_requirements),
+    )
+    
+    # 查找概念信息
+    concept_data, context = _find_concept_in_framework(
+        framework_data, intent.target_id, roadmap_id
+    )
+    
+    if not concept_data:
+        logger.warning(
+            "execute_single_modification_concept_not_found",
+            roadmap_id=roadmap_id,
+            target_id=intent.target_id,
+        )
+        return SingleModificationResult(
+            modification_type=intent.modification_type,
+            target_id=intent.target_id,
+            target_name=intent.target_name,
+            success=False,
+            modification_summary="",
+            error_message=f"概念 {intent.target_id} 不存在",
+        )
+    
+    concept = Concept(
+        concept_id=concept_data.get("concept_id"),
+        name=concept_data.get("name"),
+        description=concept_data.get("description", ""),
+        estimated_hours=concept_data.get("estimated_hours", 1.0),
+        prerequisites=concept_data.get("prerequisites", []),
+        difficulty=concept_data.get("difficulty", "medium"),
+        keywords=concept_data.get("keywords", []),
+    )
+    
+    logger.debug(
+        "execute_single_modification_concept_found",
+        concept_id=concept.concept_id,
+        concept_name=concept.name,
+    )
+    
+    # 根据类型执行修改
+    if intent.modification_type == ModificationType.TUTORIAL:
+        # 获取现有教程
+        logger.info(
+            "tutorial_modifier_fetching_existing",
+            roadmap_id=roadmap_id,
+            concept_id=intent.target_id,
+        )
+        
+        tutorial = await repo.get_latest_tutorial(roadmap_id, intent.target_id)
+        if not tutorial:
+            logger.warning(
+                "tutorial_modifier_not_found",
+                roadmap_id=roadmap_id,
+                concept_id=intent.target_id,
+            )
+            return SingleModificationResult(
+                modification_type=intent.modification_type,
+                target_id=intent.target_id,
+                target_name=intent.target_name,
+                success=False,
+                modification_summary="",
+                error_message="教程不存在，请先生成",
+            )
+        
+        logger.info(
+            "tutorial_modifier_existing_found",
+            roadmap_id=roadmap_id,
+            concept_id=intent.target_id,
+            current_version=tutorial.content_version,
+            content_url=tutorial.content_url,
+        )
+        
+        context["content_version"] = tutorial.content_version
+        
+        modifier = TutorialModifierAgent()
+        modification_input = TutorialModificationInput(
+            concept=concept,
+            context=context,
+            user_preferences=user_preferences,
+            existing_content_url=tutorial.content_url,
+            modification_requirements=intent.specific_requirements,
+        )
+        
+        logger.info(
+            "tutorial_modifier_calling_agent",
+            concept_id=intent.target_id,
+            requirements=intent.specific_requirements,
+        )
+        
+        result = await modifier.modify(modification_input)
+        
+        logger.info(
+            "tutorial_modifier_agent_completed",
+            concept_id=intent.target_id,
+            new_version=result.content_version,
+            changes_count=len(result.changes_made),
+        )
+        
+        # 保存新版本
+        from app.models.domain import TutorialGenerationOutput
+        tutorial_output = TutorialGenerationOutput(
+            concept_id=result.concept_id,
+            tutorial_id=result.tutorial_id,
+            title=result.title,
+            summary=result.summary,
+            content_url=result.content_url,
+            content_status="completed",
+            content_version=result.content_version,
+            estimated_completion_time=result.estimated_completion_time,
+            generated_at=result.generated_at,
+        )
+        await repo.save_tutorial_metadata(tutorial_output, roadmap_id)
+        
+        duration = time.time() - start_time
+        logger.info(
+            "execute_single_modification_completed",
+            modification_type="tutorial",
+            concept_id=intent.target_id,
+            new_version=result.content_version,
+            duration_seconds=duration,
+        )
+        
+        return SingleModificationResult(
+            modification_type=intent.modification_type,
+            target_id=intent.target_id,
+            target_name=intent.target_name,
+            success=True,
+            modification_summary=result.modification_summary,
+            new_version=result.content_version,
+        )
+    
+    elif intent.modification_type == ModificationType.RESOURCES:
+        # 获取现有资源
+        logger.info(
+            "resource_modifier_fetching_existing",
+            roadmap_id=roadmap_id,
+            concept_id=intent.target_id,
+        )
+        
+        resources_list = await repo.get_resource_recommendations_by_roadmap(roadmap_id)
+        existing_resources_data = None
+        for r in resources_list:
+            if r.concept_id == intent.target_id:
+                existing_resources_data = r
+                break
+        
+        if not existing_resources_data:
+            logger.warning(
+                "resource_modifier_not_found",
+                roadmap_id=roadmap_id,
+                concept_id=intent.target_id,
+            )
+            return SingleModificationResult(
+                modification_type=intent.modification_type,
+                target_id=intent.target_id,
+                target_name=intent.target_name,
+                success=False,
+                modification_summary="",
+                error_message="资源推荐不存在，请先生成",
+            )
+        
+        existing_resources = [Resource(**r) for r in existing_resources_data.resources]
+        
+        logger.info(
+            "resource_modifier_existing_found",
+            roadmap_id=roadmap_id,
+            concept_id=intent.target_id,
+            existing_count=len(existing_resources),
+        )
+        
+        modifier = ResourceModifierAgent()
+        modification_input = ResourceModificationInput(
+            concept=concept,
+            context=context,
+            user_preferences=user_preferences,
+            existing_resources=existing_resources,
+            modification_requirements=intent.specific_requirements,
+        )
+        
+        logger.info(
+            "resource_modifier_calling_agent",
+            concept_id=intent.target_id,
+            requirements=intent.specific_requirements,
+        )
+        
+        result = await modifier.modify(modification_input)
+        
+        logger.info(
+            "resource_modifier_agent_completed",
+            concept_id=intent.target_id,
+            new_resources_count=len(result.resources),
+            changes_count=len(result.changes_made),
+        )
+        
+        # 保存
+        from app.models.domain import ResourceRecommendationOutput
+        resource_output = ResourceRecommendationOutput(
+            id=result.id,
+            concept_id=result.concept_id,
+            resources=result.resources,
+            search_queries_used=result.search_queries_used,
+            generated_at=result.generated_at,
+        )
+        await repo.save_resource_recommendation_metadata(resource_output, roadmap_id)
+        
+        duration = time.time() - start_time
+        logger.info(
+            "execute_single_modification_completed",
+            modification_type="resources",
+            concept_id=intent.target_id,
+            resources_count=len(result.resources),
+            duration_seconds=duration,
+        )
+        
+        return SingleModificationResult(
+            modification_type=intent.modification_type,
+            target_id=intent.target_id,
+            target_name=intent.target_name,
+            success=True,
+            modification_summary=result.modification_summary,
+        )
+    
+    elif intent.modification_type == ModificationType.QUIZ:
+        # 获取现有测验
+        logger.info(
+            "quiz_modifier_fetching_existing",
+            roadmap_id=roadmap_id,
+            concept_id=intent.target_id,
+        )
+        
+        existing_quiz = await repo.get_quiz_by_concept(intent.target_id, roadmap_id)
+        if not existing_quiz:
+            logger.warning(
+                "quiz_modifier_not_found",
+                roadmap_id=roadmap_id,
+                concept_id=intent.target_id,
+            )
+            return SingleModificationResult(
+                modification_type=intent.modification_type,
+                target_id=intent.target_id,
+                target_name=intent.target_name,
+                success=False,
+                modification_summary="",
+                error_message="测验不存在，请先生成",
+            )
+        
+        existing_questions = [QuizQuestion(**q) for q in existing_quiz.questions]
+        
+        logger.info(
+            "quiz_modifier_existing_found",
+            roadmap_id=roadmap_id,
+            concept_id=intent.target_id,
+            existing_count=len(existing_questions),
+        )
+        
+        modifier = QuizModifierAgent()
+        modification_input = QuizModificationInput(
+            concept=concept,
+            context=context,
+            user_preferences=user_preferences,
+            existing_questions=existing_questions,
+            modification_requirements=intent.specific_requirements,
+        )
+        
+        logger.info(
+            "quiz_modifier_calling_agent",
+            concept_id=intent.target_id,
+            requirements=intent.specific_requirements,
+        )
+        
+        result = await modifier.modify(modification_input)
+        
+        logger.info(
+            "quiz_modifier_agent_completed",
+            concept_id=intent.target_id,
+            new_questions_count=result.total_questions,
+            changes_count=len(result.changes_made),
+        )
+        
+        # 保存
+        from app.models.domain import QuizGenerationOutput
+        quiz_output = QuizGenerationOutput(
+            concept_id=result.concept_id,
+            quiz_id=result.quiz_id,
+            questions=result.questions,
+            total_questions=result.total_questions,
+            generated_at=result.generated_at,
+        )
+        await repo.save_quiz_metadata(quiz_output, roadmap_id)
+        
+        duration = time.time() - start_time
+        logger.info(
+            "execute_single_modification_completed",
+            modification_type="quiz",
+            concept_id=intent.target_id,
+            questions_count=result.total_questions,
+            duration_seconds=duration,
+        )
+        
+        return SingleModificationResult(
+            modification_type=intent.modification_type,
+            target_id=intent.target_id,
+            target_name=intent.target_name,
+            success=True,
+            modification_summary=result.modification_summary,
+        )
+    
+    else:
+        logger.warning(
+            "execute_single_modification_unsupported_type",
+            modification_type=intent.modification_type.value,
+            target_id=intent.target_id,
+        )
+        return SingleModificationResult(
+            modification_type=intent.modification_type,
+            target_id=intent.target_id,
+            target_name=intent.target_name,
+            success=False,
+            modification_summary="",
+            error_message=f"不支持的修改类型: {intent.modification_type}",
+        )
+
+
+@router.post("/{roadmap_id}/chat-stream")
+async def chat_modification_stream(
+    roadmap_id: str,
+    request: ChatModificationRequest,
+):
+    """
+    聊天式修改入口（流式返回）
+    
+    分析用户自然语言修改意见 → 执行修改 → 流式返回结果
+    
+    Args:
+        roadmap_id: 路线图 ID
+        request: 聊天修改请求（包含用户消息、上下文、偏好）
+        
+    Returns:
+        Server-Sent Events 流
+        
+    Event 类型：
+        - analyzing: 正在分析意图
+        - intents: 检测到的修改意图列表
+        - modifying: 正在执行某项修改
+        - result: 单个修改完成
+        - done: 全部完成 + 汇总
+        - error: 错误信息
+    """
+    logger.info(
+        "chat_modification_stream_requested",
+        roadmap_id=roadmap_id,
+        user_id=request.user_id,
+        message_length=len(request.user_message),
+        has_context=request.context is not None,
+    )
+    
+    return StreamingResponse(
+        _chat_modification_stream(roadmap_id, request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
+

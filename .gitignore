@@ -83,4 +83,9 @@ coverage/
 
 # Build outputs
 frontend/dist/
+frontend/.vite/
+
+# Next.js
+.next/
+out/
 
