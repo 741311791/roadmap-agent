@@ -1,0 +1,274 @@
+import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
+import { AnimatePresence } from 'framer-motion';
+import RoadmapTree from '../components/roadmap/RoadmapTree';
+// import LearningView from '../components/roadmap/LearningView';
+import ProfileSidebar from '../components/roadmap/ProfileSidebar';
+import LeftSidebar from '../components/agents/LeftSidebar';
+import RightSidebar from '../components/agents/RightSidebar';
+import MyRoadmaps from '../components/MyRoadmaps';
+import roadmapData from '../examples/demo_roadmap.json';
+import EmptyState from '../components/EmptyState';
+import { Layers, Clock, Calendar, Sparkles, ChevronLeft } from 'lucide-react';
+import { Button } from '../components/ui/Button';
+
+interface ConceptWithContext {
+    concept_id: string;
+    name: string;
+    description: string;
+    estimated_hours: number;
+    difficulty: string;
+    keywords: string[];
+    moduleName: string;
+    stageName: string;
+    moduleId: string;
+    stageId: string;
+}
+
+type ViewMode = 'dashboard' | 'roadmap';
+
+const AgentsPage: React.FC = () => {
+    // State for column widths and sidebar collapse
+    const [leftWidth, setLeftWidth] = useState(260);
+    const [rightWidth, setRightWidth] = useState(350);
+    const [isLeftSidebarCollapsed, setIsLeftSidebarCollapsed] = useState(false);
+    const [isRightSidebarCollapsed, setIsRightSidebarCollapsed] = useState(false);
+    const [selectedConcept, setSelectedConcept] = useState<ConceptWithContext | null>(null);
+    const [viewMode, setViewMode] = useState<ViewMode>('dashboard');
+    const containerRef = useRef<HTMLDivElement>(null);
+    const mainContentRef = useRef<HTMLDivElement>(null);
+    const savedScrollPosition = useRef(0);
+
+    // Resizing logic
+    const isResizingLeft = useRef(false);
+    const isResizingRight = useRef(false);
+
+    useEffect(() => {
+        const handleMouseMove = (e: MouseEvent) => {
+            if (!containerRef.current) return;
+            const containerRect = containerRef.current.getBoundingClientRect();
+
+            if (isResizingLeft.current) {
+                const newWidth = e.clientX - containerRect.left;
+                if (newWidth > 200 && newWidth < 400) setLeftWidth(newWidth);
+            }
+
+            if (isResizingRight.current && !isRightSidebarCollapsed) {
+                const newWidth = containerRect.right - e.clientX;
+                if (newWidth > 300 && newWidth < 500) setRightWidth(newWidth);
+            }
+        };
+
+        const handleMouseUp = () => {
+            isResizingLeft.current = false;
+            isResizingRight.current = false;
+            document.body.style.cursor = 'default';
+        };
+
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', handleMouseUp);
+
+        return () => {
+            document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('mouseup', handleMouseUp);
+        };
+    }, [isRightSidebarCollapsed]);
+
+    // Scroll restoration
+    useLayoutEffect(() => {
+        if (!selectedConcept && mainContentRef.current) {
+            // Restore scroll position when returning to roadmap
+            mainContentRef.current.scrollTop = savedScrollPosition.current;
+        }
+    }, [selectedConcept]);
+
+    // Toggle sidebars
+    const toggleLeftSidebar = () => {
+        setIsLeftSidebarCollapsed(!isLeftSidebarCollapsed);
+    };
+
+    const toggleRightSidebar = () => {
+        setIsRightSidebarCollapsed(!isRightSidebarCollapsed);
+    };
+
+    // Handle concept selection
+    const handleSelectConcept = (concept: ConceptWithContext) => {
+        // Save current scroll position
+        if (mainContentRef.current) {
+            savedScrollPosition.current = mainContentRef.current.scrollTop;
+        }
+        setSelectedConcept(concept);
+    };
+
+    // Navigation helpers
+    const findPreviousConcept = (): ConceptWithContext | null => {
+        if (!selectedConcept) return null;
+
+        const concepts: ConceptWithContext[] = [];
+        roadmapData.stages.forEach(stage => {
+            stage.modules.forEach(module => {
+                module.concepts.forEach(concept => {
+                    concepts.push({
+                        ...concept,
+                        moduleName: module.name,
+                        stageName: stage.name,
+                        moduleId: module.module_id,
+                        stageId: stage.stage_id
+                    });
+                });
+            });
+        });
+
+        const currentIndex = concepts.findIndex(c => c.concept_id === selectedConcept.concept_id);
+        return currentIndex > 0 ? concepts[currentIndex - 1] : null;
+    };
+
+    const findNextConcept = (): ConceptWithContext | null => {
+        if (!selectedConcept) return null;
+
+        const concepts: ConceptWithContext[] = [];
+        roadmapData.stages.forEach(stage => {
+            stage.modules.forEach(module => {
+                module.concepts.forEach(concept => {
+                    concepts.push({
+                        ...concept,
+                        moduleName: module.name,
+                        stageName: stage.name,
+                        moduleId: module.module_id,
+                        stageId: stage.stage_id
+                    });
+                });
+            });
+        });
+
+        const currentIndex = concepts.findIndex(c => c.concept_id === selectedConcept.concept_id);
+        return currentIndex < concepts.length - 1 ? concepts[currentIndex + 1] : null;
+    };
+
+    const handlePreviousLesson = () => {
+        const prev = findPreviousConcept();
+        if (prev) setSelectedConcept(prev);
+    };
+
+    const handleNextLesson = () => {
+        const next = findNextConcept();
+        if (next) setSelectedConcept(next);
+    };
+
+    const handleBackToRoadmap = () => {
+        setSelectedConcept(null);
+    };
+
+    const handleSelectRoadmap = (id: number) => {
+        console.log(`Selected roadmap ${id}`);
+        setViewMode('roadmap');
+    };
+
+    const handleBackToDashboard = () => {
+        setViewMode('dashboard');
+    };
+
+    return (
+        <div ref={containerRef} className="flex h-screen bg-background overflow-hidden text-foreground font-sans">
+
+            <LeftSidebar
+                width={isLeftSidebarCollapsed ? 70 : leftWidth}
+                onResizeStart={() => { isResizingLeft.current = true; document.body.style.cursor = 'col-resize'; }}
+                isCollapsed={isLeftSidebarCollapsed}
+                onToggleCollapse={toggleLeftSidebar}
+            />
+
+            {/* MAIN CONTENT AREA */}
+            <main
+                ref={mainContentRef}
+                className="flex-1 overflow-y-auto relative h-full bg-background bg-noise"
+            >
+
+
+                <AnimatePresence mode="popLayout">
+                    {viewMode === 'dashboard' ? (
+                        <MyRoadmaps key="dashboard-view" onSelectRoadmap={handleSelectRoadmap} />
+                    ) : selectedConcept ? (
+                        // LearningView is now a standalone route
+                        <div className="flex items-center justify-center h-full">
+                            <Button onClick={() => window.location.href = `/concept/${selectedConcept.concept_id}`}>
+                                Go to Concept
+                            </Button>
+                        </div>
+                    ) : (
+                        <div key="roadmap-view" className="max-w-7xl mx-auto py-12 px-6">
+                            {/* Hero Section */}
+                            <div className="mb-10">
+                                <div className="flex items-center gap-4 mb-4">
+                                    <Button variant="ghost" size="sm" onClick={handleBackToDashboard} className="text-muted-foreground hover:text-foreground -ml-2">
+                                        <ChevronLeft className="h-4 w-4 mr-1" /> Back to Dashboard
+                                    </Button>
+                                </div>
+                                <h1 className="text-4xl font-serif font-bold text-foreground mb-4 leading-tight">
+                                    {roadmapData.title}
+                                </h1>
+
+                                {/* Stats Badges */}
+                                <div className="flex items-center gap-3 flex-wrap">
+                                    <div className="flex items-center gap-2 px-4 py-2 bg-sage-50 border border-sage-200 rounded-full">
+                                        <Layers size={16} className="text-sage-700" />
+                                        <span className="text-sm font-medium text-sage-800">
+                                            {roadmapData.stages.length} Stages
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center gap-2 px-4 py-2 bg-muted border border-border rounded-full">
+                                        <Clock size={16} className="text-foreground/70" />
+                                        <span className="text-sm font-medium text-foreground">
+                                            {roadmapData.total_estimated_hours} Hours
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center gap-2 px-4 py-2 bg-sage-100 border border-sage-300 rounded-full">
+                                        <Calendar size={16} className="text-sage-700" />
+                                        <span className="text-sm font-medium text-sage-800">
+                                            {roadmapData.recommended_completion_weeks} Weeks
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* 2-Column Grid Layout */}
+                            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                                {/* Left Column: Roadmap */}
+                                <div className="lg:col-span-8">
+                                    <RoadmapTree data={roadmapData} onSelectConcept={handleSelectConcept} />
+                                </div>
+
+                                {/* Right Column: Profile Sidebar (Sticky) */}
+                                <div className="lg:col-span-4 space-y-3 sticky top-6">
+                                    <div className="bg-card rounded-2xl border border-border overflow-hidden">
+                                        <EmptyState
+                                            title="Start Journey"
+                                            description="Select a concept to begin."
+                                            icon={Sparkles}
+                                            compact={true}
+                                        />
+                                    </div>
+                                    <ProfileSidebar />
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </AnimatePresence>
+            </main>
+
+            <RightSidebar
+                width={isRightSidebarCollapsed ? 70 : rightWidth}
+                isCollapsed={isRightSidebarCollapsed}
+                onToggleCollapse={toggleRightSidebar}
+                onResizeStart={() => {
+                    if (!isRightSidebarCollapsed) {
+                        isResizingRight.current = true;
+                        document.body.style.cursor = 'col-resize';
+                    }
+                }}
+            />
+
+        </div>
+    );
+};
+
+export default AgentsPage;

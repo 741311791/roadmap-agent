@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  # ==================== Backend API ====================
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - POSTGRES_HOST=postgres
+      - REDIS_HOST=redis
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ./app:/app/app
+      - ./prompts:/app/prompts
+      - ./specs:/app/specs
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # ==================== PostgreSQL ====================
+  postgres:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: roadmap_user
+      POSTGRES_PASSWORD: roadmap_pass
+      POSTGRES_DB: roadmap_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # ==================== Redis ====================
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+  redis_data:
+

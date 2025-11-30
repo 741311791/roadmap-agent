@@ -1,0 +1,451 @@
+"""
+路线图生成服务
+"""
+import uuid
+from sqlalchemy.ext.asyncio import AsyncSession
+import structlog
+
+from app.models.domain import UserRequest, RoadmapFramework
+from app.core.orchestrator import RoadmapOrchestrator
+from app.db.repositories.roadmap_repo import RoadmapRepository
+from app.services.notification_service import notification_service
+
+logger = structlog.get_logger()
+
+
+class RoadmapService:
+    """路线图生成服务"""
+    
+    def __init__(self, session: AsyncSession, orchestrator: RoadmapOrchestrator):
+        self.session = session
+        self.repo = RoadmapRepository(session)
+        self.orchestrator = orchestrator
+    
+    async def generate_roadmap(
+        self,
+        user_request: UserRequest,
+        trace_id: str | None = None,
+    ) -> dict:
+        """
+        生成学习路线图（异步任务）
+        
+        Args:
+            user_request: 用户请求
+            trace_id: 追踪 ID（必须提供，由 API 层创建）
+            
+        Returns:
+            包含 task_id 和初始状态的字典
+        """
+        if trace_id is None:
+            trace_id = str(uuid.uuid4())
+            # 如果没有提供 trace_id，则创建任务记录
+            await self.repo.create_task(
+                task_id=trace_id,
+                user_id=user_request.user_id,
+                user_request=user_request.model_dump(mode='json'),
+            )
+        
+        # 更新任务状态为处理中
+        logger.info(
+            "roadmap_service_starting",
+            trace_id=trace_id,
+            user_id=user_request.user_id,
+        )
+        
+        await self.repo.update_task_status(
+            task_id=trace_id,
+            status="processing",
+            current_step="intent_analysis",
+        )
+        await self.session.commit()
+        
+        try:
+            logger.info(
+                "roadmap_service_executing_workflow",
+                trace_id=trace_id,
+            )
+            
+            # 执行工作流
+            final_state = await self.orchestrator.execute(user_request, trace_id)
+            
+            # 检查工作流是否在 human_review 处被 interrupt() 暂停
+            is_interrupted = "__interrupt__" in final_state
+            current_step = final_state.get("current_step", "unknown")
+            
+            logger.info(
+                "roadmap_service_workflow_returned",
+                trace_id=trace_id,
+                current_step=current_step,
+                is_interrupted=is_interrupted,
+                has_framework=bool(final_state.get("roadmap_framework")),
+            )
+            
+            if is_interrupted:
+                # 工作流在 human_review 处被中断，等待人工审核
+                logger.info(
+                    "roadmap_service_awaiting_human_review",
+                    trace_id=trace_id,
+                    interrupt_info=str(final_state.get("__interrupt__"))[:200],
+                )
+                
+                # 先保存路线图框架（如果存在），方便用户审核
+                if final_state.get("roadmap_framework"):
+                    framework: RoadmapFramework = final_state["roadmap_framework"]
+                    await self.repo.save_roadmap_metadata(
+                        roadmap_id=framework.roadmap_id,
+                        user_id=user_request.user_id,
+                        task_id=trace_id,
+                        framework=framework,
+                    )
+                
+                # 更新任务状态为等待人工审核
+                await self.repo.update_task_status(
+                    task_id=trace_id,
+                    status="human_review_pending",
+                    current_step="human_review",
+                    roadmap_id=final_state.get("roadmap_framework").roadmap_id if final_state.get("roadmap_framework") else None,
+                )
+                
+                return {
+                    "task_id": trace_id,
+                    "status": "human_review_pending",
+                    "roadmap_id": final_state.get("roadmap_framework").roadmap_id if final_state.get("roadmap_framework") else None,
+                    "message": "工作流已暂停，等待人工审核",
+                }
+            
+            # 工作流正常完成，保存路线图元数据
+            if final_state.get("roadmap_framework"):
+                framework: RoadmapFramework = final_state["roadmap_framework"]
+                await self.repo.save_roadmap_metadata(
+                    roadmap_id=framework.roadmap_id,
+                    user_id=user_request.user_id,
+                    task_id=trace_id,
+                    framework=framework,
+                )
+                
+                # 保存需求分析元数据（A1: 需求分析师产出）
+                intent_analysis = final_state.get("intent_analysis")
+                if intent_analysis:
+                    await self.repo.save_intent_analysis_metadata(
+                        task_id=trace_id,
+                        intent_analysis=intent_analysis,
+                    )
+                    logger.info(
+                        "intent_analysis_metadata_saved",
+                        task_id=trace_id,
+                    )
+                
+                # 保存教程元数据（A4: 教程生成器产出）
+                tutorial_refs = final_state.get("tutorial_refs", {})
+                if tutorial_refs:
+                    logger.info(
+                        "saving_tutorial_metadata",
+                        task_id=trace_id,
+                        count=len(tutorial_refs),
+                        concept_ids=list(tutorial_refs.keys()),
+                    )
+                    await self.repo.save_tutorials_batch(
+                        tutorial_refs=tutorial_refs,
+                        roadmap_id=framework.roadmap_id,
+                    )
+                
+                # 保存资源推荐元数据（A5: 资源推荐师产出）
+                resource_refs = final_state.get("resource_refs", {})
+                if resource_refs:
+                    logger.info(
+                        "saving_resource_metadata",
+                        task_id=trace_id,
+                        count=len(resource_refs),
+                        concept_ids=list(resource_refs.keys()),
+                    )
+                    await self.repo.save_resources_batch(
+                        resource_refs=resource_refs,
+                        roadmap_id=framework.roadmap_id,
+                    )
+                
+                # 保存测验元数据（A6: 测验生成器产出）
+                quiz_refs = final_state.get("quiz_refs", {})
+                if quiz_refs:
+                    logger.info(
+                        "saving_quiz_metadata",
+                        task_id=trace_id,
+                        count=len(quiz_refs),
+                        concept_ids=list(quiz_refs.keys()),
+                    )
+                    await self.repo.save_quizzes_batch(
+                        quiz_refs=quiz_refs,
+                        roadmap_id=framework.roadmap_id,
+                    )
+                else:
+                    logger.warning(
+                        "no_quiz_refs_to_save",
+                        task_id=trace_id,
+                        message="quiz_refs is empty, no quizzes will be saved",
+                    )
+                
+                # 更新任务状态为完成
+                await self.repo.update_task_status(
+                    task_id=trace_id,
+                    status="completed",
+                    current_step="completed",
+                    roadmap_id=framework.roadmap_id,
+                )
+                
+                # 发布完成通知（如果教程生成被跳过，这里补发通知）
+                if not tutorial_refs:
+                    await notification_service.publish_completed(
+                        task_id=trace_id,
+                        roadmap_id=framework.roadmap_id,
+                    )
+            else:
+                # 如果没有生成框架，标记为失败
+                await self.repo.update_task_status(
+                    task_id=trace_id,
+                    status="failed",
+                    current_step="failed",
+                    error_message="路线图框架生成失败",
+                )
+                # 发布失败通知
+                await notification_service.publish_failed(
+                    task_id=trace_id,
+                    error="路线图框架生成失败",
+                )
+            
+            logger.info("roadmap_generation_completed", task_id=trace_id)
+            
+        except Exception as e:
+            # 更新任务状态为失败
+            await self.repo.update_task_status(
+                task_id=trace_id,
+                status="failed",
+                current_step="failed",
+                error_message=str(e),
+            )
+            # 发布失败通知
+            await notification_service.publish_failed(
+                task_id=trace_id,
+                error=str(e),
+            )
+            logger.error("roadmap_generation_failed", task_id=trace_id, error=str(e))
+            raise
+        
+        return {
+            "task_id": trace_id,
+            "status": "completed" if final_state.get("roadmap_framework") else "failed",
+            "roadmap_id": final_state.get("roadmap_framework").roadmap_id if final_state.get("roadmap_framework") else None,
+        }
+    
+    async def get_task_status(self, task_id: str) -> dict | None:
+        """
+        获取任务状态
+        
+        Args:
+            task_id: 任务 ID
+            
+        Returns:
+            任务状态字典，如果不存在则返回 None
+        """
+        task = await self.repo.get_task(task_id)
+        if not task:
+            return None
+        
+        # 如果任务正在处理中，从 AsyncPostgresSaver 获取实时状态
+        current_step = task.current_step
+        if task.status == "processing":
+            try:
+                realtime_step = await self._get_realtime_step_from_checkpointer(task_id)
+                if realtime_step:
+                    current_step = realtime_step
+            except Exception as e:
+                # 如果获取实时状态失败，使用数据库中的状态
+                logger.warning(
+                    "get_realtime_step_failed",
+                    task_id=task_id,
+                    error=str(e),
+                )
+        
+        return {
+            "task_id": task.task_id,
+            "status": task.status,
+            "current_step": current_step,
+            "roadmap_id": task.roadmap_id,
+            "created_at": task.created_at.isoformat() if task.created_at else None,
+            "updated_at": task.updated_at.isoformat() if task.updated_at else None,
+            "error_message": task.error_message,
+        }
+    
+    async def _get_realtime_step_from_checkpointer(self, task_id: str) -> str | None:
+        """
+        从 AsyncPostgresSaver 获取工作流的实时步骤
+        
+        Args:
+            task_id: 任务 ID（同时也是 LangGraph 的 thread_id）
+            
+        Returns:
+            当前步骤名称，如果获取失败则返回 None
+        """
+        try:
+            config = {"configurable": {"thread_id": task_id}}
+            checkpoint_tuple = await self.orchestrator.checkpointer.aget_tuple(config)
+            
+            if checkpoint_tuple and checkpoint_tuple.checkpoint:
+                channel_values = checkpoint_tuple.checkpoint.get("channel_values", {})
+                current_step = channel_values.get("current_step")
+                
+                logger.debug(
+                    "checkpointer_realtime_step",
+                    task_id=task_id,
+                    current_step=current_step,
+                    has_channel_values=bool(channel_values),
+                    channel_keys=list(channel_values.keys()) if channel_values else [],
+                )
+                
+                return current_step
+            else:
+                logger.debug(
+                    "checkpointer_no_checkpoint",
+                    task_id=task_id,
+                    has_tuple=checkpoint_tuple is not None,
+                    has_checkpoint=checkpoint_tuple.checkpoint is not None if checkpoint_tuple else False,
+                )
+            
+            return None
+        except Exception as e:
+            logger.warning(
+                "checkpointer_get_step_failed",
+                task_id=task_id,
+                error=str(e),
+            )
+            return None
+    
+    async def get_roadmap(self, roadmap_id: str) -> RoadmapFramework | None:
+        """
+        获取完整的路线图数据
+        
+        Args:
+            roadmap_id: 路线图 ID
+            
+        Returns:
+            路线图框架，如果不存在则返回 None
+        """
+        metadata = await self.repo.get_roadmap_metadata(roadmap_id)
+        if not metadata:
+            return None
+        
+        # 从 JSON 数据重建 RoadmapFramework
+        return RoadmapFramework.model_validate(metadata.framework_data)
+    
+    async def handle_human_review(
+        self,
+        task_id: str,
+        approved: bool,
+        feedback: str | None = None,
+    ) -> dict:
+        """
+        处理人工审核结果（Human-in-the-Loop）
+        
+        Args:
+            task_id: 任务 ID
+            approved: 是否批准
+            feedback: 用户反馈（如果未批准）
+            
+        Returns:
+            处理结果
+        """
+        # 获取任务状态
+        task = await self.repo.get_task(task_id)
+        if not task:
+            raise ValueError(f"任务 {task_id} 不存在")
+        
+        if task.status != "human_review_pending" or task.current_step != "human_review":
+            raise ValueError(f"任务 {task_id} 当前不在人工审核阶段（当前状态: {task.status}, 步骤: {task.current_step}）")
+        
+        try:
+            # 恢复工作流（使用 Command(resume=...) 继续执行）
+            final_state = await self.orchestrator.resume_after_human_review(
+                trace_id=task_id,
+                approved=approved,
+                feedback=feedback,
+            )
+            
+            if approved:
+                # 用户批准，保存路线图元数据
+                if final_state.get("roadmap_framework"):
+                    framework: RoadmapFramework = final_state["roadmap_framework"]
+                    await self.repo.save_roadmap_metadata(
+                        roadmap_id=framework.roadmap_id,
+                        user_id=task.user_id,
+                        task_id=task_id,
+                        framework=framework,
+                    )
+                    
+                    # 保存需求分析元数据（A1: 需求分析师产出）
+                    intent_analysis = final_state.get("intent_analysis")
+                    if intent_analysis:
+                        await self.repo.save_intent_analysis_metadata(
+                            task_id=task_id,
+                            intent_analysis=intent_analysis,
+                        )
+                    
+                    # 保存教程元数据（A4: 教程生成器产出）
+                    tutorial_refs = final_state.get("tutorial_refs", {})
+                    if tutorial_refs:
+                        await self.repo.save_tutorials_batch(
+                            tutorial_refs=tutorial_refs,
+                            roadmap_id=framework.roadmap_id,
+                        )
+                    
+                    # 保存资源推荐元数据（A5: 资源推荐师产出）
+                    resource_refs = final_state.get("resource_refs", {})
+                    if resource_refs:
+                        await self.repo.save_resources_batch(
+                            resource_refs=resource_refs,
+                            roadmap_id=framework.roadmap_id,
+                        )
+                    
+                    # 保存测验元数据（A6: 测验生成器产出）
+                    quiz_refs = final_state.get("quiz_refs", {})
+                    if quiz_refs:
+                        await self.repo.save_quizzes_batch(
+                            quiz_refs=quiz_refs,
+                            roadmap_id=framework.roadmap_id,
+                        )
+                    
+                    # 更新任务状态为完成
+                    await self.repo.update_task_status(
+                        task_id=task_id,
+                        status="completed",
+                        current_step="completed",
+                        roadmap_id=framework.roadmap_id,
+                    )
+                else:
+                    # 如果没有生成框架，标记为失败
+                    await self.repo.update_task_status(
+                        task_id=task_id,
+                        status="failed",
+                        current_step="failed",
+                        error_message="路线图框架生成失败",
+                    )
+            else:
+                # 用户要求修改，工作流会返回重新设计
+                await self.repo.update_task_status(
+                    task_id=task_id,
+                    status="processing",
+                    current_step="curriculum_design",
+                )
+            
+            logger.info(
+                "human_review_processed",
+                task_id=task_id,
+                approved=approved,
+            )
+            
+            return {
+                "task_id": task_id,
+                "approved": approved,
+                "message": "审核结果已提交，工作流将继续执行" if approved else "已记录修改要求，将重新设计路线图",
+            }
+            
+        except Exception as e:
+            logger.error("human_review_processing_failed", task_id=task_id, error=str(e))
+            raise

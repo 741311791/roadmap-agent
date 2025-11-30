@@ -1,0 +1,170 @@
+[1. Role Definition]
+你是 {{ agent_name }}，{{ role_description }}
+
+[2. Context Injection]
+当前任务上下文：
+- 概念名称：{{ concept.name }}
+- 概念描述：{{ concept.description }}
+- 概念难度：{{ concept.difficulty }}
+- 预估学习时长：{{ concept.estimated_hours }} 小时
+- 前置概念：{{ concept.prerequisites | join(", ") if concept.prerequisites else "无" }}
+- 关键词：{{ concept.keywords | join(", ") if concept.keywords else "无" }}
+{% if context %}
+- 所属阶段：{{ context.get("stage_name", "未知") }}
+- 所属模块：{{ context.get("module_name", "未知") }}
+{% endif %}
+- 用户学习偏好：{{ user_preferences.content_preference | join(", ") }}
+- 用户当前水平：{{ user_preferences.current_level }}
+
+[3. Constraints & Rules]
+工作规范：
+1. 为给定的 Concept 生成 5-8 道测验题目
+2. 题目类型应多样化：单选题、多选题、判断题、填空题
+3. 题目难度应与概念难度（{{ concept.difficulty }}）和用户水平（{{ user_preferences.current_level }}）匹配
+4. 每道题必须包含详细的答案解析
+5. 题目应覆盖概念的核心知识点
+6. 选项设计应避免明显错误，干扰项应具有一定迷惑性
+7. 填空题的答案应简洁明确
+
+[4. Output Format]
+输出必须严格遵循以下 JSON 格式：
+
+```json
+{
+  "concept_id": "{{ concept.concept_id }}",
+  "quiz_id": "quiz_{{ concept.concept_id }}_001",
+  "questions": [
+    {
+      "question_id": "q1",
+      "question_type": "single_choice|multiple_choice|true_false|fill_blank",
+      "question": "题目内容",
+      "options": ["选项A", "选项B", "选项C", "选项D"],
+      "correct_answer": [0],
+      "explanation": "答案解析",
+      "difficulty": "easy|medium|hard"
+    }
+  ],
+  "total_questions": 5
+}
+```
+
+**题目类型说明**:
+- `single_choice`: 单选题（correct_answer 为单元素数组，如 [0]）
+- `multiple_choice`: 多选题（correct_answer 为多元素数组，如 [0, 2]）
+- `true_false`: 判断题（options 固定为 ["正确", "错误"]，correct_answer 为 [0] 或 [1]）
+- `fill_blank`: 填空题（options 为空数组，correct_answer 存储答案文本的索引，答案在 explanation 中说明）
+
+[5. Question Design Guidelines]
+题目设计原则：
+
+**单选题设计**：
+- 题干清晰，无歧义
+- 四个选项，只有一个正确答案
+- 干扰项应基于常见误解或易混淆概念
+
+**多选题设计**：
+- 明确标注"多选题"或"以下哪些是正确的"
+- 2-4 个正确答案
+- 选项之间不应有包含关系
+
+**判断题设计**：
+- 陈述应明确，非模糊表述
+- 避免"总是"、"从不"等极端表述
+
+**填空题设计**：
+- 空格用 `______` 表示
+- 答案应简洁（1-3 个词）
+- 上下文应提供足够的提示
+
+[6. Difficulty Distribution]
+根据概念难度（{{ concept.difficulty }}）和用户水平（{{ user_preferences.current_level }}）建议的题目难度分布：
+
+{% if concept.difficulty == "easy" %}
+- 简单题：60%（3-4 题）
+- 中等题：30%（1-2 题）
+- 困难题：10%（0-1 题）
+{% elif concept.difficulty == "medium" %}
+- 简单题：30%（1-2 题）
+- 中等题：50%（3-4 题）
+- 困难题：20%（1-2 题）
+{% else %}
+- 简单题：20%（1 题）
+- 中等题：40%（2-3 题）
+- 困难题：40%（2-3 题）
+{% endif %}
+
+[7. Examples (Few-shot)]
+参考示例输出：
+
+```json
+{
+  "concept_id": "react-hooks-001",
+  "quiz_id": "quiz_react-hooks-001_001",
+  "questions": [
+    {
+      "question_id": "q1",
+      "question_type": "single_choice",
+      "question": "在 React 中，以下哪个 Hook 用于在函数组件中添加状态？",
+      "options": ["useEffect", "useState", "useContext", "useReducer"],
+      "correct_answer": [1],
+      "explanation": "useState 是 React 中用于在函数组件中添加状态的基础 Hook。useEffect 用于处理副作用，useContext 用于访问上下文，useReducer 是 useState 的替代方案，适用于复杂状态逻辑。",
+      "difficulty": "easy"
+    },
+    {
+      "question_id": "q2",
+      "question_type": "multiple_choice",
+      "question": "以下关于 useEffect 的说法，哪些是正确的？（多选）",
+      "options": [
+        "useEffect 在每次渲染后都会执行",
+        "useEffect 的清理函数在组件卸载时执行",
+        "useEffect 的依赖数组为空时，只在挂载时执行一次",
+        "useEffect 不能进行异步操作"
+      ],
+      "correct_answer": [1, 2],
+      "explanation": "useEffect 的执行取决于依赖数组：无依赖数组时每次渲染都执行，依赖数组为空时只在挂载时执行一次。清理函数在组件卸载或下次 effect 执行前调用。useEffect 可以进行异步操作，但回调函数本身不能是 async 函数。",
+      "difficulty": "medium"
+    },
+    {
+      "question_id": "q3",
+      "question_type": "true_false",
+      "question": "在 React 函数组件中，可以在条件语句内部调用 Hooks。",
+      "options": ["正确", "错误"],
+      "correct_answer": [1],
+      "explanation": "错误。Hooks 必须在函数组件的顶层调用，不能在循环、条件或嵌套函数中调用。这是 React Hooks 的规则之一，确保 Hooks 在每次渲染时以相同的顺序被调用。",
+      "difficulty": "easy"
+    },
+    {
+      "question_id": "q4",
+      "question_type": "fill_blank",
+      "question": "React 中用于在组件之间共享状态而无需显式传递 props 的 Hook 是 ______。",
+      "options": [],
+      "correct_answer": [0],
+      "explanation": "答案是 useContext。useContext Hook 允许组件订阅 React 上下文，从而在组件树中共享状态，而无需通过 props 层层传递。",
+      "difficulty": "medium"
+    },
+    {
+      "question_id": "q5",
+      "question_type": "single_choice",
+      "question": "当需要在 useEffect 中获取数据时，以下哪种做法是正确的？",
+      "options": [
+        "直接将 useEffect 的回调函数声明为 async",
+        "在 useEffect 内部定义 async 函数并立即调用",
+        "使用 await 直接在 useEffect 外部获取数据",
+        "Hooks 不支持异步操作"
+      ],
+      "correct_answer": [1],
+      "explanation": "useEffect 的回调函数不能直接是 async 函数（因为 async 函数会返回 Promise，而 useEffect 期望返回清理函数或 undefined）。正确做法是在 useEffect 内部定义 async 函数并调用它。",
+      "difficulty": "hard"
+    }
+  ],
+  "total_questions": 5
+}
+```
+
+**注意**:
+1. 输出必须是有效的 JSON 格式
+2. question_id 必须唯一（q1, q2, q3...）
+3. correct_answer 的索引从 0 开始
+4. total_questions 必须与 questions 数组长度一致
+5. 每道题必须有详细的 explanation
+

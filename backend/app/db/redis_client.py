@@ -1,0 +1,65 @@
+"""
+Redis 客户端封装
+"""
+from typing import Any
+import json
+import redis.asyncio as aioredis
+import structlog
+
+from app.config.settings import settings
+
+logger = structlog.get_logger()
+
+
+class RedisClient:
+    """Redis 异步客户端封装"""
+    
+    def __init__(self):
+        self._client: aioredis.Redis | None = None
+    
+    async def connect(self):
+        """建立连接"""
+        if self._client is None:
+            self._client = await aioredis.from_url(
+                settings.REDIS_URL,
+                encoding="utf-8",
+                decode_responses=True,
+            )
+            logger.info("redis_client_initialized")
+    
+    async def close(self):
+        """关闭连接"""
+        if self._client:
+            await self._client.close()
+            logger.info("redis_client_closed")
+    
+    async def ping(self) -> bool:
+        """健康检查"""
+        await self.connect()
+        return await self._client.ping()
+    
+    async def set_json(self, key: str, value: Any, ex: int | None = None):
+        """存储 JSON 对象"""
+        await self.connect()
+        await self._client.set(key, json.dumps(value), ex=ex)
+    
+    async def get_json(self, key: str) -> Any | None:
+        """读取 JSON 对象"""
+        await self.connect()
+        data = await self._client.get(key)
+        return json.loads(data) if data else None
+    
+    async def delete(self, key: str):
+        """删除键"""
+        await self.connect()
+        await self._client.delete(key)
+    
+    async def exists(self, key: str) -> bool:
+        """检查键是否存在"""
+        await self.connect()
+        return await self._client.exists(key) > 0
+
+
+# 全局单例
+redis_client = RedisClient()
+

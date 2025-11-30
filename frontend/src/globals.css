@@ -1,0 +1,201 @@
+/* Editorial Cream & Sage Design System - CSS Variables */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+    :root {
+        /* ===== COLOR PALETTE (HSL) ===== */
+        /* Warm Editorial Background */
+        --background: 40 20% 99%;
+        /* #FFFCF9 - Canvas */
+        --foreground: 24 10% 10%;
+        /* #1C1917 - Text Base */
+
+        /* Primary Action (Same as Foreground - Charcoal) */
+        --primary: 24 10% 10%;
+        --primary-foreground: 0 0% 100%;
+        /* White */
+
+        /* Accent: Sage Green */
+        --sage: 140 15% 55%;
+        /* Custom Sage Variable */
+
+        /* Muted/Secondary */
+        --muted: 40 10% 94%;
+        /* Darker cream */
+        --muted-foreground: 24 5% 45%;
+        /* Medium warm gray */
+
+        /* Card (Slightly elevated from background) */
+        --card: 40 15% 97%;
+        --card-foreground: 24 10% 10%;
+
+        /* Popover */
+        --popover: 40 20% 99%;
+        --popover-foreground: 24 10% 10%;
+
+        /* Secondary (Softer than primary) */
+        --secondary: 40 10% 92%;
+        --secondary-foreground: 24 10% 10%;
+
+        /* Accent (Using Sage for highlights) */
+        --accent: 140 15% 55%;
+        --accent-foreground: 0 0% 100%;
+
+        /* Destructive (Warm Red for errors) */
+        --destructive: 0 60% 50%;
+        --destructive-foreground: 0 0% 100%;
+
+        /* Borders & Input */
+        --border: 24 5% 90%;
+        /* Soft contrast */
+        --input: 24 5% 85%;
+        --ring: 24 10% 10%;
+        /* Focus ring matches primary */
+
+        /* Chart Colors (Muted Editorial Palette) */
+        --chart-1: 140 15% 55%;
+        /* Sage */
+        --chart-2: 24 10% 10%;
+        /* Charcoal */
+        --chart-3: 40 10% 75%;
+        /* Warm gray */
+        --chart-4: 140 10% 40%;
+        /* Deep sage */
+        --chart-5: 24 5% 60%;
+        /* Light charcoal */
+
+        /* Shape Design Tokens */
+        --radius: 0.5rem;
+        /* Rounded-md - subtle, not pill */
+    }
+
+    /* Optional: Dark mode tokens (if needed later) */
+    .dark {
+        --background: 24 10% 10%;
+        --foreground: 40 20% 99%;
+        --primary: 40 20% 99%;
+        --primary-foreground: 24 10% 10%;
+        /* Add other dark tokens as needed */
+    }
+}
+
+@layer base {
+    * {
+        @apply border-border;
+    }
+
+    body {
+        @apply bg-background text-foreground font-sans antialiased;
+        font-feature-settings: "rlig" 1, "calt" 1;
+    }
+
+    /* Typography Hierarchy - Editorial Style */
+    h1,
+    h2,
+    h3 {
+        @apply font-serif font-semibold tracking-tight;
+    }
+
+    h4,
+    h5,
+    h6 {
+        @apply font-serif font-medium;
+    }
+
+    h1 {
+        @apply text-5xl md:text-6xl lg:text-7xl;
+    }
+
+    h2 {
+        @apply text-4xl md:text-5xl;
+    }
+
+    h3 {
+        @apply text-3xl md:text-4xl;
+    }
+
+    h4 {
+        @apply text-2xl;
+    }
+
+    h5 {
+        @apply text-xl;
+    }
+
+    h6 {
+        @apply text-lg;
+    }
+
+    p {
+        @apply leading-7 [&:not(:first-child)]:mt-6;
+    }
+
+    /* Smooth focus transitions */
+    a,
+    button,
+    input,
+    textarea,
+    select {
+        @apply transition-colors duration-200;
+    }
+}
+
+@layer utilities {
+
+    /* === CUSTOM SAGE UTILITIES === */
+    .text-sage {
+        color: hsl(var(--sage));
+    }
+
+    .bg-sage {
+        background-color: hsl(var(--sage));
+    }
+
+    .border-sage {
+        border-color: hsl(var(--sage));
+    }
+
+    .hover\:bg-sage:hover {
+        background-color: hsl(var(--sage));
+    }
+
+    .hover\:text-sage:hover {
+        color: hsl(var(--sage));
+    }
+
+    /* === GRADIENT UTILITIES === */
+    .bg-gradient-radial {
+        background-image: radial-gradient(circle at center, var(--tw-gradient-stops));
+    }
+
+    /* === EDITORIAL GLASS PANELS === */
+    .glass-panel {
+        @apply bg-card/80 backdrop-blur-sm border border-border shadow-sm rounded-lg;
+    }
+
+    .glass-input {
+        @apply bg-muted/50 backdrop-blur-sm border border-input focus:border-primary/50 focus:ring-2 focus:ring-ring/20 transition-all outline-none rounded-md px-4 py-2;
+    }
+
+    /* === EDITORIAL BUTTON VARIANTS === */
+    .btn-primary {
+        @apply bg-primary text-primary-foreground hover:bg-primary/90 px-6 py-3 rounded-md font-medium transition-all duration-200;
+    }
+
+    .btn-sage {
+        @apply bg-sage text-white hover:bg-sage/90 px-6 py-3 rounded-md font-medium transition-all duration-200;
+    }
+
+    .btn-ghost {
+        @apply bg-transparent border border-border hover:bg-muted px-6 py-3 rounded-md font-medium transition-all duration-200;
+    }
+
+    /* === TEXTURES === */
+    .bg-noise {
+        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.05'/%3E%3C/svg%3E");
+    }
+}
