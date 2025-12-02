@@ -29,10 +29,26 @@ export type LearningPreferences = {
     /**
      * 偏好的内容类型
      */
-    content_preference?: Array<'video' | 'text' | 'interactive' | 'project'>;
+    content_preference?: Array<'visual' | 'text' | 'audio' | 'hands_on'>;
     /**
      * 期望完成时间
      */
     target_deadline?: (string | null);
+    /**
+     * 所属行业
+     */
+    industry?: (string | null);
+    /**
+     * 当前职位
+     */
+    current_role?: (string | null);
+    /**
+     * 技术栈列表
+     */
+    tech_stack?: null;
+    /**
+     * 偏好的学习语言
+     */
+    preferred_language?: (string | null);
 };
 

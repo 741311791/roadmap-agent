@@ -4,6 +4,25 @@
 [2. Context Injection]
 当前任务上下文：
 - 用户学习目标：{{ user_goal }}
+- 每周可投入时间：{{ available_hours_per_week }} 小时
+- 学习动机：{{ motivation }}
+- 当前水平：{{ current_level }}
+- 职业背景：{{ career_background }}
+- 内容偏好：{{ content_preference | default(['visual', 'text']) | join(', ') }}
+
+{% if user_profile %}
+用户画像信息：
+{% if user_profile.industry %}- 所属行业：{{ user_profile.industry }}{% endif %}
+{% if user_profile.current_role %}- 当前职位：{{ user_profile.current_role }}{% endif %}
+{% if user_profile.tech_stack and user_profile.tech_stack | length > 0 %}
+- 已掌握技术栈：
+{% for tech in user_profile.tech_stack %}
+  - {{ tech.technology }}（{{ tech.proficiency }}）
+{% endfor %}
+{% endif %}
+{% if user_profile.preferred_language %}- 偏好学习语言：{{ user_profile.preferred_language }}{% endif %}
+{% endif %}
+
 {% if execution_history %}
 - 已完成步骤：{{ execution_history | join(", ") }}
 {% endif %}
@@ -14,19 +33,31 @@
 [3. Constraints & Rules]
 工作规范：
 1. 仔细分析用户的学习需求，提取关键信息
-2. 识别用户提到的技术栈和技能点
-3. 评估用户当前水平和学习能力
-4. 考虑时间约束和学习动机
-5. 输出必须严格遵循 JSON Schema 格式
+2. 结合用户画像信息（行业、职位、已有技能）进行个性化分析
+3. 识别用户需要学习的技术栈，并考虑其已掌握的技能基础
+4. 评估技能差距，提供针对性的学习建议
+5. 根据用户的内容偏好推荐合适的学习方式权重
+6. 考虑时间约束和学习动机，规划合理的学习路径
+7. 输出必须严格遵循 JSON Schema 格式
 
 [4. Output Format]
 输出必须严格遵循以下 JSON Schema：
 {
   "parsed_goal": "string - 结构化的学习目标",
-  "key_technologies": ["string"] - 提取的关键技术栈列表,
+  "key_technologies": ["string"] - 需要学习的关键技术栈列表,
   "difficulty_profile": "string - 难度画像分析",
   "time_constraint": "string - 时间约束分析",
-  "recommended_focus": ["string"] - 建议的学习重点列表
+  "recommended_focus": ["string"] - 建议的学习重点列表,
+  "user_profile_summary": "string - 用户画像摘要，包括职业背景和技能基础",
+  "skill_gap_analysis": ["string"] - 技能差距分析，列出需要重点提升的方面,
+  "personalized_suggestions": ["string"] - 基于用户画像的个性化建议,
+  "estimated_learning_path_type": "string - 学习路径类型：quick_start（快速入门）、deep_dive（深度学习）、career_transition（转型路径）、skill_upgrade（技能升级）之一",
+  "content_format_weights": {
+    "visual": 0.0-1.0,
+    "text": 0.0-1.0,
+    "audio": 0.0-1.0,
+    "hands_on": 0.0-1.0
+  } - 基于用户偏好的内容格式权重分配（总和为1.0）
 }
 
 [5. Tool Usage Guide]
@@ -38,20 +69,61 @@
 {% endif %}
 
 [6. Examples (Few-shot)]
-参考示例：
+参考示例 1（转行用户）：
 用户输入：
 - 学习目标：成为全栈工程师
 - 每周可投入时间：10 小时
 - 学习动机：转行
 - 当前水平：beginner
 - 职业背景：市场营销 3 年经验
+- 内容偏好：visual, hands_on
+- 用户画像：行业-互联网，职位-市场专员，无技术栈
 
 输出：
 {
   "parsed_goal": "从零开始学习全栈开发，掌握前端和后端核心技术，能够独立开发 Web 应用",
-  "key_technologies": ["HTML", "CSS", "JavaScript", "React", "Node.js", "PostgreSQL"],
-  "difficulty_profile": "用户为初学者，需要从基础开始，注重实战项目",
-  "time_constraint": "每周 10 小时，预计 6 个月完成",
-  "recommended_focus": ["前端基础", "React 框架", "后端 API 开发", "数据库设计"]
+  "key_technologies": ["HTML", "CSS", "JavaScript", "React", "Node.js", "PostgreSQL", "Git"],
+  "difficulty_profile": "用户为非技术背景的初学者，需要从编程基础概念开始，循序渐进，注重实战项目以建立信心",
+  "time_constraint": "每周 10 小时，建议 8-10 个月完成转型，包含项目实战时间",
+  "recommended_focus": ["编程思维培养", "前端基础 HTML/CSS/JS", "React 框架实战", "后端 API 开发", "全栈项目实践"],
+  "user_profile_summary": "市场营销背景，3年职场经验，具备良好的沟通和项目管理能力，但缺乏技术基础。市场经验有助于理解产品需求。",
+  "skill_gap_analysis": ["需要从零学习编程基础", "需要建立计算机科学基本概念", "缺乏项目开发实战经验", "需要学习版本控制和协作工具"],
+  "personalized_suggestions": ["建议从可视化编程概念入手，降低学习门槛", "利用市场背景优势，选择电商或营销相关的实战项目", "建议加入编程社区，获得更多交流机会"],
+  "estimated_learning_path_type": "career_transition",
+  "content_format_weights": {
+    "visual": 0.4,
+    "text": 0.15,
+    "audio": 0.05,
+    "hands_on": 0.4
+  }
+}
+
+参考示例 2（技能升级用户）：
+用户输入：
+- 学习目标：学习 Kubernetes 和云原生技术
+- 每周可投入时间：8 小时
+- 学习动机：升职加薪
+- 当前水平：intermediate
+- 职业背景：后端开发 5 年经验
+- 内容偏好：text, hands_on
+- 用户画像：行业-科技，职位-高级后端工程师，技术栈-Python(expert), Docker(intermediate), AWS(beginner)
+
+输出：
+{
+  "parsed_goal": "系统学习 Kubernetes 和云原生技术栈，掌握容器编排和微服务架构，能够设计和部署生产级云原生应用",
+  "key_technologies": ["Kubernetes", "Helm", "Prometheus", "Grafana", "Istio", "ArgoCD", "Terraform"],
+  "difficulty_profile": "用户有扎实的后端开发基础和 Docker 经验，学习 K8s 有较好的基础。重点在于理解分布式系统概念和实际运维经验",
+  "time_constraint": "每周 8 小时，建议 4-5 个月完成核心内容，后续持续实践深化",
+  "recommended_focus": ["Kubernetes 核心概念与架构", "应用部署与管理", "服务网格与微服务治理", "监控与可观测性", "GitOps 与持续交付"],
+  "user_profile_summary": "资深后端工程师，5年开发经验，精通 Python，熟悉 Docker 容器化，有 AWS 入门经验。具备成为云原生架构师的基础条件。",
+  "skill_gap_analysis": ["需要深入学习 Kubernetes 编排原理", "AWS 知识需要加强，特别是 EKS 相关", "缺乏微服务架构设计经验", "需要学习云原生监控体系"],
+  "personalized_suggestions": ["建议结合现有 Python 技能开发 K8s Operator", "利用 Docker 基础快速过渡到容器编排", "建议在现有项目中实践 K8s 部署"],
+  "estimated_learning_path_type": "skill_upgrade",
+  "content_format_weights": {
+    "visual": 0.15,
+    "text": 0.35,
+    "audio": 0.05,
+    "hands_on": 0.45
+  }
 }
 

@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
 from app.models.domain import UserRequest, RoadmapFramework
+from app.models.database import beijing_now
 from app.core.orchestrator import RoadmapOrchestrator
 from app.db.repositories.roadmap_repo import RoadmapRepository
 from app.services.notification_service import notification_service
@@ -21,10 +22,15 @@ class RoadmapService:
         self.repo = RoadmapRepository(session)
         self.orchestrator = orchestrator
     
+    def _get_current_timestamp(self) -> str:
+        """获取当前时间戳（ISO 格式）"""
+        return beijing_now().isoformat()
+    
     async def generate_roadmap(
         self,
         user_request: UserRequest,
         trace_id: str | None = None,
+        pre_generated_roadmap_id: str | None = None,
     ) -> dict:
         """
         生成学习路线图（异步任务）
@@ -32,6 +38,7 @@ class RoadmapService:
         Args:
             user_request: 用户请求
             trace_id: 追踪 ID（必须提供，由 API 层创建）
+            pre_generated_roadmap_id: 预生成的路线图 ID（可选，用于加速前端跳转）
             
         Returns:
             包含 task_id 和初始状态的字典
@@ -59,14 +66,28 @@ class RoadmapService:
         )
         await self.session.commit()
         
+        # 发布任务开始通知（WebSocket 会收到此事件）
+        await notification_service.publish_progress(
+            task_id=trace_id,
+            step="starting",
+            status="processing",
+            message="路线图生成任务已启动",
+            extra_data={
+                "learning_goal": user_request.preferences.learning_goal[:100],
+            },
+        )
+        
         try:
             logger.info(
                 "roadmap_service_executing_workflow",
                 trace_id=trace_id,
+                pre_generated_roadmap_id=pre_generated_roadmap_id,
             )
             
             # 执行工作流
-            final_state = await self.orchestrator.execute(user_request, trace_id)
+            final_state = await self.orchestrator.execute(
+                user_request, trace_id, pre_generated_roadmap_id=pre_generated_roadmap_id
+            )
             
             # 检查工作流是否在 human_review 处被 interrupt() 暂停
             is_interrupted = "__interrupt__" in final_state
@@ -183,19 +204,76 @@ class RoadmapService:
                         message="quiz_refs is empty, no quizzes will be saved",
                     )
                 
-                # 更新任务状态为完成
+                # 获取失败概念列表
+                failed_concept_ids = final_state.get("failed_concepts", [])
+                
+                # 计算所有概念总数
+                all_concepts = []
+                for stage in framework.stages:
+                    for module in stage.modules:
+                        all_concepts.extend(module.concepts)
+                total_concepts = len(all_concepts)
+                
+                # 根据失败情况决定任务状态
+                if failed_concept_ids:
+                    # 部分失败
+                    task_status = "partial_failure"
+                    
+                    # 构建失败概念详情
+                    failed_concepts_detail = {}
+                    for concept_id in failed_concept_ids:
+                        failed_concepts_detail[concept_id] = {
+                            "timestamp": self._get_current_timestamp(),
+                            "reason": "Content generation failed",
+                        }
+                    
+                    error_summary = f"{len(failed_concept_ids)}/{total_concepts} concepts failed to generate"
+                else:
+                    task_status = "completed"
+                    failed_concepts_detail = None
+                    error_summary = None
+                
+                # 构建执行摘要
+                execution_summary = {
+                    "total_concepts": total_concepts,
+                    "completed": total_concepts - len(failed_concept_ids),
+                    "failed": len(failed_concept_ids),
+                    "tutorials_generated": len(tutorial_refs),
+                    "resources_generated": len(resource_refs),
+                    "quizzes_generated": len(quiz_refs),
+                }
+                
+                # 更新任务状态
                 await self.repo.update_task_status(
                     task_id=trace_id,
-                    status="completed",
+                    status=task_status,
                     current_step="completed",
                     roadmap_id=framework.roadmap_id,
+                    error_message=error_summary,
+                    failed_concepts=failed_concepts_detail,
+                    execution_summary=execution_summary,
                 )
                 
-                # 发布完成通知（如果教程生成被跳过，这里补发通知）
+                logger.info(
+                    "roadmap_generation_status_updated",
+                    task_id=trace_id,
+                    status=task_status,
+                    total_concepts=total_concepts,
+                    failed_count=len(failed_concept_ids),
+                    execution_summary=execution_summary,
+                )
+                
+                # 发布完成通知
+                # 注意：如果教程生成启用且成功，Orchestrator._run_tutorial_generation 已发送通知
+                # 这里补发是为了处理以下情况：
+                # 1. 教程生成被跳过（SKIP_TUTORIAL_GENERATION=true）
+                # 2. 教程生成失败，tutorial_refs 为空
                 if not tutorial_refs:
                     await notification_service.publish_completed(
                         task_id=trace_id,
                         roadmap_id=framework.roadmap_id,
+                        tutorials_count=0,
+                        failed_count=len(failed_concept_ids),
                     )
             else:
                 # 如果没有生成框架，标记为失败
@@ -229,10 +307,19 @@ class RoadmapService:
             logger.error("roadmap_generation_failed", task_id=trace_id, error=str(e))
             raise
         
+        # 确定最终状态
+        if not final_state.get("roadmap_framework"):
+            final_status = "failed"
+        elif final_state.get("failed_concepts"):
+            final_status = "partial_failure"
+        else:
+            final_status = "completed"
+        
         return {
             "task_id": trace_id,
-            "status": "completed" if final_state.get("roadmap_framework") else "failed",
+            "status": final_status,
             "roadmap_id": final_state.get("roadmap_framework").roadmap_id if final_state.get("roadmap_framework") else None,
+            "failed_count": len(final_state.get("failed_concepts", [])),
         }
     
     async def get_task_status(self, task_id: str) -> dict | None:

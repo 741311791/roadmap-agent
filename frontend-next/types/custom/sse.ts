@@ -8,113 +8,174 @@ import type { RoadmapFramework, Concept } from '../generated/models';
 // Base SSE event
 export interface BaseSSEEvent {
   type: string;
-  timestamp?: number;
+  [key: string]: unknown;
 }
 
 // ============================================================
-// Roadmap Generation Events
+// Roadmap Generation Events (matching backend implementation)
 // ============================================================
 
-export interface StepStartEvent extends BaseSSEEvent {
-  type: 'step_start';
-  step: string;
-  step_name: string;
-  progress: number;
+// Agent streaming events
+export interface ChunkEvent extends BaseSSEEvent {
+  type: 'chunk';
+  content: string;
+  agent: string;
 }
 
-export interface StepCompleteEvent extends BaseSSEEvent {
-  type: 'step_complete';
-  step: string;
-  result?: unknown;
+export interface CompleteEvent extends BaseSSEEvent {
+  type: 'complete';
+  data: unknown;
+  agent: string;
 }
 
-export interface AgentThinkingEvent extends BaseSSEEvent {
-  type: 'agent_thinking';
-  agent_id: string;
-  message: string;
+// Tutorial generation events
+export interface TutorialsStartEvent extends BaseSSEEvent {
+  type: 'tutorials_start';
+  total_count: number;
+  batch_size: number;
 }
 
-export interface RoadmapPreviewEvent extends BaseSSEEvent {
-  type: 'roadmap_preview';
-  framework: RoadmapFramework;
+export interface BatchStartEvent extends BaseSSEEvent {
+  type: 'batch_start';
+  batch_index: number;
+  batch_size: number;
+  total_batches: number;
+  concepts: string[];
 }
 
 export interface TutorialStartEvent extends BaseSSEEvent {
   type: 'tutorial_start';
   concept_id: string;
   concept_name: string;
-  index: number;
-  total: number;
 }
 
-export interface TutorialProgressEvent extends BaseSSEEvent {
-  type: 'tutorial_progress';
+export interface TutorialChunkEvent extends BaseSSEEvent {
+  type: 'tutorial_chunk';
   concept_id: string;
-  status: 'generating' | 'completed' | 'failed';
-  progress?: number;
+  content: string;
 }
 
 export interface TutorialCompleteEvent extends BaseSSEEvent {
   type: 'tutorial_complete';
   concept_id: string;
-  tutorial_id: string;
-  summary: string;
+  data: {
+    tutorial_id: string;
+    title: string;
+    summary: string;
+    content_url: string;
+    content_status: string;
+    estimated_completion_time: number;
+  };
 }
 
-export interface GenerationCompleteEvent extends BaseSSEEvent {
-  type: 'complete';
-  roadmap_id: string;
-  total_concepts: number;
-  successful_tutorials: number;
+export interface TutorialErrorEvent extends BaseSSEEvent {
+  type: 'tutorial_error';
+  concept_id: string;
+  error: string;
 }
 
-export interface GenerationErrorEvent extends BaseSSEEvent {
+export interface BatchCompleteEvent extends BaseSSEEvent {
+  type: 'batch_complete';
+  batch_index: number;
+  progress: {
+    batch_completed: number;
+    batch_failed: number;
+    completed: number;
+    failed: number;
+    total: number;
+    percentage: number;
+  };
+}
+
+export interface TutorialsDoneEvent extends BaseSSEEvent {
+  type: 'tutorials_done';
+  summary: {
+    total: number;
+    succeeded: number;
+    failed: number;
+    success_rate: number;
+  };
+}
+
+export interface DoneEvent extends BaseSSEEvent {
+  type: 'done';
+  task_id?: string;
+  roadmap_id?: string;
+  summary: {
+    intent_analysis: unknown;
+    framework: unknown;
+    design_rationale: string;
+    tutorials?: unknown;
+  };
+}
+
+export interface ErrorEvent extends BaseSSEEvent {
   type: 'error';
   message: string;
-  details?: string;
+  agent: string;
 }
 
-export type GenerationEvent =
-  | StepStartEvent
-  | StepCompleteEvent
-  | AgentThinkingEvent
-  | RoadmapPreviewEvent
+export type RoadmapGenerationEvent =
+  | ChunkEvent
+  | CompleteEvent
+  | TutorialsStartEvent
+  | BatchStartEvent
   | TutorialStartEvent
-  | TutorialProgressEvent
+  | TutorialChunkEvent
   | TutorialCompleteEvent
-  | GenerationCompleteEvent
-  | GenerationErrorEvent;
+  | TutorialErrorEvent
+  | BatchCompleteEvent
+  | TutorialsDoneEvent
+  | DoneEvent
+  | ErrorEvent;
 
 // ============================================================
-// Chat Modification Events
+// Chat Modification Events (matching backend implementation)
 // ============================================================
 
 export interface AnalyzingEvent extends BaseSSEEvent {
   type: 'analyzing';
+  agent: string;
+  step: string;
   message: string;
 }
 
 export interface IntentsEvent extends BaseSSEEvent {
   type: 'intents';
   intents: Array<{
-    modification_type: 'tutorial' | 'resources' | 'quiz' | 'concept';
+    modification_type: string;
     target_id: string;
     target_name: string;
     specific_requirements: string[];
-    priority: 'high' | 'medium' | 'low';
+    priority: string;
   }>;
+  count: number;
+  overall_confidence: number;
   needs_clarification: boolean;
   clarification_questions: string[];
+  analysis_reasoning: string;
 }
 
 export interface ModifyingEvent extends BaseSSEEvent {
   type: 'modifying';
+  modification_type: string;
   target_id: string;
   target_name: string;
-  modification_type: string;
+  requirements: string[];
+  progress: {
+    current: number;
+    total: number;
+  };
 }
 
-export interface ModificationResultEvent extends BaseSSEEvent {
+export interface AgentProgressEvent extends BaseSSEEvent {
+  type: 'agent_progress';
+  agent: string;
+  step: string;
+  details: string;
+}
+
+export interface ResultEvent extends BaseSSEEvent {
   type: 'result';
   modification_type: string;
   target_id: string;
@@ -127,9 +188,19 @@ export interface ModificationResultEvent extends BaseSSEEvent {
 
 export interface ModificationDoneEvent extends BaseSSEEvent {
   type: 'done';
-  summary: string;
   overall_success: boolean;
   partial_success: boolean;
+  summary: string;
+  results: Array<{
+    modification_type: string;
+    target_id: string;
+    target_name: string;
+    success: boolean;
+    modification_summary: string;
+    new_version?: number;
+    error_message?: string;
+  }>;
+  duration_ms: number;
 }
 
 export interface ModificationErrorEvent extends BaseSSEEvent {
@@ -141,7 +212,8 @@ export type ChatModificationEvent =
   | AnalyzingEvent
   | IntentsEvent
   | ModifyingEvent
-  | ModificationResultEvent
+  | AgentProgressEvent
+  | ResultEvent
   | ModificationDoneEvent
   | ModificationErrorEvent;
 

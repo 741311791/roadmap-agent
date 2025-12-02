@@ -34,6 +34,55 @@ def _ensure_unique_roadmap_id(roadmap_id: str) -> str:
     return f"{roadmap_id}-{unique_suffix}"
 
 
+def _ensure_unique_concept_ids(framework_dict: dict, roadmap_id: str) -> dict:
+    """
+    确保 concept_id 的唯一性
+    
+    在原始 concept_id（如 c-1-1-1）基础上添加 roadmap_id 前缀，
+    确保跨 roadmap 的全局唯一性。
+    
+    格式: {roadmap_id}:c-{stage}-{module}-{concept}
+    例如: python-web-dev-a1b2c3d4:c-1-1-1
+    
+    Args:
+        framework_dict: 框架数据字典
+        roadmap_id: 路线图 ID
+        
+    Returns:
+        更新后的框架数据字典
+    """
+    # 创建旧 ID 到新 ID 的映射（用于更新 prerequisites）
+    id_mapping = {}
+    
+    for stage in framework_dict.get("stages", []):
+        for module in stage.get("modules", []):
+            for concept in module.get("concepts", []):
+                old_id = concept.get("concept_id")
+                if old_id and not old_id.startswith(roadmap_id):
+                    # 添加 roadmap_id 前缀
+                    new_id = f"{roadmap_id}:{old_id}"
+                    id_mapping[old_id] = new_id
+                    concept["concept_id"] = new_id
+    
+    # 更新 prerequisites 中的引用
+    for stage in framework_dict.get("stages", []):
+        for module in stage.get("modules", []):
+            for concept in module.get("concepts", []):
+                prerequisites = concept.get("prerequisites", [])
+                if prerequisites:
+                    concept["prerequisites"] = [
+                        id_mapping.get(prereq, prereq) for prereq in prerequisites
+                    ]
+    
+    logger.debug(
+        "concept_ids_updated",
+        roadmap_id=roadmap_id,
+        concepts_updated=len(id_mapping),
+    )
+    
+    return framework_dict
+
+
 class CurriculumArchitectAgent(BaseAgent):
     """
     课程架构师 Agent
@@ -60,6 +109,7 @@ class CurriculumArchitectAgent(BaseAgent):
         self,
         intent_analysis: IntentAnalysisOutput,
         user_preferences: LearningPreferences,
+        pre_generated_roadmap_id: str | None = None,
     ) -> CurriculumDesignOutput:
         """
         设计三层学习路线图框架
@@ -67,6 +117,7 @@ class CurriculumArchitectAgent(BaseAgent):
         Args:
             intent_analysis: 需求分析结果
             user_preferences: 用户偏好
+            pre_generated_roadmap_id: 预生成的路线图 ID（可选，用于加速前端跳转）
             
         Returns:
             路线图框架设计结果
@@ -150,17 +201,30 @@ class CurriculumArchitectAgent(BaseAgent):
             logger.debug("curriculum_design_parsing_json")
             result_dict = json.loads(content)
             
-            # 确保 roadmap_id 唯一性
+            # 处理 roadmap_id
             framework_dict = result_dict.get("framework", result_dict)
-            original_roadmap_id = framework_dict.get("roadmap_id", "roadmap")
-            unique_roadmap_id = _ensure_unique_roadmap_id(original_roadmap_id)
-            framework_dict["roadmap_id"] = unique_roadmap_id
             
-            logger.info(
-                "curriculum_design_roadmap_id_ensured_unique",
-                original_id=original_roadmap_id,
-                unique_id=unique_roadmap_id,
-            )
+            if pre_generated_roadmap_id:
+                # 使用预生成的 roadmap_id（来自 API 层）
+                framework_dict["roadmap_id"] = pre_generated_roadmap_id
+                logger.info(
+                    "curriculum_design_using_pre_generated_roadmap_id",
+                    pre_generated_id=pre_generated_roadmap_id,
+                )
+            else:
+                # 确保 roadmap_id 唯一性（兼容旧的调用方式）
+                original_roadmap_id = framework_dict.get("roadmap_id", "roadmap")
+                unique_roadmap_id = _ensure_unique_roadmap_id(original_roadmap_id)
+                framework_dict["roadmap_id"] = unique_roadmap_id
+                logger.info(
+                    "curriculum_design_roadmap_id_ensured_unique",
+                    original_id=original_roadmap_id,
+                    unique_id=unique_roadmap_id,
+                )
+            
+            # 确保 concept_id 唯一性（添加 roadmap_id 前缀）
+            final_roadmap_id = framework_dict["roadmap_id"]
+            framework_dict = _ensure_unique_concept_ids(framework_dict, final_roadmap_id)
             
             # 验证并构建输出
             logger.debug("curriculum_design_validating_schema")
@@ -203,6 +267,7 @@ class CurriculumArchitectAgent(BaseAgent):
         self,
         intent_analysis: IntentAnalysisOutput,
         user_preferences: LearningPreferences,
+        pre_generated_roadmap_id: str | None = None,
     ) -> AsyncIterator[dict]:
         """
         流式设计路线图框架
@@ -210,6 +275,7 @@ class CurriculumArchitectAgent(BaseAgent):
         Args:
             intent_analysis: 需求分析结果
             user_preferences: 用户偏好
+            pre_generated_roadmap_id: 预生成的路线图 ID（可选，用于加速前端跳转）
             
         Yields:
             {"type": "chunk", "content": "...", "agent": "curriculum_architect"}
@@ -304,17 +370,30 @@ class CurriculumArchitectAgent(BaseAgent):
             logger.debug("curriculum_design_stream_parsing_json")
             result_dict = json.loads(content)
             
-            # 确保 roadmap_id 唯一性
+            # 处理 roadmap_id
             framework_dict = result_dict.get("framework", result_dict)
-            original_roadmap_id = framework_dict.get("roadmap_id", "roadmap")
-            unique_roadmap_id = _ensure_unique_roadmap_id(original_roadmap_id)
-            framework_dict["roadmap_id"] = unique_roadmap_id
             
-            logger.info(
-                "curriculum_design_stream_roadmap_id_ensured_unique",
-                original_id=original_roadmap_id,
-                unique_id=unique_roadmap_id,
-            )
+            if pre_generated_roadmap_id:
+                # 使用预生成的 roadmap_id（来自 API 层）
+                framework_dict["roadmap_id"] = pre_generated_roadmap_id
+                logger.info(
+                    "curriculum_design_stream_using_pre_generated_roadmap_id",
+                    pre_generated_id=pre_generated_roadmap_id,
+                )
+            else:
+                # 确保 roadmap_id 唯一性（兼容旧的调用方式）
+                original_roadmap_id = framework_dict.get("roadmap_id", "roadmap")
+                unique_roadmap_id = _ensure_unique_roadmap_id(original_roadmap_id)
+                framework_dict["roadmap_id"] = unique_roadmap_id
+                logger.info(
+                    "curriculum_design_stream_roadmap_id_ensured_unique",
+                    original_id=original_roadmap_id,
+                    unique_id=unique_roadmap_id,
+                )
+            
+            # 确保 concept_id 唯一性（添加 roadmap_id 前缀）
+            final_roadmap_id = framework_dict["roadmap_id"]
+            framework_dict = _ensure_unique_concept_ids(framework_dict, final_roadmap_id)
             
             # 验证并构建输出
             logger.debug("curriculum_design_stream_validating_schema")

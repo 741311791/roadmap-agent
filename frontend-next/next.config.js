@@ -5,6 +5,16 @@ const nextConfig = {
   experimental: {
     // serverActions: true,
   },
+  // Configure external images
+  images: {
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: 'images.unsplash.com',
+        pathname: '/**',
+      },
+    ],
+  },
   // Rewrites for API proxy during development
   async rewrites() {
     return [

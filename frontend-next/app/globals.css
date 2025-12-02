@@ -238,3 +238,121 @@
   }
 }
 
+/* === GENERATION STATUS ANIMATIONS === */
+
+/* Pulse border animation for generating state */
+@keyframes pulse-border {
+  0%, 100% {
+    border-color: rgba(59, 130, 246, 0.5);
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4);
+  }
+  50% {
+    border-color: rgba(59, 130, 246, 1);
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0);
+  }
+}
+
+.animate-pulse-border {
+  animation: pulse-border 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Slower pulse for phase indicator */
+@keyframes pulse-slow {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.05);
+  }
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Gradient shimmer for skeleton loading */
+@keyframes gradient-shimmer {
+  0% { 
+    background-position: -200% center; 
+  }
+  100% { 
+    background-position: 200% center; 
+  }
+}
+
+.animate-shimmer {
+  background: linear-gradient(
+    90deg, 
+    hsl(var(--muted)) 25%, 
+    hsl(var(--border)) 50%, 
+    hsl(var(--muted)) 75%
+  );
+  background-size: 200% 100%;
+  animation: gradient-shimmer 2s ease-in-out infinite;
+}
+
+/* Success checkmark animation */
+@keyframes check-appear {
+  0% {
+    transform: scale(0) rotate(-45deg);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.2) rotate(0deg);
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
+    opacity: 1;
+  }
+}
+
+.animate-check-appear {
+  animation: check-appear 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+/* Fade in up for completed cards */
+@keyframes fade-in-up {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.3s ease-out forwards;
+}
+
+/* Staggered reveal for skeleton to real content transition */
+@keyframes reveal {
+  0% {
+    clip-path: inset(0 100% 0 0);
+  }
+  100% {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+.animate-reveal {
+  animation: reveal 0.5s ease-out forwards;
+}
+
+/* Generating spinner glow */
+@keyframes spinner-glow {
+  0%, 100% {
+    filter: drop-shadow(0 0 2px rgba(59, 130, 246, 0.5));
+  }
+  50% {
+    filter: drop-shadow(0 0 8px rgba(59, 130, 246, 0.8));
+  }
+}
+
+.animate-spinner-glow {
+  animation: spinner-glow 1.5s ease-in-out infinite;
+}
+

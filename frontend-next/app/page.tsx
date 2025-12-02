@@ -21,12 +21,12 @@ export default function LandingPage() {
             <Link href="/pricing" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
               Pricing
             </Link>
-            <Link href="/app/dashboard" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-              Dashboard
+            <Link href="/app/home" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+              Home
             </Link>
           </div>
           <div className="flex items-center gap-4">
-            <Link href="/app/dashboard">
+            <Link href="/app/home">
               <Button variant="ghost" size="sm">
                 Sign In
               </Button>
@@ -137,8 +137,8 @@ export default function LandingPage() {
             <Link href="/pricing" className="hover:text-foreground transition-colors">
               Pricing
             </Link>
-            <Link href="/app/dashboard" className="hover:text-foreground transition-colors">
-              Dashboard
+            <Link href="/app/home" className="hover:text-foreground transition-colors">
+              Home
             </Link>
             <span>© 2024 Muset. All rights reserved.</span>
           </div>

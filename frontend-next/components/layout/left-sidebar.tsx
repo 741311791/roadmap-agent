@@ -169,9 +169,9 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
 
           <NavItem
             icon={Home}
-            label="Dashboard"
-            href="/app/dashboard"
-            active={isActive('/app/dashboard')}
+            label="Home"
+            href="/app/home"
+            active={isActive('/app/home')}
             isCollapsed={isCollapsed}
           />
           <NavItem

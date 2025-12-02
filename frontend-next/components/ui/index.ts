@@ -18,4 +18,21 @@ export {
   DialogTitle,
   DialogDescription,
 } from './dialog';
-
+export { Switch } from './switch';
+export { Checkbox } from './checkbox';
+export { Label } from './label';
+export {
+  Select,
+  SelectGroup,
+  SelectValue,
+  SelectTrigger,
+  SelectContent,
+  SelectLabel,
+  SelectItem,
+  SelectSeparator,
+} from './select';
+export { Slider } from './slider';
+export { RadioGroup, RadioGroupItem } from './radio-group';
+export { Skeleton } from './skeleton';
+export { Input, type InputProps } from './input';
+export { Textarea, type TextareaProps } from './textarea';

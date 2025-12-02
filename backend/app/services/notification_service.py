@@ -46,6 +46,30 @@ class TaskEvent:
     CONCEPT_FAILED = "concept_failed"
     BATCH_START = "batch_start"
     BATCH_COMPLETE = "batch_complete"
+    
+    # 重试任务事件
+    RETRY_STARTED = "retry_started"
+    RETRY_ITEM_COMPLETE = "retry_item_complete"
+    RETRY_COMPLETED = "retry_completed"
+
+
+class StepName:
+    """步骤名称常量"""
+    QUEUED = "queued"
+    INTENT_ANALYSIS = "intent_analysis"
+    CURRICULUM_DESIGN = "curriculum_design"
+    STRUCTURE_VALIDATION = "structure_validation"
+    HUMAN_REVIEW = "human_review"
+    ROADMAP_EDIT = "roadmap_edit"
+    CONTENT_GENERATION = "content_generation"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class HumanReviewSubStatus:
+    """人工审核子状态常量"""
+    WAITING = "waiting"
+    EDITING = "editing"
 
 
 class NotificationService:
@@ -76,6 +100,7 @@ class NotificationService:
         status: str = "processing",
         message: Optional[str] = None,
         extra_data: Optional[dict] = None,
+        sub_status: Optional[str] = None,
     ):
         """
         发布进度更新事件
@@ -86,6 +111,7 @@ class NotificationService:
             status: 状态（processing, completed 等）
             message: 可选的消息文本
             extra_data: 额外数据
+            sub_status: 子状态（用于 human_review 步骤：waiting/editing）
         """
         event = {
             "type": TaskEvent.PROGRESS,
@@ -99,6 +125,8 @@ class NotificationService:
             event["message"] = message
         if extra_data:
             event["data"] = extra_data
+        if sub_status:
+            event["sub_status"] = sub_status
         
         await self._publish(task_id, event)
     

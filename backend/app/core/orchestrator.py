@@ -51,6 +51,7 @@ from app.agents.resource_recommender import ResourceRecommenderAgent
 from app.agents.quiz_generator import QuizGeneratorAgent
 from app.config.settings import settings
 from app.services.notification_service import notification_service
+from app.services.execution_logger import execution_logger, LogCategory
 
 logger = structlog.get_logger()
 
@@ -70,6 +71,9 @@ class RoadmapState(TypedDict):
     """
     # 输入
     user_request: UserRequest
+    
+    # 预生成的 roadmap_id（在 API 层生成，用于加速前端跳转）
+    pre_generated_roadmap_id: str | None
     
     # 中间产出
     intent_analysis: IntentAnalysisOutput | None
@@ -318,17 +322,29 @@ class RoadmapOrchestrator:
     
     async def _run_intent_analysis(self, state: RoadmapState) -> dict:
         """Step 1: 需求分析（A1: 需求分析师）"""
-        self._set_live_step(state["trace_id"], "intent_analysis")
+        import time
+        start_time = time.time()
+        trace_id = state["trace_id"]
+        
+        self._set_live_step(trace_id, "intent_analysis")
         logger.info(
             "workflow_step_started",
             step="intent_analysis",
-            trace_id=state["trace_id"],
+            trace_id=trace_id,
             user_goal=state["user_request"].preferences.learning_goal[:50] if state["user_request"].preferences.learning_goal else "N/A",
+        )
+        
+        # 记录执行日志
+        await execution_logger.log_workflow_start(
+            trace_id=trace_id,
+            step="intent_analysis",
+            message="开始需求分析",
+            details={"learning_goal": state["user_request"].preferences.learning_goal[:100]},
         )
         
         # 发布进度通知
         await notification_service.publish_progress(
-            task_id=state["trace_id"],
+            task_id=trace_id,
             step="intent_analysis",
             status="processing",
             message="正在分析学习需求...",
@@ -338,16 +354,30 @@ class RoadmapOrchestrator:
             agent = IntentAnalyzerAgent()
             result = await agent.analyze(state["user_request"])
             
+            duration_ms = int((time.time() - start_time) * 1000)
+            
             logger.info(
                 "workflow_step_completed",
                 step="intent_analysis",
-                trace_id=state["trace_id"],
+                trace_id=trace_id,
                 key_technologies=result.key_technologies[:3] if result.key_technologies else [],
+            )
+            
+            # 记录执行日志
+            await execution_logger.log_workflow_complete(
+                trace_id=trace_id,
+                step="intent_analysis",
+                message="需求分析完成",
+                duration_ms=duration_ms,
+                details={
+                    "key_technologies": result.key_technologies[:5],
+                    "difficulty_profile": result.difficulty_profile,
+                },
             )
             
             # 发布步骤完成通知
             await notification_service.publish_progress(
-                task_id=state["trace_id"],
+                task_id=trace_id,
                 step="intent_analysis",
                 status="completed",
                 message="需求分析完成",
@@ -361,16 +391,28 @@ class RoadmapOrchestrator:
                 "execution_history": ["需求分析完成"],  # reducer 会自动追加
             }
         except Exception as e:
+            duration_ms = int((time.time() - start_time) * 1000)
+            
             logger.error(
                 "workflow_step_failed",
                 step="intent_analysis",
-                trace_id=state["trace_id"],
+                trace_id=trace_id,
                 error=str(e),
                 error_type=type(e).__name__,
             )
+            
+            # 记录错误日志
+            await execution_logger.error(
+                trace_id=trace_id,
+                category=LogCategory.WORKFLOW,
+                message=f"需求分析失败: {str(e)[:100]}",
+                step="intent_analysis",
+                details={"error": str(e), "error_type": type(e).__name__},
+            )
+            
             # 发布失败通知
             await notification_service.publish_failed(
-                task_id=state["trace_id"],
+                task_id=trace_id,
                 error=str(e),
                 step="intent_analysis",
             )
@@ -378,17 +420,29 @@ class RoadmapOrchestrator:
     
     async def _run_curriculum_design(self, state: RoadmapState) -> dict:
         """Step 2: 课程设计（A2: 课程架构师）"""
-        self._set_live_step(state["trace_id"], "curriculum_design")
+        import time
+        start_time = time.time()
+        trace_id = state["trace_id"]
+        
+        self._set_live_step(trace_id, "curriculum_design")
         logger.info(
             "workflow_step_started",
             step="curriculum_design",
-            trace_id=state["trace_id"],
+            trace_id=trace_id,
             has_intent_analysis=bool(state.get("intent_analysis")),
+            pre_generated_roadmap_id=state.get("pre_generated_roadmap_id"),
+        )
+        
+        # 记录执行日志
+        await execution_logger.log_workflow_start(
+            trace_id=trace_id,
+            step="curriculum_design",
+            message="开始设计课程架构",
         )
         
         # 发布进度通知
         await notification_service.publish_progress(
-            task_id=state["trace_id"],
+            task_id=trace_id,
             step="curriculum_design",
             status="processing",
             message="正在设计学习路线图框架...",
@@ -398,7 +452,7 @@ class RoadmapOrchestrator:
             agent = CurriculumArchitectAgent()
             logger.debug(
                 "curriculum_design_agent_created",
-                trace_id=state["trace_id"],
+                trace_id=trace_id,
                 model=agent.model_name,
                 provider=agent.model_provider,
             )
@@ -406,25 +460,40 @@ class RoadmapOrchestrator:
             result = await agent.design(
                 intent_analysis=state["intent_analysis"],
                 user_preferences=state["user_request"].preferences,
+                pre_generated_roadmap_id=state.get("pre_generated_roadmap_id"),
             )
+            
+            duration_ms = int((time.time() - start_time) * 1000)
+            roadmap_id = result.framework.roadmap_id if result.framework else None
+            stages_count = len(result.framework.stages) if result.framework else 0
             
             logger.info(
                 "workflow_step_completed",
                 step="curriculum_design",
-                trace_id=state["trace_id"],
-                roadmap_id=result.framework.roadmap_id if result.framework else None,
-                stages_count=len(result.framework.stages) if result.framework else 0,
+                trace_id=trace_id,
+                roadmap_id=roadmap_id,
+                stages_count=stages_count,
+            )
+            
+            # 记录执行日志
+            await execution_logger.log_workflow_complete(
+                trace_id=trace_id,
+                step="curriculum_design",
+                message="课程架构设计完成",
+                duration_ms=duration_ms,
+                roadmap_id=roadmap_id,
+                details={"stages_count": stages_count},
             )
             
             # 发布步骤完成通知
             await notification_service.publish_progress(
-                task_id=state["trace_id"],
+                task_id=trace_id,
                 step="curriculum_design",
                 status="completed",
                 message="路线图框架设计完成",
                 extra_data={
-                    "roadmap_id": result.framework.roadmap_id if result.framework else None,
-                    "stages_count": len(result.framework.stages) if result.framework else 0,
+                    "roadmap_id": roadmap_id,
+                    "stages_count": stages_count,
                 },
             )
             
@@ -436,15 +505,27 @@ class RoadmapOrchestrator:
                 "modification_count": state.get("modification_count", 0),
             }
         except Exception as e:
+            duration_ms = int((time.time() - start_time) * 1000)
+            
             logger.error(
                 "workflow_step_failed",
                 step="curriculum_design",
-                trace_id=state["trace_id"],
+                trace_id=trace_id,
                 error=str(e),
                 error_type=type(e).__name__,
             )
+            
+            # 记录错误日志
+            await execution_logger.error(
+                trace_id=trace_id,
+                category=LogCategory.WORKFLOW,
+                message=f"课程设计失败: {str(e)[:100]}",
+                step="curriculum_design",
+                details={"error": str(e), "error_type": type(e).__name__},
+            )
+            
             await notification_service.publish_failed(
-                task_id=state["trace_id"],
+                task_id=trace_id,
                 error=str(e),
                 step="curriculum_design",
             )
@@ -591,6 +672,16 @@ class RoadmapOrchestrator:
         
         modification_count = state.get("modification_count", 0)
         
+        # 发布人工审核子状态通知（editing）
+        await notification_service.publish_progress(
+            task_id=state["trace_id"],
+            step="human_review",
+            status="processing",
+            message=f"正在修正路线图结构（第{modification_count + 1}次修改）...",
+            sub_status="editing",
+            extra_data={"modification_count": modification_count + 1},
+        )
+        
         # 发布进度通知
         await notification_service.publish_progress(
             task_id=state["trace_id"],
@@ -659,6 +750,15 @@ class RoadmapOrchestrator:
             "human_review_interrupt_starting",
             trace_id=state["trace_id"],
             roadmap_id=review_payload.get("roadmap_id"),
+        )
+        
+        # 发布人工审核进度通知（带 waiting 子状态）
+        await notification_service.publish_progress(
+            task_id=state["trace_id"],
+            step="human_review",
+            status="processing",
+            message="等待人工审核...",
+            sub_status="waiting",
         )
         
         # 发布人工审核请求通知（关键：主动推送给用户）
@@ -1259,13 +1359,19 @@ class RoadmapOrchestrator:
             stages=updated_stages,
         )
     
-    async def execute(self, user_request: UserRequest, trace_id: str) -> RoadmapState:
+    async def execute(
+        self,
+        user_request: UserRequest,
+        trace_id: str,
+        pre_generated_roadmap_id: str | None = None,
+    ) -> RoadmapState:
         """
         执行完整的工作流
         
         Args:
             user_request: 用户请求
             trace_id: 追踪 ID
+            pre_generated_roadmap_id: 预生成的路线图 ID（可选，用于加速前端跳转）
             
         Returns:
             最终的工作流状态
@@ -1274,6 +1380,7 @@ class RoadmapOrchestrator:
             "workflow_execution_starting",
             trace_id=trace_id,
             user_id=user_request.user_id,
+            pre_generated_roadmap_id=pre_generated_roadmap_id,
             skip_structure_validation=settings.SKIP_STRUCTURE_VALIDATION,
             skip_human_review=settings.SKIP_HUMAN_REVIEW,
             skip_tutorial_generation=settings.SKIP_TUTORIAL_GENERATION,
@@ -1283,6 +1390,7 @@ class RoadmapOrchestrator:
         
         initial_state: RoadmapState = {
             "user_request": user_request,
+            "pre_generated_roadmap_id": pre_generated_roadmap_id,
             "intent_analysis": None,
             "roadmap_framework": None,
             "validation_result": None,

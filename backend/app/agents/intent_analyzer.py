@@ -51,30 +51,60 @@ class IntentAnalyzerAgent(BaseAgent):
             available_hours=user_request.preferences.available_hours_per_week,
         )
         
+        # 构建用户画像信息
+        user_profile = None
+        prefs = user_request.preferences
+        if prefs.industry or prefs.current_role or prefs.tech_stack:
+            user_profile = {
+                "industry": prefs.industry,
+                "current_role": prefs.current_role,
+                "tech_stack": prefs.tech_stack or [],
+                "preferred_language": prefs.preferred_language or "zh",
+            }
+        
         # 加载 System Prompt
         logger.debug("intent_analysis_loading_prompt", template="intent_analyzer.j2")
         system_prompt = self._load_system_prompt(
             "intent_analyzer.j2",
             agent_name="Intent Analyzer",
-            role_description="分析用户的学习需求，提取关键技术栈、难度画像和时间约束，为后续设计提供结构化输入。",
-            user_goal=user_request.preferences.learning_goal,
+            role_description="分析用户的学习需求，提取关键技术栈、难度画像和时间约束，为后续设计提供结构化输入。结合用户画像进行个性化分析。",
+            user_goal=prefs.learning_goal,
+            available_hours_per_week=prefs.available_hours_per_week,
+            motivation=prefs.motivation,
+            current_level=prefs.current_level,
+            career_background=prefs.career_background,
+            content_preference=prefs.content_preference,
+            user_profile=user_profile,
         )
         
         # 构建用户消息
+        profile_info = ""
+        if user_profile:
+            profile_parts = []
+            if user_profile.get("industry"):
+                profile_parts.append(f"**所属行业**: {user_profile['industry']}")
+            if user_profile.get("current_role"):
+                profile_parts.append(f"**当前职位**: {user_profile['current_role']}")
+            if user_profile.get("tech_stack"):
+                tech_list = [f"{t.get('technology', '')}({t.get('proficiency', '')})" for t in user_profile["tech_stack"]]
+                profile_parts.append(f"**已掌握技术**: {', '.join(tech_list)}")
+            if profile_parts:
+                profile_info = "\n" + "\n".join(profile_parts)
+        
         user_message = f"""
 请分析以下用户的学习需求：
 
-**学习目标**: {user_request.preferences.learning_goal}
-**每周可投入时间**: {user_request.preferences.available_hours_per_week} 小时
-**学习动机**: {user_request.preferences.motivation}
-**当前水平**: {user_request.preferences.current_level}
-**职业背景**: {user_request.preferences.career_background}
-**内容偏好**: {", ".join(user_request.preferences.content_preference)}
-{"**期望完成时间**: " + str(user_request.preferences.target_deadline) if user_request.preferences.target_deadline else ""}
+**学习目标**: {prefs.learning_goal}
+**每周可投入时间**: {prefs.available_hours_per_week} 小时
+**学习动机**: {prefs.motivation}
+**当前水平**: {prefs.current_level}
+**职业背景**: {prefs.career_background}
+**内容偏好**: {", ".join(prefs.content_preference)}{profile_info}
+{"**期望完成时间**: " + str(prefs.target_deadline) if prefs.target_deadline else ""}
 {f"**额外信息**: {user_request.additional_context}" if user_request.additional_context else ""}
 
-请提取关键技术栈、难度画像、时间约束，并给出学习重点建议。
-请以 JSON 格式返回结果，严格遵循输出 Schema。
+请结合用户画像进行个性化分析，提取关键技术栈、难度画像、时间约束、技能差距分析，并给出个性化学习建议。
+请以 JSON 格式返回结果，严格遵循输出 Schema（包含新增的 user_profile_summary、skill_gap_analysis、personalized_suggestions、estimated_learning_path_type 和 content_format_weights 字段）。
 """
         
         messages = [
@@ -157,30 +187,61 @@ class IntentAnalyzerAgent(BaseAgent):
         )
         
         try:
+            prefs = user_request.preferences
+            
+            # 构建用户画像信息
+            user_profile = None
+            if prefs.industry or prefs.current_role or prefs.tech_stack:
+                user_profile = {
+                    "industry": prefs.industry,
+                    "current_role": prefs.current_role,
+                    "tech_stack": prefs.tech_stack or [],
+                    "preferred_language": prefs.preferred_language or "zh",
+                }
+            
             # 加载 System Prompt（复用现有逻辑）
             logger.debug("intent_analysis_stream_loading_prompt", template="intent_analyzer.j2")
             system_prompt = self._load_system_prompt(
                 "intent_analyzer.j2",
                 agent_name="Intent Analyzer",
-                role_description="分析用户的学习需求，提取关键技术栈、难度画像和时间约束，为后续设计提供结构化输入。",
-                user_goal=user_request.preferences.learning_goal,
+                role_description="分析用户的学习需求，提取关键技术栈、难度画像和时间约束，为后续设计提供结构化输入。结合用户画像进行个性化分析。",
+                user_goal=prefs.learning_goal,
+                available_hours_per_week=prefs.available_hours_per_week,
+                motivation=prefs.motivation,
+                current_level=prefs.current_level,
+                career_background=prefs.career_background,
+                content_preference=prefs.content_preference,
+                user_profile=user_profile,
             )
             
             # 构建用户消息（复用现有逻辑）
+            profile_info = ""
+            if user_profile:
+                profile_parts = []
+                if user_profile.get("industry"):
+                    profile_parts.append(f"**所属行业**: {user_profile['industry']}")
+                if user_profile.get("current_role"):
+                    profile_parts.append(f"**当前职位**: {user_profile['current_role']}")
+                if user_profile.get("tech_stack"):
+                    tech_list = [f"{t.get('technology', '')}({t.get('proficiency', '')})" for t in user_profile["tech_stack"]]
+                    profile_parts.append(f"**已掌握技术**: {', '.join(tech_list)}")
+                if profile_parts:
+                    profile_info = "\n" + "\n".join(profile_parts)
+            
             user_message = f"""
 请分析以下用户的学习需求：
 
-**学习目标**: {user_request.preferences.learning_goal}
-**每周可投入时间**: {user_request.preferences.available_hours_per_week} 小时
-**学习动机**: {user_request.preferences.motivation}
-**当前水平**: {user_request.preferences.current_level}
-**职业背景**: {user_request.preferences.career_background}
-**内容偏好**: {", ".join(user_request.preferences.content_preference)}
-{"**期望完成时间**: " + str(user_request.preferences.target_deadline) if user_request.preferences.target_deadline else ""}
+**学习目标**: {prefs.learning_goal}
+**每周可投入时间**: {prefs.available_hours_per_week} 小时
+**学习动机**: {prefs.motivation}
+**当前水平**: {prefs.current_level}
+**职业背景**: {prefs.career_background}
+**内容偏好**: {", ".join(prefs.content_preference)}{profile_info}
+{"**期望完成时间**: " + str(prefs.target_deadline) if prefs.target_deadline else ""}
 {f"**额外信息**: {user_request.additional_context}" if user_request.additional_context else ""}
 
-请提取关键技术栈、难度画像、时间约束，并给出学习重点建议。
-请以 JSON 格式返回结果，严格遵循输出 Schema。
+请结合用户画像进行个性化分析，提取关键技术栈、难度画像、时间约束、技能差距分析，并给出个性化学习建议。
+请以 JSON 格式返回结果，严格遵循输出 Schema（包含新增的 user_profile_summary、skill_gap_analysis、personalized_suggestions、estimated_learning_path_type 和 content_format_weights 字段）。
 """
             
             messages = [

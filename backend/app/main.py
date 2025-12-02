@@ -3,6 +3,7 @@ FastAPI 主应用
 """
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 import structlog
 
 from app.api.v1.router import api_router_v1
@@ -35,6 +36,20 @@ app = FastAPI(
     description="基于 Multi-Agent 的个性化学习路线图生成系统",
     version="1.0.0",
     lifespan=lifespan,
+)
+
+# 配置 CORS 中间件
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # 注册路由

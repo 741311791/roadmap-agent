@@ -28,10 +28,17 @@ class LearningPreferences(BaseModel):
         ..., description="当前掌握程度"
     )
     career_background: str = Field(..., description="职业背景，如'市场营销 5 年经验'")
-    content_preference: List[Literal["video", "text", "interactive", "project"]] = Field(
-        default=["text", "interactive"], description="偏好的内容类型"
+    # 内容偏好类型：visual(视觉类), text(文本类), audio(音频类), hands_on(实操类)
+    content_preference: List[Literal["visual", "text", "audio", "hands_on"]] = Field(
+        default=["visual", "text"], description="偏好的内容类型"
     )
     target_deadline: Optional[datetime] = Field(None, description="期望完成时间")
+    
+    # 来自用户画像的扩展信息（可选）
+    industry: Optional[str] = Field(None, description="所属行业")
+    current_role: Optional[str] = Field(None, description="当前职位")
+    tech_stack: Optional[List[Dict[str, Any]]] = Field(None, description="技术栈列表")
+    preferred_language: Optional[str] = Field(None, description="偏好的学习语言")
     
     @field_serializer('target_deadline')
     def serialize_deadline(self, value: Optional[datetime], _info) -> Optional[str]:
@@ -123,7 +130,7 @@ class RoadmapFramework(BaseModel):
     """完整的三层路线图框架"""
     roadmap_id: str
     title: str = Field(..., description="路线图标题，如 '全栈开发学习路线'")
-    stages: List[Stage] = Field(..., min_length=1)
+    stages: List[Stage] = Field(default_factory=list, min_length=0, description="路线图阶段列表，生成过程中可能为空")
     total_estimated_hours: float
     recommended_completion_weeks: int
 
@@ -193,12 +200,46 @@ class IntentAnalysisInput(BaseModel):
     user_request: UserRequest
 
 
+class ContentFormatWeights(BaseModel):
+    """内容格式权重分配"""
+    visual: float = Field(default=0.25, ge=0.0, le=1.0, description="视觉类内容权重")
+    text: float = Field(default=0.25, ge=0.0, le=1.0, description="文本类内容权重")
+    audio: float = Field(default=0.25, ge=0.0, le=1.0, description="音频类内容权重")
+    hands_on: float = Field(default=0.25, ge=0.0, le=1.0, description="实操类内容权重")
+
+
 class IntentAnalysisOutput(BaseModel):
+    """需求分析输出（增强版）"""
+    # 原有字段
     parsed_goal: str = Field(..., description="结构化的学习目标")
-    key_technologies: List[str] = Field(..., description="提取的关键技术栈")
+    key_technologies: List[str] = Field(..., description="需要学习的关键技术栈")
     difficulty_profile: str = Field(..., description="难度画像分析")
     time_constraint: str = Field(..., description="时间约束分析")
     recommended_focus: List[str] = Field(..., description="建议的学习重点")
+    
+    # 新增分析维度
+    user_profile_summary: str = Field(
+        default="", 
+        description="用户画像摘要，包括职业背景和技能基础"
+    )
+    skill_gap_analysis: List[str] = Field(
+        default=[], 
+        description="技能差距分析，列出需要重点提升的方面"
+    )
+    personalized_suggestions: List[str] = Field(
+        default=[], 
+        description="基于用户画像的个性化建议"
+    )
+    estimated_learning_path_type: Literal[
+        "quick_start", "deep_dive", "career_transition", "skill_upgrade"
+    ] = Field(
+        default="deep_dive",
+        description="学习路径类型"
+    )
+    content_format_weights: Optional[ContentFormatWeights] = Field(
+        default=None,
+        description="基于用户偏好的内容格式权重分配"
+    )
 
 
 # --- A2: Curriculum Architect (课程架构师) ---

@@ -4,7 +4,7 @@
  */
 
 // View modes for roadmap display
-export type ViewMode = 'tree' | 'flow';
+export type ViewMode = 'list' | 'flow';
 
 // Sidebar collapse states
 export interface SidebarState {

@@ -5,6 +5,7 @@
 
 import type { RoadmapFramework, Concept, LearningPreferences } from '../generated/models';
 import type { ViewMode, SidebarState } from './ui';
+import type { GenerationPhase } from './phases';
 
 // ============================================================
 // Roadmap Store
@@ -17,6 +18,7 @@ export interface RoadmapHistory {
   status: 'draft' | 'completed' | 'archived';
   total_concepts: number;
   completed_concepts: number;
+  topic?: string;
 }
 
 export interface RoadmapStoreState {
@@ -29,6 +31,16 @@ export interface RoadmapStoreState {
   isGenerating: boolean;
   generationProgress: number;
   currentStep: string | null;
+  
+  // Generation streaming state
+  generationPhase: 'idle' | 'analyzing' | 'designing' | 'generating_tutorials' | 'done';
+  generationBuffer: string;
+  tutorialProgress: { completed: number; total: number };
+  
+  // Real-time generation tracking (for early navigation)
+  activeTaskId: string | null;
+  activeGenerationPhase: GenerationPhase | null;
+  isLiveGenerating: boolean;
   
   // History
   history: RoadmapHistory[];
@@ -45,11 +57,24 @@ export interface RoadmapStoreActions {
   setGenerating: (generating: boolean) => void;
   updateProgress: (step: string, progress: number) => void;
   setHistory: (history: RoadmapHistory[]) => void;
+  addToHistory: (roadmap: RoadmapHistory) => void;
   selectConcept: (conceptId: string | null) => void;
   updateConceptStatus: (
     conceptId: string,
     status: Partial<Pick<Concept, 'content_status' | 'resources_status' | 'quiz_status'>>
   ) => void;
+  
+  // Generation streaming actions
+  setGenerationPhase: (phase: 'idle' | 'analyzing' | 'designing' | 'generating_tutorials' | 'done') => void;
+  appendGenerationBuffer: (chunk: string) => void;
+  clearGenerationBuffer: () => void;
+  updateTutorialProgress: (completed: number, total: number) => void;
+  
+  // Real-time generation tracking (for early navigation)
+  setActiveTask: (taskId: string | null) => void;
+  setActiveGenerationPhase: (phase: GenerationPhase | null) => void;
+  setLiveGenerating: (isLive: boolean) => void;
+  clearLiveGeneration: () => void;
 }
 
 export type RoadmapStore = RoadmapStoreState & RoadmapStoreActions;

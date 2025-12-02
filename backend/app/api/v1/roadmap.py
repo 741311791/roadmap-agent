@@ -32,20 +32,74 @@ router = APIRouter(prefix="/roadmaps", tags=["roadmaps"])
 logger = structlog.get_logger()
 
 
+def _generate_roadmap_id(learning_goal: str) -> str:
+    """
+    预生成路线图 ID
+    
+    使用简洁的 UUID 格式，确保 URL 友好且唯一
+    
+    格式: rm-{timestamp}-{random}
+    - rm: roadmap 前缀（便于识别）
+    - timestamp: 6位时间戳（秒级，36进制）
+    - random: 8位随机字符
+    
+    示例: rm-1a2b3c-4d5e6f7g
+    
+    Args:
+        learning_goal: 用户的学习目标（未使用，保留参数以保持接口兼容）
+        
+    Returns:
+        唯一的路线图 ID（约 18 个字符）
+    """
+    import time
+    
+    # 使用时间戳（36进制）+ 随机字符，确保唯一性和可读性
+    timestamp = int(time.time())
+    timestamp_b36 = base36_encode(timestamp)  # 约 6 位
+    
+    # 8 位随机十六进制字符
+    random_suffix = uuid.uuid4().hex[:8]
+    
+    return f"rm-{timestamp_b36}-{random_suffix}"
+
+
+def base36_encode(number: int) -> str:
+    """将数字转换为 36 进制字符串（0-9, a-z）"""
+    if number == 0:
+        return '0'
+    
+    chars = '0123456789abcdefghijklmnopqrstuvwxyz'
+    result = ''
+    
+    while number:
+        number, remainder = divmod(number, 36)
+        result = chars[remainder] + result
+    
+    return result
+
+
 async def _execute_roadmap_generation_task(
     request: UserRequest,
     trace_id: str,
     orchestrator: RoadmapOrchestrator,
+    pre_generated_roadmap_id: str | None = None,
 ):
     """
     后台任务执行函数
     
     使用独立的数据库会话，避免请求结束后会话被关闭的问题
+    
+    Args:
+        request: 用户请求
+        trace_id: 追踪 ID
+        orchestrator: 编排器实例
+        pre_generated_roadmap_id: 预生成的路线图 ID（用于加速前端跳转）
     """
     logger.info(
         "background_task_started",
         trace_id=trace_id,
         user_id=request.user_id,
+        pre_generated_roadmap_id=pre_generated_roadmap_id,
     )
     
     # 为后台任务创建独立的数据库会话
@@ -56,9 +110,12 @@ async def _execute_roadmap_generation_task(
             logger.info(
                 "background_task_executing_workflow",
                 trace_id=trace_id,
+                pre_generated_roadmap_id=pre_generated_roadmap_id,
             )
             
-            result = await service.generate_roadmap(request, trace_id)
+            result = await service.generate_roadmap(
+                request, trace_id, pre_generated_roadmap_id=pre_generated_roadmap_id
+            )
             
             logger.info(
                 "background_task_completed",
@@ -116,15 +173,19 @@ async def generate_roadmap(
     生成学习路线图（异步任务）
     
     Returns:
-        任务 ID，用于后续查询状态
+        任务 ID 和预生成的路线图 ID，用于前端立即跳转和后续查询状态
     """
     trace_id = str(uuid.uuid4())
+    
+    # 预生成 roadmap_id，加速前端页面跳转
+    pre_generated_roadmap_id = _generate_roadmap_id(request.preferences.learning_goal)
     
     logger.info(
         "roadmap_generation_requested",
         user_id=request.user_id,
         trace_id=trace_id,
         learning_goal=request.preferences.learning_goal,
+        pre_generated_roadmap_id=pre_generated_roadmap_id,
     )
     
     # 先创建初始任务记录（使用当前请求的会话）
@@ -138,7 +199,26 @@ async def generate_roadmap(
         task_id=trace_id,
         status="processing",
         current_step="queued",
+        roadmap_id=pre_generated_roadmap_id,  # 预先关联 roadmap_id
     )
+    
+    # 创建初始的 roadmap_metadata 记录（状态为 generating）
+    # 注意：framework_data 暂时为空，待课程设计完成后更新
+    from app.models.domain import RoadmapFramework
+    initial_framework = RoadmapFramework(
+        roadmap_id=pre_generated_roadmap_id,
+        title=f"正在生成: {request.preferences.learning_goal[:50]}...",
+        stages=[],
+        total_estimated_hours=0,
+        recommended_completion_weeks=0,
+    )
+    await repo.save_roadmap_metadata(
+        roadmap_id=pre_generated_roadmap_id,
+        user_id=request.user_id,
+        task_id=trace_id,
+        framework=initial_framework,
+    )
+    await db.commit()
     
     # 在后台任务中执行工作流（使用独立的数据库会话）
     background_tasks.add_task(
@@ -146,10 +226,12 @@ async def generate_roadmap(
         request,
         trace_id,
         orchestrator,
+        pre_generated_roadmap_id,
     )
     
     return {
         "task_id": trace_id,
+        "roadmap_id": pre_generated_roadmap_id,
         "status": "processing",
         "message": "路线图生成任务已启动，请通过 WebSocket 或轮询接口查询进度",
     }
@@ -741,10 +823,457 @@ async def generate_full_roadmap_stream(
 
 
 # ============================================================
-# 教程版本管理相关端点
+# 断点续传相关端点
 # ============================================================
 
 from pydantic import BaseModel, Field
+from typing import List as TypingList, Literal as TypingLiteral
+
+
+class RetryFailedRequest(BaseModel):
+    """断点续传请求"""
+    user_id: str = Field(..., description="用户 ID")
+    preferences: LearningPreferences = Field(..., description="用户学习偏好")
+    content_types: TypingList[TypingLiteral["tutorial", "resources", "quiz"]] = Field(
+        default=["tutorial", "resources", "quiz"],
+        description="要重试的内容类型列表"
+    )
+
+
+def _get_failed_content_items(framework_data: dict) -> dict:
+    """
+    获取失败的内容项目
+    
+    按内容类型分类收集失败的 concepts
+    
+    Args:
+        framework_data: 路线图框架数据
+        
+    Returns:
+        {
+            "tutorial": [{"concept_id": "xxx", "concept_data": {...}, "context": {...}}, ...],
+            "resources": [...],
+            "quiz": [...]
+        }
+    """
+    failed_items = {
+        "tutorial": [],
+        "resources": [],
+        "quiz": [],
+    }
+    
+    for stage in framework_data.get("stages", []):
+        for module in stage.get("modules", []):
+            for concept_data in module.get("concepts", []):
+                concept_id = concept_data.get("concept_id")
+                context = {
+                    "roadmap_id": framework_data.get("roadmap_id"),
+                    "stage_id": stage.get("stage_id"),
+                    "stage_name": stage.get("name"),
+                    "module_id": module.get("module_id"),
+                    "module_name": module.get("name"),
+                }
+                
+                # 检查教程状态
+                if concept_data.get("content_status") == "failed":
+                    failed_items["tutorial"].append({
+                        "concept_id": concept_id,
+                        "concept_data": concept_data,
+                        "context": context,
+                    })
+                
+                # 检查资源状态
+                if concept_data.get("resources_status") == "failed":
+                    failed_items["resources"].append({
+                        "concept_id": concept_id,
+                        "concept_data": concept_data,
+                        "context": context,
+                    })
+                
+                # 检查测验状态
+                if concept_data.get("quiz_status") == "failed":
+                    failed_items["quiz"].append({
+                        "concept_id": concept_id,
+                        "concept_data": concept_data,
+                        "context": context,
+                    })
+    
+    return failed_items
+
+
+@router.post("/{roadmap_id}/retry-failed")
+async def retry_failed_content(
+    roadmap_id: str,
+    request: RetryFailedRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    断点续传：重新生成失败的内容
+    
+    精确到内容类型粒度，只重跑失败的部分：
+    - content_status='failed' 的教程
+    - resources_status='failed' 的资源推荐
+    - quiz_status='failed' 的测验
+    
+    Args:
+        roadmap_id: 路线图 ID
+        request: 包含用户偏好和要重试的内容类型
+        
+    Returns:
+        task_id 用于 WebSocket 订阅进度
+    """
+    logger.info(
+        "retry_failed_content_requested",
+        roadmap_id=roadmap_id,
+        user_id=request.user_id,
+        content_types=request.content_types,
+    )
+    
+    repo = RoadmapRepository(db)
+    
+    # 1. 检查路线图是否存在
+    roadmap_metadata = await repo.get_roadmap_metadata(roadmap_id)
+    if not roadmap_metadata:
+        raise HTTPException(status_code=404, detail=f"路线图 {roadmap_id} 不存在")
+    
+    # 2. 获取失败的内容项目
+    failed_items = _get_failed_content_items(roadmap_metadata.framework_data)
+    
+    # 3. 根据请求筛选要重试的类型
+    items_to_retry = {}
+    total_items = 0
+    for content_type in request.content_types:
+        if content_type in failed_items and failed_items[content_type]:
+            items_to_retry[content_type] = failed_items[content_type]
+            total_items += len(failed_items[content_type])
+    
+    if total_items == 0:
+        return {
+            "status": "no_failed_items",
+            "message": "没有需要重试的失败项目",
+            "failed_counts": {
+                "tutorial": len(failed_items["tutorial"]),
+                "resources": len(failed_items["resources"]),
+                "quiz": len(failed_items["quiz"]),
+            }
+        }
+    
+    # 4. 创建重试任务
+    retry_task_id = str(uuid.uuid4())
+    
+    # 5. 启动后台重试任务
+    background_tasks.add_task(
+        _execute_retry_failed_task,
+        retry_task_id=retry_task_id,
+        roadmap_id=roadmap_id,
+        items_to_retry=items_to_retry,
+        user_preferences=request.preferences,
+    )
+    
+    return {
+        "task_id": retry_task_id,
+        "roadmap_id": roadmap_id,
+        "status": "processing",
+        "items_to_retry": {
+            content_type: len(items) for content_type, items in items_to_retry.items()
+        },
+        "total_items": total_items,
+        "message": f"开始重试 {total_items} 个失败项目",
+    }
+
+
+async def _execute_retry_failed_task(
+    retry_task_id: str,
+    roadmap_id: str,
+    items_to_retry: dict,
+    user_preferences: LearningPreferences,
+):
+    """
+    后台执行重试失败任务
+    
+    Args:
+        retry_task_id: 重试任务 ID（用于 WebSocket 订阅）
+        roadmap_id: 路线图 ID
+        items_to_retry: 要重试的项目 {"tutorial": [...], "resources": [...], "quiz": [...]}
+        user_preferences: 用户偏好
+    """
+    from app.services.notification_service import notification_service
+    from app.agents.tutorial_generator import TutorialGeneratorAgent
+    from app.agents.resource_recommender import ResourceRecommenderAgent
+    from app.agents.quiz_generator import QuizGeneratorAgent
+    from app.models.domain import (
+        Concept, 
+        TutorialGenerationInput, 
+        ResourceRecommendationInput, 
+        QuizGenerationInput,
+    )
+    
+    logger.info(
+        "retry_failed_task_started",
+        retry_task_id=retry_task_id,
+        roadmap_id=roadmap_id,
+        items_count={k: len(v) for k, v in items_to_retry.items()},
+    )
+    
+    # 发布重试开始事件
+    await notification_service.publish_progress(
+        task_id=retry_task_id,
+        step="retry_started",
+        status="processing",
+        message="开始重试失败项目",
+        extra_data={
+            "roadmap_id": roadmap_id,
+            "items_by_type": {k: len(v) for k, v in items_to_retry.items()},
+        },
+    )
+    
+    # 创建 Agents
+    tutorial_generator = TutorialGeneratorAgent() if "tutorial" in items_to_retry else None
+    resource_recommender = ResourceRecommenderAgent() if "resources" in items_to_retry else None
+    quiz_generator = QuizGeneratorAgent() if "quiz" in items_to_retry else None
+    
+    # 统计结果
+    success_count = 0
+    failed_count = 0
+    results = []
+    
+    # 并发限制
+    semaphore = asyncio.Semaphore(settings.PARALLEL_TUTORIAL_LIMIT)
+    
+    async def retry_single_item(content_type: str, item: dict, current: int, total: int) -> dict:
+        """重试单个项目"""
+        nonlocal success_count, failed_count
+        
+        concept_id = item["concept_id"]
+        concept_data = item["concept_data"]
+        context = item["context"]
+        
+        # 构建 Concept 对象
+        concept = Concept(
+            concept_id=concept_data.get("concept_id"),
+            name=concept_data.get("name"),
+            description=concept_data.get("description", ""),
+            estimated_hours=concept_data.get("estimated_hours", 1.0),
+            prerequisites=concept_data.get("prerequisites", []),
+            difficulty=concept_data.get("difficulty", "medium"),
+            keywords=concept_data.get("keywords", []),
+        )
+        
+        # 发布概念开始事件
+        await notification_service.publish_concept_start(
+            task_id=retry_task_id,
+            concept_id=concept_id,
+            concept_name=concept.name,
+            current=current,
+            total=total,
+        )
+        
+        try:
+            async with semaphore:
+                if content_type == "tutorial" and tutorial_generator:
+                    input_data = TutorialGenerationInput(
+                        concept=concept,
+                        context=context,
+                        user_preferences=user_preferences,
+                    )
+                    result = await tutorial_generator.execute(input_data)
+                    output_data = {
+                        "tutorial_id": result.tutorial_id,
+                        "content_url": result.content_url,
+                    }
+                    
+                elif content_type == "resources" and resource_recommender:
+                    input_data = ResourceRecommendationInput(
+                        concept=concept,
+                        context=context,
+                        user_preferences=user_preferences,
+                    )
+                    result = await resource_recommender.execute(input_data)
+                    output_data = {
+                        "resources_id": result.id,
+                        "resources_count": len(result.resources),
+                    }
+                    
+                elif content_type == "quiz" and quiz_generator:
+                    input_data = QuizGenerationInput(
+                        concept=concept,
+                        context=context,
+                        user_preferences=user_preferences,
+                    )
+                    result = await quiz_generator.execute(input_data)
+                    output_data = {
+                        "quiz_id": result.quiz_id,
+                        "questions_count": result.total_questions,
+                    }
+                else:
+                    raise ValueError(f"未知的内容类型: {content_type}")
+                
+                success_count += 1
+                
+                # 发布概念完成事件（使用标准事件）
+                await notification_service.publish_concept_complete(
+                    task_id=retry_task_id,
+                    concept_id=concept_id,
+                    concept_name=concept.name,
+                    data=output_data,
+                )
+                
+                return {
+                    "concept_id": concept_id,
+                    "content_type": content_type,
+                    "success": True,
+                    "result": result,
+                }
+                
+        except Exception as e:
+            failed_count += 1
+            logger.error(
+                "retry_item_failed",
+                retry_task_id=retry_task_id,
+                concept_id=concept_id,
+                content_type=content_type,
+                error=str(e),
+            )
+            
+            # 发布概念失败事件（使用标准事件）
+            await notification_service.publish_concept_failed(
+                task_id=retry_task_id,
+                concept_id=concept_id,
+                concept_name=concept.name,
+                error=str(e),
+            )
+            
+            return {
+                "concept_id": concept_id,
+                "content_type": content_type,
+                "success": False,
+                "error": str(e),
+            }
+    
+    # 收集所有重试任务
+    all_tasks = []
+    total_items = sum(len(items) for items in items_to_retry.values())
+    current = 0
+    
+    for content_type, items in items_to_retry.items():
+        for item in items:
+            current += 1
+            all_tasks.append(retry_single_item(content_type, item, current, total_items))
+    
+    # 并行执行
+    results = await asyncio.gather(*all_tasks, return_exceptions=True)
+    
+    # 更新数据库中的框架数据
+    async with AsyncSessionLocal() as session:
+        repo = RoadmapRepository(session)
+        roadmap_metadata = await repo.get_roadmap_metadata(roadmap_id)
+        
+        if roadmap_metadata:
+            framework_data = roadmap_metadata.framework_data
+            
+            # 更新成功的概念状态
+            for result in results:
+                if isinstance(result, dict) and result.get("success"):
+                    concept_id = result["concept_id"]
+                    content_type = result["content_type"]
+                    output = result.get("result")
+                    
+                    # 遍历框架更新对应概念的状态
+                    for stage in framework_data.get("stages", []):
+                        for module in stage.get("modules", []):
+                            for concept in module.get("concepts", []):
+                                if concept.get("concept_id") == concept_id:
+                                    if content_type == "tutorial" and output:
+                                        concept["content_status"] = "completed"
+                                        concept["content_ref"] = output.content_url
+                                        concept["content_summary"] = output.summary
+                                    elif content_type == "resources" and output:
+                                        concept["resources_status"] = "completed"
+                                        concept["resources_id"] = output.id
+                                        concept["resources_count"] = len(output.resources)
+                                    elif content_type == "quiz" and output:
+                                        concept["quiz_status"] = "completed"
+                                        concept["quiz_id"] = output.quiz_id
+                                        concept["quiz_questions_count"] = output.total_questions
+            
+            # 保存更新后的框架
+            from app.models.domain import RoadmapFramework
+            updated_framework = RoadmapFramework.model_validate(framework_data)
+            await repo.save_roadmap_metadata(
+                roadmap_id=roadmap_id,
+                user_id=roadmap_metadata.user_id,
+                task_id=roadmap_metadata.task_id,
+                framework=updated_framework,
+            )
+            
+            # 同时保存到各自的元数据表
+            for result in results:
+                if isinstance(result, dict) and result.get("success"):
+                    content_type = result["content_type"]
+                    output = result.get("result")
+                    
+                    if content_type == "tutorial" and output:
+                        await repo.save_tutorial_metadata(output, roadmap_id)
+                    elif content_type == "resources" and output:
+                        await repo.save_resource_recommendation_metadata(output, roadmap_id)
+                    elif content_type == "quiz" and output:
+                        await repo.save_quiz_metadata(output, roadmap_id)
+            
+            await session.commit()
+            
+            # 计算更新后的失败统计
+            remaining_failed = {
+                "tutorial": 0,
+                "resources": 0,
+                "quiz": 0,
+            }
+            for stage in framework_data.get("stages", []):
+                for module in stage.get("modules", []):
+                    for concept in module.get("concepts", []):
+                        if concept.get("content_status") == "failed":
+                            remaining_failed["tutorial"] += 1
+                        if concept.get("resources_status") == "failed":
+                            remaining_failed["resources"] += 1
+                        if concept.get("quiz_status") == "failed":
+                            remaining_failed["quiz"] += 1
+    
+    # 发布重试完成事件（包含详细的统计数据）
+    await notification_service.publish_completed(
+        task_id=retry_task_id,
+        roadmap_id=roadmap_id,
+        tutorials_count=success_count,
+        failed_count=failed_count,
+    )
+    
+    # 发布进度通知，告知前端 framework 已更新
+    await notification_service.publish_progress(
+        task_id=retry_task_id,
+        step="retry_completed",
+        status="completed",
+        message=f"重试完成: {success_count} 成功, {failed_count} 失败",
+        extra_data={
+            "roadmap_id": roadmap_id,
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "remaining_failed": remaining_failed,
+            "framework_updated": True,
+        },
+    )
+    
+    logger.info(
+        "retry_failed_task_completed",
+        retry_task_id=retry_task_id,
+        roadmap_id=roadmap_id,
+        success_count=success_count,
+        failed_count=failed_count,
+        remaining_failed=remaining_failed,
+    )
+
+
+# ============================================================
+# 教程版本管理相关端点
+# ============================================================
 
 
 class RegenerateTutorialRequest(BaseModel):
@@ -1019,6 +1548,86 @@ async def get_tutorial_by_version(
         "content_status": tutorial.content_status,
         "estimated_completion_time": tutorial.estimated_completion_time,
         "generated_at": tutorial.generated_at.isoformat() if tutorial.generated_at else None,
+    }
+
+
+# ============================================================
+# 资源和测验获取端点
+# ============================================================
+
+@router.get("/{roadmap_id}/concepts/{concept_id}/quiz")
+async def get_concept_quiz(
+    roadmap_id: str,
+    concept_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    获取指定概念的测验
+    
+    Args:
+        roadmap_id: 路线图 ID
+        concept_id: 概念 ID
+        
+    Returns:
+        测验数据，包含题目列表
+    """
+    repo = RoadmapRepository(db)
+    
+    quiz = await repo.get_quiz_by_concept(concept_id, roadmap_id)
+    
+    if not quiz:
+        raise HTTPException(
+            status_code=404,
+            detail=f"概念 {concept_id} 在路线图 {roadmap_id} 中没有测验"
+        )
+    
+    return {
+        "roadmap_id": roadmap_id,
+        "concept_id": concept_id,
+        "quiz_id": quiz.quiz_id,
+        "questions": quiz.questions,
+        "total_questions": quiz.total_questions,
+        "easy_count": quiz.easy_count,
+        "medium_count": quiz.medium_count,
+        "hard_count": quiz.hard_count,
+        "generated_at": quiz.generated_at.isoformat() if quiz.generated_at else None,
+    }
+
+
+@router.get("/{roadmap_id}/concepts/{concept_id}/resources")
+async def get_concept_resources(
+    roadmap_id: str,
+    concept_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    获取指定概念的学习资源
+    
+    Args:
+        roadmap_id: 路线图 ID
+        concept_id: 概念 ID
+        
+    Returns:
+        资源推荐列表
+    """
+    repo = RoadmapRepository(db)
+    
+    resources = await repo.get_resources_by_concept(concept_id, roadmap_id)
+    
+    if not resources:
+        raise HTTPException(
+            status_code=404,
+            detail=f"概念 {concept_id} 在路线图 {roadmap_id} 中没有资源推荐"
+        )
+    
+    return {
+        "roadmap_id": roadmap_id,
+        "concept_id": concept_id,
+        "resources_id": resources.id,
+        "resources": resources.resources,
+        "resources_count": resources.resources_count,
+        "search_queries_used": resources.search_queries_used,
+        "generated_at": resources.generated_at.isoformat() if resources.generated_at else None,
     }
 
 
@@ -2269,5 +2878,315 @@ async def chat_modification_stream(
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         }
+    )
+
+
+# ============================================================
+# User Profile API (用户画像)
+# ============================================================
+
+from pydantic import BaseModel, Field
+from typing import List, Optional as OptionalType
+
+
+class TechStackItem(BaseModel):
+    """技术栈项"""
+    technology: str = Field(..., description="技术名称")
+    proficiency: str = Field(..., description="熟练程度: beginner, intermediate, expert")
+
+
+class UserProfileRequest(BaseModel):
+    """用户画像请求体"""
+    # 职业背景
+    industry: OptionalType[str] = Field(None, description="所属行业")
+    current_role: OptionalType[str] = Field(None, description="当前职位")
+    # 技术栈
+    tech_stack: List[TechStackItem] = Field(default=[], description="技术栈列表")
+    # 语言偏好
+    primary_language: str = Field(default="zh", description="主要语言")
+    secondary_language: OptionalType[str] = Field(None, description="次要语言")
+    # 学习习惯
+    weekly_commitment_hours: int = Field(default=10, ge=1, le=168, description="每周学习时间")
+    learning_style: List[str] = Field(default=[], description="学习风格: visual, text, audio, hands_on")
+    # AI 个性化
+    ai_personalization: bool = Field(default=True, description="是否启用 AI 个性化")
+
+
+class UserProfileResponse(BaseModel):
+    """用户画像响应体"""
+    user_id: str
+    industry: OptionalType[str] = None
+    current_role: OptionalType[str] = None
+    tech_stack: List[dict] = []
+    primary_language: str = "zh"
+    secondary_language: OptionalType[str] = None
+    weekly_commitment_hours: int = 10
+    learning_style: List[str] = []
+    ai_personalization: bool = True
+    created_at: OptionalType[str] = None
+    updated_at: OptionalType[str] = None
+
+
+# 创建独立的 users router
+users_router = APIRouter(prefix="/users", tags=["users"])
+
+
+@users_router.get("/{user_id}/profile", response_model=UserProfileResponse)
+async def get_user_profile(
+    user_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    获取用户画像
+    
+    Args:
+        user_id: 用户 ID
+        
+    Returns:
+        用户画像数据，如果不存在则返回默认值
+    """
+    logger.info("get_user_profile_requested", user_id=user_id)
+    
+    repo = RoadmapRepository(db)
+    profile = await repo.get_user_profile(user_id)
+    
+    if profile:
+        return UserProfileResponse(
+            user_id=profile.user_id,
+            industry=profile.industry,
+            current_role=profile.current_role,
+            tech_stack=profile.tech_stack,
+            primary_language=profile.primary_language,
+            secondary_language=profile.secondary_language,
+            weekly_commitment_hours=profile.weekly_commitment_hours,
+            learning_style=profile.learning_style,
+            ai_personalization=profile.ai_personalization,
+            created_at=profile.created_at.isoformat() if profile.created_at else None,
+            updated_at=profile.updated_at.isoformat() if profile.updated_at else None,
+        )
+    else:
+        # 返回默认画像
+        return UserProfileResponse(
+            user_id=user_id,
+            tech_stack=[],
+            learning_style=[],
+        )
+
+
+@users_router.put("/{user_id}/profile", response_model=UserProfileResponse)
+async def save_user_profile(
+    user_id: str,
+    request: UserProfileRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    保存或更新用户画像
+    
+    Args:
+        user_id: 用户 ID
+        request: 用户画像数据
+        
+    Returns:
+        保存后的用户画像
+    """
+    logger.info(
+        "save_user_profile_requested",
+        user_id=user_id,
+        tech_stack_count=len(request.tech_stack),
+    )
+    
+    repo = RoadmapRepository(db)
+    
+    # 转换为字典格式
+    profile_data = {
+        "industry": request.industry,
+        "current_role": request.current_role,
+        "tech_stack": [item.model_dump() for item in request.tech_stack],
+        "primary_language": request.primary_language,
+        "secondary_language": request.secondary_language,
+        "weekly_commitment_hours": request.weekly_commitment_hours,
+        "learning_style": request.learning_style,
+        "ai_personalization": request.ai_personalization,
+    }
+    
+    profile = await repo.save_user_profile(user_id, profile_data)
+    
+    return UserProfileResponse(
+        user_id=profile.user_id,
+        industry=profile.industry,
+        current_role=profile.current_role,
+        tech_stack=profile.tech_stack,
+        primary_language=profile.primary_language,
+        secondary_language=profile.secondary_language,
+        weekly_commitment_hours=profile.weekly_commitment_hours,
+        learning_style=profile.learning_style,
+        ai_personalization=profile.ai_personalization,
+        created_at=profile.created_at.isoformat() if profile.created_at else None,
+        updated_at=profile.updated_at.isoformat() if profile.updated_at else None,
+    )
+
+
+# ============================================================
+# Trace / 执行日志 API
+# ============================================================
+
+from typing import Optional
+
+trace_router = APIRouter(prefix="/trace", tags=["trace"])
+
+
+class ExecutionLogResponse(BaseModel):
+    """执行日志响应"""
+    id: str
+    trace_id: str
+    roadmap_id: Optional[str] = None
+    concept_id: Optional[str] = None
+    level: str
+    category: str
+    step: Optional[str] = None
+    agent_name: Optional[str] = None
+    message: str
+    details: Optional[dict] = None
+    duration_ms: Optional[int] = None
+    created_at: str
+
+
+class ExecutionLogListResponse(BaseModel):
+    """执行日志列表响应"""
+    logs: list[ExecutionLogResponse]
+    total: int
+    offset: int
+    limit: int
+
+
+class TraceSummaryResponse(BaseModel):
+    """追踪摘要响应"""
+    trace_id: str
+    level_stats: dict[str, int]
+    category_stats: dict[str, int]
+    total_duration_ms: int
+    first_log_at: Optional[str] = None
+    last_log_at: Optional[str] = None
+    total_logs: int
+
+
+@trace_router.get("/{trace_id}/logs", response_model=ExecutionLogListResponse)
+async def get_trace_logs(
+    trace_id: str,
+    level: Optional[str] = None,
+    category: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    获取指定 trace_id 的执行日志
+    
+    Args:
+        trace_id: 追踪 ID（通常等于 task_id）
+        level: 过滤日志级别（debug, info, warning, error）
+        category: 过滤日志分类（workflow, agent, tool, database）
+        limit: 返回数量限制（默认 100，最大 500）
+        offset: 分页偏移
+        
+    Returns:
+        执行日志列表
+    """
+    # 限制最大返回数量
+    limit = min(limit, 500)
+    
+    repo = RoadmapRepository(db)
+    logs = await repo.get_execution_logs_by_trace(
+        trace_id=trace_id,
+        level=level,
+        category=category,
+        limit=limit,
+        offset=offset,
+    )
+    
+    return ExecutionLogListResponse(
+        logs=[
+            ExecutionLogResponse(
+                id=log.id,
+                trace_id=log.trace_id,
+                roadmap_id=log.roadmap_id,
+                concept_id=log.concept_id,
+                level=log.level,
+                category=log.category,
+                step=log.step,
+                agent_name=log.agent_name,
+                message=log.message,
+                details=log.details,
+                duration_ms=log.duration_ms,
+                created_at=log.created_at.isoformat() if log.created_at else "",
+            )
+            for log in logs
+        ],
+        total=len(logs),  # 简化版本，不查询总数
+        offset=offset,
+        limit=limit,
+    )
+
+
+@trace_router.get("/{trace_id}/summary", response_model=TraceSummaryResponse)
+async def get_trace_summary(
+    trace_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    获取指定 trace_id 的执行摘要
+    
+    Args:
+        trace_id: 追踪 ID
+        
+    Returns:
+        执行摘要统计
+    """
+    repo = RoadmapRepository(db)
+    summary = await repo.get_execution_logs_summary(trace_id)
+    
+    return TraceSummaryResponse(**summary)
+
+
+@trace_router.get("/{trace_id}/errors", response_model=ExecutionLogListResponse)
+async def get_trace_errors(
+    trace_id: str,
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    获取指定 trace_id 的错误日志
+    
+    Args:
+        trace_id: 追踪 ID
+        limit: 返回数量限制（默认 50）
+        
+    Returns:
+        错误日志列表
+    """
+    repo = RoadmapRepository(db)
+    logs = await repo.get_error_logs_by_trace(trace_id, limit=limit)
+    
+    return ExecutionLogListResponse(
+        logs=[
+            ExecutionLogResponse(
+                id=log.id,
+                trace_id=log.trace_id,
+                roadmap_id=log.roadmap_id,
+                concept_id=log.concept_id,
+                level=log.level,
+                category=log.category,
+                step=log.step,
+                agent_name=log.agent_name,
+                message=log.message,
+                details=log.details,
+                duration_ms=log.duration_ms,
+                created_at=log.created_at.isoformat() if log.created_at else "",
+            )
+            for log in logs
+        ],
+        total=len(logs),
+        offset=0,
+        limit=limit,
     )
 

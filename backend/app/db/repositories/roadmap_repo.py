@@ -22,6 +22,8 @@ from app.models.database import (
     IntentAnalysisMetadata,
     ResourceRecommendationMetadata,
     QuizMetadata,
+    UserProfile,
+    ExecutionLog,
     beijing_now,
 )
 from app.models.domain import (
@@ -94,16 +96,20 @@ class RoadmapRepository:
         current_step: str,
         roadmap_id: Optional[str] = None,
         error_message: Optional[str] = None,
+        failed_concepts: Optional[dict] = None,
+        execution_summary: Optional[dict] = None,
     ) -> Optional[RoadmapTask]:
         """
         更新任务状态
         
         Args:
             task_id: 任务 ID
-            status: 新状态
+            status: 新状态 (pending, processing, completed, partial_failure, failed)
             current_step: 当前步骤
             roadmap_id: 路线图 ID（可选）
             error_message: 错误信息（可选）
+            failed_concepts: 失败概念详情（可选）
+            execution_summary: 执行摘要（可选）
             
         Returns:
             更新后的任务记录
@@ -121,9 +127,13 @@ class RoadmapRepository:
             task.roadmap_id = roadmap_id
         if error_message:
             task.error_message = error_message
+        if failed_concepts is not None:
+            task.failed_concepts = failed_concepts
+        if execution_summary is not None:
+            task.execution_summary = execution_summary
         
-        # 当任务完成或失败时，设置 completed_at
-        if status in ("completed", "failed"):
+        # 当任务完成（包括部分失败）或失败时，设置 completed_at
+        if status in ("completed", "partial_failure", "failed"):
             task.completed_at = beijing_now()
         
         await self.session.commit()
@@ -134,6 +144,8 @@ class RoadmapRepository:
             task_id=task_id,
             status=status,
             current_step=current_step,
+            has_failed_concepts=failed_concepts is not None,
+            has_execution_summary=execution_summary is not None,
         )
         return task
     
@@ -457,7 +469,7 @@ class RoadmapRepository:
         intent_analysis: IntentAnalysisOutput,
     ) -> IntentAnalysisMetadata:
         """
-        保存需求分析结果元数据
+        保存需求分析结果元数据（支持增强版字段）
         
         Args:
             task_id: 任务 ID
@@ -468,11 +480,19 @@ class RoadmapRepository:
         """
         metadata = IntentAnalysisMetadata(
             task_id=task_id,
+            # 原有字段
             parsed_goal=intent_analysis.parsed_goal,
             key_technologies=intent_analysis.key_technologies,
             difficulty_profile=intent_analysis.difficulty_profile,
             time_constraint=intent_analysis.time_constraint,
             recommended_focus=intent_analysis.recommended_focus,
+            # 新增字段
+            user_profile_summary=intent_analysis.user_profile_summary or "",
+            skill_gap_analysis=intent_analysis.skill_gap_analysis or [],
+            personalized_suggestions=intent_analysis.personalized_suggestions or [],
+            estimated_learning_path_type=intent_analysis.estimated_learning_path_type,
+            content_format_weights=intent_analysis.content_format_weights.model_dump() if intent_analysis.content_format_weights else None,
+            # 完整数据
             full_analysis_data=intent_analysis.model_dump(),
         )
         self.session.add(metadata)
@@ -483,6 +503,7 @@ class RoadmapRepository:
             "intent_analysis_metadata_saved",
             task_id=task_id,
             key_technologies_count=len(intent_analysis.key_technologies),
+            learning_path_type=intent_analysis.estimated_learning_path_type,
         )
         return metadata
     
@@ -603,6 +624,29 @@ class RoadmapRepository:
             )
         )
         return list(result.scalars().all())
+    
+    async def get_resources_by_concept(
+        self,
+        concept_id: str,
+        roadmap_id: str,
+    ) -> Optional[ResourceRecommendationMetadata]:
+        """
+        获取指定概念的资源推荐
+        
+        Args:
+            concept_id: 概念 ID
+            roadmap_id: 路线图 ID
+            
+        Returns:
+            资源推荐元数据，如果不存在则返回 None
+        """
+        result = await self.session.execute(
+            select(ResourceRecommendationMetadata).where(
+                ResourceRecommendationMetadata.concept_id == concept_id,
+                ResourceRecommendationMetadata.roadmap_id == roadmap_id,
+            )
+        )
+        return result.scalar_one_or_none()
     
     # ============================================================
     # A6: 测验生成器产出 (QuizMetadata)
@@ -728,4 +772,201 @@ class RoadmapRepository:
             )
         )
         return result.scalar_one_or_none()
+    
+    # ============================================================
+    # User Profile (用户画像)
+    # ============================================================
+    
+    async def get_user_profile(self, user_id: str) -> Optional[UserProfile]:
+        """
+        获取用户画像
+        
+        Args:
+            user_id: 用户 ID
+            
+        Returns:
+            用户画像，如果不存在则返回 None
+        """
+        result = await self.session.execute(
+            select(UserProfile).where(UserProfile.user_id == user_id)
+        )
+        return result.scalar_one_or_none()
+    
+    async def save_user_profile(
+        self,
+        user_id: str,
+        profile_data: dict,
+    ) -> UserProfile:
+        """
+        保存或更新用户画像
+        
+        Args:
+            user_id: 用户 ID
+            profile_data: 用户画像数据
+            
+        Returns:
+            保存的用户画像记录
+        """
+        existing = await self.get_user_profile(user_id)
+        
+        if existing:
+            # 更新现有记录
+            for key, value in profile_data.items():
+                if hasattr(existing, key):
+                    setattr(existing, key, value)
+            existing.updated_at = beijing_now()
+            await self.session.commit()
+            await self.session.refresh(existing)
+            
+            logger.info("user_profile_updated", user_id=user_id)
+            return existing
+        else:
+            # 创建新记录
+            profile = UserProfile(
+                user_id=user_id,
+                industry=profile_data.get('industry'),
+                current_role=profile_data.get('current_role'),
+                tech_stack=profile_data.get('tech_stack', []),
+                primary_language=profile_data.get('primary_language', 'zh'),
+                secondary_language=profile_data.get('secondary_language'),
+                weekly_commitment_hours=profile_data.get('weekly_commitment_hours', 10),
+                learning_style=profile_data.get('learning_style', []),
+                ai_personalization=profile_data.get('ai_personalization', True),
+                created_at=beijing_now(),
+                updated_at=beijing_now(),
+            )
+            self.session.add(profile)
+            await self.session.commit()
+            await self.session.refresh(profile)
+            
+            logger.info("user_profile_created", user_id=user_id)
+            return profile
+    
+    # ============================================================
+    # Execution Logs (执行日志)
+    # ============================================================
+    
+    async def get_execution_logs_by_trace(
+        self,
+        trace_id: str,
+        level: Optional[str] = None,
+        category: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[ExecutionLog]:
+        """
+        获取指定 trace_id 的执行日志
+        
+        Args:
+            trace_id: 追踪 ID（对应 task_id）
+            level: 过滤日志级别（可选）
+            category: 过滤日志分类（可选）
+            limit: 返回数量限制
+            offset: 分页偏移
+            
+        Returns:
+            执行日志列表（按时间降序）
+        """
+        query = select(ExecutionLog).where(ExecutionLog.trace_id == trace_id)
+        
+        if level:
+            query = query.where(ExecutionLog.level == level)
+        if category:
+            query = query.where(ExecutionLog.category == category)
+        
+        query = query.order_by(ExecutionLog.created_at.desc()).offset(offset).limit(limit)
+        
+        result = await self.session.execute(query)
+        return list(result.scalars().all())
+    
+    async def get_execution_logs_summary(
+        self,
+        trace_id: str,
+    ) -> dict:
+        """
+        获取执行日志摘要统计
+        
+        Args:
+            trace_id: 追踪 ID
+            
+        Returns:
+            包含统计信息的字典
+        """
+        from sqlalchemy import func
+        
+        # 统计各级别日志数量
+        level_counts = await self.session.execute(
+            select(
+                ExecutionLog.level,
+                func.count(ExecutionLog.id).label('count')
+            )
+            .where(ExecutionLog.trace_id == trace_id)
+            .group_by(ExecutionLog.level)
+        )
+        level_stats = {row[0]: row[1] for row in level_counts.fetchall()}
+        
+        # 统计各分类日志数量
+        category_counts = await self.session.execute(
+            select(
+                ExecutionLog.category,
+                func.count(ExecutionLog.id).label('count')
+            )
+            .where(ExecutionLog.trace_id == trace_id)
+            .group_by(ExecutionLog.category)
+        )
+        category_stats = {row[0]: row[1] for row in category_counts.fetchall()}
+        
+        # 计算总耗时
+        duration_result = await self.session.execute(
+            select(func.sum(ExecutionLog.duration_ms))
+            .where(ExecutionLog.trace_id == trace_id)
+            .where(ExecutionLog.duration_ms.isnot(None))
+        )
+        total_duration_ms = duration_result.scalar_one_or_none() or 0
+        
+        # 获取时间范围
+        time_range_result = await self.session.execute(
+            select(
+                func.min(ExecutionLog.created_at).label('first'),
+                func.max(ExecutionLog.created_at).label('last'),
+            )
+            .where(ExecutionLog.trace_id == trace_id)
+        )
+        time_range = time_range_result.fetchone()
+        
+        return {
+            "trace_id": trace_id,
+            "level_stats": level_stats,
+            "category_stats": category_stats,
+            "total_duration_ms": total_duration_ms,
+            "first_log_at": time_range[0].isoformat() if time_range and time_range[0] else None,
+            "last_log_at": time_range[1].isoformat() if time_range and time_range[1] else None,
+            "total_logs": sum(level_stats.values()),
+        }
+    
+    async def get_error_logs_by_trace(
+        self,
+        trace_id: str,
+        limit: int = 50,
+    ) -> List[ExecutionLog]:
+        """
+        获取指定 trace_id 的错误日志
+        
+        Args:
+            trace_id: 追踪 ID
+            limit: 返回数量限制
+            
+        Returns:
+            错误日志列表（按时间降序）
+        """
+        result = await self.session.execute(
+            select(ExecutionLog)
+            .where(
+                ExecutionLog.trace_id == trace_id,
+                ExecutionLog.level == "error",
+            )
+            .order_by(ExecutionLog.created_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
 

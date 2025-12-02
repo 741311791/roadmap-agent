@@ -77,6 +77,20 @@ class RoadmapTask(SQLModel, table=True):
     
     # 错误信息
     error_message: Optional[str] = Field(default=None, sa_column=Column(Text))
+    
+    # 失败概念列表（JSON 格式，包含 concept_id, reason, timestamp）
+    failed_concepts: Optional[dict] = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+        description="失败概念的详细信息：{concept_id: {reason, content_type, timestamp}}"
+    )
+    
+    # 执行摘要（JSON 格式，包含总数、成功数、失败数等）
+    execution_summary: Optional[dict] = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+        description="执行摘要：{total, completed, failed, skipped, duration_seconds}"
+    )
 
 
 class RoadmapMetadata(SQLModel, table=True):
@@ -137,7 +151,7 @@ class TutorialMetadata(SQLModel, table=True):
 
 
 class IntentAnalysisMetadata(SQLModel, table=True):
-    """需求分析结果元数据表（A1: 需求分析师产出）"""
+    """需求分析结果元数据表（A1: 需求分析师产出，增强版）"""
     __tablename__ = "intent_analysis_metadata"
     
     id: str = Field(
@@ -146,12 +160,19 @@ class IntentAnalysisMetadata(SQLModel, table=True):
     )
     task_id: str = Field(foreign_key="roadmap_tasks.task_id", index=True)
     
-    # 分析结果
+    # 原有分析结果字段
     parsed_goal: str = Field(sa_column=Column(Text))
     key_technologies: list = Field(sa_column=Column(JSON))  # List[str]
     difficulty_profile: str = Field(sa_column=Column(Text))
     time_constraint: str = Field(sa_column=Column(Text))
     recommended_focus: list = Field(sa_column=Column(JSON))  # List[str]
+    
+    # 新增分析维度字段
+    user_profile_summary: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    skill_gap_analysis: list = Field(default=[], sa_column=Column(JSON))  # List[str]
+    personalized_suggestions: list = Field(default=[], sa_column=Column(JSON))  # List[str]
+    estimated_learning_path_type: Optional[str] = Field(default=None)  # quick_start, deep_dive, career_transition, skill_upgrade
+    content_format_weights: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))  # {visual, text, audio, hands_on}
     
     # 完整分析数据（JSON 格式，用于恢复）
     full_analysis_data: dict = Field(sa_column=Column(JSON))
@@ -204,6 +225,96 @@ class QuizMetadata(SQLModel, table=True):
     hard_count: int = Field(default=0)
     
     generated_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False))
+    )
+
+
+class UserProfile(SQLModel, table=True):
+    """
+    用户画像表
+    
+    存储用户的个人偏好设置，用于个性化路线图生成。
+    """
+    __tablename__ = "user_profiles"
+    
+    user_id: str = Field(primary_key=True)
+    
+    # 职业背景
+    industry: Optional[str] = Field(default=None, description="所属行业")
+    current_role: Optional[str] = Field(default=None, description="当前职位")
+    
+    # 技术栈 (JSON: [{technology: str, proficiency: str}])
+    tech_stack: list = Field(default=[], sa_column=Column(JSON))
+    
+    # 语言偏好
+    primary_language: str = Field(default="zh", description="主要语言")
+    secondary_language: Optional[str] = Field(default=None, description="次要语言")
+    
+    # 学习习惯
+    weekly_commitment_hours: int = Field(default=10, description="每周学习时间（小时）")
+    # 学习风格 (JSON: ['visual', 'text', 'audio', 'hands_on'])
+    learning_style: list = Field(default=[], sa_column=Column(JSON))
+    
+    # AI 个性化开关
+    ai_personalization: bool = Field(default=True, description="是否启用 AI 个性化")
+    
+    created_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False))
+    )
+    updated_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False))
+    )
+
+
+class ExecutionLog(SQLModel, table=True):
+    """
+    执行日志表
+    
+    记录工作流执行过程中的关键事件，用于：
+    - 通过 trace_id 追踪请求完整生命周期
+    - 聚合错误报告
+    - 性能分析和问题定位
+    
+    日志级别：
+    - debug: 调试信息（开发环境）
+    - info: 正常执行信息
+    - warning: 警告（可恢复的问题）
+    - error: 错误（导致失败的问题）
+    """
+    __tablename__ = "execution_logs"
+    
+    id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        primary_key=True,
+    )
+    
+    # 关联字段
+    trace_id: str = Field(index=True, description="追踪 ID，对应 task_id")
+    roadmap_id: Optional[str] = Field(default=None, index=True, description="路线图 ID")
+    concept_id: Optional[str] = Field(default=None, index=True, description="概念 ID")
+    
+    # 日志分类
+    level: str = Field(default="info", index=True, description="日志级别: debug, info, warning, error")
+    category: str = Field(index=True, description="日志分类: workflow, agent, tool, database")
+    step: Optional[str] = Field(default=None, index=True, description="当前步骤")
+    agent_name: Optional[str] = Field(default=None, index=True, description="Agent 名称")
+    
+    # 日志内容
+    message: str = Field(sa_column=Column(Text), description="日志消息")
+    details: Optional[dict] = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+        description="详细数据（如输入输出、错误堆栈等）"
+    )
+    
+    # 性能指标
+    duration_ms: Optional[int] = Field(default=None, description="执行耗时（毫秒）")
+    
+    # 时间戳
+    created_at: datetime = Field(
         default_factory=beijing_now,
         sa_column=Column(DateTime(timezone=False))
     )
