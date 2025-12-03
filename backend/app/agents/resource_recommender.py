@@ -75,18 +75,26 @@ class ResourceRecommenderAgent(BaseAgent):
             }
         ]
     
-    async def _handle_tool_calls(self, tool_calls: List[Any]) -> tuple[List[Dict[str, Any]], List[str]]:
+    async def _handle_tool_calls(
+        self, 
+        tool_calls: List[Any],
+        user_preferences: LearningPreferences | None = None
+    ) -> tuple[List[Dict[str, Any]], List[str]]:
         """
         处理 LLM 返回的工具调用请求
         
         Args:
             tool_calls: 工具调用列表
+            user_preferences: 用户偏好（可选，如果未提供则从实例变量获取）
             
         Returns:
             (工具调用结果列表, 使用的搜索查询列表)
         """
         tool_messages = []
         search_queries_used = []
+        
+        # 获取用户偏好（优先使用参数，否则使用实例变量）
+        prefs = user_preferences or getattr(self, '_current_user_preferences', None)
         
         for tool_call in tool_calls:
             tool_name = tool_call.function.name
@@ -111,10 +119,27 @@ class ResourceRecommenderAgent(BaseAgent):
                     if not search_tool:
                         raise RuntimeError("Web Search Tool 未注册")
                     
-                    # 构建搜索查询
+                    # 构建搜索查询（包含语言和内容类型信息）
+                    # 从 user_preferences 提取语言信息（如果可用）
+                    language = None
+                    if prefs and prefs.preferred_language:
+                        language = prefs.preferred_language
+                    
+                    # 从查询中推断内容类型（如果可能）
+                    content_type = None
+                    query_lower = tool_args["query"].lower()
+                    if any(keyword in query_lower for keyword in ["video", "tutorial", "course", "youtube", "bilibili"]):
+                        content_type = "video"
+                    elif any(keyword in query_lower for keyword in ["documentation", "docs", "api"]):
+                        content_type = "documentation"
+                    elif any(keyword in query_lower for keyword in ["article", "blog", "post"]):
+                        content_type = "article"
+                    
                     search_query = SearchQuery(
                         query=tool_args["query"],
                         max_results=tool_args.get("max_results", 5),
+                        language=language,
+                        content_type=content_type,
                     )
                     
                     # 执行搜索
@@ -174,6 +199,10 @@ class ResourceRecommenderAgent(BaseAgent):
         """
         为给定的 Concept 推荐学习资源
         
+        支持双语资源推荐：
+        - 如果用户设置了不同的主语言和次语言，按 60%/40% 比例分配资源
+        - 如果只有主语言，则 100% 使用主语言资源
+        
         Args:
             concept: 要推荐资源的概念
             context: 上下文信息（所属阶段、模块等）
@@ -182,7 +211,30 @@ class ResourceRecommenderAgent(BaseAgent):
         Returns:
             资源推荐结果
         """
-        # 加载 System Prompt
+        # 保存用户偏好到实例变量，供工具调用时使用
+        self._current_user_preferences = user_preferences
+        
+        # 获取语言偏好和资源分配比例
+        language_prefs = user_preferences.get_language_preferences()
+        resource_ratio = language_prefs.get_effective_ratio()
+        
+        # 判断是否需要双语搜索
+        has_bilingual = (
+            language_prefs.secondary_language and 
+            language_prefs.secondary_language != language_prefs.primary_language and
+            resource_ratio["secondary"] > 0
+        )
+        
+        logger.info(
+            "resource_recommender_language_config",
+            concept_id=concept.concept_id,
+            primary_language=language_prefs.primary_language,
+            secondary_language=language_prefs.secondary_language,
+            resource_ratio=resource_ratio,
+            has_bilingual=has_bilingual,
+        )
+        
+        # 加载 System Prompt（包含语言偏好信息）
         system_prompt = self._load_system_prompt(
             "resource_recommender.j2",
             agent_name="Resource Recommender",
@@ -190,9 +242,40 @@ class ResourceRecommenderAgent(BaseAgent):
             concept=concept,
             context=context,
             user_preferences=user_preferences,
+            language_preferences=language_prefs.model_dump(),
+            resource_ratio=resource_ratio,
         )
         
-        # 构建用户消息
+        # 根据内容偏好构建搜索建议
+        content_pref_map = {
+            "visual": "视频教程、图解、演示",
+            "text": "文档、文章、书籍",
+            "audio": "播客、有声内容",
+            "hands_on": "互动练习、项目实战",
+        }
+        content_pref_desc = ", ".join([
+            content_pref_map.get(pref, pref) 
+            for pref in user_preferences.content_preference
+        ])
+        
+        # 构建语言分配指令
+        if has_bilingual:
+            primary_count = int(10 * resource_ratio["primary"])  # 假设推荐10个资源
+            secondary_count = 10 - primary_count
+            language_instruction = f"""
+**语言分配要求**（重要）:
+- 主要语言（{language_prefs.primary_language}）资源: 约 {int(resource_ratio['primary'] * 100)}%（约 {primary_count} 个）
+- 次要语言（{language_prefs.secondary_language}）资源: 约 {int(resource_ratio['secondary'] * 100)}%（约 {secondary_count} 个）
+- 每个资源需要在 JSON 输出中标注其语言（language 字段）
+- 搜索时需要分别使用主语言和次语言的搜索查询
+"""
+        else:
+            language_instruction = f"""
+**语言要求**:
+- 主要使用 {language_prefs.primary_language} 语言的资源
+- 每个资源需要在 JSON 输出中标注其语言（language 字段）
+"""
+        
         user_message = f"""
 请为以下概念推荐高质量的学习资源：
 
@@ -207,13 +290,16 @@ class ResourceRecommenderAgent(BaseAgent):
 - 所属模块: {context.get("module_name", "未知")}
 
 **用户偏好**:
-- 内容偏好: {", ".join(user_preferences.content_preference)}
+- 内容偏好: {content_pref_desc}
 - 当前水平: {user_preferences.current_level}
-
+{language_instruction}
 请执行以下步骤：
-1. 使用 web_search 工具搜索与概念相关的官方文档、教程、课程等资源
-2. 基于搜索结果和你的知识，筛选 5-10 个高质量资源
-3. 按相关性评分排序，输出 JSON 格式的推荐结果
+1. 根据用户的内容偏好（{", ".join(user_preferences.content_preference)}）和语言分配要求，构建针对性的搜索查询
+2. 使用 web_search 工具搜索与概念相关的官方文档、教程、课程等资源
+   - 优先搜索用户偏好的内容类型（如偏好 visual，优先搜索视频教程）
+   - **按语言分配比例分别搜索不同语言的资源**
+3. 基于搜索结果和你的知识，筛选 8-10 个高质量资源（按语言比例分配）
+4. 按相关性评分排序，输出 JSON 格式的推荐结果（每个资源包含 language 字段）
 """
         
         messages = [
@@ -266,8 +352,11 @@ class ResourceRecommenderAgent(BaseAgent):
                     ]
                 })
                 
-                # 处理工具调用
-                tool_messages, search_queries = await self._handle_tool_calls(message.tool_calls)
+                # 处理工具调用（传递用户偏好）
+                tool_messages, search_queries = await self._handle_tool_calls(
+                    message.tool_calls,
+                    user_preferences=user_preferences
+                )
                 messages.extend(tool_messages)
                 all_search_queries.extend(search_queries)
                 

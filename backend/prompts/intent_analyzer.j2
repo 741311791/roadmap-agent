@@ -20,7 +20,15 @@
   - {{ tech.technology }}（{{ tech.proficiency }}）
 {% endfor %}
 {% endif %}
-{% if user_profile.preferred_language %}- 偏好学习语言：{{ user_profile.preferred_language }}{% endif %}
+{% endif %}
+
+{% if language_preferences %}
+语言偏好设置：
+- 主要语言：{{ language_preferences.primary_language | default('zh') }}
+{% if language_preferences.secondary_language and language_preferences.secondary_language != language_preferences.primary_language %}
+- 次要语言：{{ language_preferences.secondary_language }}
+- 资源分配建议：主语言资源 60%，次语言资源 40%
+{% endif %}
 {% endif %}
 
 {% if execution_history %}
@@ -38,11 +46,16 @@
 4. 评估技能差距，提供针对性的学习建议
 5. 根据用户的内容偏好推荐合适的学习方式权重
 6. 考虑时间约束和学习动机，规划合理的学习路径
-7. 输出必须严格遵循 JSON Schema 格式
+7. **语言偏好处理**：
+   - 根据用户的主要语言生成路线图标题和教程内容
+   - 如果用户设置了不同的次要语言，资源推荐需按 60%/40% 比例分配
+   - 主要语言用于教程生成，次要语言仅用于资源推荐的补充
+8. 输出必须严格遵循 JSON Schema 格式
 
 [4. Output Format]
 输出必须严格遵循以下 JSON Schema：
 {
+  "roadmap_id": "string - **路线图唯一标识**（格式：英文语义短语-8位随机后缀），详见下方说明",
   "parsed_goal": "string - 结构化的学习目标",
   "key_technologies": ["string"] - 需要学习的关键技术栈列表,
   "difficulty_profile": "string - 难度画像分析",
@@ -57,8 +70,32 @@
     "text": 0.0-1.0,
     "audio": 0.0-1.0,
     "hands_on": 0.0-1.0
-  } - 基于用户偏好的内容格式权重分配（总和为1.0）
+  } - 基于用户偏好的内容格式权重分配（总和为1.0）,
+  "language_preferences": {
+    "primary_language": "string - 主要语言代码（如 'zh', 'en'），用于生成教程和路线图",
+    "secondary_language": "string | null - 次要语言代码（如 'en', 'zh'），用于资源推荐补充",
+    "resource_ratio": {
+      "primary": 0.6 - 主语言资源占比（如果有次语言则为 0.6，否则为 1.0）,
+      "secondary": 0.4 - 次语言资源占比（如果有次语言则为 0.4，否则为 0.0）
+    }
+  } - 语言偏好配置，影响教程语言和资源推荐的语言分布
 }
+
+**roadmap_id 生成规则（重要）**：
+1. **格式**：`<英文语义短语>-<8位随机字符>`
+2. **英文语义短语**：从学习目标中提取核心关键词，翻译成英文，用连字符连接
+   - 保持简洁（20-40个字符）
+   - 全部小写
+   - 只使用字母、数字和连字符
+   - 体现学习目标的核心内容
+3. **8位随机字符**：生成8位随机字母数字组合（小写）
+4. **示例**：
+   - "学习Python Web开发" → "python-web-development-a1b2c3d4"
+   - "成为全栈工程师" → "fullstack-engineer-x9y8z7w6"
+   - "掌握React前端框架" → "react-frontend-framework-m4n5o6p7"
+   - "Kubernetes云原生技术" → "kubernetes-cloud-native-k1j2h3g4"
+
+**重要**：roadmap_id 必须完全是英文，即使学习目标是中文，也要翻译成有意义的英文短语。
 
 [5. Tool Usage Guide]
 {% if tools %}
@@ -69,7 +106,7 @@
 {% endif %}
 
 [6. Examples (Few-shot)]
-参考示例 1（转行用户）：
+参考示例 1（转行用户，中文为主）：
 用户输入：
 - 学习目标：成为全栈工程师
 - 每周可投入时间：10 小时
@@ -78,9 +115,12 @@
 - 职业背景：市场营销 3 年经验
 - 内容偏好：visual, hands_on
 - 用户画像：行业-互联网，职位-市场专员，无技术栈
+- 主要语言：zh（中文）
+- 次要语言：en（英文）
 
 输出：
 {
+  "roadmap_id": "fullstack-web-development-a7f3e2c1",
   "parsed_goal": "从零开始学习全栈开发，掌握前端和后端核心技术，能够独立开发 Web 应用",
   "key_technologies": ["HTML", "CSS", "JavaScript", "React", "Node.js", "PostgreSQL", "Git"],
   "difficulty_profile": "用户为非技术背景的初学者，需要从编程基础概念开始，循序渐进，注重实战项目以建立信心",
@@ -95,10 +135,18 @@
     "text": 0.15,
     "audio": 0.05,
     "hands_on": 0.4
+  },
+  "language_preferences": {
+    "primary_language": "zh",
+    "secondary_language": "en",
+    "resource_ratio": {
+      "primary": 0.6,
+      "secondary": 0.4
+    }
   }
 }
 
-参考示例 2（技能升级用户）：
+参考示例 2（技能升级用户，英文为主）：
 用户输入：
 - 学习目标：学习 Kubernetes 和云原生技术
 - 每周可投入时间：8 小时
@@ -107,9 +155,12 @@
 - 职业背景：后端开发 5 年经验
 - 内容偏好：text, hands_on
 - 用户画像：行业-科技，职位-高级后端工程师，技术栈-Python(expert), Docker(intermediate), AWS(beginner)
+- 主要语言：en（英文）
+- 次要语言：无
 
 输出：
 {
+  "roadmap_id": "kubernetes-cloud-native-m9n8k7j6",
   "parsed_goal": "系统学习 Kubernetes 和云原生技术栈，掌握容器编排和微服务架构，能够设计和部署生产级云原生应用",
   "key_technologies": ["Kubernetes", "Helm", "Prometheus", "Grafana", "Istio", "ArgoCD", "Terraform"],
   "difficulty_profile": "用户有扎实的后端开发基础和 Docker 经验，学习 K8s 有较好的基础。重点在于理解分布式系统概念和实际运维经验",
@@ -124,6 +175,14 @@
     "text": 0.35,
     "audio": 0.05,
     "hands_on": 0.45
+  },
+  "language_preferences": {
+    "primary_language": "en",
+    "secondary_language": null,
+    "resource_ratio": {
+      "primary": 1.0,
+      "secondary": 0.0
+    }
   }
 }
 

@@ -61,6 +61,67 @@ def merge_dicts(left: dict, right: dict) -> dict:
     return {**left, **right}
 
 
+async def ensure_unique_roadmap_id(roadmap_id: str, repo) -> str:
+    """
+    确保 roadmap_id 在数据库中是唯一的
+    
+    如果 roadmap_id 已存在，则重新生成后缀直到唯一。
+    
+    Args:
+        roadmap_id: IntentAnalyzerAgent 生成的 roadmap_id
+        repo: RoadmapRepository 实例
+        
+    Returns:
+        唯一的 roadmap_id
+    """
+    import uuid
+    import re
+    
+    # 检查是否已存在
+    if not await repo.roadmap_id_exists(roadmap_id):
+        logger.debug(
+            "roadmap_id_unique",
+            roadmap_id=roadmap_id,
+        )
+        return roadmap_id
+    
+    # 提取基础部分和后缀（假设格式为 xxx-xxx-xxxxxxxx）
+    # 找到最后一个 8 位字母数字后缀
+    pattern = r'^(.+)-([a-z0-9]{8})$'
+    match = re.match(pattern, roadmap_id)
+    
+    if match:
+        base_part = match.group(1)  # 例如 "python-web-development"
+    else:
+        # 如果格式不符合预期，使用整个 roadmap_id 作为基础
+        base_part = roadmap_id.rsplit('-', 1)[0] if '-' in roadmap_id else roadmap_id
+    
+    # 重新生成后缀直到唯一
+    max_attempts = 10
+    for attempt in range(max_attempts):
+        new_suffix = uuid.uuid4().hex[:8]
+        new_roadmap_id = f"{base_part}-{new_suffix}"
+        
+        if not await repo.roadmap_id_exists(new_roadmap_id):
+            logger.info(
+                "roadmap_id_regenerated",
+                original=roadmap_id,
+                new=new_roadmap_id,
+                attempt=attempt + 1,
+            )
+            return new_roadmap_id
+    
+    # 如果 10 次都失败，使用完全随机的后缀
+    fallback_id = f"{base_part}-{uuid.uuid4().hex[:12]}"
+    logger.warning(
+        "roadmap_id_fallback",
+        original=roadmap_id,
+        fallback=fallback_id,
+        reason="max_attempts_exceeded",
+    )
+    return fallback_id
+
+
 class RoadmapState(TypedDict):
     """
     工作流全局状态
@@ -71,9 +132,10 @@ class RoadmapState(TypedDict):
     """
     # 输入
     user_request: UserRequest
+    trace_id: str
     
-    # 预生成的 roadmap_id（在 API 层生成，用于加速前端跳转）
-    pre_generated_roadmap_id: str | None
+    # 路线图ID（在需求分析完成后生成）
+    roadmap_id: str | None
     
     # 中间产出
     intent_analysis: IntentAnalysisOutput | None
@@ -375,18 +437,79 @@ class RoadmapOrchestrator:
                 },
             )
             
-            # 发布步骤完成通知
+            # 从 IntentAnalyzerAgent 的输出中获取 roadmap_id
+            # 验证唯一性，如果重复则重新生成后缀
+            from app.db.repositories.roadmap_repo import RoadmapRepository
+            from app.db.session import AsyncSessionLocal
+            
+            async with AsyncSessionLocal() as session:
+                repo = RoadmapRepository(session)
+                
+                # 如果 LLM 没有生成 roadmap_id，则使用回退方案
+                if not result.roadmap_id or not result.roadmap_id.strip():
+                    logger.warning(
+                        "roadmap_id_missing_from_llm",
+                        trace_id=trace_id,
+                        message="IntentAnalyzerAgent 未生成 roadmap_id，使用回退方案",
+                    )
+                    # 回退：基于技术栈生成简单 ID
+                    import uuid
+                    tech_slug = "-".join(result.key_technologies[:2]).lower().replace(" ", "-")[:30] if result.key_technologies else "roadmap"
+                    result.roadmap_id = f"{tech_slug}-{uuid.uuid4().hex[:8]}"
+                
+                # 验证并确保唯一性
+                original_id = result.roadmap_id
+                unique_id = await ensure_unique_roadmap_id(result.roadmap_id, repo)
+                result.roadmap_id = unique_id
+                
+                if original_id != unique_id:
+                    logger.info(
+                        "roadmap_id_uniqueness_ensured",
+                        trace_id=trace_id,
+                        original_id=original_id,
+                        unique_id=unique_id,
+                    )
+                else:
+                    logger.info(
+                        "roadmap_id_validated",
+                        trace_id=trace_id,
+                        roadmap_id=unique_id,
+                        learning_goal=state["user_request"].preferences.learning_goal[:50],
+                    )
+                
+                # 🔧 关键修复：立即更新task记录的roadmap_id字段
+                # 这样前端跳转时就能通过roadmap_id找到活跃的task
+                await repo.update_task_status(
+                    task_id=trace_id,
+                    status="processing",
+                    current_step="intent_analysis",
+                    roadmap_id=unique_id,
+                )
+                await session.commit()
+                
+                logger.info(
+                    "task_roadmap_id_updated",
+                    trace_id=trace_id,
+                    roadmap_id=unique_id,
+                    message="已将roadmap_id关联到task记录，前端现在可以安全跳转",
+                )
+            
+            # 发布步骤完成通知，包含roadmap_id
             await notification_service.publish_progress(
                 task_id=trace_id,
                 step="intent_analysis",
                 status="completed",
                 message="需求分析完成",
-                extra_data={"key_technologies": result.key_technologies[:5]},
+                extra_data={
+                    "key_technologies": result.key_technologies[:5],
+                    "roadmap_id": result.roadmap_id,  # 通过websocket发送roadmap_id给前端
+                },
             )
             
             # 使用 reducer 后，直接返回新条目（会自动追加）
             return {
                 "intent_analysis": result,
+                "roadmap_id": result.roadmap_id,  # 添加到state中
                 "current_step": "intent_analysis",
                 "execution_history": ["需求分析完成"],  # reducer 会自动追加
             }
@@ -430,7 +553,7 @@ class RoadmapOrchestrator:
             step="curriculum_design",
             trace_id=trace_id,
             has_intent_analysis=bool(state.get("intent_analysis")),
-            pre_generated_roadmap_id=state.get("pre_generated_roadmap_id"),
+            roadmap_id=state.get("roadmap_id"),
         )
         
         # 记录执行日志
@@ -457,10 +580,16 @@ class RoadmapOrchestrator:
                 provider=agent.model_provider,
             )
             
+            # 使用已生成和验证过的 roadmap_id
+            roadmap_id = state.get("roadmap_id")
+            if not roadmap_id:
+                # 如果还没有 roadmap_id（不应该发生），抛出错误
+                raise ValueError("roadmap_id 在 intent_analysis 阶段未生成")
+            
             result = await agent.design(
                 intent_analysis=state["intent_analysis"],
                 user_preferences=state["user_request"].preferences,
-                pre_generated_roadmap_id=state.get("pre_generated_roadmap_id"),
+                roadmap_id=roadmap_id,  # 传入已生成和验证过的roadmap_id
             )
             
             duration_ms = int((time.time() - start_time) * 1000)
@@ -1390,7 +1519,8 @@ class RoadmapOrchestrator:
         
         initial_state: RoadmapState = {
             "user_request": user_request,
-            "pre_generated_roadmap_id": pre_generated_roadmap_id,
+            "trace_id": trace_id,
+            "roadmap_id": None,  # 将在需求分析完成后生成
             "intent_analysis": None,
             "roadmap_framework": None,
             "validation_result": None,
@@ -1401,7 +1531,6 @@ class RoadmapOrchestrator:
             "current_step": "init",
             "modification_count": 0,
             "human_approved": False,
-            "trace_id": trace_id,
             "execution_history": [],
         }
         

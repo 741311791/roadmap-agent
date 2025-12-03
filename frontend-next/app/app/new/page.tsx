@@ -62,8 +62,7 @@ export default function NewRoadmapPage() {
   const wsRef = useRef<TaskWebSocket | null>(null);
   const hasNavigatedRef = useRef(false); // Track if we've already navigated
   
-  // Roadmap store for setting up live generation tracking
-  const { setActiveTask, setActiveGenerationPhase, setLiveGenerating } = useRoadmapStore();
+  // Roadmap store (no longer needed for live generation tracking)
   
   // Profile state
   const [userProfile, setUserProfile] = useState<UserProfileData | null>(null);
@@ -206,11 +205,7 @@ export default function NewRoadmapPage() {
             hasNavigatedRef.current = true;
             console.log('[Generate] Early navigation from status, roadmap_id:', event.roadmap_id);
             
-            setActiveTask(newTaskId);
-            setLiveGenerating(true);
-            setActiveGenerationPhase('content_generation');
-            
-            router.push(`/app/roadmap/${event.roadmap_id}?task_id=${newTaskId}&generating=true`);
+            router.push(`/app/roadmap/${event.roadmap_id}`);
             return;
           }
           
@@ -246,12 +241,6 @@ export default function NewRoadmapPage() {
           const message = event.message || undefined;
           updateProgressFromStep(event.step, undefined, message);
           
-          // Update generation phase in store
-          const phase = mapStepToPhase(event.step);
-          if (phase) {
-            setActiveGenerationPhase(phase);
-          }
-          
           // Extract additional info from data
           if (event.data) {
             if (event.data.stages_count) {
@@ -269,16 +258,8 @@ export default function NewRoadmapPage() {
               
               console.log('[Generate] Early navigation triggered, roadmap_id:', roadmapId);
               
-              // Set up live generation tracking in store
-              setActiveTask(newTaskId);
-              setLiveGenerating(true);
-              setActiveGenerationPhase('content_generation');
-              
-              // Don't disconnect WebSocket - let roadmap page handle it
-              // wsRef.current will be cleaned up when component unmounts
-              
-              // Navigate to roadmap page with task_id for continued updates
-              router.push(`/app/roadmap/${roadmapId}?task_id=${newTaskId}&generating=true`);
+              // Navigate to roadmap page (it will detect active task automatically)
+              router.push(`/app/roadmap/${roadmapId}`);
             }
           }
         },

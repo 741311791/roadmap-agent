@@ -16,6 +16,12 @@
 - 用户学习偏好：{{ user_preferences.content_preference | join(", ") }}
 - 用户当前水平：{{ user_preferences.current_level }}
 
+{% if language_preferences %}
+语言偏好设置：
+- 教程语言：{{ language_preferences.primary_language | default('zh') }}
+**重要**：教程内容必须完全使用主要语言（{{ language_preferences.primary_language | default('zh') }}）编写。
+{% endif %}
+
 [3. Constraints & Rules]
 工作规范：
 1. 为给定的 Concept 生成详细、易懂、实用的教程内容

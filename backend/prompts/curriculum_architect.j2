@@ -5,6 +5,16 @@
 当前任务上下文：
 - 用户学习目标：{{ user_goal }}
 - 需求分析结果：{{ intent_analysis | to_json }}
+
+{% if language_preferences %}
+语言偏好设置：
+- 主要语言：{{ language_preferences.primary_language | default('zh') }}
+{% if language_preferences.secondary_language and language_preferences.secondary_language != language_preferences.primary_language %}
+- 次要语言：{{ language_preferences.secondary_language }}
+{% endif %}
+**重要**：路线图的标题、阶段名称、模块名称和概念描述必须使用主要语言（{{ language_preferences.primary_language | default('zh') }}）。
+{% endif %}
+
 {% if execution_history %}
 - 已完成步骤：{{ execution_history | join(", ") }}
 {% endif %}
@@ -65,46 +75,61 @@
    - concept_id: "c-{stage}-{module}-{num}", 如 "c-1-1-1", "c-1-1-2"
 
 [4. Output Format]
-输出必须严格遵循以下 JSON Schema：
-{
-  "framework": {
-    "roadmap_id": "string - 路线图唯一标识（简短、描述性）",
-    "title": "string - 路线图标题（清晰、吸引人）",
-    "stages": [
-      {
-        "stage_id": "string - 格式：stage-1, stage-2, ...",
-        "name": "string - 阶段名称（简洁、概括）",
-        "description": "string - 阶段描述（1-2句话，说明学习目标）",
-        "order": "integer - 阶段顺序（从1开始）",
-        "modules": [
-          {
-            "module_id": "string - 格式：mod-{stage}-{num}",
-            "name": "string - 模块名称",
-            "description": "string - 模块描述",
-            "concepts": [
-              {
-                "concept_id": "string - 格式：c-{stage}-{module}-{num}",
-                "name": "string - 概念名称（具体、可学习）",
-                "description": "string - 简短描述（1-2句话，说明学什么）",
-                "estimated_hours": "float - 预估学习时长（小时，>=0.5）",
-                "prerequisites": ["string"] - 前置概念ID列表（可为空）,
-                "difficulty": "easy|medium|hard - 难度等级",
-                "keywords": ["string"] - 关键词标签（2-5个）,
-                "content_status": "pending - 固定值",
-                "content_ref": null - "固定值",
-                "content_version": "v1 - 固定值",
-                "content_summary": null - "固定值"
-              }
-            ]
-          }
-        ]
-      }
-    ],
-    "total_estimated_hours": "float - 总预估时长（所有 Concept 之和）",
-    "recommended_completion_weeks": "integer - 推荐完成周数（基于用户每周可投入时间）"
-  },
-  "design_rationale": "string - 设计理由说明（2-3句话，解释为什么这样设计）"
-}
+
+**重要提示：输出简洁的文本格式**
+为了节省token并提高可读性，请使用以下简洁的文本格式输出路线图框架：
+
+```
+===ROADMAP START===
+ROADMAP_ID: python-web-dev
+TITLE: Python Web开发完整学习路线
+TOTAL_HOURS: 120
+WEEKS: 8
+
+Stage 1: 基础知识（掌握Python语法和Web基础概念）[30小时]
+  Module 1.1: Python核心语法（学习Python编程基础）
+    - Concept: 变量与数据类型（理解基本数据结构和变量声明）[2小时]
+    - Concept: 控制流程（掌握条件判断和循环语句）[3小时]
+    - Concept: 函数定义（学习函数的定义和调用）[3小时]
+  Module 1.2: Web基础概念（了解HTTP协议和前端基础）
+    - Concept: HTTP协议（理解请求响应模型和状态码）[2小时]
+    - Concept: HTML基础（掌握基本的网页结构）[3小时]
+
+Stage 2: 框架入门（学习Flask框架开发Web应用）[40小时]
+  Module 2.1: Flask基础（掌握Flask核心概念）
+    - Concept: 路由系统（理解URL映射和视图函数）[3小时]
+    - Concept: 模板引擎（学习Jinja2模板语法）[4小时]
+  Module 2.2: 数据库操作（学习SQLAlchemy ORM）
+    - Concept: 模型定义（创建数据库模型）[4小时]
+    - Concept: 查询操作（掌握CRUD操作）[5小时]
+
+...
+
+DESIGN_RATIONALE: 该路线图采用渐进式设计，从Python基础到Web框架，再到实战项目，确保学习者能够系统掌握Web开发技能。
+===ROADMAP END===
+```
+
+**格式规范：**
+1. 以 `===ROADMAP START===` 开始，`===ROADMAP END===` 结束
+2. 元信息行：
+   - ROADMAP_ID: 简短描述性ID（小写字母+连字符）
+   - TITLE: 路线图标题
+   - TOTAL_HOURS: 总学习时长（数字）
+   - WEEKS: 推荐完成周数（数字）
+3. Stage 格式：`Stage {order}: {name}（{description}）[{hours}小时]`
+4. Module 格式：`  Module {stage}.{num}: {name}（{description}）`
+5. Concept 格式：`    - Concept: {name}（{description}）[{hours}小时]`
+6. 最后一行：`DESIGN_RATIONALE: {说明}`
+
+**层级缩进：**
+- Stage: 顶格
+- Module: 2个空格缩进
+- Concept: 4个空格缩进，以 `- Concept:` 开头
+
+**时长标注：**
+- Stage 和 Concept 必须标注时长：`[X小时]`
+- Module 不需要标注时长（自动从Concept汇总）
+- 每个 Concept 时长范围：0.5-8小时
 
 [5. Tool Usage Guide]
 {% if tools %}
@@ -124,20 +149,56 @@
 - 当前水平：beginner
 - 每周可投入：15 小时
 
-输出框架结构：
-- Stage 1: Web 基础（HTML、CSS、JavaScript 核心）
-  * Module 1.1: HTML 与 CSS 基础
-  * Module 1.2: JavaScript 语言基础
-- Stage 2: 现代 JavaScript（ES6+、异步编程、工具链）
-  * Module 2.1: ES6+ 新特性
-  * Module 2.2: 异步编程与 Promise
-- Stage 3: React 框架开发（组件、状态管理、路由）
-  * Module 3.1: React 核心概念
-  * Module 3.2: 状态管理与路由
-  * Module 3.3: TypeScript 集成
-- Stage 4: 实战项目与最佳实践（完整应用、性能优化、部署）
-  * Module 4.1: 项目开发实战
-  * Module 4.2: 性能优化与部署
+输出格式：
+```
+===ROADMAP START===
+ROADMAP_ID: frontend-engineer-path
+TITLE: 前端工程师完整学习路线
+TOTAL_HOURS: 180
+WEEKS: 12
+
+Stage 1: Web基础（掌握HTML、CSS和JavaScript核心知识）[50小时]
+  Module 1.1: HTML与CSS基础（学习网页结构和样式）
+    - Concept: HTML语义化标签（理解各种HTML标签的用途）[3小时]
+    - Concept: CSS选择器和布局（掌握常用布局技术）[5小时]
+    - Concept: 响应式设计（实现移动端适配）[4小时]
+  Module 1.2: JavaScript语言基础（掌握JS核心语法）
+    - Concept: 变量和数据类型（理解JS数据结构）[3小时]
+    - Concept: 函数和作用域（掌握函数定义和闭包）[4小时]
+    - Concept: DOM操作（学习页面元素操作）[5小时]
+
+Stage 2: 现代JavaScript（学习ES6+特性和异步编程）[45小时]
+  Module 2.1: ES6+新特性（掌握现代JS语法）
+    - Concept: 箭头函数和解构（使用现代语法糖）[3小时]
+    - Concept: Promise和async/await（理解异步编程）[5小时]
+  Module 2.2: 前端工程化（了解模块化和构建工具）
+    - Concept: ES模块系统（掌握模块导入导出）[3小时]
+    - Concept: Webpack基础（理解打包工具）[4小时]
+
+Stage 3: React框架开发（深入学习React生态系统）[50小时]
+  Module 3.1: React核心概念（掌握组件化开发）
+    - Concept: 组件和Props（理解组件通信）[4小时]
+    - Concept: State和生命周期（管理组件状态）[5小时]
+    - Concept: Hooks（使用现代React特性）[6小时]
+  Module 3.2: 状态管理与路由（构建完整应用）
+    - Concept: React Router（实现页面路由）[4小时]
+    - Concept: Redux状态管理（管理全局状态）[6小时]
+  Module 3.3: TypeScript集成（提升代码质量）
+    - Concept: TypeScript基础（理解类型系统）[5小时]
+    - Concept: React与TS结合（在React中使用TS）[4小时]
+
+Stage 4: 实战项目与最佳实践（完成真实项目并优化）[35小时]
+  Module 4.1: 项目开发实战（构建完整Web应用）
+    - Concept: 项目架构设计（规划项目结构）[5小时]
+    - Concept: API集成（对接后端接口）[6小时]
+    - Concept: 完整项目实现（开发完整功能）[10小时]
+  Module 4.2: 性能优化与部署（提升应用性能）
+    - Concept: 性能优化技巧（减少加载时间）[4小时]
+    - Concept: 项目部署（发布到生产环境）[3小时]
+
+DESIGN_RATIONALE: 该路线图采用渐进式设计，从Web基础到现代JavaScript，再到React框架和实战项目，确保学习者能够系统掌握前端开发全栈技能。每个阶段都包含实践项目，强化动手能力。
+===ROADMAP END===
+```
 
 **示例 2：Python 数据分析路线图（3 个 Stage）**
 
@@ -147,25 +208,55 @@
 - 当前水平：intermediate（已懂 Python 基础）
 - 每周可投入：10 小时
 
-输出框架结构：
-- Stage 1: 数据处理基础（Pandas、NumPy）
-  * Module 1.1: Pandas 数据操作
-  * Module 1.2: NumPy 数值计算
-- Stage 2: 数据可视化与分析（Matplotlib、统计分析）
-  * Module 2.1: 数据可视化
-  * Module 2.2: 统计分析方法
-  * Module 2.3: SQL 与数据库
-- Stage 3: 综合项目实战（真实数据集分析）
-  * Module 3.1: 项目设计与数据清洗
-  * Module 3.2: 分析建模与报告
+输出格式：
+```
+===ROADMAP START===
+ROADMAP_ID: python-data-analysis
+TITLE: Python数据分析学习路线
+TOTAL_HOURS: 80
+WEEKS: 8
+
+Stage 1: 数据处理基础（掌握Pandas和NumPy核心功能）[30小时]
+  Module 1.1: Pandas数据操作（学习数据清洗和处理）
+    - Concept: DataFrame基础（理解表格数据结构）[3小时]
+    - Concept: 数据清洗（处理缺失值和异常值）[4小时]
+    - Concept: 数据转换（重塑和合并数据）[4小时]
+  Module 1.2: NumPy数值计算（掌握数组运算）
+    - Concept: 数组创建和索引（操作多维数组）[3小时]
+    - Concept: 数学运算（执行向量化计算）[3小时]
+
+Stage 2: 数据可视化与分析（学习图表制作和统计分析）[30小时]
+  Module 2.1: 数据可视化（使用Matplotlib绘制图表）
+    - Concept: 基础图表（绘制折线图和柱状图）[3小时]
+    - Concept: 高级可视化（制作复杂统计图）[4小时]
+  Module 2.2: 统计分析方法（掌握数据分析技巧）
+    - Concept: 描述性统计（计算均值和方差）[3小时]
+    - Concept: 假设检验（执行统计推断）[4小时]
+  Module 2.3: SQL与数据库（从数据库获取数据）
+    - Concept: SQL查询基础（编写SELECT语句）[3小时]
+    - Concept: 数据库连接（使用Python操作数据库）[3小时]
+
+Stage 3: 综合项目实战（完成真实数据分析项目）[20小时]
+  Module 3.1: 项目设计与数据清洗（准备分析数据）
+    - Concept: 问题定义（明确分析目标）[2小时]
+    - Concept: 数据获取和清洗（准备高质量数据）[5小时]
+  Module 3.2: 分析建模与报告（产出分析结果）
+    - Concept: 探索性分析（发现数据规律）[5小时]
+    - Concept: 可视化报告（制作分析报告）[4小时]
+
+DESIGN_RATIONALE: 该路线图针对已有Python基础的学习者，聚焦数据分析核心技能，通过循序渐进的方式掌握数据处理、可视化和统计分析，最后通过综合项目巩固所学知识。
+===ROADMAP END===
+```
 
 [7. Quality Checklist]
 在输出前，请自检：
 - [ ] Stage 数量是否在 3-5 个之间？
 - [ ] 每个 Stage 的时长是否相对均衡？
 - [ ] 难度是否渐进（Stage 1 最简单，最后一个 Stage 最复杂）？
-- [ ] 所有 prerequisites 引用的 concept_id 是否都已定义？
 - [ ] 最后一个 Stage 是否包含综合实战项目？
-- [ ] total_estimated_hours 是否等于所有 Concept 的 estimated_hours 之和？
-- [ ] recommended_completion_weeks 是否基于用户的每周可投入时间计算？
-- [ ] 每个 Concept 的 description 是否清晰说明"学什么"？
+- [ ] TOTAL_HOURS 是否等于所有 Concept 的时长之和？
+- [ ] WEEKS 是否基于用户的每周可投入时间计算？
+- [ ] 每个 Concept 的描述是否清晰说明"学什么"？
+- [ ] 格式是否严格遵循示例（缩进、标点、时长标注）？
+- [ ] 是否以 ===ROADMAP START=== 开始，===ROADMAP END=== 结束？
+- [ ] 每个 Stage 和 Concept 是否都标注了时长？

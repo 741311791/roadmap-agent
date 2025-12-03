@@ -15,7 +15,10 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react';
+import { useRoadmapStore } from '@/lib/store/roadmap-store';
 
 interface LeftSidebarProps {
   className?: string;
@@ -70,15 +73,21 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
   const pathname = usePathname();
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [isRecentExpanded, setIsRecentExpanded] = useState(true);
+  
+  const { history } = useRoadmapStore();
 
   const isActive = (path: string) => pathname === path || pathname.startsWith(path + '/');
 
-  // Mock recent roadmaps - in real app, this would come from store
-  const recentRoadmaps = [
-    { id: 'demo', title: 'Python Mastery' },
-    { id: 'demo2', title: 'React Architecture' },
-    { id: 'demo3', title: 'System Design 101' },
-  ];
+  // Get recent 3 roadmaps from store, sorted by created_at (most recent first)
+  const recentRoadmaps = history
+    .slice()
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .slice(0, 3)
+    .map((item) => ({
+      id: item.roadmap_id,
+      title: item.title,
+    }));
 
   return (
     <div
@@ -182,23 +191,67 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
             isCollapsed={isCollapsed}
           />
 
-          {!isCollapsed && (
-            <div className="px-2 py-1 text-xs font-bold text-foreground/40 uppercase tracking-wider mt-8 mb-2">
-              Recent
-            </div>
+          {/* Recent Section */}
+          {!isCollapsed ? (
+            <>
+              <div className="px-2 py-1 mt-8 mb-2 flex items-center justify-between">
+                <div className="text-xs font-bold text-foreground/40 uppercase tracking-wider">
+                  Recent
+                </div>
+                <button
+                  onClick={() => setIsRecentExpanded(!isRecentExpanded)}
+                  className="w-5 h-5 flex items-center justify-center hover:bg-primary/5 rounded transition-colors"
+                  title={isRecentExpanded ? 'Collapse' : 'Expand'}
+                >
+                  {isRecentExpanded ? (
+                    <ChevronDown size={14} className="text-foreground/40" />
+                  ) : (
+                    <ChevronRight size={14} className="text-foreground/40" />
+                  )}
+                </button>
+              </div>
+              {isRecentExpanded && (
+                <>
+                  {recentRoadmaps.length > 0 ? (
+                    <div className="space-y-1">
+                      {recentRoadmaps.map((roadmap) => (
+                        <NavItem
+                          key={roadmap.id}
+                          icon={Bot}
+                          label={roadmap.title}
+                          href={`/app/roadmap/${roadmap.id}`}
+                          active={isActive(`/app/roadmap/${roadmap.id}`)}
+                          isCollapsed={false}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="px-2 py-2 text-xs text-foreground/30">
+                      No recent roadmaps
+                    </div>
+                  )}
+                </>
+              )}
+            </>
+          ) : (
+            <>
+              {recentRoadmaps.length > 0 && (
+                <>
+                  <div className="h-8" />
+                  {recentRoadmaps.map((roadmap) => (
+                    <NavItem
+                      key={roadmap.id}
+                      icon={Bot}
+                      label={roadmap.title}
+                      href={`/app/roadmap/${roadmap.id}`}
+                      active={isActive(`/app/roadmap/${roadmap.id}`)}
+                      isCollapsed={true}
+                    />
+                  ))}
+                </>
+              )}
+            </>
           )}
-          {isCollapsed && <div className="h-8" />}
-
-          {recentRoadmaps.map((roadmap) => (
-            <NavItem
-              key={roadmap.id}
-              icon={Bot}
-              label={roadmap.title}
-              href={`/app/roadmap/${roadmap.id}`}
-              active={isActive(`/app/roadmap/${roadmap.id}`)}
-              isCollapsed={isCollapsed}
-            />
-          ))}
         </nav>
       </ScrollArea>
 

@@ -1,5 +1,7 @@
 // Roadmap generation components
 export { PhaseProgress, PhaseProgressCompact } from './phase-progress';
+export { PhaseIndicator } from './phase-indicator';
+export { CompactPhaseIndicator } from './compact-phase-indicator';
 export { 
   ConceptSkeletonCard, 
   ConceptSkeletonList,

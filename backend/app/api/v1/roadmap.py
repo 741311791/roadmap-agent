@@ -32,57 +32,10 @@ router = APIRouter(prefix="/roadmaps", tags=["roadmaps"])
 logger = structlog.get_logger()
 
 
-def _generate_roadmap_id(learning_goal: str) -> str:
-    """
-    预生成路线图 ID
-    
-    使用简洁的 UUID 格式，确保 URL 友好且唯一
-    
-    格式: rm-{timestamp}-{random}
-    - rm: roadmap 前缀（便于识别）
-    - timestamp: 6位时间戳（秒级，36进制）
-    - random: 8位随机字符
-    
-    示例: rm-1a2b3c-4d5e6f7g
-    
-    Args:
-        learning_goal: 用户的学习目标（未使用，保留参数以保持接口兼容）
-        
-    Returns:
-        唯一的路线图 ID（约 18 个字符）
-    """
-    import time
-    
-    # 使用时间戳（36进制）+ 随机字符，确保唯一性和可读性
-    timestamp = int(time.time())
-    timestamp_b36 = base36_encode(timestamp)  # 约 6 位
-    
-    # 8 位随机十六进制字符
-    random_suffix = uuid.uuid4().hex[:8]
-    
-    return f"rm-{timestamp_b36}-{random_suffix}"
-
-
-def base36_encode(number: int) -> str:
-    """将数字转换为 36 进制字符串（0-9, a-z）"""
-    if number == 0:
-        return '0'
-    
-    chars = '0123456789abcdefghijklmnopqrstuvwxyz'
-    result = ''
-    
-    while number:
-        number, remainder = divmod(number, 36)
-        result = chars[remainder] + result
-    
-    return result
-
-
 async def _execute_roadmap_generation_task(
     request: UserRequest,
     trace_id: str,
     orchestrator: RoadmapOrchestrator,
-    pre_generated_roadmap_id: str | None = None,
 ):
     """
     后台任务执行函数
@@ -93,13 +46,11 @@ async def _execute_roadmap_generation_task(
         request: 用户请求
         trace_id: 追踪 ID
         orchestrator: 编排器实例
-        pre_generated_roadmap_id: 预生成的路线图 ID（用于加速前端跳转）
     """
     logger.info(
         "background_task_started",
         trace_id=trace_id,
         user_id=request.user_id,
-        pre_generated_roadmap_id=pre_generated_roadmap_id,
     )
     
     # 为后台任务创建独立的数据库会话
@@ -110,11 +61,10 @@ async def _execute_roadmap_generation_task(
             logger.info(
                 "background_task_executing_workflow",
                 trace_id=trace_id,
-                pre_generated_roadmap_id=pre_generated_roadmap_id,
             )
             
             result = await service.generate_roadmap(
-                request, trace_id, pre_generated_roadmap_id=pre_generated_roadmap_id
+                request, trace_id
             )
             
             logger.info(
@@ -173,19 +123,15 @@ async def generate_roadmap(
     生成学习路线图（异步任务）
     
     Returns:
-        任务 ID 和预生成的路线图 ID，用于前端立即跳转和后续查询状态
+        任务 ID，roadmap_id将在需求分析完成后通过WebSocket发送给前端
     """
     trace_id = str(uuid.uuid4())
-    
-    # 预生成 roadmap_id，加速前端页面跳转
-    pre_generated_roadmap_id = _generate_roadmap_id(request.preferences.learning_goal)
     
     logger.info(
         "roadmap_generation_requested",
         user_id=request.user_id,
         trace_id=trace_id,
         learning_goal=request.preferences.learning_goal,
-        pre_generated_roadmap_id=pre_generated_roadmap_id,
     )
     
     # 先创建初始任务记录（使用当前请求的会话）
@@ -199,24 +145,6 @@ async def generate_roadmap(
         task_id=trace_id,
         status="processing",
         current_step="queued",
-        roadmap_id=pre_generated_roadmap_id,  # 预先关联 roadmap_id
-    )
-    
-    # 创建初始的 roadmap_metadata 记录（状态为 generating）
-    # 注意：framework_data 暂时为空，待课程设计完成后更新
-    from app.models.domain import RoadmapFramework
-    initial_framework = RoadmapFramework(
-        roadmap_id=pre_generated_roadmap_id,
-        title=f"正在生成: {request.preferences.learning_goal[:50]}...",
-        stages=[],
-        total_estimated_hours=0,
-        recommended_completion_weeks=0,
-    )
-    await repo.save_roadmap_metadata(
-        roadmap_id=pre_generated_roadmap_id,
-        user_id=request.user_id,
-        task_id=trace_id,
-        framework=initial_framework,
     )
     await db.commit()
     
@@ -226,14 +154,12 @@ async def generate_roadmap(
         request,
         trace_id,
         orchestrator,
-        pre_generated_roadmap_id,
     )
     
     return {
         "task_id": trace_id,
-        "roadmap_id": pre_generated_roadmap_id,
         "status": "processing",
-        "message": "路线图生成任务已启动，请通过 WebSocket 或轮询接口查询进度",
+        "message": "路线图生成任务已启动，roadmap_id将在需求分析完成后通过WebSocket发送",
     }
 
 
@@ -253,20 +179,89 @@ async def get_roadmap_status(
     return status
 
 
-@router.get("/{roadmap_id}", response_model=RoadmapFramework)
+@router.get("/{roadmap_id}")
 async def get_roadmap(
     roadmap_id: str,
     db: AsyncSession = Depends(get_db),
     orchestrator: RoadmapOrchestrator = Depends(get_orchestrator),
 ):
-    """获取完整的路线图数据"""
+    """
+    获取完整的路线图数据
+    
+    Returns:
+        - 如果路线图存在，返回完整的路线图框架数据
+        - 如果路线图不存在但有活跃任务，返回生成中状态
+        - 如果都不存在，返回 404
+    """
     service = RoadmapService(db, orchestrator)
     roadmap = await service.get_roadmap(roadmap_id)
     
     if not roadmap:
+        # 检查是否有活跃任务正在生成这个路线图
+        repo = RoadmapRepository(db)
+        active_task = await repo.get_active_task_by_roadmap_id(roadmap_id)
+        
+        if active_task:
+            # 路线图正在生成中
+            return {
+                "status": "processing",
+                "task_id": active_task.task_id,
+                "current_step": active_task.current_step,
+                "message": "路线图正在生成中",
+                "created_at": active_task.created_at.isoformat() if active_task.created_at else None,
+                "updated_at": active_task.updated_at.isoformat() if active_task.updated_at else None,
+            }
+        
+        # 路线图不存在且没有活跃任务
         raise HTTPException(status_code=404, detail="路线图不存在")
     
     return roadmap
+
+
+@router.get("/{roadmap_id}/active-task")
+async def get_roadmap_active_task(
+    roadmap_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    获取路线图当前的活跃任务
+    
+    用于前端轮询：查询该路线图是否有正在进行的任务
+    - 如果有正在进行的任务，返回task_id和状态
+    - 如果没有，返回null
+    
+    Args:
+        roadmap_id: 路线图 ID
+        
+    Returns:
+        活跃任务信息或null
+    """
+    repo = RoadmapRepository(db)
+    metadata = await repo.get_roadmap_metadata(roadmap_id)
+    
+    if not metadata:
+        raise HTTPException(status_code=404, detail="路线图不存在")
+    
+    # 获取关联的任务
+    task = await repo.get_task(metadata.task_id) if metadata.task_id else None
+    
+    # 只有当任务状态为 processing 或 human_review_pending 时才算活跃
+    if task and task.status in ['processing', 'human_review_pending']:
+        return {
+            "has_active_task": True,
+            "task_id": task.task_id,
+            "status": task.status,
+            "current_step": task.current_step,
+            "created_at": task.created_at.isoformat() if task.created_at else None,
+            "updated_at": task.updated_at.isoformat() if task.updated_at else None,
+        }
+    else:
+        return {
+            "has_active_task": False,
+            "task_id": None,
+            "status": None,
+            "current_step": None,
+        }
 
 
 @router.post("/{task_id}/approve")
@@ -3023,6 +3018,88 @@ async def save_user_profile(
         ai_personalization=profile.ai_personalization,
         created_at=profile.created_at.isoformat() if profile.created_at else None,
         updated_at=profile.updated_at.isoformat() if profile.updated_at else None,
+    )
+
+
+class RoadmapHistoryItem(BaseModel):
+    """路线图历史项"""
+    roadmap_id: str
+    title: str
+    created_at: str
+    total_concepts: int
+    completed_concepts: int
+    topic: OptionalType[str] = None
+    status: OptionalType[str] = None
+
+
+class RoadmapHistoryResponse(BaseModel):
+    """用户路线图历史响应"""
+    roadmaps: list[RoadmapHistoryItem]
+    total: int
+
+
+@users_router.get("/{user_id}/roadmaps", response_model=RoadmapHistoryResponse)
+async def get_user_roadmaps(
+    user_id: str,
+    limit: int = 50,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    获取用户的所有路线图列表
+    
+    Args:
+        user_id: 用户 ID
+        limit: 返回数量限制（默认50）
+        offset: 分页偏移（默认0）
+        
+    Returns:
+        用户的路线图列表
+    """
+    logger.info("get_user_roadmaps_requested", user_id=user_id, limit=limit, offset=offset)
+    
+    repo = RoadmapRepository(db)
+    roadmaps = await repo.get_roadmaps_by_user(user_id, limit=limit, offset=offset)
+    
+    # 转换为响应格式
+    roadmap_items = []
+    for roadmap in roadmaps:
+        # 从framework_data中提取概念信息
+        framework_data = roadmap.framework_data or {}
+        stages = framework_data.get("stages", [])
+        
+        total_concepts = 0
+        completed_concepts = 0
+        
+        for stage in stages:
+            modules = stage.get("modules", [])
+            for module in modules:
+                concepts = module.get("concepts", [])
+                total_concepts += len(concepts)
+                # 统计已完成的概念（假设有status字段）
+                for concept in concepts:
+                    if concept.get("content_status") == "completed":
+                        completed_concepts += 1
+        
+        # 从user_request中提取topic
+        task = await repo.get_task(roadmap.task_id)
+        topic = None
+        if task and task.user_request:
+            topic = task.user_request.get("learning_goal", "").lower()[:50]  # 取前50个字符
+        
+        roadmap_items.append(RoadmapHistoryItem(
+            roadmap_id=roadmap.roadmap_id,
+            title=roadmap.title,
+            created_at=roadmap.created_at.isoformat() if roadmap.created_at else "",
+            total_concepts=total_concepts,
+            completed_concepts=completed_concepts,
+            topic=topic,
+            status="completed" if completed_concepts == total_concepts and total_concepts > 0 else "learning",
+        ))
+    
+    return RoadmapHistoryResponse(
+        roadmaps=roadmap_items,
+        total=len(roadmap_items),
     )
 
 

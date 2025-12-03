@@ -26,11 +26,84 @@ class RoadmapService:
         """获取当前时间戳（ISO 格式）"""
         return beijing_now().isoformat()
     
+    async def _enrich_user_request_with_profile(self, user_request: UserRequest) -> UserRequest:
+        """
+        使用用户画像信息丰富用户请求（包括语言偏好）
+        
+        从数据库获取用户画像，将语言偏好注入到 LearningPreferences 中。
+        
+        Args:
+            user_request: 原始用户请求
+            
+        Returns:
+            丰富后的用户请求（包含语言偏好）
+        """
+        try:
+            # 获取用户画像
+            user_profile = await self.repo.get_user_profile(user_request.user_id)
+            
+            if user_profile:
+                # 创建更新后的偏好配置
+                prefs_dict = user_request.preferences.model_dump()
+                
+                # 注入语言偏好（优先使用用户画像中的设置）
+                if user_profile.primary_language:
+                    prefs_dict["primary_language"] = user_profile.primary_language
+                    # 向后兼容：同时设置 preferred_language
+                    if not prefs_dict.get("preferred_language"):
+                        prefs_dict["preferred_language"] = user_profile.primary_language
+                
+                if user_profile.secondary_language:
+                    prefs_dict["secondary_language"] = user_profile.secondary_language
+                
+                # 注入其他用户画像信息（如果请求中没有提供）
+                if not prefs_dict.get("industry") and user_profile.industry:
+                    prefs_dict["industry"] = user_profile.industry
+                if not prefs_dict.get("current_role") and user_profile.current_role:
+                    prefs_dict["current_role"] = user_profile.current_role
+                if not prefs_dict.get("tech_stack") and user_profile.tech_stack:
+                    prefs_dict["tech_stack"] = user_profile.tech_stack
+                
+                # 重建 UserRequest
+                from app.models.domain import LearningPreferences
+                enriched_prefs = LearningPreferences.model_validate(prefs_dict)
+                
+                enriched_request = UserRequest(
+                    user_id=user_request.user_id,
+                    session_id=user_request.session_id,
+                    preferences=enriched_prefs,
+                    additional_context=user_request.additional_context,
+                )
+                
+                logger.info(
+                    "user_request_enriched_with_profile",
+                    user_id=user_request.user_id,
+                    primary_language=enriched_prefs.primary_language,
+                    secondary_language=enriched_prefs.secondary_language,
+                    has_industry=bool(enriched_prefs.industry),
+                )
+                
+                return enriched_request
+            
+            logger.debug(
+                "no_user_profile_found",
+                user_id=user_request.user_id,
+            )
+            return user_request
+            
+        except Exception as e:
+            logger.warning(
+                "enrich_user_request_failed",
+                user_id=user_request.user_id,
+                error=str(e),
+            )
+            # 出错时返回原始请求
+            return user_request
+    
     async def generate_roadmap(
         self,
         user_request: UserRequest,
         trace_id: str | None = None,
-        pre_generated_roadmap_id: str | None = None,
     ) -> dict:
         """
         生成学习路线图（异步任务）
@@ -38,25 +111,29 @@ class RoadmapService:
         Args:
             user_request: 用户请求
             trace_id: 追踪 ID（必须提供，由 API 层创建）
-            pre_generated_roadmap_id: 预生成的路线图 ID（可选，用于加速前端跳转）
             
         Returns:
             包含 task_id 和初始状态的字典
         """
+        # 使用用户画像丰富请求（注入语言偏好等）
+        enriched_request = await self._enrich_user_request_with_profile(user_request)
+        
         if trace_id is None:
             trace_id = str(uuid.uuid4())
             # 如果没有提供 trace_id，则创建任务记录
             await self.repo.create_task(
                 task_id=trace_id,
-                user_id=user_request.user_id,
-                user_request=user_request.model_dump(mode='json'),
+                user_id=enriched_request.user_id,
+                user_request=enriched_request.model_dump(mode='json'),
             )
         
         # 更新任务状态为处理中
         logger.info(
             "roadmap_service_starting",
             trace_id=trace_id,
-            user_id=user_request.user_id,
+            user_id=enriched_request.user_id,
+            primary_language=enriched_request.preferences.primary_language,
+            secondary_language=enriched_request.preferences.secondary_language,
         )
         
         await self.repo.update_task_status(
@@ -73,7 +150,9 @@ class RoadmapService:
             status="processing",
             message="路线图生成任务已启动",
             extra_data={
-                "learning_goal": user_request.preferences.learning_goal[:100],
+                "learning_goal": enriched_request.preferences.learning_goal[:100],
+                "primary_language": enriched_request.preferences.primary_language,
+                "secondary_language": enriched_request.preferences.secondary_language,
             },
         )
         
@@ -81,12 +160,11 @@ class RoadmapService:
             logger.info(
                 "roadmap_service_executing_workflow",
                 trace_id=trace_id,
-                pre_generated_roadmap_id=pre_generated_roadmap_id,
             )
             
-            # 执行工作流
+            # 执行工作流（使用丰富后的请求）
             final_state = await self.orchestrator.execute(
-                user_request, trace_id, pre_generated_roadmap_id=pre_generated_roadmap_id
+                enriched_request, trace_id
             )
             
             # 检查工作流是否在 human_review 处被 interrupt() 暂停
@@ -114,7 +192,7 @@ class RoadmapService:
                     framework: RoadmapFramework = final_state["roadmap_framework"]
                     await self.repo.save_roadmap_metadata(
                         roadmap_id=framework.roadmap_id,
-                        user_id=user_request.user_id,
+                        user_id=enriched_request.user_id,
                         task_id=trace_id,
                         framework=framework,
                     )
@@ -139,7 +217,7 @@ class RoadmapService:
                 framework: RoadmapFramework = final_state["roadmap_framework"]
                 await self.repo.save_roadmap_metadata(
                     roadmap_id=framework.roadmap_id,
-                    user_id=user_request.user_id,
+                    user_id=enriched_request.user_id,
                     task_id=trace_id,
                     framework=framework,
                 )

@@ -160,6 +160,9 @@ class IntentAnalysisMetadata(SQLModel, table=True):
     )
     task_id: str = Field(foreign_key="roadmap_tasks.task_id", index=True)
     
+    # 路线图ID（在需求分析完成后生成）
+    roadmap_id: Optional[str] = Field(default=None, index=True, description="路线图唯一标识")
+    
     # 原有分析结果字段
     parsed_goal: str = Field(sa_column=Column(Text))
     key_technologies: list = Field(sa_column=Column(JSON))  # List[str]
@@ -173,6 +176,9 @@ class IntentAnalysisMetadata(SQLModel, table=True):
     personalized_suggestions: list = Field(default=[], sa_column=Column(JSON))  # List[str]
     estimated_learning_path_type: Optional[str] = Field(default=None)  # quick_start, deep_dive, career_transition, skill_upgrade
     content_format_weights: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))  # {visual, text, audio, hands_on}
+    
+    # 语言偏好（新增）
+    language_preferences: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))  # LanguagePreferences
     
     # 完整分析数据（JSON 格式，用于恢复）
     full_analysis_data: dict = Field(sa_column=Column(JSON))

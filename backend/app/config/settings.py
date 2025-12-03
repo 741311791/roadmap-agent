@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     S3_BUCKET_NAME: str = Field("roadmap-content", description="存储桶名称")
     S3_REGION: str | None = Field(None, description="区域（MinIO 可留空）")
     
+    # ==================== Web Search 配置 ====================
+    TAVILY_API_KEY: str | None = Field(None, description="Tavily API 密钥（可选）")
+    USE_DUCKDUCKGO_FALLBACK: bool = Field(True, description="是否使用 DuckDuckGo 作为备选搜索引擎")
+    
     # ==================== LLM 配置 ====================
     # A1: Intent Analyzer (需求分析师)
     ANALYZER_PROVIDER: str = Field("openai", description="模型提供商")

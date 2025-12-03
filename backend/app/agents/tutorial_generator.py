@@ -180,6 +180,9 @@ class TutorialGeneratorAgent(BaseAgent):
         Returns:
             教程生成结果（包含 S3 URL）
         """
+        # 获取语言偏好
+        language_prefs = user_preferences.get_language_preferences()
+        
         # 加载 System Prompt
         system_prompt = self._load_system_prompt(
             "tutorial_generator.j2",
@@ -188,6 +191,7 @@ class TutorialGeneratorAgent(BaseAgent):
             concept=concept,
             context=context,
             user_preferences=user_preferences,
+            language_preferences=language_prefs.model_dump() if language_prefs else None,
         )
         
         # 构建用户消息
@@ -209,6 +213,7 @@ class TutorialGeneratorAgent(BaseAgent):
 **用户偏好**:
 - 内容偏好: {", ".join(user_preferences.content_preference)}
 - 当前水平: {user_preferences.current_level}
+- 主要语言: {language_prefs.primary_language}
 
 请生成一个完整、结构化的教程，包含：
 1. 概述
@@ -218,6 +223,7 @@ class TutorialGeneratorAgent(BaseAgent):
 5. 总结
 
 注意：
+- **教程内容必须使用主要语言（{language_prefs.primary_language}）编写**
 - 教程应专注于理论讲解和实践示例，不要包含推荐学习资源（这些将由专门的资源推荐 Agent 生成）
 - 不要包含练习题或实战练习（这些将由专门的测验生成 Agent 生成）
 
@@ -432,10 +438,14 @@ class TutorialGeneratorAgent(BaseAgent):
             {"type": "tutorial_complete", "concept_id": "...", "data": {...}}
             {"type": "tutorial_error", "concept_id": "...", "error": "..."}
         """
+        # 获取语言偏好
+        language_prefs = user_preferences.get_language_preferences()
+        
         logger.info(
             "tutorial_generation_stream_started",
             concept_id=concept.concept_id,
             concept_name=concept.name,
+            primary_language=language_prefs.primary_language,
         )
         
         try:
@@ -447,6 +457,7 @@ class TutorialGeneratorAgent(BaseAgent):
                 concept=concept,
                 context=context,
                 user_preferences=user_preferences,
+                language_preferences=language_prefs.model_dump() if language_prefs else None,
             )
             
             # 构建用户消息（复用现有逻辑）
@@ -468,6 +479,7 @@ class TutorialGeneratorAgent(BaseAgent):
 **用户偏好**:
 - 内容偏好: {", ".join(user_preferences.content_preference)}
 - 当前水平: {user_preferences.current_level}
+- 主要语言: {language_prefs.primary_language}
 
 请生成一个完整、结构化的教程，包含：
 1. 概述
@@ -477,6 +489,7 @@ class TutorialGeneratorAgent(BaseAgent):
 5. 总结
 
 注意：
+- **教程内容必须使用主要语言（{language_prefs.primary_language}）编写**
 - 教程应专注于理论讲解和实践示例，不要包含推荐学习资源（这些将由专门的资源推荐 Agent 生成）
 - 不要包含练习题或实战练习（这些将由专门的测验生成 Agent 生成）
 

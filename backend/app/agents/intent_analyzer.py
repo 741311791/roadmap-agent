@@ -4,7 +4,7 @@ Intent Analyzer Agent（需求分析师）
 import json
 from typing import AsyncIterator
 from app.agents.base import BaseAgent
-from app.models.domain import UserRequest, IntentAnalysisOutput
+from app.models.domain import UserRequest, IntentAnalysisOutput, LanguagePreferences
 from app.config.settings import settings
 import structlog
 
@@ -51,15 +51,22 @@ class IntentAnalyzerAgent(BaseAgent):
             available_hours=user_request.preferences.available_hours_per_week,
         )
         
-        # 构建用户画像信息
-        user_profile = None
+        # 构建用户画像信息（包含双语偏好）
         prefs = user_request.preferences
-        if prefs.industry or prefs.current_role or prefs.tech_stack:
+        
+        # 获取语言偏好
+        language_prefs = prefs.get_language_preferences()
+        
+        user_profile = None
+        if prefs.industry or prefs.current_role or prefs.tech_stack or language_prefs:
             user_profile = {
                 "industry": prefs.industry,
                 "current_role": prefs.current_role,
                 "tech_stack": prefs.tech_stack or [],
-                "preferred_language": prefs.preferred_language or "zh",
+                "primary_language": language_prefs.primary_language,
+                "secondary_language": language_prefs.secondary_language,
+                # 向后兼容
+                "preferred_language": language_prefs.primary_language,
             }
         
         # 加载 System Prompt
@@ -67,7 +74,7 @@ class IntentAnalyzerAgent(BaseAgent):
         system_prompt = self._load_system_prompt(
             "intent_analyzer.j2",
             agent_name="Intent Analyzer",
-            role_description="分析用户的学习需求，提取关键技术栈、难度画像和时间约束，为后续设计提供结构化输入。结合用户画像进行个性化分析。",
+            role_description="分析用户的学习需求，提取关键技术栈、难度画像和时间约束，为后续设计提供结构化输入。结合用户画像和语言偏好进行个性化分析。",
             user_goal=prefs.learning_goal,
             available_hours_per_week=prefs.available_hours_per_week,
             motivation=prefs.motivation,
@@ -75,6 +82,7 @@ class IntentAnalyzerAgent(BaseAgent):
             career_background=prefs.career_background,
             content_preference=prefs.content_preference,
             user_profile=user_profile,
+            language_preferences=language_prefs.model_dump(),
         )
         
         # 构建用户消息
@@ -91,6 +99,11 @@ class IntentAnalyzerAgent(BaseAgent):
             if profile_parts:
                 profile_info = "\n" + "\n".join(profile_parts)
         
+        # 构建语言偏好信息
+        language_info = f"\n**主要语言**: {language_prefs.primary_language}"
+        if language_prefs.secondary_language and language_prefs.secondary_language != language_prefs.primary_language:
+            language_info += f"\n**次要语言**: {language_prefs.secondary_language}"
+        
         user_message = f"""
 请分析以下用户的学习需求：
 
@@ -99,12 +112,14 @@ class IntentAnalyzerAgent(BaseAgent):
 **学习动机**: {prefs.motivation}
 **当前水平**: {prefs.current_level}
 **职业背景**: {prefs.career_background}
-**内容偏好**: {", ".join(prefs.content_preference)}{profile_info}
+**内容偏好**: {", ".join(prefs.content_preference)}{profile_info}{language_info}
 {"**期望完成时间**: " + str(prefs.target_deadline) if prefs.target_deadline else ""}
 {f"**额外信息**: {user_request.additional_context}" if user_request.additional_context else ""}
 
-请结合用户画像进行个性化分析，提取关键技术栈、难度画像、时间约束、技能差距分析，并给出个性化学习建议。
-请以 JSON 格式返回结果，严格遵循输出 Schema（包含新增的 user_profile_summary、skill_gap_analysis、personalized_suggestions、estimated_learning_path_type 和 content_format_weights 字段）。
+请结合用户画像和语言偏好进行个性化分析，提取关键技术栈、难度画像、时间约束、技能差距分析，并给出个性化学习建议。
+请以 JSON 格式返回结果，严格遵循输出 Schema。
+
+**特别注意**：必须生成 roadmap_id 字段，格式为"英文语义短语-8位随机字符"（例如：python-web-development-a7f3e2c1）。
 """
         
         messages = [
@@ -118,6 +133,8 @@ class IntentAnalyzerAgent(BaseAgent):
             user_id=user_request.user_id,
             model=self.model_name,
             provider=self.model_provider,
+            primary_language=language_prefs.primary_language,
+            secondary_language=language_prefs.secondary_language,
         )
         response = await self._call_llm(messages)
         
@@ -145,6 +162,20 @@ class IntentAnalyzerAgent(BaseAgent):
             logger.debug("intent_analysis_parsing_json", user_id=user_request.user_id)
             result_dict = json.loads(content)
             
+            # 确保 language_preferences 被正确设置（LLM 可能不返回或返回格式不对）
+            if "language_preferences" not in result_dict or result_dict["language_preferences"] is None:
+                # 使用用户输入的语言偏好
+                result_dict["language_preferences"] = language_prefs.model_dump()
+            else:
+                # 验证并补充 LLM 返回的语言偏好
+                llm_lang_prefs = result_dict["language_preferences"]
+                if not isinstance(llm_lang_prefs, dict):
+                    result_dict["language_preferences"] = language_prefs.model_dump()
+                else:
+                    # 确保有有效的资源分配比例
+                    if "resource_ratio" not in llm_lang_prefs:
+                        llm_lang_prefs["resource_ratio"] = language_prefs.get_effective_ratio()
+            
             # 使用 Pydantic 验证输出格式
             result = IntentAnalysisOutput.model_validate(result_dict)
             logger.info(
@@ -153,6 +184,8 @@ class IntentAnalyzerAgent(BaseAgent):
                 tech_stack_count=len(result.key_technologies) if result.key_technologies else 0,
                 learning_priority_count=len(result.recommended_focus) if result.recommended_focus else 0,
                 difficulty_profile=result.difficulty_profile if result.difficulty_profile else None,
+                primary_language=result.language_preferences.primary_language if result.language_preferences else None,
+                secondary_language=result.language_preferences.secondary_language if result.language_preferences else None,
             )
             return result
             
@@ -189,14 +222,20 @@ class IntentAnalyzerAgent(BaseAgent):
         try:
             prefs = user_request.preferences
             
-            # 构建用户画像信息
+            # 获取语言偏好
+            language_prefs = prefs.get_language_preferences()
+            
+            # 构建用户画像信息（包含双语偏好）
             user_profile = None
-            if prefs.industry or prefs.current_role or prefs.tech_stack:
+            if prefs.industry or prefs.current_role or prefs.tech_stack or language_prefs:
                 user_profile = {
                     "industry": prefs.industry,
                     "current_role": prefs.current_role,
                     "tech_stack": prefs.tech_stack or [],
-                    "preferred_language": prefs.preferred_language or "zh",
+                    "primary_language": language_prefs.primary_language,
+                    "secondary_language": language_prefs.secondary_language,
+                    # 向后兼容
+                    "preferred_language": language_prefs.primary_language,
                 }
             
             # 加载 System Prompt（复用现有逻辑）
@@ -204,7 +243,7 @@ class IntentAnalyzerAgent(BaseAgent):
             system_prompt = self._load_system_prompt(
                 "intent_analyzer.j2",
                 agent_name="Intent Analyzer",
-                role_description="分析用户的学习需求，提取关键技术栈、难度画像和时间约束，为后续设计提供结构化输入。结合用户画像进行个性化分析。",
+                role_description="分析用户的学习需求，提取关键技术栈、难度画像和时间约束，为后续设计提供结构化输入。结合用户画像和语言偏好进行个性化分析。",
                 user_goal=prefs.learning_goal,
                 available_hours_per_week=prefs.available_hours_per_week,
                 motivation=prefs.motivation,
@@ -212,6 +251,7 @@ class IntentAnalyzerAgent(BaseAgent):
                 career_background=prefs.career_background,
                 content_preference=prefs.content_preference,
                 user_profile=user_profile,
+                language_preferences=language_prefs.model_dump(),
             )
             
             # 构建用户消息（复用现有逻辑）
@@ -228,6 +268,11 @@ class IntentAnalyzerAgent(BaseAgent):
                 if profile_parts:
                     profile_info = "\n" + "\n".join(profile_parts)
             
+            # 构建语言偏好信息
+            language_info = f"\n**主要语言**: {language_prefs.primary_language}"
+            if language_prefs.secondary_language and language_prefs.secondary_language != language_prefs.primary_language:
+                language_info += f"\n**次要语言**: {language_prefs.secondary_language}"
+            
             user_message = f"""
 请分析以下用户的学习需求：
 
@@ -236,12 +281,14 @@ class IntentAnalyzerAgent(BaseAgent):
 **学习动机**: {prefs.motivation}
 **当前水平**: {prefs.current_level}
 **职业背景**: {prefs.career_background}
-**内容偏好**: {", ".join(prefs.content_preference)}{profile_info}
+**内容偏好**: {", ".join(prefs.content_preference)}{profile_info}{language_info}
 {"**期望完成时间**: " + str(prefs.target_deadline) if prefs.target_deadline else ""}
 {f"**额外信息**: {user_request.additional_context}" if user_request.additional_context else ""}
 
-请结合用户画像进行个性化分析，提取关键技术栈、难度画像、时间约束、技能差距分析，并给出个性化学习建议。
-请以 JSON 格式返回结果，严格遵循输出 Schema（包含新增的 user_profile_summary、skill_gap_analysis、personalized_suggestions、estimated_learning_path_type 和 content_format_weights 字段）。
+请结合用户画像和语言偏好进行个性化分析，提取关键技术栈、难度画像、时间约束、技能差距分析，并给出个性化学习建议。
+请以 JSON 格式返回结果，严格遵循输出 Schema。
+
+**特别注意**：必须生成 roadmap_id 字段，格式为"英文语义短语-8位随机字符"（例如：python-web-development-a7f3e2c1）。
 """
             
             messages = [
@@ -289,6 +336,20 @@ class IntentAnalyzerAgent(BaseAgent):
             logger.debug("intent_analysis_stream_parsing_json", user_id=user_request.user_id)
             result_dict = json.loads(content)
             
+            # 确保 language_preferences 被正确设置（LLM 可能不返回或返回格式不对）
+            if "language_preferences" not in result_dict or result_dict["language_preferences"] is None:
+                # 使用用户输入的语言偏好
+                result_dict["language_preferences"] = language_prefs.model_dump()
+            else:
+                # 验证并补充 LLM 返回的语言偏好
+                llm_lang_prefs = result_dict["language_preferences"]
+                if not isinstance(llm_lang_prefs, dict):
+                    result_dict["language_preferences"] = language_prefs.model_dump()
+                else:
+                    # 确保有有效的资源分配比例
+                    if "resource_ratio" not in llm_lang_prefs:
+                        llm_lang_prefs["resource_ratio"] = language_prefs.get_effective_ratio()
+            
             # 使用 Pydantic 验证输出格式
             result = IntentAnalysisOutput.model_validate(result_dict)
             logger.info(
@@ -297,6 +358,8 @@ class IntentAnalyzerAgent(BaseAgent):
                 tech_stack_count=len(result.key_technologies) if result.key_technologies else 0,
                 learning_priority_count=len(result.recommended_focus) if result.recommended_focus else 0,
                 difficulty_profile=result.difficulty_profile if result.difficulty_profile else None,
+                primary_language=result.language_preferences.primary_language if result.language_preferences else None,
+                secondary_language=result.language_preferences.secondary_language if result.language_preferences else None,
             )
             
             # 推送最终结果

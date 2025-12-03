@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -149,20 +149,23 @@ export function TutorialDialog({
     <Dialog open={true} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl max-h-[90vh] p-0">
         {loading ? (
-          <div className="p-6 space-y-4">
-            <Skeleton className="h-8 w-3/4" />
-            <Skeleton className="h-4 w-1/2" />
-            <Skeleton className="h-64 w-full" />
-          </div>
+          <>
+            <DialogHeader className="px-6 pt-6 pb-4">
+              <DialogTitle>加载中...</DialogTitle>
+              <DialogDescription>正在加载教程内容</DialogDescription>
+            </DialogHeader>
+            <div className="px-6 pb-6 space-y-4">
+              <Skeleton className="h-8 w-3/4" />
+              <Skeleton className="h-4 w-1/2" />
+              <Skeleton className="h-64 w-full" />
+            </div>
+          </>
         ) : (
           <>
             <DialogHeader className="px-6 pt-6 pb-4">
               <div className="flex items-start justify-between">
                 <div className="flex-1">
-                  <DialogTitle className="text-2xl mb-2">{tutorial?.title}</DialogTitle>
-                  {tutorial?.summary && (
-                    <p className="text-sm text-muted-foreground">{tutorial.summary}</p>
-                  )}
+                  <DialogTitle className="text-2xl">{tutorial?.title}</DialogTitle>
                 </div>
                 <div className="flex items-center gap-2 ml-4">
                   {tutorial?.content_version && (
@@ -176,6 +179,9 @@ export function TutorialDialog({
                   )}
                 </div>
               </div>
+              <DialogDescription className="mt-2">
+                {tutorial?.summary || '查看教程内容、学习资源和练习测验'}
+              </DialogDescription>
             </DialogHeader>
 
             <Tabs value={activeTab} onValueChange={handleTabChange} className="flex-1">

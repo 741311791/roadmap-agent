@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Button } from '@/components/ui/button';
@@ -38,8 +38,10 @@ function formatRelativeTime(dateString: string): string {
 }
 
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
+import { getUserRoadmaps } from '@/lib/api/endpoints';
 
 // Use roadmap history from store instead of mock data
+const USER_ID = 'temp-user-001';
 
 // Mock data - Community Roadmaps
 const communityRoadmaps = [
@@ -426,7 +428,43 @@ function SectionHeader({
 
 // Main Home Page Component
 export default function HomePage() {
-  const { history } = useRoadmapStore();
+  const { history, setHistory } = useRoadmapStore();
+  const [isLoading, setIsLoading] = useState(true);
+  
+  // Fetch user roadmaps on mount
+  useEffect(() => {
+    const fetchRoadmaps = async () => {
+      try {
+        setIsLoading(true);
+        const response = await getUserRoadmaps(USER_ID);
+        // Map API response to store format
+        const historyData = response.roadmaps.map((item) => {
+          let status: 'draft' | 'completed' | 'archived' = 'completed';
+          if (item.status === 'completed' || item.status === 'draft' || item.status === 'archived') {
+            status = item.status;
+          }
+          
+          return {
+            roadmap_id: item.roadmap_id,
+            title: item.title,
+            created_at: item.created_at,
+            total_concepts: item.total_concepts,
+            completed_concepts: item.completed_concepts,
+            topic: item.topic || undefined,
+            status,
+          };
+        });
+        setHistory(historyData);
+      } catch (error) {
+        console.error('Failed to fetch roadmaps:', error);
+        // Keep existing history on error
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    fetchRoadmaps();
+  }, [setHistory]);
   
   // Map history to roadmap format for display
   const roadmaps = history.map((item) => ({

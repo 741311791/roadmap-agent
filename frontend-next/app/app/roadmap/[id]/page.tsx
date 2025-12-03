@@ -17,38 +17,49 @@ import {
   RefreshCw,
   Sparkles,
   AlertTriangle,
+  Loader2,
+  AlertCircle,
+  CheckCircle2,
 } from 'lucide-react';
-import { getRoadmap, approveRoadmap } from '@/lib/api/endpoints';
+import { getRoadmap, approveRoadmap, getRoadmapActiveTask, getRoadmapStatus } from '@/lib/api/endpoints';
 import { TaskWebSocket } from '@/lib/api/websocket';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import { useUIStore } from '@/lib/store/ui-store';
 import { TutorialDialog } from '@/components/tutorial/tutorial-dialog';
 import { 
-  PhaseProgress, 
+  PhaseProgress,
+  CompactPhaseIndicator,
   ConceptCard, 
   RoadmapSkeletonView,
-  StageSkeletonCard,
   HumanReviewDialog,
   RetryFailedButton,
 } from '@/components/roadmap';
 import { 
   GenerationPhase, 
-  mapStepToPhase,
   parseStepWithSubStatus,
-  GENERATION_PHASES,
   HumanReviewSubStatus,
 } from '@/types/custom/phases';
 import type { ViewMode } from '@/types/custom/ui';
 import type { Stage, Module, Concept, LearningPreferences } from '@/types/generated/models';
+import { cn } from '@/lib/utils';
+
+const PHASE_LABELS: Record<string, string> = {
+  intent_analysis: '需求分析',
+  curriculum_design: '课程设计',
+  human_review: '人工审核',
+  content_generation: '内容生成',
+  completed: '完成',
+};
 
 export default function RoadmapDetailPage() {
   const params = useParams();
   const searchParams = useSearchParams();
   const roadmapId = params.id as string;
 
-  // Check for live generation mode from URL params
-  const taskIdFromUrl = searchParams.get('task_id');
-  const isGeneratingFromUrl = searchParams.get('generating') === 'true';
+  // Task ID state (fetched from roadmap's active task)
+  const [taskId, setTaskId] = useState<string | null>(null);
+  const [isPolling, setIsPolling] = useState(false);
+  const [isLiveGenerating, setIsLiveGenerating] = useState(false);
 
   // Store state
   const { 
@@ -61,13 +72,6 @@ export default function RoadmapDetailPage() {
     selectedConceptId, 
     selectConcept,
     updateConceptStatus,
-    activeTaskId,
-    activeGenerationPhase,
-    isLiveGenerating,
-    setActiveTask,
-    setActiveGenerationPhase,
-    setLiveGenerating,
-    clearLiveGeneration,
   } = useRoadmapStore();
   
   const viewMode = useUIStore((state) => state.viewMode);
@@ -114,11 +118,32 @@ export default function RoadmapDetailPage() {
   const retryWsRef = useRef<TaskWebSocket | null>(null);
   const initialLoadCompleteRef = useRef(false);
 
-  // Load roadmap data
+  // Load roadmap data and check for active task
   const loadRoadmap = useCallback(async () => {
     setLoading(true);
     try {
+      // Load roadmap data
       const data = await getRoadmap(roadmapId);
+      
+      // Check if response indicates roadmap is still processing
+      if ((data as any).status === 'processing') {
+        console.log('[Roadmap] Roadmap is still processing, setting up polling');
+        const generatingData = data as any;
+        setTaskId(generatingData.task_id);
+        setIsPolling(true);
+        setIsLiveGenerating(true);
+        
+        // Determine initial phase from current step
+        const phaseState = parseStepWithSubStatus(generatingData.current_step || '', undefined);
+        if (phaseState) {
+          setCurrentPhase(phaseState.phase);
+        }
+        
+        initialLoadCompleteRef.current = true;
+        setLoading(false);
+        return;
+      }
+      
       setRoadmap(data);
       // Expand all stages and modules by default
       setExpandedStages(new Set(data.stages.map((s: Stage) => s.stage_id)));
@@ -126,6 +151,39 @@ export default function RoadmapDetailPage() {
         new Set(data.stages.flatMap((s: Stage) => s.modules.map((m: Module) => m.module_id)))
       );
       initialLoadCompleteRef.current = true;
+      
+      // Check if roadmap has an active task (processing or pending review)
+      try {
+        const activeTask = await getRoadmapActiveTask(roadmapId);
+        if (activeTask.has_active_task && activeTask.task_id) {
+          console.log('[Roadmap] Found active task:', activeTask.task_id, activeTask.status);
+          setTaskId(activeTask.task_id);
+          
+          // Set up WebSocket or polling based on task status
+          if (activeTask.status === 'processing') {
+            setIsPolling(true);
+            setIsLiveGenerating(true);
+            
+            // Determine initial phase from current step
+            const phaseState = parseStepWithSubStatus(activeTask.current_step || '', undefined);
+            if (phaseState) {
+              setCurrentPhase(phaseState.phase);
+            }
+          } else if (activeTask.status === 'human_review_pending') {
+            setCurrentPhase('human_review');
+            setPhaseSubStatus('waiting');
+            setShowHumanReviewDialog(true);
+          }
+        } else {
+          console.log('[Roadmap] No active task found');
+          setTaskId(null);
+          setIsPolling(false);
+          setIsLiveGenerating(false);
+        }
+      } catch (err) {
+        // Active task query might fail, ignore and just show roadmap
+        console.warn('Failed to check active task:', err);
+      }
       
       // Calculate initial stats
       const allConcepts = data.stages.flatMap((s: Stage) =>
@@ -156,6 +214,8 @@ export default function RoadmapDetailPage() {
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : '加载失败';
       setError(errorMsg);
+    } finally {
+      setLoading(false);
     }
   }, [roadmapId, setRoadmap, setLoading, setError]);
 
@@ -164,18 +224,74 @@ export default function RoadmapDetailPage() {
     loadRoadmap();
   }, [loadRoadmap]);
 
-  // Set up WebSocket for live generation updates
+  // Poll task status if task is processing
   useEffect(() => {
-    const taskId = taskIdFromUrl || activeTaskId;
-    const shouldConnect = (isGeneratingFromUrl || isLiveGenerating) && taskId;
-
-    if (!shouldConnect || !initialLoadCompleteRef.current) {
+    if (!isPolling || !taskId || !initialLoadCompleteRef.current) {
       return;
     }
 
-    // Set initial phase if coming from generation
-    if (isGeneratingFromUrl && !currentPhase) {
-      setCurrentPhase('content_generation');
+    const pollInterval = setInterval(async () => {
+      try {
+        const status = await getRoadmapStatus(taskId);
+        
+        // Update phase based on current step
+        const phaseState = parseStepWithSubStatus(status.current_step || '', undefined);
+        if (phaseState) {
+          setCurrentPhase(phaseState.phase);
+        }
+        
+        // If task is completed or failed, stop polling
+        if (status.status === 'completed' || status.status === 'failed' || (status.status as string) === 'partial_failure') {
+          setIsPolling(false);
+          setIsLiveGenerating(false);
+          setCurrentPhase('completed');
+          // Refresh roadmap data
+          loadRoadmap();
+        } else if (!currentRoadmap && status.roadmap_id) {
+          // If roadmap doesn't exist yet but task has roadmap_id, try to load it
+          // This handles the case where roadmap metadata is created during generation
+          console.log('[Roadmap] Task has roadmap_id, attempting to load roadmap...');
+          try {
+            const data = await getRoadmap(roadmapId);
+            if ((data as any).status !== 'processing' && data.stages) {
+              console.log('[Roadmap] Roadmap metadata now available, loading...');
+              setRoadmap(data);
+              setExpandedStages(new Set(data.stages.map((s: Stage) => s.stage_id)));
+              setExpandedModules(
+                new Set(data.stages.flatMap((s: Stage) => s.modules.map((m: Module) => m.module_id)))
+              );
+              
+              // Calculate initial stats
+              const allConcepts = data.stages.flatMap((s: Stage) =>
+                s.modules.flatMap((m: Module) => m.concepts)
+              );
+              const completed = allConcepts.filter((c: Concept) => c.content_status === 'completed').length;
+              const failed = allConcepts.filter((c: Concept) => c.content_status === 'failed').length;
+              setGenerationStats({
+                completed,
+                total: allConcepts.length,
+                failed,
+              });
+            }
+          } catch (err) {
+            console.warn('[Roadmap] Failed to load roadmap during polling:', err);
+          }
+        }
+      
+      } catch (err) {
+        console.error('Failed to poll task status:', err);
+      }
+    }, 2000); // Poll every 2 seconds
+
+    return () => clearInterval(pollInterval);
+  }, [isPolling, taskId, currentRoadmap, roadmapId, loadRoadmap]);
+
+  // Set up WebSocket for live generation updates
+  useEffect(() => {
+    const shouldConnect = isLiveGenerating && taskId;
+
+    if (!shouldConnect || !initialLoadCompleteRef.current) {
+      return;
     }
 
     console.log('[Roadmap] Setting up WebSocket for task:', taskId);
@@ -185,14 +301,13 @@ export default function RoadmapDetailPage() {
         console.log('[Roadmap WS] Connected:', event.message);
       },
 
-      onProgress: (event) => {
+        onProgress: (event) => {
         console.log('[Roadmap WS] Progress:', event);
         const subStatus = (event as any).sub_status as string | undefined;
         const phaseState = parseStepWithSubStatus(event.step, subStatus);
         if (phaseState) {
           setCurrentPhase(phaseState.phase);
           setPhaseSubStatus(phaseState.subStatus || null);
-          setActiveGenerationPhase(phaseState.phase);
           
           // Handle human_review step - show dialog
           if (phaseState.phase === 'human_review' && phaseState.subStatus === 'waiting') {
@@ -252,25 +367,17 @@ export default function RoadmapDetailPage() {
       onCompleted: (event) => {
         console.log('[Roadmap WS] Generation completed:', event);
         setCurrentPhase('completed');
-        setLiveGenerating(false);
-        clearLiveGeneration();
+        setIsLiveGenerating(false);
+        setIsPolling(false);
         
         // Final refresh to ensure all data is up to date
         loadRoadmap();
-        
-        // Clean up URL params
-        if (typeof window !== 'undefined') {
-          const url = new URL(window.location.href);
-          url.searchParams.delete('task_id');
-          url.searchParams.delete('generating');
-          window.history.replaceState({}, '', url.toString());
-        }
       },
 
       onFailed: (event) => {
         console.error('[Roadmap WS] Generation failed:', event);
-        setLiveGenerating(false);
-        clearLiveGeneration();
+        setIsLiveGenerating(false);
+        setIsPolling(false);
       },
 
       onError: (event) => {
@@ -292,15 +399,11 @@ export default function RoadmapDetailPage() {
       }
     };
   }, [
-    taskIdFromUrl, 
-    isGeneratingFromUrl, 
-    activeTaskId, 
+    taskId, 
     isLiveGenerating,
+    isPolling,
     currentPhase,
     updateConceptStatus,
-    setActiveGenerationPhase,
-    setLiveGenerating,
-    clearLiveGeneration,
     loadRoadmap,
   ]);
 
@@ -424,11 +527,11 @@ export default function RoadmapDetailPage() {
 
   // Human review handlers
   const handleApproveReview = async () => {
-    if (!taskIdFromUrl && !activeTaskId) return;
+    if (!taskId) return;
     
     setIsSubmittingReview(true);
     try {
-      await approveRoadmap(taskIdFromUrl || activeTaskId!, true);
+      await approveRoadmap(taskId, true);
       setShowHumanReviewDialog(false);
       // Phase will be updated via WebSocket
     } catch (error) {
@@ -439,11 +542,11 @@ export default function RoadmapDetailPage() {
   };
 
   const handleRejectReview = async (feedback: string) => {
-    if (!taskIdFromUrl && !activeTaskId) return;
+    if (!taskId) return;
     
     setIsSubmittingReview(true);
     try {
-      await approveRoadmap(taskIdFromUrl || activeTaskId!, false, feedback);
+      await approveRoadmap(taskId, false, feedback);
       setShowHumanReviewDialog(false);
       setPhaseSubStatus('editing');
       // Phase will be updated via WebSocket
@@ -533,34 +636,37 @@ export default function RoadmapDetailPage() {
     return (completedConcepts / allConcepts.length) * 100;
   };
 
-  const isGenerating = isLiveGenerating || isGeneratingFromUrl || (currentPhase && currentPhase !== 'completed');
+  const isGenerating = isLiveGenerating || isPolling || (currentPhase && currentPhase !== 'completed');
   
-  // 重试按钮显示条件：有失败项且不在重试中，且（已完成 或 不在主动生成中）
-  // 注意：即使 URL 有 generating=true，只要不是真正在生成（isLiveGenerating），就可以显示重试按钮
+  // 重试按钮显示条件
   const shouldShowRetryButton = 
     (failedStats.tutorial > 0 || failedStats.resources > 0 || failedStats.quiz > 0) && 
     !isRetrying && 
     (currentPhase === 'completed' || currentPhase === null || !isLiveGenerating);
 
-  // Debug: Log retry button visibility conditions
-  useEffect(() => {
-    console.log('[Roadmap] Retry button conditions:', {
-      failedStats,
-      isRetrying,
-      currentPhase,
-      isLiveGenerating,
-      shouldShowRetryButton,
-    });
-  }, [failedStats, isRetrying, currentPhase, isLiveGenerating, shouldShowRetryButton]);
-
-  // Loading state
-  if (isLoading && !currentRoadmap) {
+  // Loading state or generating state
+  if ((isLoading && !currentRoadmap) || (isLiveGenerating && !currentRoadmap)) {
     return (
-      <div className="container mx-auto px-4 py-8 max-w-6xl">
-        {/* Show skeleton during initial load */}
-        <div className="mb-8">
-          <div className="h-10 w-3/4 bg-muted rounded animate-pulse mb-4" />
-          <div className="h-4 w-1/2 bg-muted rounded animate-pulse" />
+      <div className="container mx-auto px-4 py-12 max-w-5xl">
+        {/* Compact Phase Indicator */}
+        {currentPhase && (
+          <div className="mb-8 p-5 rounded-xl bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md border border-zinc-200/60 dark:border-zinc-800/60 shadow-sm">
+            <CompactPhaseIndicator 
+              currentPhase={currentPhase} 
+              failedCount={0}
+            />
+          </div>
+        )}
+        
+        <div className="mb-10 space-y-4">
+          <div className="h-12 w-2/3 bg-muted/40 rounded-lg animate-pulse" />
+          <div className="h-4 w-1/3 bg-muted/30 rounded animate-pulse" />
+          {isLiveGenerating && (
+            <div className="flex items-center gap-2 text-sm text-blue-600 dark:text-blue-400">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>路线图正在生成中，请稍候...</span>
+            </div>
+          )}
         </div>
         <RoadmapSkeletonView />
       </div>
@@ -570,17 +676,18 @@ export default function RoadmapDetailPage() {
   // Error state
   if (error) {
     return (
-      <div className="container mx-auto px-4 py-8">
-        <Card>
-          <CardContent className="py-12">
-            <div className="text-center text-red-600">
-              <p className="text-lg font-semibold mb-2">加载失败</p>
-              <p className="text-sm text-muted-foreground mb-4">{error}</p>
-              <Button onClick={loadRoadmap} className="gap-2">
-                <RefreshCw className="w-4 h-4" />
-                重试
-              </Button>
+      <div className="container mx-auto px-4 py-20 flex justify-center">
+        <Card className="w-full max-w-md bg-white/50 dark:bg-zinc-900/50 backdrop-blur-md border-red-100 dark:border-red-900/30">
+          <CardContent className="py-12 flex flex-col items-center text-center">
+            <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center mb-4">
+               <AlertCircle className="w-6 h-6 text-red-500" />
             </div>
+            <p className="text-lg font-serif font-medium text-zinc-900 dark:text-zinc-50 mb-2">加载失败</p>
+            <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-6">{error}</p>
+            <Button onClick={loadRoadmap} variant="outline" className="gap-2">
+              <RefreshCw className="w-4 h-4" />
+              重试
+            </Button>
           </CardContent>
         </Card>
       </div>
@@ -590,33 +697,94 @@ export default function RoadmapDetailPage() {
   // No roadmap found
   if (!currentRoadmap) {
     return (
-      <div className="container mx-auto px-4 py-8">
-        <Card>
-          <CardContent className="py-12">
-            <div className="text-center text-muted-foreground">
-              <p className="text-lg">未找到路线图</p>
-            </div>
-          </CardContent>
-        </Card>
+      <div className="container mx-auto px-4 py-20 flex justify-center">
+         <div className="text-center text-zinc-400">
+           <p className="text-lg font-serif">未找到路线图</p>
+         </div>
       </div>
     );
   }
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-6xl">
-      {/* Generation Phase Progress (shown during live generation) */}
-      {isGenerating && (
-        <Card className="mb-6 border-blue-200 bg-gradient-to-r from-blue-50/50 to-transparent dark:from-blue-900/20">
-          <CardContent className="py-4">
+      
+      {/* Compact Phase Indicator */}
+      {(isGenerating && currentPhase) && (
+        <div className="mb-8 p-5 rounded-xl bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md border border-zinc-200/60 dark:border-zinc-800/60 shadow-sm">
+          <CompactPhaseIndicator 
+            currentPhase={currentPhase} 
+            failedCount={generationStats.failed}
+          />
+        </div>
+      )}
+      
+      {/* Header Section */}
+      <div className="mb-10 relative">
+        <div className="flex flex-col md:flex-row md:items-start justify-between gap-6 mb-6">
+          <div className="space-y-3 flex-1">
+             <h1 className="text-3xl md:text-4xl font-serif font-semibold text-zinc-900 dark:text-zinc-50 tracking-tight leading-tight">
+               {currentRoadmap.title}
+             </h1>
+
+             <div className="flex items-center gap-6 text-sm text-zinc-500 dark:text-zinc-400">
+                <div className="flex items-center gap-1.5">
+                  <Clock className="h-4 w-4 opacity-70" />
+                  <span>{currentRoadmap.total_estimated_hours} 小时</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="opacity-70">周期:</span>
+                  <span>{currentRoadmap.recommended_completion_weeks} 周</span>
+                </div>
+                {generationStats.failed > 0 && !isGenerating && (
+                  <div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-500">
+                     <AlertTriangle className="h-4 w-4" />
+                     <span>{generationStats.failed} 个概念失败</span>
+                  </div>
+                )}
+             </div>
+          </div>
+
+          {/* Actions & Retry */}
+          <div className="flex items-center gap-3">
+             {shouldShowRetryButton && (
+                <RetryFailedButton
+                  roadmapId={roadmapId}
+                  userId="default-user"
+                  preferences={userPreferences}
+                  failedStats={failedStats}
+                  onRetryStarted={handleRetryStarted}
+                  onRetryCompleted={handleRetryCompleted}
+                />
+             )}
+          </div>
+        </div>
+
+        {/* Progress Bar - Slim & Elegant */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-xs font-medium text-zinc-500 dark:text-zinc-400">
+            <span>{isGenerating || isRetrying ? '内容生成进度' : '学习进度'}</span>
+            <span>{Math.round(calculateProgress())}%</span>
+          </div>
+          <Progress 
+            value={calculateProgress()} 
+            className="h-1.5 bg-zinc-100 dark:bg-zinc-800" 
+            indicatorClassName="bg-sage-600 dark:bg-sage-500"
+          />
+        </div>
+      </div>
+
+      {/* Detailed Generation Progress (Glass Card) */}
+      {isGenerating && currentPhase === 'content_generation' && (
+        <div className="mb-8 p-6 rounded-xl bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md border border-blue-100/50 dark:border-blue-900/20 shadow-sm">
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900/50 flex items-center justify-center">
-                <Sparkles className="w-4 h-4 text-blue-600 animate-pulse" />
+              <div className="w-8 h-8 rounded-full bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center">
+                <Sparkles className="w-4 h-4 text-blue-600 dark:text-blue-400 animate-pulse" />
               </div>
               <div>
-                <p className="text-sm font-medium text-foreground">
+                <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
                   正在生成学习内容
                 </p>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-xs text-zinc-500">
                   {generationStats.completed} / {generationStats.total} 个概念已完成
                   {generationStats.failed > 0 && ` (${generationStats.failed} 个失败)`}
                 </p>
@@ -627,64 +795,24 @@ export default function RoadmapDetailPage() {
               subStatus={phaseSubStatus}
               failedCount={generationStats.failed}
             />
-          </CardContent>
-        </Card>
+        </div>
       )}
 
-      {/* Header */}
-      <div className="mb-8">
-        <div className="flex items-start justify-between mb-2">
-          <h1 className="text-3xl font-bold">{currentRoadmap.title}</h1>
-          {/* Retry Failed Button */}
-          {shouldShowRetryButton && (
-            <RetryFailedButton
-              roadmapId={roadmapId}
-              userId="default-user"
-              preferences={userPreferences}
-              failedStats={failedStats}
-              onRetryStarted={handleRetryStarted}
-              onRetryCompleted={handleRetryCompleted}
-            />
-          )}
-        </div>
-        <div className="flex items-center gap-4 text-sm text-muted-foreground">
-          <div className="flex items-center gap-1">
-            <Clock className="h-4 w-4" />
-            <span>{currentRoadmap.total_estimated_hours} 小时</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <span>推荐完成时间: {currentRoadmap.recommended_completion_weeks} 周</span>
-          </div>
-          {/* Failed items warning */}
-          {generationStats.failed > 0 && (currentPhase === 'completed' || !isLiveGenerating) && (
-            <div className="flex items-center gap-1 text-amber-600">
-              <AlertTriangle className="h-4 w-4" />
-              <span>{generationStats.failed} 个概念生成失败</span>
-            </div>
-          )}
-        </div>
-        <div className="mt-4">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium">
-              {isGenerating || isRetrying ? '内容生成进度' : '学习进度'}
-            </span>
-            <span className="text-sm text-muted-foreground">
-              {Math.round(calculateProgress())}%
-            </span>
-          </div>
-          <Progress value={calculateProgress()} className="h-2" />
-        </div>
-      </div>
-
       {/* View Mode Toggle */}
-      <div className="mb-6">
-        <Tabs value={viewMode} onValueChange={(v: string) => setViewMode(v as ViewMode)}>
-          <TabsList>
-            <TabsTrigger value="list">
+      <div className="mb-8 border-b border-zinc-200/50 dark:border-zinc-800/50 pb-1">
+        <Tabs value={viewMode} onValueChange={(v: string) => setViewMode(v as ViewMode)} className="w-auto">
+          <TabsList className="bg-transparent p-0 h-auto">
+            <TabsTrigger 
+              value="list" 
+              className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-sage-600 data-[state=active]:text-sage-700 dark:data-[state=active]:text-sage-300 rounded-none px-4 py-2 text-zinc-500 transition-all"
+            >
               <List className="h-4 w-4 mr-2" />
               列表视图
             </TabsTrigger>
-            <TabsTrigger value="flow">
+            <TabsTrigger 
+              value="flow" 
+              className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-sage-600 data-[state=active]:text-sage-700 dark:data-[state=active]:text-sage-300 rounded-none px-4 py-2 text-zinc-500 transition-all"
+            >
               <Network className="h-4 w-4 mr-2" />
               流程图视图
             </TabsTrigger>
@@ -693,96 +821,119 @@ export default function RoadmapDetailPage() {
       </div>
 
       {/* Content */}
-      <ScrollArea className="h-[calc(100vh-300px)]">
+      <ScrollArea className="h-[calc(100vh-320px)] pr-4 -mr-4">
         {viewMode === 'list' ? (
-          <div className="space-y-6">
+          <div className="space-y-6 pb-20">
             {currentRoadmap.stages
               .sort((a: Stage, b: Stage) => a.order - b.order)
               .map((stage: Stage) => (
-                <Card key={stage.stage_id} className="overflow-hidden">
+                <Card 
+                  key={stage.stage_id} 
+                  className="overflow-hidden border-zinc-200/60 dark:border-zinc-800/60 bg-white/60 dark:bg-zinc-900/60 backdrop-blur-xl shadow-sm hover:shadow-md transition-all duration-300"
+                >
                   <CardHeader 
-                    className="cursor-pointer hover:bg-muted/30 transition-colors" 
+                    className="cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors p-6" 
                     onClick={() => toggleStage(stage.stage_id)}
                   >
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        {expandedStages.has(stage.stage_id) ? (
-                          <ChevronDown className="h-5 w-5 text-muted-foreground" />
-                        ) : (
-                          <ChevronRight className="h-5 w-5 text-muted-foreground" />
-                        )}
-                        <CardTitle className="text-xl">{stage.name}</CardTitle>
-                        <Badge variant="outline" className="ml-2">
-                          阶段 {stage.order}
-                        </Badge>
+                      <div className="flex items-center gap-3">
+                        <div className="text-zinc-400">
+                           {expandedStages.has(stage.stage_id) ? (
+                             <ChevronDown className="h-5 w-5" />
+                           ) : (
+                             <ChevronRight className="h-5 w-5" />
+                           )}
+                        </div>
+                        <div>
+                          <CardTitle className="text-xl font-serif font-semibold text-zinc-900 dark:text-zinc-50 tracking-tight">{stage.name}</CardTitle>
+                          {stage.description && (
+                             <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1.5 font-normal leading-relaxed">
+                               {stage.description}
+                             </p>
+                          )}
+                        </div>
                       </div>
                       <StageProgressBadge 
                         modules={stage.modules} 
                         isGenerating={isGenerating || false}
                       />
                     </div>
-                    {expandedStages.has(stage.stage_id) && stage.description && (
-                      <p className="text-sm text-muted-foreground mt-2 ml-7">
-                        {stage.description}
-                      </p>
-                    )}
                   </CardHeader>
 
-                  {expandedStages.has(stage.stage_id) && (
-                    <CardContent className="space-y-4 pt-0">
-                      {stage.modules.map((module: Module) => (
-                        <div key={module.module_id} className="border rounded-lg bg-card">
-                          <div
-                            className="p-4 cursor-pointer hover:bg-muted/30 transition-colors"
-                            onClick={() => toggleModule(module.module_id)}
+                  <div className={cn(
+                      "grid transition-all duration-300 ease-in-out",
+                      expandedStages.has(stage.stage_id) ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+                    )}>
+                    <div className="overflow-hidden">
+                      <CardContent className="space-y-4 pt-0 p-6">
+                        {stage.modules.map((module: Module) => (
+                          <div 
+                            key={module.module_id} 
+                            className="group rounded-xl border border-transparent bg-white/40 dark:bg-zinc-800/40 hover:bg-white/80 dark:hover:bg-zinc-800/80 hover:border-zinc-200/50 dark:hover:border-zinc-700/50 backdrop-blur-sm transition-all duration-200"
                           >
-                            <div className="flex items-center gap-2">
-                              {expandedModules.has(module.module_id) ? (
-                                <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                              ) : (
-                                <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                              )}
-                              <h3 className="font-semibold">{module.name}</h3>
-                              <Badge variant="secondary" className="ml-auto">
-                                {module.concepts.length} 个概念
-                              </Badge>
+                            <div
+                              className="p-5 cursor-pointer"
+                              onClick={() => toggleModule(module.module_id)}
+                            >
+                              <div className="flex items-center gap-3">
+                                <div className="text-zinc-400 group-hover:text-zinc-600 transition-colors">
+                                   {expandedModules.has(module.module_id) ? (
+                                     <ChevronDown className="h-4 w-4" />
+                                   ) : (
+                                     <ChevronRight className="h-4 w-4" />
+                                   )}
+                                </div>
+                                <div className="flex-1">
+                                   <div className="flex items-center justify-between mb-1">
+                                      <h3 className="text-base font-medium text-zinc-800 dark:text-zinc-200">{module.name}</h3>
+                                      <Badge variant="secondary" className="bg-zinc-100/80 dark:bg-zinc-800/80 text-zinc-500 text-xs font-normal">
+                                        {module.concepts.length} 个概念
+                                      </Badge>
+                                   </div>
+                                   {expandedModules.has(module.module_id) && module.description && (
+                                     <p className="text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed">
+                                       {module.description}
+                                     </p>
+                                   )}
+                                </div>
+                              </div>
                             </div>
-                            {expandedModules.has(module.module_id) && module.description && (
-                              <p className="text-sm text-muted-foreground mt-2 ml-6">
-                                {module.description}
-                              </p>
-                            )}
-                          </div>
 
-                          {expandedModules.has(module.module_id) && (
-                            <div className="p-4 pt-0 space-y-2">
-                              {module.concepts.map((concept: Concept) => (
-                                <ConceptCard
-                                  key={concept.concept_id}
-                                  concept={concept}
-                                  onClick={() => {
-                                    if (concept.content_status === 'completed') {
-                                      selectConcept(concept.concept_id);
-                                    }
-                                  }}
-                                />
-                              ))}
+                            <div className={cn(
+                                "grid transition-all duration-300 ease-in-out",
+                                expandedModules.has(module.module_id) ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+                              )}>
+                                <div className="overflow-hidden">
+                                  <div className="p-5 pt-0 space-y-3 pl-12">
+                                    {module.concepts.map((concept: Concept) => (
+                                      <ConceptCard
+                                        key={concept.concept_id}
+                                        concept={concept}
+                                        onClick={() => {
+                                          if (concept.content_status === 'completed') {
+                                            selectConcept(concept.concept_id);
+                                          }
+                                        }}
+                                      />
+                                    ))}
+                                  </div>
+                                </div>
                             </div>
-                          )}
-                        </div>
-                      ))}
-                    </CardContent>
-                  )}
+                          </div>
+                        ))}
+                      </CardContent>
+                    </div>
+                  </div>
                 </Card>
               ))}
           </div>
         ) : (
-          <div className="flex items-center justify-center h-full">
-            <div className="text-center text-muted-foreground">
-              <Network className="h-16 w-16 mx-auto mb-4 opacity-50" />
-              <p className="text-lg font-medium">流程图视图</p>
-              <p className="text-sm mt-2">此功能正在开发中</p>
-              <Button variant="outline" className="mt-4" onClick={() => setViewMode('list' as ViewMode)}>
+          <div className="flex items-center justify-center h-full min-h-[400px]">
+            <div className="text-center text-zinc-400">
+              <Network className="h-16 w-16 mx-auto mb-4 opacity-20" />
+              <p className="text-lg font-serif mb-2">流程图视图</p>
+              <p className="text-sm">此功能正在开发中</p>
+              <Button variant="link" className="mt-4 text-sage-600" onClick={() => setViewMode('list' as ViewMode)}>
                 返回列表视图
               </Button>
             </div>
@@ -803,7 +954,7 @@ export default function RoadmapDetailPage() {
       <HumanReviewDialog
         open={showHumanReviewDialog}
         onOpenChange={setShowHumanReviewDialog}
-        taskId={taskIdFromUrl || activeTaskId || ''}
+        taskId={taskId || ''}
         roadmapId={roadmapId}
         roadmapTitle={currentRoadmap.title}
         stagesCount={currentRoadmap.stages.length}
@@ -840,7 +991,7 @@ function StageProgressBadge({
 
   if (isGenerating && generating > 0) {
     return (
-      <Badge variant="secondary" className="bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300">
+      <Badge variant="secondary" className="bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 border border-blue-100 dark:border-blue-900/50 font-normal">
         生成中 {completed}/{total}
       </Badge>
     );
@@ -848,14 +999,14 @@ function StageProgressBadge({
 
   if (completed === total) {
     return (
-      <Badge variant="secondary" className="bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300">
+      <Badge variant="secondary" className="bg-sage-50 text-sage-700 dark:bg-sage-900/30 dark:text-sage-300 border border-sage-100 dark:border-sage-900/50 font-normal">
         已完成
       </Badge>
     );
   }
 
   return (
-    <Badge variant="secondary">
+    <Badge variant="secondary" className="bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400 font-normal">
       {completed}/{total}
     </Badge>
   );

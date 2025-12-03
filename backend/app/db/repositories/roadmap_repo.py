@@ -89,6 +89,27 @@ class RoadmapRepository:
         )
         return result.scalar_one_or_none()
     
+    async def get_active_task_by_roadmap_id(self, roadmap_id: str) -> Optional[RoadmapTask]:
+        """
+        通过 roadmap_id 获取活跃任务
+        
+        Args:
+            roadmap_id: 路线图 ID
+            
+        Returns:
+            活跃任务记录（状态为 processing 或 pending），如果不存在则返回 None
+        """
+        result = await self.session.execute(
+            select(RoadmapTask)
+            .where(
+                RoadmapTask.roadmap_id == roadmap_id,
+                RoadmapTask.status.in_(["pending", "processing", "human_review_pending"])
+            )
+            .order_by(RoadmapTask.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+    
     async def update_task_status(
         self,
         task_id: str,
@@ -214,6 +235,47 @@ class RoadmapRepository:
             select(RoadmapMetadata).where(RoadmapMetadata.roadmap_id == roadmap_id)
         )
         return result.scalar_one_or_none()
+    
+    async def roadmap_id_exists(self, roadmap_id: str) -> bool:
+        """
+        检查 roadmap_id 是否已存在于数据库中
+        
+        Args:
+            roadmap_id: 要检查的路线图 ID
+            
+        Returns:
+            True 如果存在，False 如果不存在
+        """
+        result = await self.session.execute(
+            select(RoadmapMetadata.roadmap_id).where(RoadmapMetadata.roadmap_id == roadmap_id)
+        )
+        return result.scalar_one_or_none() is not None
+    
+    async def get_roadmaps_by_user(
+        self,
+        user_id: str,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[RoadmapMetadata]:
+        """
+        获取用户的所有路线图列表
+        
+        Args:
+            user_id: 用户 ID
+            limit: 返回数量限制
+            offset: 分页偏移
+            
+        Returns:
+            路线图元数据列表（按创建时间降序排列，最新的在前）
+        """
+        result = await self.session.execute(
+            select(RoadmapMetadata)
+            .where(RoadmapMetadata.user_id == user_id)
+            .order_by(RoadmapMetadata.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(result.scalars().all())
     
     async def save_tutorial_metadata(
         self,
@@ -480,6 +542,8 @@ class RoadmapRepository:
         """
         metadata = IntentAnalysisMetadata(
             task_id=task_id,
+            # 路线图 ID（在需求分析完成后生成）
+            roadmap_id=intent_analysis.roadmap_id,
             # 原有字段
             parsed_goal=intent_analysis.parsed_goal,
             key_technologies=intent_analysis.key_technologies,
@@ -492,6 +556,8 @@ class RoadmapRepository:
             personalized_suggestions=intent_analysis.personalized_suggestions or [],
             estimated_learning_path_type=intent_analysis.estimated_learning_path_type,
             content_format_weights=intent_analysis.content_format_weights.model_dump() if intent_analysis.content_format_weights else None,
+            # 语言偏好
+            language_preferences=intent_analysis.language_preferences.model_dump() if intent_analysis.language_preferences else None,
             # 完整数据
             full_analysis_data=intent_analysis.model_dump(),
         )
@@ -502,8 +568,10 @@ class RoadmapRepository:
         logger.info(
             "intent_analysis_metadata_saved",
             task_id=task_id,
+            roadmap_id=intent_analysis.roadmap_id,
             key_technologies_count=len(intent_analysis.key_technologies),
             learning_path_type=intent_analysis.estimated_learning_path_type,
+            primary_language=intent_analysis.language_preferences.primary_language if intent_analysis.language_preferences else None,
         )
         return metadata
     

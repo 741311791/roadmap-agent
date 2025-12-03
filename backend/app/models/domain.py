@@ -19,6 +19,35 @@ from datetime import datetime
 # 1. 用户输入模型
 # ============================================================
 
+class LanguagePreferences(BaseModel):
+    """
+    语言偏好配置
+    
+    用于指导内容生成和资源推荐的语言分布：
+    - primary_language: 主要语言（教程、路线图的主要语言）
+    - secondary_language: 次要语言（资源推荐的补充语言）
+    - resource_ratio: 资源推荐的语言分配比例
+    """
+    primary_language: str = Field(default="zh", description="主要语言代码（如 'zh', 'en'）")
+    secondary_language: Optional[str] = Field(None, description="次要语言代码（如 'en', 'zh'）")
+    resource_ratio: Dict[str, float] = Field(
+        default={"primary": 1.0, "secondary": 0.0},
+        description="资源推荐的语言分配比例（如 {'primary': 0.6, 'secondary': 0.4}）"
+    )
+    
+    def get_effective_ratio(self) -> Dict[str, float]:
+        """
+        获取有效的资源分配比例
+        
+        规则：
+        - 如果 secondary_language 为空或与 primary_language 相同，则 100% 使用主语言
+        - 否则按 60%/40% 分配
+        """
+        if not self.secondary_language or self.secondary_language == self.primary_language:
+            return {"primary": 1.0, "secondary": 0.0}
+        return {"primary": 0.6, "secondary": 0.4}
+
+
 class LearningPreferences(BaseModel):
     """学习偏好配置"""
     learning_goal: str = Field(..., description="学习目标，如'成为全栈工程师'")
@@ -38,12 +67,31 @@ class LearningPreferences(BaseModel):
     industry: Optional[str] = Field(None, description="所属行业")
     current_role: Optional[str] = Field(None, description="当前职位")
     tech_stack: Optional[List[Dict[str, Any]]] = Field(None, description="技术栈列表")
-    preferred_language: Optional[str] = Field(None, description="偏好的学习语言")
+    
+    # 语言偏好（向后兼容：保留 preferred_language，新增双语支持）
+    preferred_language: Optional[str] = Field(None, description="偏好的学习语言（向后兼容）")
+    primary_language: str = Field(default="zh", description="主要语言（教程、路线图语言）")
+    secondary_language: Optional[str] = Field(None, description="次要语言（资源推荐补充语言）")
     
     @field_serializer('target_deadline')
     def serialize_deadline(self, value: Optional[datetime], _info) -> Optional[str]:
         """将 datetime 序列化为 ISO 格式字符串"""
         return value.isoformat() if value else None
+    
+    def get_language_preferences(self) -> LanguagePreferences:
+        """
+        获取语言偏好配置对象
+        
+        向后兼容逻辑：
+        - 如果设置了 primary_language，使用它
+        - 否则使用 preferred_language（如果有）
+        - 默认为 'zh'
+        """
+        primary = self.primary_language or self.preferred_language or "zh"
+        return LanguagePreferences(
+            primary_language=primary,
+            secondary_language=self.secondary_language,
+        )
 
 
 class UserRequest(BaseModel):
@@ -240,6 +288,18 @@ class IntentAnalysisOutput(BaseModel):
         default=None,
         description="基于用户偏好的内容格式权重分配"
     )
+    
+    # 语言偏好分析
+    language_preferences: Optional[LanguagePreferences] = Field(
+        default=None,
+        description="语言偏好配置（包含主语言、次语言和资源分配比例）"
+    )
+    
+    # 路线图ID（在需求分析完成后生成）
+    roadmap_id: Optional[str] = Field(
+        default=None,
+        description="路线图唯一标识（有语义的英文短语 + 唯一后缀）"
+    )
 
 
 # --- A2: Curriculum Architect (课程架构师) ---
@@ -336,6 +396,10 @@ class Resource(BaseModel):
     )
     description: str = Field(..., description="资源简介")
     relevance_score: float = Field(..., ge=0, le=1, description="相关性评分（0-1）")
+    language: Optional[str] = Field(
+        default=None, 
+        description="资源语言代码（如 'zh', 'en'），用于语言分布追踪"
+    )
 
 
 class ResourceRecommendationInput(BaseModel):
@@ -407,6 +471,8 @@ class SearchQuery(BaseModel):
     query: str = Field(..., description="搜索查询字符串")
     search_type: Literal["web", "academic", "video"] = Field(default="web", description="搜索类型")
     max_results: int = Field(default=5, ge=1, le=20, description="最大结果数量")
+    language: Optional[str] = Field(None, description="搜索语言（如 'zh', 'en'），用于优化搜索结果")
+    content_type: Optional[str] = Field(None, description="内容类型提示（如 'video', 'article', 'documentation'），用于优化搜索策略")
 
 
 class SearchResult(BaseModel):

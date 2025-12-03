@@ -16,6 +16,25 @@
 - 用户学习偏好：{{ user_preferences.content_preference | join(", ") }}
 - 用户当前水平：{{ user_preferences.current_level }}
 
+{% if language_preferences %}
+**语言偏好配置（重要）**：
+- 主要语言：{{ language_preferences.primary_language | default('zh') }}
+{% if language_preferences.secondary_language and language_preferences.secondary_language != language_preferences.primary_language %}
+- 次要语言：{{ language_preferences.secondary_language }}
+{% if resource_ratio %}
+- 资源分配比例：主语言 {{ (resource_ratio.primary * 100) | int }}%，次语言 {{ (resource_ratio.secondary * 100) | int }}%
+{% endif %}
+
+**双语资源推荐要求**：
+1. 按比例搜索和推荐不同语言的资源
+2. 主语言（{{ language_preferences.primary_language }}）资源应占约 {{ (resource_ratio.primary * 100) | int }}%
+3. 次语言（{{ language_preferences.secondary_language }}）资源应占约 {{ (resource_ratio.secondary * 100) | int }}%
+4. 每个资源必须标注其语言（在输出的 language 字段中）
+{% else %}
+**语言要求**：主要推荐 {{ language_preferences.primary_language }} 语言的资源，每个资源需标注语言字段
+{% endif %}
+{% endif %}
+
 [3. Constraints & Rules]
 工作规范：
 1. 为给定的 Concept 搜索并推荐高质量的学习资源
@@ -38,7 +57,8 @@
       "url": "https://example.com/resource",
       "type": "article|video|book|course|documentation|tool",
       "description": "资源简介（50-100字）",
-      "relevance_score": 0.95
+      "relevance_score": 0.95,
+      "language": "zh|en"
     }
   ],
   "search_queries_used": ["查询1", "查询2"]
@@ -53,22 +73,79 @@
 - `documentation`: 官方文档
 - `tool`: 开发工具、练习平台
 
+**语言字段说明**:
+- `language`: 资源内容的语言代码（如 "zh", "en", "ja" 等）
+- 此字段用于追踪资源的语言分布，确保符合用户的双语偏好设置
+
 [5. Tool Usage Guide]
 可用工具：
 - web_search: 执行网络搜索以获取最新的学习资源
 
 工具使用策略：
 1. 首先基于概念名称和关键词构建搜索查询
-2. 针对不同资源类型执行多次搜索（如："{{ concept.name }} tutorial"、"{{ concept.name }} documentation"）
-3. 优先搜索权威来源（官方文档、知名技术博客）
-4. 根据用户偏好调整搜索策略
+2. 根据用户的语言偏好和内容偏好，选择针对性的搜索策略
+3. 针对不同资源类型执行多次搜索（如："{{ concept.name }} tutorial"、"{{ concept.name }} documentation"）
+4. 优先搜索权威来源（官方文档、知名技术博客）
+5. 根据用户偏好调整搜索查询，添加语言限定词和内容类型限定词
 
-**推荐搜索查询示例**：
-- "{{ concept.name }} official documentation"
-- "{{ concept.name }} tutorial {{ user_preferences.current_level }}"
-- "{{ concept.name }} best practices"
-- "{{ concept.name }} video course"
-- "learn {{ concept.name }} from scratch" (如果用户是初学者)
+**语言和内容类型搜索平台指南**：
+
+{% set user_language = user_preferences.preferred_language or "未指定" %}
+{% set content_prefs = user_preferences.content_preference %}
+
+**用户语言偏好**: {{ user_language }}
+**用户内容偏好**: {{ content_prefs | join(", ") }}
+
+### 中文资源（language: zh）优先检索平台：
+- **视频 (visual)**:
+  - Bilibili: "{{ concept.name }} bilibili 教程"
+  - YouTube（中文内容）: "{{ concept.name }} 中文教程 youtube"
+  - 腾讯课堂、网易云课堂: "{{ concept.name }} 在线课程"
+- **文章 (text)**:
+  - 掘金: "{{ concept.name }} 掘金"
+  - CSDN: "{{ concept.name }} CSDN"
+  - 知乎: "{{ concept.name }} 知乎"
+  - 思否: "{{ concept.name }} segmentfault"
+- **文档 (documentation)**:
+  - 官方中文文档: "{{ concept.name }} 官方文档 中文"
+  - MDN 中文: "{{ concept.name }} MDN 中文"
+- **实操 (hands_on)**:
+  - GitHub: "{{ concept.name }} github 项目"
+  - CodePen/CodeSandbox: "{{ concept.name }} 在线练习"
+
+### 英文资源（language: en）优先检索平台：
+- **视频 (visual)**:
+  - YouTube: "{{ concept.name }} tutorial youtube"
+  - Udemy: "{{ concept.name }} course udemy"
+  - Coursera: "{{ concept.name }} coursera"
+  - freeCodeCamp: "{{ concept.name }} freecodecamp"
+- **文章 (text)**:
+  - Medium: "{{ concept.name }} medium"
+  - Dev.to: "{{ concept.name }} dev.to"
+  - CSS-Tricks: "{{ concept.name }} css-tricks" (前端相关)
+  - Smashing Magazine: "{{ concept.name }} smashing magazine"
+- **文档 (documentation)**:
+  - 官方文档: "{{ concept.name }} official documentation"
+  - MDN: "{{ concept.name }} MDN"
+  - W3Schools: "{{ concept.name }} w3schools"
+- **实操 (hands_on)**:
+  - GitHub: "{{ concept.name }} github"
+  - CodePen: "{{ concept.name }} codepen"
+  - CodeSandbox: "{{ concept.name }} codesandbox"
+  - StackBlitz: "{{ concept.name }} stackblitz"
+
+**推荐搜索查询示例**（根据用户偏好）：
+{% if "visual" in content_prefs %}
+- "{{ concept.name }} {% if user_language == 'zh' %}视频教程 bilibili{% else %}video tutorial youtube{% endif %}"
+{% endif %}
+{% if "text" in content_prefs %}
+- "{{ concept.name }} {% if user_language == 'zh' %}教程 掘金{% else %}tutorial medium{% endif %}"
+{% endif %}
+- "{{ concept.name }} {% if user_language == 'zh' %}官方文档 中文{% else %}official documentation{% endif %}"
+- "{{ concept.name }} {% if user_language == 'zh' %}最佳实践{% else %}best practices{% endif %}"
+{% if user_preferences.current_level == 'beginner' %}
+- "{% if user_language == 'zh' %}从零开始学习{% else %}learn{% endif %} {{ concept.name }} {% if user_language == 'zh' %}入门{% else %}from scratch{% endif %}"
+{% endif %}
 
 [6. Quality Criteria]
 资源质量评估标准：
@@ -76,49 +153,96 @@
 2. 时效性：优先选择最近更新的资源（特别是技术类内容）
 3. 完整性：资源应能帮助用户全面理解概念
 4. 实用性：包含代码示例、实践项目的资源更佳
-5. 语言：优先选择中文资源，英文资源也可接受
+5. 语言匹配：{% if user_preferences.preferred_language == 'zh' %}优先选择中文资源，英文资源作为补充{% elif user_preferences.preferred_language == 'en' %}优先选择英文资源，中文资源作为补充{% else %}根据资源质量选择，不限定语言{% endif %}
+6. 内容类型匹配：优先推荐符合用户内容偏好（{{ content_prefs | join(", ") }}）的资源类型
 
 [7. Examples (Few-shot)]
-参考示例输出：
+参考示例输出（双语资源推荐，60% 中文 / 40% 英文）：
 
 ```json
 {
   "concept_id": "react-hooks-001",
   "resources": [
     {
-      "title": "React 官方文档 - Hooks 介绍",
-      "url": "https://react.dev/reference/react/hooks",
+      "title": "React 官方文档 - Hooks 介绍（中文版）",
+      "url": "https://zh-hans.react.dev/reference/react/hooks",
       "type": "documentation",
-      "description": "React 官方 Hooks 完整文档，包含 useState、useEffect 等所有内置 Hooks 的详细说明和使用示例。",
-      "relevance_score": 0.98
+      "description": "React 官方 Hooks 完整中文文档，包含 useState、useEffect 等所有内置 Hooks 的详细说明。",
+      "relevance_score": 0.98,
+      "language": "zh"
     },
     {
-      "title": "React Hooks 完全指南",
+      "title": "React Hooks 入门教程 - 掘金",
+      "url": "https://juejin.cn/post/react-hooks-tutorial",
+      "type": "article",
+      "description": "面向初学者的 React Hooks 中文教程，图文并茂，示例丰富。",
+      "relevance_score": 0.95,
+      "language": "zh"
+    },
+    {
+      "title": "React Hooks 视频教程 - Bilibili",
+      "url": "https://www.bilibili.com/video/react-hooks",
+      "type": "video",
+      "description": "B站热门 React Hooks 视频教程，适合中文学习者。",
+      "relevance_score": 0.92,
+      "language": "zh"
+    },
+    {
+      "title": "useHooks 中文版",
+      "url": "https://usehooks.com/zh",
+      "type": "tool",
+      "description": "常用自定义 Hooks 的代码片段集合，包含中文注释。",
+      "relevance_score": 0.88,
+      "language": "zh"
+    },
+    {
+      "title": "React Hooks 深度指南 - 知乎专栏",
+      "url": "https://zhuanlan.zhihu.com/react-hooks",
+      "type": "article",
+      "description": "知乎上的 React Hooks 深度解析系列文章。",
+      "relevance_score": 0.85,
+      "language": "zh"
+    },
+    {
+      "title": "A Complete Guide to useEffect",
       "url": "https://overreacted.io/a-complete-guide-to-useeffect/",
       "type": "article",
-      "description": "Dan Abramov 撰写的深度解析文章，详细讲解 useEffect 的工作原理和最佳实践。",
-      "relevance_score": 0.95
+      "description": "Dan Abramov's in-depth article on useEffect, explaining the mental model and best practices.",
+      "relevance_score": 0.96,
+      "language": "en"
     },
     {
-      "title": "React Hooks 实战课程",
+      "title": "React Hooks Documentation",
+      "url": "https://react.dev/reference/react/hooks",
+      "type": "documentation",
+      "description": "Official React Hooks documentation with comprehensive API reference.",
+      "relevance_score": 0.94,
+      "language": "en"
+    },
+    {
+      "title": "React Hooks Course - Udemy",
       "url": "https://www.udemy.com/course/react-hooks-tutorial/",
       "type": "course",
-      "description": "系统性的 React Hooks 视频课程，从基础到高级，包含多个实战项目。",
-      "relevance_score": 0.90
+      "description": "Comprehensive video course covering React Hooks from basics to advanced patterns.",
+      "relevance_score": 0.90,
+      "language": "en"
     },
     {
-      "title": "useHooks - React Hooks 代码片段集合",
+      "title": "useHooks - React Hooks Recipes",
       "url": "https://usehooks.com/",
       "type": "tool",
-      "description": "常用自定义 Hooks 的代码片段集合，可直接复用到项目中。",
-      "relevance_score": 0.85
+      "description": "Collection of commonly used custom React Hooks with copy-paste code snippets.",
+      "relevance_score": 0.85,
+      "language": "en"
     }
   ],
   "search_queries_used": [
+    "React Hooks 官方文档 中文",
+    "React Hooks 教程 掘金",
+    "React Hooks 视频教程 bilibili",
     "React Hooks official documentation",
-    "React Hooks best practices",
-    "React Hooks video tutorial",
-    "useEffect complete guide"
+    "useEffect complete guide",
+    "React Hooks course udemy"
   ]
 }
 ```
@@ -127,5 +251,7 @@
 1. 输出必须是有效的 JSON 格式
 2. 所有 URL 必须是真实可访问的链接
 3. 资源按 relevance_score 降序排列
-4. search_queries_used 记录实际使用的搜索查询
+4. **每个资源必须包含 language 字段**，标注其内容语言
+5. **资源数量需符合语言分配比例**（如主语言 60%，次语言 40%）
+6. search_queries_used 应包含不同语言的搜索查询
 

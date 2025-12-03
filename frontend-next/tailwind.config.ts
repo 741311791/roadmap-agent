@@ -63,10 +63,22 @@ const config: Config = {
           light: '#44403c',
         },
       },
-      // Typography
+      // Typography with Chinese support
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
-        serif: ['Playfair Display', 'Georgia', 'serif'],
+        sans: [
+          'var(--font-inter)',
+          'var(--font-noto-sans-sc)',
+          '-apple-system',
+          'BlinkMacSystemFont',
+          'system-ui',
+          'sans-serif',
+        ],
+        serif: [
+          'var(--font-playfair)',
+          'var(--font-noto-serif-sc)',
+          'Georgia',
+          'serif',
+        ],
       },
       // Border Radius
       borderRadius: {
