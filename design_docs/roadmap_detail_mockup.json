@@ -1,0 +1,66 @@
+{
+  "design_brief": {
+    "project": "Roadmap Agent - Next-Gen Learning Interface",
+    "theme": "Cognitive Immersive Space",
+    "mode": "Dark Mode (Deep Zinc/Slate)",
+    "style": "Kinetic Glassmorphism, Aurora Gradients, Editorial Typography"
+  },
+  "layout_structure": {
+    "type": "Three-Column Viewport-Fixed",
+    "columns": [
+      {
+        "region": "Left Sidebar (Navigation Rail)",
+        "width": "Collapsed (60px) -> Expandable (240px)",
+        "visuals": "Frosted glass strip, glowing progress nodes, minimal icons",
+        "interaction": "Hover reveal, smooth expansion animation",
+        "elements": [
+            "Logo Icon (Top)",
+            "Timeline Tree (Vertical Line with Pulse Nodes)",
+            "Progress Ring (Bottom)"
+        ]
+      },
+      {
+        "region": "Center Stage (Learning Core)",
+        "width": "Fluid (50-60%)",
+        "visuals": "Rich text editorial layout, serif fonts for body, sans-serif for headers",
+        "hero_element": "Dynamic SVG/WebGL animation header (visualizing 'React Lifecycle')",
+        "content_elements": [
+            "Immersive Typography (Merriweather/Lora)",
+            "Interactive Code Blocks (JetBrains Mono) with 'Run' button",
+            "Embedded Audio Player (Waveform visualization)",
+            "'Deep Dive' expandable glass cards",
+            "Floating 'Complete Concept' Action Bar (Bottom)"
+        ]
+      },
+      {
+        "region": "Right Sidebar (AI Sidecar)",
+        "width": "Fixed (350px+)",
+        "visuals": "Glass panel with tab switcher (Mentor/Notes)",
+        "active_view": "AI Chat with 'Context Aware' indicators",
+        "ui_elements": [
+            "Tab Switcher: 'AI Mentor' vs 'Smart Notes'",
+            "Chat Stream: Glass bubbles, glowing avatar",
+            "Context Cards: 'Quiz Widget', 'Related Resource'",
+            "Smart Note: Live transcription effect, 'Save to Card' button"
+        ]
+      }
+    ]
+  },
+  "visual_details": {
+    "background": "Deep noise texture (#09090b) with subtle breathing aurora gradient (Indigo/Cyan)",
+    "glass_effect": "backdrop-filter: blur(20px), bg-white/5, border-white/10",
+    "typography": {
+        "ui": "Inter or Geist Sans",
+        "content": "Merriweather or Lora",
+        "code": "JetBrains Mono"
+    },
+    "color_palette": {
+        "base": "Zinc-950",
+        "surface": "White/5",
+        "primary": "Cyan-400 (Generating/Active)",
+        "secondary": "Purple-500 (AI Logic)",
+        "accent": "Amber-400 (Notes/Highlights)"
+    }
+  },
+  "meta_instructions": "Create a high-fidelity UI mockup showing the full interface. Focus on the depth created by glass layers and the lighting effects indicating AI activity. The center content should look like a premium editorial piece, not a generic documentation page."
+}

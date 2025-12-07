@@ -400,6 +400,18 @@ class Resource(BaseModel):
         default=None, 
         description="资源语言代码（如 'zh', 'en'），用于语言分布追踪"
     )
+    
+    # 🆕 新增字段：提升资源质量
+    confidence_score: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="资源可信度评分（0-1），基于来源权威性和内容质量"
+    )
+    published_date: Optional[str] = Field(
+        default=None,
+        description="资源发布日期（ISO格式，如 '2024-01-15'），用于时效性判断"
+    )
 
 
 class ResourceRecommendationInput(BaseModel):

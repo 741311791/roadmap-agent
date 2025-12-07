@@ -6,6 +6,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 import structlog
 from typing import List, Dict
 import asyncio
+import time
 
 from app.tools.base import BaseTool
 from app.models.domain import SearchQuery, SearchResult
@@ -21,6 +22,11 @@ class WebSearchTool(BaseTool[SearchQuery, SearchResult]):
     搜索引擎优先级：
     1. Tavily API（主要）：高质量搜索结果，需要 API Key
     2. DuckDuckGo（备选）：免费，无需 API Key，隐私友好
+    
+    特性：
+    - 请求速率控制（避免触发API限流）
+    - 时间筛选（优先搜索近期内容）
+    - 自动回退机制
     """
     
     def __init__(self):
@@ -28,10 +34,41 @@ class WebSearchTool(BaseTool[SearchQuery, SearchResult]):
         self.api_key = settings.TAVILY_API_KEY
         self.base_url = "https://api.tavily.com"
         self.use_duckduckgo_fallback = settings.USE_DUCKDUCKGO_FALLBACK
+        
+        # 速率控制
+        self._search_semaphore = asyncio.Semaphore(3)  # 最多3个并发请求
+        self._last_request_time = 0
+        self._min_request_interval = 0.5  # 最小请求间隔500ms
+    
+    async def _rate_limited_request(self, coro):
+        """
+        带速率限制的请求包装器
+        
+        功能：
+        - 限制并发数量（最多3个）
+        - 确保请求间隔（最少500ms）
+        - 避免触发API限流
+        """
+        async with self._search_semaphore:
+            # 确保请求间隔
+            now = time.time()
+            elapsed = now - self._last_request_time
+            if elapsed < self._min_request_interval:
+                wait_time = self._min_request_interval - elapsed
+                logger.debug(
+                    "rate_limit_throttle",
+                    wait_time=wait_time,
+                    elapsed=elapsed
+                )
+                await asyncio.sleep(wait_time)
+            
+            result = await coro
+            self._last_request_time = time.time()
+            return result
     
     async def _search_with_tavily(self, input_data: SearchQuery) -> SearchResult:
         """
-        使用 Tavily API 搜索
+        使用 Tavily API 搜索（带速率控制和时间筛选）
         
         Args:
             input_data: 搜索查询
@@ -45,50 +82,58 @@ class WebSearchTool(BaseTool[SearchQuery, SearchResult]):
         if not self.api_key:
             raise ValueError("Tavily API Key 未配置")
         
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{self.base_url}/search",
-                json={
-                    "api_key": self.api_key,
-                    "query": input_data.query,
-                    "search_depth": "basic",  # basic, advanced
-                    "max_results": input_data.max_results,
-                    "include_answer": False,
-                    "include_raw_content": False,
-                    "include_images": False,
-                },
-                headers={
-                    "Content-Type": "application/json",
-                },
-                timeout=15.0,
-            )
-            response.raise_for_status()
-            
-            data = response.json()
-            
-            # Tavily 返回格式：{"results": [{"title", "url", "content", "score", "published_date"}], ...}
-            tavily_results = data.get("results", [])
-            
-            results = [
-                {
-                    "title": item.get("title", ""),
-                    "url": item.get("url", ""),
-                    "snippet": item.get("content", "")[:200],  # 截取前200字符作为摘要
-                    "published_date": item.get("published_date", ""),
-                }
-                for item in tavily_results[:input_data.max_results]
-            ]
-            
-            logger.info(
-                "web_search_tavily_success",
-                query=input_data.query,
-                results_count=len(results),
-            )
-            
-            return SearchResult(
-                results=results,
-                total_found=len(results),
-            )
+        async def do_search():
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{self.base_url}/search",
+                    json={
+                        "api_key": self.api_key,
+                        "query": input_data.query,
+                        "search_depth": "advanced",  # 🆕 改为 advanced 获取更高质量结果
+                        "max_results": input_data.max_results,
+                        "days": 730,  # 🆕 只搜索最近2年内的内容
+                        "include_answer": False,
+                        "include_raw_content": False,
+                        "include_images": False,
+                    },
+                    headers={
+                        "Content-Type": "application/json",
+                    },
+                    timeout=15.0,
+                )
+                response.raise_for_status()
+                return response
+        
+        # 🆕 使用速率限制包装器
+        response = await self._rate_limited_request(do_search())
+        
+        data = response.json()
+        
+        # Tavily 返回格式：{"results": [{"title", "url", "content", "score", "published_date"}], ...}
+        tavily_results = data.get("results", [])
+        
+        results = [
+            {
+                "title": item.get("title", ""),
+                "url": item.get("url", ""),
+                "snippet": item.get("content", "")[:200],  # 截取前200字符作为摘要
+                "published_date": item.get("published_date", ""),
+            }
+            for item in tavily_results[:input_data.max_results]
+        ]
+        
+        logger.info(
+            "web_search_tavily_success",
+            query=input_data.query,
+            results_count=len(results),
+            search_depth="advanced",
+            days_filter=730
+        )
+        
+        return SearchResult(
+            results=results,
+            total_found=len(results),
+        )
     
     async def _search_with_duckduckgo(self, input_data: SearchQuery) -> SearchResult:
         """

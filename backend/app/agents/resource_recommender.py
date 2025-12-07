@@ -4,7 +4,7 @@ Resource Recommender Agent（资源推荐师）
 import json
 import uuid
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from app.agents.base import BaseAgent
 from app.models.domain import (
     Concept,
@@ -17,6 +17,8 @@ from app.models.domain import (
 from app.core.tool_registry import tool_registry
 from app.config.settings import settings
 import structlog
+import httpx
+import asyncio
 
 logger = structlog.get_logger()
 
@@ -196,6 +198,139 @@ class ResourceRecommenderAgent(BaseAgent):
                 })
         
         return tool_messages, search_queries_used
+    
+    async def _verify_urls(
+        self, 
+        resources: List[Resource]
+    ) -> List[Resource]:
+        """
+        批量验证资源URL的有效性
+        
+        策略:
+        - 使用 HEAD 请求检查链接（更快）
+        - 模拟浏览器 User-Agent（避免403）
+        - 并发验证提升速度
+        - 保留200和403/412状态码的资源（403/412可能需要浏览器访问但资源存在）
+        - 过滤404和500+错误的资源
+        
+        Args:
+            resources: 待验证的资源列表
+            
+        Returns:
+            验证后的资源列表（已过滤无效链接）
+        """
+        verified_resources = []
+        
+        # 模拟浏览器 User-Agent
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                         "AppleWebKit/537.36 (KHTML, like Gecko) "
+                         "Chrome/120.0.0.0 Safari/537.36"
+        }
+        
+        async def verify_single(resource: Resource) -> Optional[Resource]:
+            """验证单个URL"""
+            try:
+                async with httpx.AsyncClient(
+                    timeout=10.0, 
+                    follow_redirects=True
+                ) as client:
+                    response = await client.head(resource.url, headers=headers)
+                    
+                    # 200: 完全有效
+                    if response.status_code == 200:
+                        # 更新为最终URL（处理重定向）
+                        resource.url = str(response.url)
+                        logger.info(
+                            "url_verified_success",
+                            url=resource.url,
+                            status=200,
+                            title=resource.title[:50]
+                        )
+                        return resource
+                    
+                    # 403/412: 可能需要浏览器访问，但资源可能存在，保留
+                    elif response.status_code in [403, 412]:
+                        logger.info(
+                            "url_possibly_valid",
+                            url=resource.url,
+                            status=response.status_code,
+                            title=resource.title[:50],
+                            reason="需要浏览器访问或Cookie"
+                        )
+                        return resource  # 保留这些资源
+                    
+                    # 404: 确认无效
+                    elif response.status_code == 404:
+                        logger.warning(
+                            "url_not_found",
+                            url=resource.url,
+                            status=404,
+                            title=resource.title[:50]
+                        )
+                        return None  # 过滤掉
+                    
+                    # 500+: 服务器错误
+                    elif response.status_code >= 500:
+                        logger.warning(
+                            "url_server_error",
+                            url=resource.url,
+                            status=response.status_code,
+                            title=resource.title[:50]
+                        )
+                        return None  # 过滤掉
+                    
+                    # 其他状态码：保守处理，保留
+                    else:
+                        logger.info(
+                            "url_unknown_status",
+                            url=resource.url,
+                            status=response.status_code,
+                            title=resource.title[:50]
+                        )
+                        return resource
+                        
+            except httpx.TimeoutException:
+                logger.warning(
+                    "url_verification_timeout",
+                    url=resource.url,
+                    title=resource.title[:50]
+                )
+                # 超时的链接保留（可能是网络问题）
+                return resource
+                
+            except Exception as e:
+                logger.warning(
+                    "url_verification_failed",
+                    url=resource.url,
+                    error=str(e)[:100],
+                    title=resource.title[:50]
+                )
+                # 验证失败的链接保留（保守策略）
+                return resource
+        
+        # 并发验证所有URL
+        logger.info(
+            "url_verification_start",
+            total_resources=len(resources)
+        )
+        
+        tasks = [verify_single(r) for r in resources]
+        results = await asyncio.gather(*tasks)
+        
+        verified_resources = [r for r in results if r is not None]
+        
+        filtered_count = len(resources) - len(verified_resources)
+        
+        logger.info(
+            "url_verification_complete",
+            total=len(resources),
+            verified=len(verified_resources),
+            filtered=filtered_count,
+            success_rate=f"{len(verified_resources)/len(resources)*100:.1f}%" if resources else "0%"
+        )
+        
+        return verified_resources
     
     async def recommend(
         self,
@@ -413,6 +548,10 @@ class ResourceRecommenderAgent(BaseAgent):
                         type=r.get("type", "article"),
                         description=r.get("description", ""),
                         relevance_score=float(r.get("relevance_score", 0.5)),
+                        # 🆕 支持新字段
+                        confidence_score=float(r.get("confidence_score")) if r.get("confidence_score") is not None else None,
+                        published_date=r.get("published_date"),
+                        language=r.get("language"),
                     )
                     resources.append(resource)
                 except Exception as e:
@@ -420,6 +559,31 @@ class ResourceRecommenderAgent(BaseAgent):
                         "resource_recommender_parse_resource_failed",
                         error=str(e),
                         resource_data=r,
+                    )
+            
+            logger.info(
+                "resource_recommender_parsed_resources",
+                concept_id=concept.concept_id,
+                resources_count=len(resources)
+            )
+            
+            # 🆕 验证URL有效性（过滤404链接）
+            if resources:
+                logger.info(
+                    "resource_recommender_verifying_urls",
+                    concept_id=concept.concept_id,
+                    resources_count=len(resources)
+                )
+                
+                resources = await self._verify_urls(resources)
+                
+                # 确保至少有3个资源
+                if len(resources) < 3:
+                    logger.warning(
+                        "resource_recommender_insufficient_resources",
+                        concept_id=concept.concept_id,
+                        resources_count=len(resources),
+                        message="URL验证后资源数量不足，但将继续返回"
                     )
             
             # 合并搜索查询（从 JSON 和实际调用中）

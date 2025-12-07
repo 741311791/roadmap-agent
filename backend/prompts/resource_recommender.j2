@@ -41,9 +41,29 @@
 2. 推荐资源应覆盖多种类型：文章、视频、书籍、在线课程、官方文档、工具
 3. 根据用户的学习偏好（{{ user_preferences.content_preference | join(", ") }}）优先推荐对应类型的资源
 4. 考虑用户当前水平（{{ user_preferences.current_level }}），确保资源难度适中
-5. 每个资源必须包含：标题、URL、类型、简介、相关性评分
+5. 每个资源必须包含：标题、URL、类型、简介、相关性评分、可信度评分
 6. 相关性评分基于资源与概念的匹配程度（0-1，1 为最相关）
 7. 推荐 5-10 个高质量资源，按相关性排序
+
+🆕 **8. 时效性要求（重要）**：
+- **优先推荐最近1-2年内发布的资源**
+- 技术类内容更新快，避免推荐过时的API、方法、工具
+- 官方文档和经典教程（如MDN）可不受时间限制
+
+🆕 **9. 资源可信度评估（必须）**：
+- 为每个资源评估可信度（confidence_score: 0-1）
+- **0.9-1.0**: 官方文档（React官网、MDN）、知名技术网站、经过验证的权威教程
+- **0.7-0.9**: 高质量社区内容（掘金精选、知名技术博主）、知名教育平台课程（Udemy、Coursera）
+- **0.5-0.7**: 一般质量的文章/视频
+- **<0.5**: 不应推荐
+
+🆕 **10. 严格避免以下类型的资源**：
+- ❌ 2020年之前的技术文章（除非是经典文档如MDN、W3C标准）
+- ❌ 使用已弃用API/方法的过时教程
+- ❌ 个人博客上质量低下、内容不完整的文章
+- ❌ 失效的第三方网站（如404错误）
+- ❌ 非官方的API文档（优先推荐官方文档）
+- ❌ 标题党或内容与标题不符的资源
 
 [4. Output Format]
 **重要：请直接返回纯 JSON 对象，不要使用 markdown 代码块包裹（不要使用 ```json 或 ```）**
@@ -60,12 +80,20 @@
       "type": "article|video|book|course|documentation|tool",
       "description": "资源简介（50-100字）",
       "relevance_score": 0.95,
+      "confidence_score": 0.9,
+      "published_date": "2024-01-15",
       "language": "zh|en"
     }
   ],
   "search_queries_used": ["查询1", "查询2"]
 }
 ```
+
+**字段说明**:
+- `relevance_score`: 资源与概念的相关性（0-1，1为最相关）
+- 🆕 `confidence_score`: **必填**，资源可信度（0-1），基于来源权威性和内容质量
+- 🆕 `published_date`: **建议填写**，资源发布日期（ISO格式如 "2024-01-15"）。如果无法确定，填 null
+- `language`: 资源内容的语言代码（如 "zh", "en", "ja" 等）
 
 **资源类型说明**:
 - `article`: 技术文章、博客
@@ -171,6 +199,8 @@
       "type": "documentation",
       "description": "React 官方 Hooks 完整中文文档，包含 useState、useEffect 等所有内置 Hooks 的详细说明。",
       "relevance_score": 0.98,
+      "confidence_score": 1.0,
+      "published_date": null,
       "language": "zh"
     },
     {
@@ -179,6 +209,8 @@
       "type": "article",
       "description": "面向初学者的 React Hooks 中文教程，图文并茂，示例丰富。",
       "relevance_score": 0.95,
+      "confidence_score": 0.8,
+      "published_date": "2023-06-15",
       "language": "zh"
     },
     {
@@ -187,22 +219,8 @@
       "type": "video",
       "description": "B站热门 React Hooks 视频教程，适合中文学习者。",
       "relevance_score": 0.92,
-      "language": "zh"
-    },
-    {
-      "title": "useHooks 中文版",
-      "url": "https://usehooks.com/zh",
-      "type": "tool",
-      "description": "常用自定义 Hooks 的代码片段集合，包含中文注释。",
-      "relevance_score": 0.88,
-      "language": "zh"
-    },
-    {
-      "title": "React Hooks 深度指南 - 知乎专栏",
-      "url": "https://zhuanlan.zhihu.com/react-hooks",
-      "type": "article",
-      "description": "知乎上的 React Hooks 深度解析系列文章。",
-      "relevance_score": 0.85,
+      "confidence_score": 0.75,
+      "published_date": "2024-01-20",
       "language": "zh"
     },
     {
@@ -211,6 +229,8 @@
       "type": "article",
       "description": "Dan Abramov's in-depth article on useEffect, explaining the mental model and best practices.",
       "relevance_score": 0.96,
+      "confidence_score": 0.95,
+      "published_date": "2019-03-09",
       "language": "en"
     },
     {
@@ -219,22 +239,8 @@
       "type": "documentation",
       "description": "Official React Hooks documentation with comprehensive API reference.",
       "relevance_score": 0.94,
-      "language": "en"
-    },
-    {
-      "title": "React Hooks Course - Udemy",
-      "url": "https://www.udemy.com/course/react-hooks-tutorial/",
-      "type": "course",
-      "description": "Comprehensive video course covering React Hooks from basics to advanced patterns.",
-      "relevance_score": 0.90,
-      "language": "en"
-    },
-    {
-      "title": "useHooks - React Hooks Recipes",
-      "url": "https://usehooks.com/",
-      "type": "tool",
-      "description": "Collection of commonly used custom React Hooks with copy-paste code snippets.",
-      "relevance_score": 0.85,
+      "confidence_score": 1.0,
+      "published_date": null,
       "language": "en"
     }
   ],
@@ -243,8 +249,7 @@
     "React Hooks 教程 掘金",
     "React Hooks 视频教程 bilibili",
     "React Hooks official documentation",
-    "useEffect complete guide",
-    "React Hooks course udemy"
+    "useEffect complete guide"
   ]
 }
 ```
@@ -253,7 +258,9 @@
 1. 输出必须是有效的 JSON 格式
 2. 所有 URL 必须是真实可访问的链接
 3. 资源按 relevance_score 降序排列
-4. **每个资源必须包含 language 字段**，标注其内容语言
-5. **资源数量需符合语言分配比例**（如主语言 60%，次语言 40%）
-6. search_queries_used 应包含不同语言的搜索查询
+4. 🆕 **每个资源必须包含 confidence_score 字段**，评估其可信度
+5. 🆕 **published_date 字段尽量填写**，如果无法确定则填 null
+6. **每个资源必须包含 language 字段**，标注其内容语言
+7. **资源数量需符合语言分配比例**（如主语言 60%，次语言 40%）
+8. search_queries_used 应包含不同语言的搜索查询
 

@@ -95,6 +95,7 @@
     --input: 24 10% 20%;
     --ring: 40 20% 99%;
   }
+
 }
 
 @layer base {
@@ -188,6 +189,34 @@
 
   .glass-input {
     @apply bg-muted/50 backdrop-blur-sm border border-input focus:border-primary/50 focus:ring-2 focus:ring-ring/20 transition-all outline-none rounded-md px-4 py-2;
+  }
+
+  /* === IMMERSIVE LEARNING PANELS (Light Theme) === */
+  /* 沉浸式学习页面的面板样式 - 与全局浅色主题一致 */
+  .immersive-panel {
+    @apply bg-card/95 backdrop-blur-sm border border-border/60 shadow-sm;
+  }
+
+  .immersive-panel-elevated {
+    @apply bg-white/80 backdrop-blur-md border border-border/40 shadow-md;
+  }
+
+  /* Active/Selected states - 使用 Sage 深色变体突出显示 */
+  .immersive-active {
+    @apply bg-sage-50 border-sage-200 text-sage-700;
+  }
+
+  .immersive-hover {
+    @apply hover:bg-muted/50 hover:text-foreground transition-colors;
+  }
+
+  /* 学习区域的特殊头部背景 - 使用 Sage 的深色变体 */
+  .learning-header-gradient {
+    background: linear-gradient(135deg, 
+      hsl(140 20% 92%) 0%, 
+      hsl(140 15% 96%) 50%, 
+      hsl(40 15% 97%) 100%
+    );
   }
 
   /* === EDITORIAL BUTTON VARIANTS === */
