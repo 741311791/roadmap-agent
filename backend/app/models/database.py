@@ -280,7 +280,7 @@ class ExecutionLog(SQLModel, table=True):
     执行日志表
     
     记录工作流执行过程中的关键事件，用于：
-    - 通过 trace_id 追踪请求完整生命周期
+    - 通过 task_id 追踪请求完整生命周期
     - 聚合错误报告
     - 性能分析和问题定位
     
@@ -298,7 +298,7 @@ class ExecutionLog(SQLModel, table=True):
     )
     
     # 关联字段
-    trace_id: str = Field(index=True, description="追踪 ID，对应 task_id")
+    task_id: str = Field(index=True, description="任务 ID")
     roadmap_id: Optional[str] = Field(default=None, index=True, description="路线图 ID")
     concept_id: Optional[str] = Field(default=None, index=True, description="概念 ID")
     

@@ -49,7 +49,7 @@ async def approve_all_pending_tasks():
                     # 恢复工作流并批准
                     print(f"  正在批准并继续工作流...")
                     final_state = await orchestrator.resume_after_human_review(
-                        trace_id=task.task_id,
+                        task_id=task.task_id,
                         approved=True,
                         feedback=None,
                     )
@@ -156,7 +156,7 @@ async def approve_single_task(task_id: str):
                 # 恢复工作流并批准
                 print("正在批准并继续工作流...")
                 final_state = await orchestrator.resume_after_human_review(
-                    trace_id=task.task_id,
+                    task_id=task.task_id,
                     approved=True,
                     feedback=None,
                 )

@@ -19,8 +19,8 @@ from app.models.domain import (
 )
 from app.db.session import get_db, AsyncSessionLocal
 from app.services.roadmap_service import RoadmapService
-from app.core.dependencies import get_orchestrator
-from app.core.orchestrator import RoadmapOrchestrator
+from app.core.dependencies import get_workflow_executor
+from app.core.orchestrator.executor import WorkflowExecutor
 from app.db.repositories.roadmap_repo import RoadmapRepository
 from app.agents.intent_analyzer import IntentAnalyzerAgent
 from app.agents.curriculum_architect import CurriculumArchitectAgent
@@ -34,8 +34,8 @@ logger = structlog.get_logger()
 
 async def _execute_roadmap_generation_task(
     request: UserRequest,
-    trace_id: str,
-    orchestrator: RoadmapOrchestrator,
+    task_id: str,
+    orchestrator: WorkflowExecutor,
 ):
     """
     后台任务执行函数
@@ -44,12 +44,12 @@ async def _execute_roadmap_generation_task(
     
     Args:
         request: 用户请求
-        trace_id: 追踪 ID
+        task_id: 追踪 ID
         orchestrator: 编排器实例
     """
     logger.info(
         "background_task_started",
-        trace_id=trace_id,
+        task_id=task_id,
         user_id=request.user_id,
     )
     
@@ -60,16 +60,16 @@ async def _execute_roadmap_generation_task(
             
             logger.info(
                 "background_task_executing_workflow",
-                trace_id=trace_id,
+                task_id=task_id,
             )
             
             result = await service.generate_roadmap(
-                request, trace_id
+                request, task_id
             )
             
             logger.info(
                 "background_task_completed",
-                trace_id=trace_id,
+                task_id=task_id,
                 status=result.get("status"),
                 roadmap_id=result.get("roadmap_id"),
             )
@@ -79,7 +79,7 @@ async def _execute_roadmap_generation_task(
             error_traceback = traceback.format_exc()
             logger.error(
                 "background_task_failed",
-                trace_id=trace_id,
+                task_id=task_id,
                 error=str(e),
                 error_type=type(e).__name__,
                 traceback=error_traceback,
@@ -92,7 +92,7 @@ async def _execute_roadmap_generation_task(
                 
                 repo = RoadmapRepository(session)
                 await repo.update_task_status(
-                    task_id=trace_id,
+                    task_id=task_id,
                     status="failed",
                     current_step="failed",
                     error_message=f"{type(e).__name__}: {str(e)[:500]}",  # 限制错误信息长度
@@ -101,12 +101,12 @@ async def _execute_roadmap_generation_task(
                 
                 logger.info(
                     "background_task_status_updated_to_failed",
-                    trace_id=trace_id,
+                    task_id=task_id,
                 )
             except Exception as update_error:
                 logger.error(
                     "background_task_status_update_failed",
-                    trace_id=trace_id,
+                    task_id=task_id,
                     original_error=str(e),
                     update_error=str(update_error),
                 )
@@ -117,7 +117,7 @@ async def generate_roadmap(
     request: UserRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    orchestrator: RoadmapOrchestrator = Depends(get_orchestrator),
+    orchestrator: WorkflowExecutor = Depends(get_workflow_executor),
 ):
     """
     生成学习路线图（异步任务）
@@ -125,24 +125,24 @@ async def generate_roadmap(
     Returns:
         任务 ID，roadmap_id将在需求分析完成后通过WebSocket发送给前端
     """
-    trace_id = str(uuid.uuid4())
+    task_id = str(uuid.uuid4())
     
     logger.info(
         "roadmap_generation_requested",
         user_id=request.user_id,
-        trace_id=trace_id,
+        task_id=task_id,
         learning_goal=request.preferences.learning_goal,
     )
     
     # 先创建初始任务记录（使用当前请求的会话）
     repo = RoadmapRepository(db)
     await repo.create_task(
-        task_id=trace_id,
+        task_id=task_id,
         user_id=request.user_id,
         user_request=request.model_dump(mode='json'),
     )
     await repo.update_task_status(
-        task_id=trace_id,
+        task_id=task_id,
         status="processing",
         current_step="queued",
     )
@@ -152,12 +152,12 @@ async def generate_roadmap(
     background_tasks.add_task(
         _execute_roadmap_generation_task,
         request,
-        trace_id,
+        task_id,
         orchestrator,
     )
     
     return {
-        "task_id": trace_id,
+        "task_id": task_id,
         "status": "processing",
         "message": "路线图生成任务已启动，roadmap_id将在需求分析完成后通过WebSocket发送",
     }
@@ -167,7 +167,7 @@ async def generate_roadmap(
 async def get_roadmap_status(
     task_id: str,
     db: AsyncSession = Depends(get_db),
-    orchestrator: RoadmapOrchestrator = Depends(get_orchestrator),
+    orchestrator: WorkflowExecutor = Depends(get_workflow_executor),
 ):
     """查询路线图生成状态"""
     service = RoadmapService(db, orchestrator)
@@ -183,7 +183,7 @@ async def get_roadmap_status(
 async def get_roadmap(
     roadmap_id: str,
     db: AsyncSession = Depends(get_db),
-    orchestrator: RoadmapOrchestrator = Depends(get_orchestrator),
+    orchestrator: WorkflowExecutor = Depends(get_workflow_executor),
 ):
     """
     获取完整的路线图数据
@@ -270,7 +270,7 @@ async def approve_roadmap(
     approved: bool,
     feedback: str | None = None,
     db: AsyncSession = Depends(get_db),
-    orchestrator: RoadmapOrchestrator = Depends(get_orchestrator),
+    orchestrator: WorkflowExecutor = Depends(get_workflow_executor),
 ):
     """
     人工审核端点（Human-in-the-Loop）
@@ -512,8 +512,12 @@ async def _generate_sse_stream(
         data: {"type": "tutorials_done", ...}
         data: {"type": "done", "summary": {...}}
     """
-    trace_id = str(uuid.uuid4())  # 生成任务 ID
+    task_id = str(uuid.uuid4())  # 生成任务 ID
     tutorial_refs = {}  # 收集生成的教程引用
+    
+    # 导入 execution_logger
+    from app.services.execution_logger import execution_logger
+    import time
     
     try:
         logger.info(
@@ -523,11 +527,32 @@ async def _generate_sse_stream(
             include_tutorials=include_tutorials,
         )
         
+        # 记录工作流开始
+        await execution_logger.log_workflow_start(
+            task_id=task_id,
+            step="sse_stream",
+            message="SSE流式路线图生成开始",
+            details={
+                "user_id": request.user_id,
+                "learning_goal": request.preferences.learning_goal,
+                "include_tutorials": include_tutorials,
+            }
+        )
+        
         # 步骤 1: 需求分析（流式）
         intent_analyzer = IntentAnalyzerAgent()
         intent_result = None
         
         logger.info("sse_stream_intent_analysis_starting")
+        intent_start_time = time.time()
+        
+        # 记录需求分析开始
+        await execution_logger.log_workflow_start(
+            task_id=task_id,
+            step="intent_analysis",
+            message="开始需求分析",
+        )
+        
         async for event in intent_analyzer.analyze_stream(request):
             # 转发事件到 SSE 流
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
@@ -536,8 +561,30 @@ async def _generate_sse_stream(
             if event["type"] == "complete":
                 intent_result = IntentAnalysisOutput.model_validate(event["data"])
                 logger.info("sse_stream_intent_analysis_completed")
+                
+                # 记录需求分析完成
+                intent_duration_ms = int((time.time() - intent_start_time) * 1000)
+                await execution_logger.log_workflow_complete(
+                    task_id=task_id,
+                    step="intent_analysis",
+                    message="需求分析完成",
+                    duration_ms=intent_duration_ms,
+                    details={
+                        "roadmap_id": intent_result.roadmap_id,
+                        "key_technologies": intent_result.key_technologies[:5],
+                        "difficulty_profile": intent_result.difficulty_profile,
+                        "parsed_goal": intent_result.parsed_goal,
+                    }
+                )
             elif event["type"] == "error":
                 logger.error("sse_stream_intent_analysis_failed", error=event.get("error"))
+                # 记录需求分析错误
+                await execution_logger.log_error(
+                    task_id=task_id,
+                    category="workflow",
+                    message=f"需求分析失败: {event.get('error', 'Unknown error')}",
+                    step="intent_analysis",
+                )
                 return
         
         if not intent_result:
@@ -547,6 +594,13 @@ async def _generate_sse_stream(
                 "agent": "system"
             }
             yield f'data: {json.dumps(error_event, ensure_ascii=False)}\n\n'
+            # 记录错误
+            await execution_logger.log_error(
+                task_id=task_id,
+                category="workflow",
+                message="需求分析失败：未能获取有效结果",
+                step="intent_analysis",
+            )
             return
         
         # 步骤 2: 框架设计（流式）
@@ -554,6 +608,16 @@ async def _generate_sse_stream(
         framework_result = None
         
         logger.info("sse_stream_curriculum_design_starting")
+        curriculum_start_time = time.time()
+        
+        # 记录框架设计开始
+        await execution_logger.log_workflow_start(
+            task_id=task_id,
+            step="curriculum_design",
+            message="开始课程框架设计",
+            roadmap_id=intent_result.roadmap_id,
+        )
+        
         async for event in architect.design_stream(intent_result, request.preferences):
             # 转发事件到 SSE 流
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
@@ -562,8 +626,33 @@ async def _generate_sse_stream(
             if event["type"] == "complete":
                 framework_result = event["data"]
                 logger.info("sse_stream_curriculum_design_completed")
+                
+                # 记录框架设计完成
+                curriculum_duration_ms = int((time.time() - curriculum_start_time) * 1000)
+                framework_obj = framework_result.get("framework", {})
+                await execution_logger.log_workflow_complete(
+                    task_id=task_id,
+                    step="curriculum_design",
+                    message="课程框架设计完成",
+                    duration_ms=curriculum_duration_ms,
+                    roadmap_id=framework_obj.get("roadmap_id"),
+                    details={
+                        "title": framework_obj.get("title"),
+                        "stages_count": len(framework_obj.get("stages", [])),
+                        "total_hours": framework_obj.get("total_estimated_hours"),
+                        "completion_weeks": framework_obj.get("recommended_completion_weeks"),
+                    }
+                )
             elif event["type"] == "error":
                 logger.error("sse_stream_curriculum_design_failed", error=event.get("error"))
+                # 记录框架设计错误
+                await execution_logger.log_error(
+                    task_id=task_id,
+                    category="workflow",
+                    message=f"课程框架设计失败: {event.get('error', 'Unknown error')}",
+                    step="curriculum_design",
+                    roadmap_id=intent_result.roadmap_id,
+                )
                 return
         
         if not framework_result:
@@ -573,14 +662,33 @@ async def _generate_sse_stream(
                 "agent": "system"
             }
             yield f'data: {json.dumps(error_event, ensure_ascii=False)}\n\n'
+            # 记录错误
+            await execution_logger.log_error(
+                task_id=task_id,
+                category="workflow",
+                message="框架设计失败：未能获取有效结果",
+                step="curriculum_design",
+                roadmap_id=intent_result.roadmap_id,
+            )
             return
         
         # 步骤 3: 教程生成（批次流式，可选）
         tutorials_summary = None
         if include_tutorials:
             logger.info("sse_stream_tutorials_generation_starting")
+            tutorials_start_time = time.time()
             
             framework_data = framework_result.get("framework", {})
+            roadmap_id = framework_data.get("roadmap_id")
+            
+            # 记录教程生成开始
+            await execution_logger.log_workflow_start(
+                task_id=task_id,
+                step="tutorial_generation",
+                message="开始批量生成教程",
+                roadmap_id=roadmap_id,
+            )
+            
             batch_size = settings.TUTORIAL_STREAM_BATCH_SIZE
             
             async for event_line in _generate_tutorials_batch_stream(
@@ -625,6 +733,20 @@ async def _generate_sse_stream(
                     pass
             
             logger.info("sse_stream_tutorials_generation_completed")
+            
+            # 记录教程生成完成
+            tutorials_duration_ms = int((time.time() - tutorials_start_time) * 1000)
+            await execution_logger.log_workflow_complete(
+                task_id=task_id,
+                step="tutorial_generation",
+                message="批量教程生成完成",
+                duration_ms=tutorials_duration_ms,
+                roadmap_id=roadmap_id,
+                details={
+                    "tutorials_count": len(tutorial_refs),
+                    "summary": tutorials_summary,
+                }
+            )
         
         # 完成标记
         done_event = {
@@ -645,9 +767,18 @@ async def _generate_sse_stream(
             try:
                 logger.info(
                     "sse_stream_saving_to_db",
-                    trace_id=trace_id,
+                    task_id=task_id,
                     user_id=request.user_id,
                     has_tutorials=bool(tutorial_refs),
+                )
+                
+                db_save_start_time = time.time()
+                
+                # 记录数据库保存开始
+                await execution_logger.log_workflow_start(
+                    task_id=task_id,
+                    step="database_save",
+                    message="开始保存路线图到数据库",
                 )
                 
                 async with AsyncSessionLocal() as session:
@@ -655,7 +786,7 @@ async def _generate_sse_stream(
                     
                     # 1. 创建任务记录
                     await repo.create_task(
-                        task_id=trace_id,
+                        task_id=task_id,
                         user_id=request.user_id,
                         user_request=request.model_dump(mode='json'),
                     )
@@ -665,7 +796,7 @@ async def _generate_sse_stream(
                     await repo.save_roadmap_metadata(
                         roadmap_id=framework_obj.roadmap_id,
                         user_id=request.user_id,
-                        task_id=trace_id,
+                        task_id=task_id,
                         framework=framework_obj,
                     )
                     
@@ -678,7 +809,7 @@ async def _generate_sse_stream(
                     
                     # 4. 更新任务状态为完成
                     await repo.update_task_status(
-                        task_id=trace_id,
+                        task_id=task_id,
                         status="completed",
                         current_step="completed",
                         roadmap_id=framework_obj.roadmap_id,
@@ -688,25 +819,58 @@ async def _generate_sse_stream(
                     
                     logger.info(
                         "sse_stream_saved_to_db",
-                        trace_id=trace_id,
+                        task_id=task_id,
                         roadmap_id=framework_obj.roadmap_id,
                         tutorials_count=len(tutorial_refs),
                     )
                     
+                    # 记录数据库保存完成
+                    db_save_duration_ms = int((time.time() - db_save_start_time) * 1000)
+                    await execution_logger.log_workflow_complete(
+                        task_id=task_id,
+                        step="database_save",
+                        message="路线图保存到数据库完成",
+                        duration_ms=db_save_duration_ms,
+                        roadmap_id=framework_obj.roadmap_id,
+                        details={
+                            "tutorials_count": len(tutorial_refs),
+                        }
+                    )
+                    
                     # 在 done_event 中添加 task_id 和 roadmap_id
-                    done_event["task_id"] = trace_id
+                    done_event["task_id"] = task_id
                     done_event["roadmap_id"] = framework_obj.roadmap_id
                     
             except Exception as db_error:
                 logger.error(
                     "sse_stream_save_to_db_failed",
-                    trace_id=trace_id,
+                    task_id=task_id,
                     error=str(db_error),
                     error_type=type(db_error).__name__,
+                )
+                # 记录数据库保存错误
+                await execution_logger.log_error(
+                    task_id=task_id,
+                    category="database",
+                    message=f"路线图保存到数据库失败: {str(db_error)}",
+                    step="database_save",
+                    details={"error_type": type(db_error).__name__}
                 )
                 # 不影响流式返回，只记录错误
         
         yield f'data: {json.dumps(done_event, ensure_ascii=False)}\n\n'
+        
+        # 记录整个流程完成
+        await execution_logger.log_workflow_complete(
+            task_id=task_id,
+            step="sse_stream",
+            message="SSE流式路线图生成完成",
+            roadmap_id=done_event.get("roadmap_id"),
+            details={
+                "include_tutorials": include_tutorials,
+                "tutorials_count": len(tutorial_refs),
+            }
+        )
         
         logger.info(
             "sse_stream_completed",
@@ -720,6 +884,19 @@ async def _generate_sse_stream(
             error=str(e),
             error_type=type(e).__name__,
         )
+        
+        # 记录流程失败到execution_logs
+        await execution_logger.log_error(
+            task_id=task_id,
+            category="workflow",
+            message=f"SSE流式路线图生成失败: {str(e)}",
+            step="sse_stream",
+            details={
+                "error_type": type(e).__name__,
+                "error": str(e),
+            }
+        )
+        
         error_event = {
             "type": "error",
             "message": f"流式生成过程发生错误: {str(e)}",
@@ -3115,7 +3292,7 @@ trace_router = APIRouter(prefix="/trace", tags=["trace"])
 class ExecutionLogResponse(BaseModel):
     """执行日志响应"""
     id: str
-    trace_id: str
+    task_id: str
     roadmap_id: Optional[str] = None
     concept_id: Optional[str] = None
     level: str
@@ -3138,7 +3315,7 @@ class ExecutionLogListResponse(BaseModel):
 
 class TraceSummaryResponse(BaseModel):
     """追踪摘要响应"""
-    trace_id: str
+    task_id: str
     level_stats: dict[str, int]
     category_stats: dict[str, int]
     total_duration_ms: int
@@ -3147,9 +3324,9 @@ class TraceSummaryResponse(BaseModel):
     total_logs: int
 
 
-@trace_router.get("/{trace_id}/logs", response_model=ExecutionLogListResponse)
+@trace_router.get("/{task_id}/logs", response_model=ExecutionLogListResponse)
 async def get_trace_logs(
-    trace_id: str,
+    task_id: str,
     level: Optional[str] = None,
     category: Optional[str] = None,
     limit: int = 100,
@@ -3157,10 +3334,10 @@ async def get_trace_logs(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    获取指定 trace_id 的执行日志
+    获取指定 task_id 的执行日志
     
     Args:
-        trace_id: 追踪 ID（通常等于 task_id）
+        task_id: 追踪 ID（通常等于 task_id）
         level: 过滤日志级别（debug, info, warning, error）
         category: 过滤日志分类（workflow, agent, tool, database）
         limit: 返回数量限制（默认 100，最大 500）
@@ -3174,7 +3351,7 @@ async def get_trace_logs(
     
     repo = RoadmapRepository(db)
     logs = await repo.get_execution_logs_by_trace(
-        trace_id=trace_id,
+        task_id=task_id,
         level=level,
         category=category,
         limit=limit,
@@ -3185,7 +3362,7 @@ async def get_trace_logs(
         logs=[
             ExecutionLogResponse(
                 id=log.id,
-                trace_id=log.trace_id,
+                task_id=log.task_id,
                 roadmap_id=log.roadmap_id,
                 concept_id=log.concept_id,
                 level=log.level,
@@ -3205,50 +3382,50 @@ async def get_trace_logs(
     )
 
 
-@trace_router.get("/{trace_id}/summary", response_model=TraceSummaryResponse)
+@trace_router.get("/{task_id}/summary", response_model=TraceSummaryResponse)
 async def get_trace_summary(
-    trace_id: str,
+    task_id: str,
     db: AsyncSession = Depends(get_db),
 ):
     """
-    获取指定 trace_id 的执行摘要
+    获取指定 task_id 的执行摘要
     
     Args:
-        trace_id: 追踪 ID
+        task_id: 追踪 ID
         
     Returns:
         执行摘要统计
     """
     repo = RoadmapRepository(db)
-    summary = await repo.get_execution_logs_summary(trace_id)
+    summary = await repo.get_execution_logs_summary(task_id)
     
     return TraceSummaryResponse(**summary)
 
 
-@trace_router.get("/{trace_id}/errors", response_model=ExecutionLogListResponse)
+@trace_router.get("/{task_id}/errors", response_model=ExecutionLogListResponse)
 async def get_trace_errors(
-    trace_id: str,
+    task_id: str,
     limit: int = 50,
     db: AsyncSession = Depends(get_db),
 ):
     """
-    获取指定 trace_id 的错误日志
+    获取指定 task_id 的错误日志
     
     Args:
-        trace_id: 追踪 ID
+        task_id: 追踪 ID
         limit: 返回数量限制（默认 50）
         
     Returns:
         错误日志列表
     """
     repo = RoadmapRepository(db)
-    logs = await repo.get_error_logs_by_trace(trace_id, limit=limit)
+    logs = await repo.get_error_logs_by_trace(task_id, limit=limit)
     
     return ExecutionLogListResponse(
         logs=[
             ExecutionLogResponse(
                 id=log.id,
-                trace_id=log.trace_id,
+                task_id=log.task_id,
                 roadmap_id=log.roadmap_id,
                 concept_id=log.concept_id,
                 level=log.level,

@@ -916,17 +916,17 @@ class RoadmapRepository:
     
     async def get_execution_logs_by_trace(
         self,
-        trace_id: str,
+        task_id: str,
         level: Optional[str] = None,
         category: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> List[ExecutionLog]:
         """
-        获取指定 trace_id 的执行日志
+        获取指定 task_id 的执行日志
         
         Args:
-            trace_id: 追踪 ID（对应 task_id）
+            task_id: 追踪 ID（对应 task_id）
             level: 过滤日志级别（可选）
             category: 过滤日志分类（可选）
             limit: 返回数量限制
@@ -935,7 +935,7 @@ class RoadmapRepository:
         Returns:
             执行日志列表（按时间降序）
         """
-        query = select(ExecutionLog).where(ExecutionLog.trace_id == trace_id)
+        query = select(ExecutionLog).where(ExecutionLog.task_id == task_id)
         
         if level:
             query = query.where(ExecutionLog.level == level)
@@ -949,13 +949,13 @@ class RoadmapRepository:
     
     async def get_execution_logs_summary(
         self,
-        trace_id: str,
+        task_id: str,
     ) -> dict:
         """
         获取执行日志摘要统计
         
         Args:
-            trace_id: 追踪 ID
+            task_id: 追踪 ID
             
         Returns:
             包含统计信息的字典
@@ -968,7 +968,7 @@ class RoadmapRepository:
                 ExecutionLog.level,
                 func.count(ExecutionLog.id).label('count')
             )
-            .where(ExecutionLog.trace_id == trace_id)
+            .where(ExecutionLog.task_id == task_id)
             .group_by(ExecutionLog.level)
         )
         level_stats = {row[0]: row[1] for row in level_counts.fetchall()}
@@ -979,7 +979,7 @@ class RoadmapRepository:
                 ExecutionLog.category,
                 func.count(ExecutionLog.id).label('count')
             )
-            .where(ExecutionLog.trace_id == trace_id)
+            .where(ExecutionLog.task_id == task_id)
             .group_by(ExecutionLog.category)
         )
         category_stats = {row[0]: row[1] for row in category_counts.fetchall()}
@@ -987,7 +987,7 @@ class RoadmapRepository:
         # 计算总耗时
         duration_result = await self.session.execute(
             select(func.sum(ExecutionLog.duration_ms))
-            .where(ExecutionLog.trace_id == trace_id)
+            .where(ExecutionLog.task_id == task_id)
             .where(ExecutionLog.duration_ms.isnot(None))
         )
         total_duration_ms = duration_result.scalar_one_or_none() or 0
@@ -998,12 +998,12 @@ class RoadmapRepository:
                 func.min(ExecutionLog.created_at).label('first'),
                 func.max(ExecutionLog.created_at).label('last'),
             )
-            .where(ExecutionLog.trace_id == trace_id)
+            .where(ExecutionLog.task_id == task_id)
         )
         time_range = time_range_result.fetchone()
         
         return {
-            "trace_id": trace_id,
+            "task_id": task_id,
             "level_stats": level_stats,
             "category_stats": category_stats,
             "total_duration_ms": total_duration_ms,
@@ -1014,14 +1014,14 @@ class RoadmapRepository:
     
     async def get_error_logs_by_trace(
         self,
-        trace_id: str,
+        task_id: str,
         limit: int = 50,
     ) -> List[ExecutionLog]:
         """
-        获取指定 trace_id 的错误日志
+        获取指定 task_id 的错误日志
         
         Args:
-            trace_id: 追踪 ID
+            task_id: 追踪 ID
             limit: 返回数量限制
             
         Returns:
@@ -1030,7 +1030,7 @@ class RoadmapRepository:
         result = await self.session.execute(
             select(ExecutionLog)
             .where(
-                ExecutionLog.trace_id == trace_id,
+                ExecutionLog.task_id == task_id,
                 ExecutionLog.level == "error",
             )
             .order_by(ExecutionLog.created_at.desc())

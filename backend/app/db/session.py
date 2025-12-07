@@ -14,9 +14,19 @@ logger = structlog.get_logger()
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.DEBUG,
-    pool_size=10,
-    max_overflow=20,
-    pool_pre_ping=True,
+    pool_size=20,  # 增加连接池大小
+    max_overflow=40,  # 增加溢出连接数
+    pool_pre_ping=True,  # 连接前 ping 检查
+    pool_recycle=3600,  # 1小时回收连接，避免长时间连接过期
+    pool_timeout=30,  # 获取连接的超时时间（秒）
+    connect_args={
+        "server_settings": {
+            "application_name": "roadmap_agent",
+            "jit": "off",  # 禁用 JIT，可能提高稳定性
+        },
+        "command_timeout": 60,  # 命令超时 60 秒
+        "timeout": 30,  # 连接超时 30 秒
+    },
 )
 
 # 创建异步会话工厂

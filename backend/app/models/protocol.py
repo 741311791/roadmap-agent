@@ -9,7 +9,7 @@ import time
 
 class ACSMessage(BaseModel):
     """Agent Communication Standard (ACS) 信封"""
-    trace_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    task_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     timestamp: float = Field(default_factory=time.time)
     sender: str = Field(..., description="发送方 Agent ID")
     receiver: str = Field(..., description="接收方 Agent ID 或 'orchestrator'")

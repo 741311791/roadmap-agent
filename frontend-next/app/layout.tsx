@@ -1,35 +1,25 @@
 import type { Metadata } from 'next';
-import { Inter, Playfair_Display, Noto_Sans_SC, Noto_Serif_SC } from 'next/font/google';
+import { Inter, Playfair_Display } from 'next/font/google';
 import './globals.css';
+import './fonts.css'; // 本地字体配置
 import { Providers } from './providers';
 
 const inter = Inter({
   subsets: ['latin'],
   variable: '--font-inter',
   display: 'swap',
+  preload: false,
 });
 
 const playfair = Playfair_Display({
   subsets: ['latin'],
   variable: '--font-playfair',
   display: 'swap',
+  preload: false,
 });
 
-// 思源黑体 - 用于正文和UI元素
-const notoSansSC = Noto_Sans_SC({
-  subsets: ['latin'],
-  weight: ['300', '400', '500', '600', '700'],
-  variable: '--font-noto-sans-sc',
-  display: 'swap',
-});
-
-// 思源宋体 - 用于标题
-const notoSerifSC = Noto_Serif_SC({
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
-  variable: '--font-noto-serif-sc',
-  display: 'swap',
-});
+// 中文字体现在通过 fonts.css 从本地加载
+// 不再需要从 Google Fonts 导入
 
 export const metadata: Metadata = {
   title: 'Muset - AI-Powered Learning Roadmap',
@@ -45,7 +35,7 @@ export default function RootLayout({
   return (
     <html lang="zh-CN" suppressHydrationWarning>
       <body
-        className={`${inter.variable} ${playfair.variable} ${notoSansSC.variable} ${notoSerifSC.variable} font-sans antialiased`}
+        className={`${inter.variable} ${playfair.variable} font-sans antialiased`}
       >
         <Providers>{children}</Providers>
       </body>

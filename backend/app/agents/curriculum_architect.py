@@ -18,11 +18,131 @@ import structlog
 logger = structlog.get_logger()
 
 
+def _try_extract_json(content: str) -> str | None:
+    """
+    尝试从内容中提取JSON
+    
+    支持：
+    1. 直接的JSON对象 { ... }
+    2. 被 ```json ... ``` 包裹的JSON
+    3. 被 ``` ... ``` 包裹的JSON
+    
+    Returns:
+        提取的JSON字符串，如果不是JSON则返回None
+    """
+    content = content.strip()
+    
+    # 尝试1: 检测 ```json ... ``` 或 ``` ... ``` 包裹
+    json_code_block_patterns = [
+        r'```json\s*\n(.*?)\n```',  # ```json ... ```
+        r'```\s*\n(\{.*?\})\s*\n```',  # ``` { ... } ```
+    ]
+    
+    for pattern in json_code_block_patterns:
+        match = re.search(pattern, content, re.DOTALL)
+        if match:
+            json_str = match.group(1).strip()
+            # 验证是否是有效的JSON
+            try:
+                json.loads(json_str)
+                logger.debug("json_extracted_from_code_block", pattern=pattern)
+                return json_str
+            except json.JSONDecodeError:
+                continue
+    
+    # 尝试2: 直接是JSON对象（以 { 开始，以 } 结束）
+    if content.startswith('{') and content.endswith('}'):
+        try:
+            json.loads(content)
+            logger.debug("json_detected_directly")
+            return content
+        except json.JSONDecodeError:
+            pass
+    
+    # 不是JSON格式
+    return None
+
+
+def _parse_json_roadmap(json_str: str) -> dict:
+    """
+    解析JSON格式的路线图，并补全缺失的必需字段
+    
+    Args:
+        json_str: JSON字符串
+        
+    Returns:
+        符合 CurriculumDesignOutput 的字典
+    """
+    try:
+        data = json.loads(json_str)
+        
+        # 处理wrapped格式：{"output": {...}} 或 {"roadmap": {...}}
+        if "stages" not in data:
+            for wrap_key in ["output", "roadmap", "framework", "data", "result"]:
+                if wrap_key in data and isinstance(data[wrap_key], dict):
+                    logger.debug(f"json_unwrapping_from_key", key=wrap_key)
+                    data = data[wrap_key]
+                    break
+        
+        # 再次检查是否包含 stages 字段
+        if "stages" not in data:
+            raise ValueError(f"JSON格式不完整，缺少'stages'字段。实际键: {list(data.keys())}")
+        
+        # 补全 stage.order（如果缺失）
+        for idx, stage in enumerate(data["stages"], start=1):
+            if "order" not in stage:
+                stage["order"] = idx
+                logger.debug("json_补全_stage_order", stage_id=stage.get("stage_id"), order=idx)
+        
+        # 计算 total_estimated_hours（如果缺失）
+        if "total_estimated_hours" not in data or "total_hours" in data:
+            total_hours = 0.0
+            for stage in data["stages"]:
+                for module in stage.get("modules", []):
+                    for concept in module.get("concepts", []):
+                        total_hours += concept.get("estimated_hours", 0.0)
+            
+            data["total_estimated_hours"] = data.get("total_hours", total_hours)
+            logger.debug("json_计算_total_estimated_hours", total=data["total_estimated_hours"])
+        
+        # 计算 recommended_completion_weeks（如果缺失）
+        if "recommended_completion_weeks" not in data:
+            # 从 weeks 字段获取，或根据总小时数估算
+            if "weeks" in data:
+                data["recommended_completion_weeks"] = data["weeks"]
+            else:
+                # 假设每周学习10小时（可调整）
+                hours_per_week = 10.0
+                data["recommended_completion_weeks"] = max(
+                    1, int(data["total_estimated_hours"] / hours_per_week)
+                )
+            logger.debug(
+                "json_计算_recommended_completion_weeks",
+                weeks=data["recommended_completion_weeks"]
+            )
+        
+        # 提取 design_rationale
+        design_rationale = data.pop("design_rationale", "")
+        
+        # 返回标准格式
+        return {
+            "framework": data,
+            "design_rationale": design_rationale
+        }
+            
+    except json.JSONDecodeError as e:
+        raise ValueError(f"JSON解析失败: {e}")
+
+
 def _parse_compact_roadmap(content: str) -> dict:
     """
-    解析简洁格式的路线图文本，转换为完整的 JSON 结构
+    解析简洁格式的路线图（支持文本格式或JSON格式）
     
-    输入格式示例：
+    支持两种格式：
+    1. 文本格式（带 ===ROADMAP START=== 标记）
+    2. JSON格式（可能被 ```json 包裹）
+    
+    输入格式示例（文本）：
     ===ROADMAP START===
     ROADMAP_ID: python-web-dev
     TITLE: Python Web开发完整学习路线
@@ -46,6 +166,15 @@ def _parse_compact_roadmap(content: str) -> dict:
         ValueError: 无法解析文本格式
     """
     try:
+        # 1. 先尝试JSON格式
+        json_content = _try_extract_json(content)
+        if json_content:
+            logger.debug("curriculum_design_detected_json_format")
+            return _parse_json_roadmap(json_content)
+        
+        # 2. 尝试文本格式
+        logger.debug("curriculum_design_parsing_text_format")
+        
         # 提取路线图内容（去除标记）
         start_marker = "===ROADMAP START==="
         end_marker = "===ROADMAP END==="
@@ -54,7 +183,12 @@ def _parse_compact_roadmap(content: str) -> dict:
         end_idx = content.find(end_marker)
         
         if start_idx == -1 or end_idx == -1:
-            raise ValueError("未找到路线图开始/结束标记")
+            # 提供更详细的错误信息
+            content_preview = content[:300] if len(content) > 300 else content
+            raise ValueError(
+                f"无法识别输出格式。期望: (1) JSON格式（可被```json包裹）或 (2) 文本格式（带{start_marker}标记）。"
+                f"\n内容预览: {content_preview}..."
+            )
         
         roadmap_content = content[start_idx + len(start_marker):end_idx].strip()
         lines = roadmap_content.split('\n')
@@ -99,9 +233,10 @@ def _parse_compact_roadmap(content: str) -> dict:
                 module_counter_in_stage = 0
                 
                 # 格式: Stage 1: 基础知识（描述）[30小时]
-                match = re.match(r'Stage\s+(\d+):\s*([^（]+)（([^）]+)）\[([0-9.]+)小时\]', line_stripped)
+                # 支持中英文括号和小时标记
+                match = re.match(r'Stage\s+(\d+):\s*([^（(]+)[（(]([^）)]+)[）)]\[([0-9.]+)(?:小时|hours?)\]', line_stripped, re.IGNORECASE)
                 if not match:
-                    logger.warning("stage_parse_failed", line=line_stripped)
+                    logger.warning("stage_parse_failed", line=line_stripped, line_length=len(line_stripped))
                     continue
                 
                 stage_order = int(match.group(1))
@@ -123,9 +258,10 @@ def _parse_compact_roadmap(content: str) -> dict:
                 concept_counter_in_module = 0
                 
                 # 格式: Module 1.1: Python核心语法（描述）
-                match = re.match(r'Module\s+\d+\.(\d+):\s*([^（]+)（([^）]+)）', line_stripped)
+                # 支持中英文括号
+                match = re.match(r'Module\s+\d+\.(\d+):\s*([^（(]+)[（(]([^）)]+)[）)]', line_stripped)
                 if not match:
-                    logger.warning("module_parse_failed", line=line_stripped)
+                    logger.warning("module_parse_failed", line=line_stripped, line_length=len(line_stripped))
                     continue
                 
                 module_num = int(match.group(1))
@@ -151,9 +287,10 @@ def _parse_compact_roadmap(content: str) -> dict:
                 concept_counter_in_module += 1
                 
                 # 格式: - Concept: 变量与数据类型（描述）[2小时]
-                match = re.match(r'-\s*Concept:\s*([^（]+)（([^）]+)）\[([0-9.]+)小时\]', line_stripped)
+                # 支持中英文括号和小时标记
+                match = re.match(r'-\s*Concept:\s*([^（(]+)[（(]([^）)]+)[）)]\[([0-9.]+)(?:小时|hours?)\]', line_stripped, re.IGNORECASE)
                 if not match:
-                    logger.warning("concept_parse_failed", line=line_stripped)
+                    logger.warning("concept_parse_failed", line=line_stripped, line_length=len(line_stripped))
                     continue
                 
                 concept_name = match.group(1).strip()
@@ -210,7 +347,18 @@ def _parse_compact_roadmap(content: str) -> dict:
         return result
         
     except Exception as e:
-        logger.error("compact_roadmap_parse_error", error=str(e), content_preview=content[:500])
+        # 详细记录解析错误，包括完整内容和具体的错误位置
+        logger.error(
+            "compact_roadmap_parse_error",
+            error=str(e),
+            error_type=type(e).__name__,
+            content_preview=content[:500],
+            content_length=len(content),
+            has_start_marker=start_marker in content if 'start_marker' in locals() else False,
+            has_end_marker=end_marker in content if 'end_marker' in locals() else False,
+            stages_parsed=len(stages) if 'stages' in locals() else 0,
+        )
+        # 如果解析失败，尝试记录到日志系统（如果有trace_id的话会在调用方记录）
         raise ValueError(f"无法解析简洁格式的路线图: {e}")
 
 
@@ -658,23 +806,35 @@ class CurriculumArchitectAgent(BaseAgent):
             }
             
         except ValueError as e:
+            error_msg = f"LLM 输出格式解析失败: {str(e)}"
             logger.error(
                 "curriculum_design_stream_parse_error",
                 error=str(e),
                 content_length=len(full_content) if 'full_content' in locals() else 0,
                 content_preview=full_content[:500] + "..." if 'full_content' in locals() and len(full_content) > 500 else full_content if 'full_content' in locals() else "",
             )
+            
+            # 如果有trace_id可以记录到execution_logs (从调用方传入)
+            # 这里先发送错误事件给调用方处理
+            
             yield {
                 "type": "error",
-                "error": f"LLM 输出格式解析失败: {str(e)}\n请检查是否超出 token 限制或格式不正确",
-                "agent": "curriculum_architect"
+                "error": f"{error_msg}\n请检查是否超出 token 限制或格式不正确",
+                "agent": "curriculum_architect",
+                "details": {
+                    "error_type": "parse_error",
+                    "content_preview": full_content[:500] if 'full_content' in locals() else "",
+                }
             }
         except Exception as e:
             logger.error("curriculum_design_stream_error", error=str(e), error_type=type(e).__name__)
             yield {
                 "type": "error",
                 "error": str(e),
-                "agent": "curriculum_architect"
+                "agent": "curriculum_architect",
+                "details": {
+                    "error_type": type(e).__name__,
+                }
             }
     
     async def execute(self, input_data: dict) -> CurriculumDesignOutput:

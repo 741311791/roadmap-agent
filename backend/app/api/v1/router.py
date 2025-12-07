@@ -1,14 +1,49 @@
 """
-API v1 路由汇总
+API v1 路由注册
+
+将所有拆分的端点模块统一注册到主路由
 """
 from fastapi import APIRouter
-from app.api.v1 import roadmap, websocket
 
-api_router_v1 = APIRouter()
+from .endpoints import (
+    generation,
+    retrieval,
+    approval,
+    tutorial,
+    resource,
+    quiz,
+    modification,
+    retry,
+)
+from .roadmap import users_router
 
-# 注册子路由
-api_router_v1.include_router(roadmap.router)
-api_router_v1.include_router(roadmap.users_router)  # 用户画像 API
-api_router_v1.include_router(roadmap.trace_router)  # 执行日志查询 API
-api_router_v1.include_router(websocket.router, tags=["websocket"])
+# 创建v1主路由
+router = APIRouter(prefix="/api/v1")
 
+# 注册所有子路由
+# 路线图生成相关
+router.include_router(generation.router)
+
+# 路线图查询相关
+router.include_router(retrieval.router)
+
+# 人工审核相关
+router.include_router(approval.router)
+
+# 教程管理相关
+router.include_router(tutorial.router)
+
+# 资源管理相关
+router.include_router(resource.router)
+
+# 测验管理相关
+router.include_router(quiz.router)
+
+# 内容修改相关
+router.include_router(modification.router)
+
+# 失败重试相关
+router.include_router(retry.router)
+
+# 用户相关（画像等）
+router.include_router(users_router)

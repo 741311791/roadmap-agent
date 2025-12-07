@@ -12,8 +12,8 @@
 | **样式** | Tailwind CSS | 原子化 CSS 框架 |
 | **状态管理** | Zustand | 轻量级全局状态管理 |
 | **数据获取** | TanStack Query v5 | 服务端状态管理和缓存 |
-| **流式通信** | Native EventSource | SSE 客户端实现 |
-| **WebSocket** | 原生 WebSocket API | 实时状态更新 |
+| **WebSocket** | 原生 WebSocket API | 实时进度推送 |
+| **状态轮询** | Axios + TanStack Query | 任务状态查询 |
 | **类型生成** | openapi-typescript-codegen | 从 OpenAPI Schema 生成类型 |
 
 ### 架构分层
@@ -42,8 +42,8 @@
 ┌─────────────────────────────────────────┐
 │      API Layer                          │
 │  - API Client (Axios)                  │
-│  - SSE Manager                          │
 │  - WebSocket Client                    │
+│  - Status Polling                      │
 └─────────────────────────────────────────┘
                     ↓
 ┌─────────────────────────────────────────┐
@@ -65,81 +65,82 @@ sequenceDiagram
     actor User as 用户
     participant Page as New Roadmap Page
     participant Store as Roadmap Store<br/>(Zustand)
-    participant SSE as SSE Manager
     participant WS as WebSocket Client
     participant API as Backend API
+    participant BG as Background Task
     
     %% 阶段 1: 用户提交
     User->>Page: 填写学习目标
     User->>Page: 提交表单
     Page->>Store: setGenerating(true)
-    Page->>API: POST /roadmaps/generate-full-stream
+    Page->>API: POST /roadmaps/generate
     
-    %% 阶段 2: SSE 连接建立
-    API-->>SSE: SSE Stream 建立
-    SSE->>Store: setGenerationPhase('analyzing')
+    %% 阶段 2: 任务创建
+    API-->>Page: {task_id, status: 'processing'}
+    Page->>Store: setTaskId(task_id)
+    Page->>WS: 建立 WebSocket 连接<br/>ws://api/ws/{task_id}
+    WS-->>Page: 连接成功
     
-    %% 阶段 3: 需求分析阶段
-    API-->>SSE: {type: 'chunk', agent: 'intent_analyzer'}
-    SSE->>Page: 更新 UI（显示流式内容）
-    SSE->>Store: appendGenerationBuffer(chunk)
+    %% 阶段 3: 后台任务执行
+    API->>BG: 创建后台任务
+    BG->>BG: 执行 Orchestrator
     
-    API-->>SSE: {type: 'complete', agent: 'intent_analyzer'}
-    SSE->>Store: setGenerationPhase('curriculum_design')
+    %% 阶段 4: 需求分析阶段
+    BG->>WS: {type: 'progress', step: 'intent_analysis'}
+    WS->>Store: setGenerationPhase('analyzing')
+    WS->>Page: 更新 UI
     
-    %% 阶段 4: 框架设计阶段
-    API-->>SSE: {type: 'chunk', agent: 'curriculum_architect'}
-    SSE->>Page: 更新 UI
-    SSE->>Store: appendGenerationBuffer(chunk)
+    BG->>WS: {type: 'progress', step: 'intent_analysis_complete'}
+    WS->>Store: setGenerationPhase('curriculum_design')
     
-    API-->>SSE: {type: 'roadmap_preview', framework: {...}}
-    SSE->>Store: setRoadmap(framework)
-    SSE->>Store: setGenerationPhase('human_review')
+    %% 阶段 5: 框架设计阶段
+    BG->>WS: {type: 'progress', step: 'curriculum_design'}
+    WS->>Page: 更新 UI
     
-    %% 阶段 5: 人工审核阶段
-    API-->>SSE: {type: 'human_review_pending'}
-    SSE->>Page: 显示审核对话框
+    BG->>WS: {type: 'roadmap_created', roadmap_id: 'xxx'}
+    WS->>Store: setRoadmapId(roadmap_id)
+    
+    %% 阶段 6: 人工审核阶段
+    BG->>WS: {type: 'human_review_pending'}
+    WS->>Store: setGenerationPhase('human_review')
+    WS->>Page: 显示审核对话框
     Page->>User: 展示路线图预览
     
     alt 用户批准
         User->>Page: 点击"批准"
-        Page->>API: POST /roadmaps/{task_id}/approve
+        Page->>API: POST /roadmaps/{task_id}/approve?approved=true
         API-->>Page: 200 OK
         Page->>Store: setGenerationPhase('content_generation')
     else 用户拒绝
         User->>Page: 点击"拒绝"
-        Page->>API: POST /roadmaps/{task_id}/approve (approved=false)
+        Page->>API: POST /roadmaps/{task_id}/approve?approved=false
         API-->>Page: 200 OK
         Page->>Store: setGenerationPhase('idle')
+        Page->>WS: 断开连接
     end
     
-    %% 阶段 6: 内容生成阶段（并行）
-    par 教程生成
-        API-->>SSE: {type: 'tutorials_start', total_count: 10}
-        SSE->>Store: updateTutorialProgress(0, 10)
+    %% 阶段 7: 内容生成阶段
+    BG->>WS: {type: 'progress', step: 'tutorial_generation'}
+    WS->>Store: setGenerationPhase('content_generation')
         
         loop 每个 Concept
-            API-->>SSE: {type: 'tutorial_start', concept_id: 'xxx'}
-            SSE->>Store: updateConceptStatus('xxx', {content_status: 'generating'})
+        BG->>WS: {type: 'concept_start', concept_id: 'xxx'}
+        WS->>Store: updateConceptStatus('xxx', 'generating')
             
-            API-->>SSE: {type: 'tutorial_chunk', concept_id: 'xxx', content: '...'}
-            SSE->>Page: 更新进度条
-            
-            API-->>SSE: {type: 'tutorial_complete', concept_id: 'xxx'}
-            SSE->>Store: updateConceptStatus('xxx', {content_status: 'completed'})
-            SSE->>Store: updateTutorialProgress(completed++, 10)
+        BG->>WS: {type: 'concept_complete', concept_id: 'xxx'}
+        WS->>Store: updateConceptStatus('xxx', 'completed')
+        WS->>Page: 更新进度条
         end
-    and WebSocket 实时更新
-        API->>WS: {type: 'progress', step: 'tutorial_generation', progress: {...}}
-        WS->>Store: setActiveGenerationPhase('content_generation')
-        WS->>Page: 更新实时进度
-    end
     
-    %% 阶段 7: 完成
-    API-->>SSE: {type: 'done', summary: {...}}
-    SSE->>Store: setGenerationPhase('completed')
-    SSE->>Store: setGenerating(false)
-    SSE->>Page: 导航到路线图详情页
+    %% 阶段 8: 完成
+    BG->>WS: {type: 'task_complete', roadmap_id: 'xxx'}
+    WS->>Store: setGenerationPhase('completed')
+    WS->>Store: setGenerating(false)
+    
+    Page->>API: GET /roadmaps/{roadmap_id}
+    API-->>Page: RoadmapFramework
+    Page->>Store: setRoadmap(framework)
+    Page->>Page: 导航到 /app/roadmap/{id}
     Page->>User: 显示完成状态
 ```
 
@@ -189,20 +190,25 @@ graph TB
     STEP1 --> STEP2[步骤2: 填写偏好设置]
     STEP2 --> SUBMIT[提交表单]
     
-    SUBMIT --> SSE[建立 SSE 连接]
-    SSE --> ANALYZING[显示: 需求分析中...]
+    SUBMIT --> API[POST /roadmaps/generate]
+    API --> TASK_ID[获得 task_id]
+    TASK_ID --> WS[建立 WebSocket 连接]
     
+    WS --> ANALYZING[显示: 需求分析中...]
     ANALYZING --> DESIGNING[显示: 框架设计中...]
     DESIGNING --> PREVIEW[显示: 路线图预览]
     
     PREVIEW --> REVIEW{用户审核}
-    REVIEW -->|批准| GENERATING[显示: 内容生成中...]
+    REVIEW -->|批准| APPROVE[POST /approve]
     REVIEW -->|拒绝| STEP1
     
-    GENERATING --> PROGRESS[显示实时进度]
-    PROGRESS --> COMPLETE[生成完成]
+    APPROVE --> GENERATING[显示: 内容生成中...]
+    GENERATING --> PROGRESS[WebSocket 实时进度]
+    PROGRESS --> POLL[轮询 GET /status]
+    POLL --> COMPLETE[生成完成]
     
-    COMPLETE --> NAVIGATE[导航到 /app/roadmap/[id]]
+    COMPLETE --> FETCH[GET /roadmaps/{id}]
+    FETCH --> NAVIGATE[导航到 /app/roadmap/{id}]
     
     style ANALYZING fill:#e3f2fd
     style DESIGNING fill:#e3f2fd
@@ -460,46 +466,42 @@ const roadmap = await RoadmapsService.getRoadmap({
 
 ### API 客户端
 
-#### REST API
+#### REST API（主要方式）
 
 ```typescript
 // lib/api/endpoints.ts
-import { RoadmapsService } from '@/types/generated/services';
+import { apiClient } from './client';
 
+// 1. 提交生成任务
+export async function generateRoadmapAsync(request: UserRequest) {
+  const response = await apiClient.post('/roadmaps/generate', request);
+  return response.data; // { task_id, status, message }
+}
+
+// 2. 查询任务状态
+export async function getRoadmapStatus(taskId: string) {
+  const response = await apiClient.get(`/roadmaps/${taskId}/status`);
+  return response.data; // { task_id, status, roadmap_id, ... }
+}
+
+// 3. 获取完整路线图
 export async function getRoadmap(roadmapId: string) {
-  return RoadmapsService.getRoadmap({ roadmapId });
+  const response = await apiClient.get(`/roadmaps/${roadmapId}`);
+  return response.data; // RoadmapFramework
+}
+
+// 4. 人工审核
+export async function approveRoadmap(taskId: string, approved: boolean) {
+  const response = await apiClient.post(
+    `/roadmaps/${taskId}/approve`,
+    null,
+    { params: { approved } }
+  );
+  return response.data;
 }
 ```
 
-#### SSE 流式 API
-
-```typescript
-// lib/api/sse.ts
-import { SSEManager, createGenerationStream } from '@/lib/api/sse';
-
-const manager = createGenerationStream(
-  {
-    user_request: {
-      user_id: 'xxx',
-      session_id: 'xxx',
-      preferences: { ... },
-    },
-  },
-  {
-    onEvent: (event) => {
-      // 处理事件
-    },
-    onComplete: () => {
-      // 完成回调
-    },
-    onError: (error) => {
-      // 错误处理
-    },
-  }
-);
-```
-
-#### WebSocket API
+#### WebSocket API（实时进度）
 
 ```typescript
 // lib/api/websocket.ts
@@ -507,26 +509,66 @@ import { TaskWebSocket } from '@/lib/api/websocket';
 
 const ws = new TaskWebSocket(taskId, {
   onProgress: (event) => {
-    // 更新进度
+    // 更新进度: { type: 'progress', step: 'xxx', progress: 0.5 }
+  },
+  onRoadmapCreated: (event) => {
+    // 路线图创建: { type: 'roadmap_created', roadmap_id: 'xxx' }
+  },
+  onHumanReviewPending: (event) => {
+    // 等待人工审核: { type: 'human_review_pending' }
   },
   onConceptStart: (event) => {
-    // Concept 开始生成
+    // Concept 开始生成: { type: 'concept_start', concept_id: 'xxx' }
   },
   onConceptComplete: (event) => {
-    // Concept 生成完成
+    // Concept 生成完成: { type: 'concept_complete', concept_id: 'xxx' }
+  },
+  onTaskComplete: (event) => {
+    // 任务完成: { type: 'task_complete', roadmap_id: 'xxx' }
   },
 });
 ```
 
+#### 典型使用流程
+
+```typescript
+// 1. 提交任务
+const { task_id } = await generateRoadmapAsync(request);
+
+// 2. 建立 WebSocket 连接
+const ws = new TaskWebSocket(task_id, {
+  onProgress: (event) => {
+    setProgress(event.step);
+  },
+  onTaskComplete: async (event) => {
+    // 3. 获取完整路线图
+    const roadmap = await getRoadmap(event.roadmap_id);
+    setRoadmap(roadmap);
+    router.push(`/app/roadmap/${event.roadmap_id}`);
+  },
+});
+
+// 4. 可选：轮询状态（作为 WebSocket 的备用方案）
+const interval = setInterval(async () => {
+  const status = await getRoadmapStatus(task_id);
+  if (status.status === 'completed') {
+    clearInterval(interval);
+    const roadmap = await getRoadmap(status.roadmap_id!);
+    setRoadmap(roadmap);
+  }
+}, 2000);
+```
+
 ### 数据获取模式
 
-#### 使用 TanStack Query
+#### 1. 使用 TanStack Query（REST API）
 
 ```typescript
 // lib/hooks/use-roadmap.ts
 import { useQuery } from '@tanstack/react-query';
-import { getRoadmap } from '@/lib/api/endpoints';
+import { getRoadmap, getRoadmapStatus } from '@/lib/api/endpoints';
 
+// 获取完整路线图
 export function useRoadmap(roadmapId: string | undefined) {
   return useQuery({
     queryKey: ['roadmap', roadmapId],
@@ -535,9 +577,49 @@ export function useRoadmap(roadmapId: string | undefined) {
     staleTime: 5 * 60 * 1000, // 5 分钟
   });
 }
+
+// 轮询任务状态
+export function useTaskStatus(taskId: string | undefined) {
+  return useQuery({
+    queryKey: ['task-status', taskId],
+    queryFn: () => getRoadmapStatus(taskId!),
+    enabled: !!taskId,
+    refetchInterval: 2000, // 每 2 秒轮询一次
+  });
+}
 ```
 
-#### 使用 Zustand Store
+#### 2. 使用 WebSocket（实时进度）
+
+```typescript
+// lib/hooks/use-roadmap-generation.ts
+import { useEffect } from 'react';
+import { TaskWebSocket } from '@/lib/api/websocket';
+import { useRoadmapStore } from '@/lib/store/roadmap-store';
+
+export function useRoadmapGeneration(taskId: string) {
+  const { setProgress, setRoadmapId } = useRoadmapStore();
+  
+  useEffect(() => {
+    const ws = new TaskWebSocket(taskId, {
+      onProgress: (event) => {
+        setProgress(event.step, event.progress);
+      },
+      onRoadmapCreated: (event) => {
+        setRoadmapId(event.roadmap_id);
+      },
+      onTaskComplete: (event) => {
+        // 导航到路线图详情页
+        window.location.href = `/app/roadmap/${event.roadmap_id}`;
+      },
+    });
+    
+    return () => ws.disconnect();
+  }, [taskId]);
+}
+```
+
+#### 3. 使用 Zustand Store（全局状态）
 
 ```typescript
 // lib/store/roadmap-store.ts
@@ -545,13 +627,37 @@ import { create } from 'zustand';
 import type { RoadmapFramework } from '@/types';
 
 interface RoadmapStore {
+  // 路线图数据
   currentRoadmap: RoadmapFramework | null;
   setRoadmap: (roadmap: RoadmapFramework) => void;
+  
+  // 生成状态
+  isGenerating: boolean;
+  taskId: string | null;
+  roadmapId: string | null;
+  currentPhase: string;
+  progress: number;
+  
+  // 更新方法
+  setGenerating: (generating: boolean) => void;
+  setTaskId: (taskId: string) => void;
+  setRoadmapId: (roadmapId: string) => void;
+  setProgress: (phase: string, progress: number) => void;
 }
 
 export const useRoadmapStore = create<RoadmapStore>((set) => ({
   currentRoadmap: null,
+  isGenerating: false,
+  taskId: null,
+  roadmapId: null,
+  currentPhase: 'idle',
+  progress: 0,
+  
   setRoadmap: (roadmap) => set({ currentRoadmap: roadmap }),
+  setGenerating: (generating) => set({ isGenerating: generating }),
+  setTaskId: (taskId) => set({ taskId }),
+  setRoadmapId: (roadmapId) => set({ roadmapId }),
+  setProgress: (phase, progress) => set({ currentPhase: phase, progress }),
 }));
 ```
 
@@ -579,10 +685,9 @@ frontend-next/
 │   └── chat/                 # 聊天组件
 ├── lib/                      # 工具库
 │   ├── api/                  # API 客户端
-│   │   ├── client.ts
-│   │   ├── endpoints.ts
-│   │   ├── sse.ts
-│   │   └── websocket.ts
+│   │   ├── client.ts        # Axios 客户端配置
+│   │   ├── endpoints.ts     # REST API 端点
+│   │   └── websocket.ts     # WebSocket 客户端
 │   ├── store/                # Zustand Stores
 │   │   ├── roadmap-store.ts
 │   │   ├── chat-store.ts
@@ -704,20 +809,28 @@ test('should generate roadmap', async ({ page }) => {
 2. 在 `lib/api/endpoints.ts` 中添加封装函数
 3. 在 `lib/hooks/` 中创建对应的 Hook（如需要）
 
-### Q: 如何处理 SSE 流式数据？
+### Q: 如何处理实时进度更新？
 
-使用 `SSEManager` 类：
+使用 WebSocket 客户端 + 轮询状态作为备用：
 
 ```typescript
-import { createGenerationStream } from '@/lib/api/sse';
-
-const manager = createGenerationStream(request, {
-  onEvent: (event) => {
-    if (event.type === 'chunk') {
-      // 处理流式内容
-    }
+// 主要方式：WebSocket
+const ws = new TaskWebSocket(taskId, {
+  onProgress: (event) => {
+    updateProgress(event.step, event.progress);
+  },
+  onTaskComplete: (event) => {
+    // 任务完成
   },
 });
+
+// 备用方式：轮询（WebSocket 连接失败时）
+const pollStatus = async () => {
+  const status = await getRoadmapStatus(taskId);
+  if (status.status === 'completed') {
+    handleComplete(status.roadmap_id);
+  }
+};
 ```
 
 ### Q: 如何实现暗色模式？

@@ -6,7 +6,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import structlog
 
-from app.api.v1.router import api_router_v1
+from app.api.v1.router import router as api_router_v1
+from app.api.v1.websocket import router as websocket_router
 from app.core.dependencies import init_orchestrator, cleanup_orchestrator
 from app.db.minio_init import ensure_bucket_exists
 
@@ -52,8 +53,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 注册路由
-app.include_router(api_router_v1, prefix="/api/v1")
+# 注册API路由（新的拆分结构）
+app.include_router(api_router_v1)
+
+# 注册WebSocket路由
+app.include_router(websocket_router)
 
 
 @app.get("/health")

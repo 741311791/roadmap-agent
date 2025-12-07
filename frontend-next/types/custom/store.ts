@@ -3,9 +3,12 @@
  * Type definitions for global state management
  */
 
-import type { RoadmapFramework, Concept, LearningPreferences } from '../generated/models';
+import type { RoadmapFramework, Concept, LearningPreferences, Module, Stage } from '../generated/models';
 import type { ViewMode, SidebarState } from './ui';
 import type { GenerationPhase } from './phases';
+
+// Re-export for components that use these types
+export type { Module, Stage, RoadmapFramework };
 
 // ============================================================
 // Roadmap Store
@@ -87,7 +90,7 @@ export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
-  timestamp: number;
+  timestamp: string; // ISO 8601 格式的时间字符串
   metadata?: {
     isStreaming?: boolean;
     modifications?: Array<{

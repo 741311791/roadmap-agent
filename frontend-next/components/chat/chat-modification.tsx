@@ -9,7 +9,8 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Loader2, CheckCircle2, XCircle, AlertCircle, Send } from 'lucide-react';
 import { chatModificationStream } from '@/lib/api/endpoints';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
-import type { ChatModificationEvent } from '@/types/custom/sse';
+import { useAuthStore } from '@/lib/store/auth-store';
+import type { ChatModificationEvent } from '@/lib/schemas/sse-events';
 import type { LearningPreferences } from '@/types/generated/models';
 
 interface ChatModificationProps {
@@ -43,6 +44,7 @@ export function ChatModification({
   userPreferences,
   onModificationComplete,
 }: ChatModificationProps) {
+  const { getUserId } = useAuthStore();
   const [message, setMessage] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentPhase, setCurrentPhase] = useState<string>('');
@@ -82,44 +84,48 @@ export function ChatModification({
         },
         {
           onEvent: (event: ChatModificationEvent) => {
+            // Handle each event type independently with switch
             switch (event.type) {
-              case 'analyzing':
+              case 'analyzing': {
                 setCurrentPhase('analyzing');
                 break;
-
-              case 'intents':
+              }
+              case 'intents': {
+                const intentsEvent = event;
                 setCurrentPhase('intents');
-                setIntents(event.intents as ModificationIntent[]);
-                if (event.needs_clarification) {
+                setIntents(intentsEvent.intents as ModificationIntent[]);
+                if (intentsEvent.needs_clarification) {
                   setClarificationNeeded(true);
-                  setClarificationQuestions(event.clarification_questions || []);
+                  setClarificationQuestions(intentsEvent.clarification_questions || []);
                   setIsProcessing(false);
                 }
                 break;
-
-              case 'modifying':
+              }
+              case 'modifying': {
                 setCurrentPhase('modifying');
                 break;
-
-              case 'agent_progress':
+              }
+              case 'agent_progress': {
+                const progressEvent = event;
                 // Can show detailed progress if needed
-                console.log(`[${event.agent}] ${event.step}: ${event.details}`);
+                console.log(`[${progressEvent.agent}] ${progressEvent.step}: ${progressEvent.details || ''}`);
                 break;
-
-              case 'result':
+              }
+              case 'result': {
+                const resultEvent = event;
                 const result: ModificationResult = {
-                  modification_type: event.modification_type,
-                  target_id: event.target_id,
-                  target_name: event.target_name,
-                  success: event.success,
-                  modification_summary: event.modification_summary,
-                  new_version: event.new_version,
-                  error_message: event.error_message,
+                  modification_type: resultEvent.modification_type || '',
+                  target_id: resultEvent.target_id,
+                  target_name: resultEvent.target_name,
+                  success: resultEvent.success,
+                  modification_summary: resultEvent.modification_summary || '',
+                  new_version: resultEvent.new_version,
+                  error_message: resultEvent.error_message,
                 };
                 setResults((prev) => [...prev, result]);
                 break;
-
-              case 'done':
+              }
+              case 'done': {
                 setCurrentPhase('done');
                 setIsProcessing(false);
                 if (onModificationComplete) {
@@ -128,12 +134,21 @@ export function ChatModification({
                   }, 1000);
                 }
                 break;
-
-              case 'error':
-                alert(`错误: ${event.message}`);
+              }
+              case 'modification_error': {
+                const modErrorEvent = event;
+                alert(`错误: ${modErrorEvent.message}`);
                 setCurrentPhase('error');
                 setIsProcessing(false);
                 break;
+              }
+              case 'error': {
+                const genericErrorEvent = event;
+                alert(`错误: ${genericErrorEvent.message}`);
+                setCurrentPhase('error');
+                setIsProcessing(false);
+                break;
+              }
             }
           },
           onComplete: () => {

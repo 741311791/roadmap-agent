@@ -1,0 +1,1127 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Learning Roadmap Generation System",
+    "description": "基于 Multi-Agent 的个性化学习路线图生成系统",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/v1/roadmaps/generate": {
+      "post": {
+        "tags": [
+          "generation"
+        ],
+        "summary": "Generate Roadmap Async",
+        "description": "生成学习路线图（异步任务）\n\nArgs:\n    request: 用户请求，包含学习目标和偏好\n    background_tasks: FastAPI后台任务\n    orchestrator: 工作流执行器\n    repo_factory: Repository 工厂\n    \nReturns:\n    任务 ID，roadmap_id将在需求分析完成后通过WebSocket发送给前端\n    \nExample:\n    ```json\n    {\n        \"task_id\": \"550e8400-e29b-41d4-a716-446655440000\",\n        \"status\": \"processing\",\n        \"message\": \"路线图生成任务已启动\"\n    }\n    ```",
+        "operationId": "generate_roadmap_async_api_v1_roadmaps_generate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/roadmaps/{task_id}/status": {
+      "get": {
+        "tags": [
+          "generation"
+        ],
+        "summary": "Get Generation Status",
+        "description": "查询路线图生成任务状态\n\nArgs:\n    task_id: 任务ID\n    orchestrator: 工作流执行器\n    repo_factory: Repository 工厂\n    \nReturns:\n    任务状态信息\n    \nRaises:\n    HTTPException: 404 - 任务不存在\n    \nExample:\n    ```json\n    {\n        \"task_id\": \"550e8400-e29b-41d4-a716-446655440000\",\n        \"status\": \"completed\",\n        \"current_step\": \"tutorial_generation\",\n        \"roadmap_id\": \"python-web-dev-2024\",\n        \"created_at\": \"2024-01-01T00:00:00Z\"\n    }\n    ```",
+        "operationId": "get_generation_status_api_v1_roadmaps__task_id__status_get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/roadmaps/{roadmap_id}/retry-failed": {
+      "post": {
+        "tags": [
+          "retry"
+        ],
+        "summary": "Retry Failed Content",
+        "description": "断点续传：重新生成失败的内容\n\n精确到内容类型粒度，只重跑失败的部分：\n- content_status='failed' 的教程\n- resources_status='failed' 的资源推荐\n- quiz_status='failed' 的测验\n\nArgs:\n    roadmap_id: 路线图 ID\n    request: 包含用户偏好和要重试的内容类型\n    background_tasks: FastAPI后台任务\n    db: 数据库会话\n    \nReturns:\n    task_id 用于 WebSocket 订阅进度\n    \nExample:\n    ```json\n    {\n        \"task_id\": \"550e8400-e29b-41d4-a716-446655440000\",\n        \"roadmap_id\": \"python-web-dev-2024\",\n        \"status\": \"processing\",\n        \"items_to_retry\": {\n            \"tutorial\": 3,\n            \"resources\": 2,\n            \"quiz\": 1\n        },\n        \"total_items\": 6,\n        \"message\": \"开始重试 6 个失败项目\"\n    }\n    ```",
+        "operationId": "retry_failed_content_api_v1_roadmaps__roadmap_id__retry_failed_post",
+        "parameters": [
+          {
+            "name": "roadmap_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Roadmap Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetryFailedRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/roadmaps/{roadmap_id}": {
+      "get": {
+        "tags": [
+          "retrieval"
+        ],
+        "summary": "Get Roadmap",
+        "description": "获取完整的路线图数据\n\nArgs:\n    roadmap_id: 路线图ID\n    db: 数据库会话\n    repo_factory: Repository 工厂\n    orchestrator: 工作流执行器\n    \nReturns:\n    - 如果路线图存在，返回完整的路线图框架数据\n    - 如果路线图不存在但有活跃任务，返回生成中状态\n    - 如果都不存在，返回 404\n    \nRaises:\n    HTTPException: 404 - 路线图不存在\n    \nExample:\n    ```json\n    {\n        \"roadmap_id\": \"python-web-dev-2024\",\n        \"title\": \"Python Web开发学习路线\",\n        \"topic\": \"Python Web开发\",\n        \"concepts\": [...],\n        \"status\": \"completed\"\n    }\n    ```",
+        "operationId": "get_roadmap_api_v1_roadmaps__roadmap_id__get",
+        "parameters": [
+          {
+            "name": "roadmap_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Roadmap Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/roadmaps/{roadmap_id}/active-task": {
+      "get": {
+        "tags": [
+          "retrieval"
+        ],
+        "summary": "Get Active Task",
+        "description": "获取路线图当前的活跃任务\n\n用于前端轮询：查询该路线图是否有正在进行的任务\n- 如果有正在进行的任务，返回task_id和状态\n- 如果没有，返回null\n\nArgs:\n    roadmap_id: 路线图 ID\n    db: 数据库会话\n    \nReturns:\n    活跃任务信息或null\n    \nRaises:\n    HTTPException: 404 - 路线图不存在\n    \nExample:\n    ```json\n    {\n        \"has_active_task\": true,\n        \"task_id\": \"550e8400-e29b-41d4-a716-446655440000\",\n        \"status\": \"processing\",\n        \"current_step\": \"tutorial_generation\",\n        \"created_at\": \"2024-01-01T00:00:00Z\"\n    }\n    ```",
+        "operationId": "get_active_task_api_v1_roadmaps__roadmap_id__active_task_get",
+        "parameters": [
+          {
+            "name": "roadmap_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Roadmap Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/roadmaps/{task_id}/approve": {
+      "post": {
+        "tags": [
+          "approval"
+        ],
+        "summary": "Approve Roadmap",
+        "description": "人工审核端点（Human-in-the-Loop）\n\n在路线图框架生成后，允许用户审核并决定是否继续生成详细内容\n\nArgs:\n    task_id: 任务 ID\n    approved: 是否批准（True=批准继续生成，False=拒绝需要修改）\n    feedback: 用户反馈（如果未批准，说明需要修改的内容）\n    db: 数据库会话\n    orchestrator: 工作流执行器\n    \nReturns:\n    审核处理结果\n    \nRaises:\n    HTTPException: \n        - 400: 任务状态不正确或参数错误\n        - 500: 处理审核结果时发生错误\n        \nExample Request:\n    ```json\n    {\n        \"approved\": true,\n        \"feedback\": null\n    }\n    ```\n    \nExample Response (Approved):\n    ```json\n    {\n        \"status\": \"approved\",\n        \"message\": \"审核通过，继续生成详细内容\",\n        \"task_id\": \"550e8400-e29b-41d4-a716-446655440000\"\n    }\n    ```\n    \nExample Response (Rejected):\n    ```json\n    {\n        \"status\": \"rejected\",\n        \"message\": \"审核未通过，需要重新设计\",\n        \"task_id\": \"550e8400-e29b-41d4-a716-446655440000\",\n        \"feedback\": \"需要增加更多实战项目\"\n    }\n    ```",
+        "operationId": "approve_roadmap_api_v1_roadmaps__task_id__approve_post",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "approved",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "boolean",
+              "title": "Approved"
+            }
+          },
+          {
+            "name": "feedback",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Feedback"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/roadmaps/{roadmap_id}/concepts/{concept_id}/tutorials": {
+      "get": {
+        "tags": [
+          "tutorial"
+        ],
+        "summary": "Get Tutorial Versions",
+        "description": "获取指定概念的所有教程版本历史\n\nArgs:\n    roadmap_id: 路线图 ID\n    concept_id: 概念 ID\n    db: 数据库会话\n    \nReturns:\n    教程版本列表（按版本号降序，最新版本在前）\n    \nRaises:\n    HTTPException: 404 - 概念没有教程\n    \nExample:\n    ```json\n    {\n        \"roadmap_id\": \"python-web-dev-2024\",\n        \"concept_id\": \"flask-basics\",\n        \"total_versions\": 3,\n        \"tutorials\": [\n            {\n                \"tutorial_id\": \"tut-001\",\n                \"title\": \"Flask基础入门\",\n                \"content_version\": 3,\n                \"is_latest\": true,\n                \"content_status\": \"completed\"\n            },\n            ...\n        ]\n    }\n    ```",
+        "operationId": "get_tutorial_versions_api_v1_roadmaps__roadmap_id__concepts__concept_id__tutorials_get",
+        "parameters": [
+          {
+            "name": "roadmap_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Roadmap Id"
+            }
+          },
+          {
+            "name": "concept_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Concept Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/roadmaps/{roadmap_id}/concepts/{concept_id}/tutorials/latest": {
+      "get": {
+        "tags": [
+          "tutorial"
+        ],
+        "summary": "Get Latest Tutorial",
+        "description": "获取指定概念的最新教程版本\n\nArgs:\n    roadmap_id: 路线图 ID\n    concept_id: 概念 ID\n    db: 数据库会话\n    \nReturns:\n    最新版本的教程元数据\n    \nRaises:\n    HTTPException: 404 - 概念没有教程\n    \nExample:\n    ```json\n    {\n        \"roadmap_id\": \"python-web-dev-2024\",\n        \"concept_id\": \"flask-basics\",\n        \"tutorial_id\": \"tut-001\",\n        \"title\": \"Flask基础入门\",\n        \"summary\": \"学习Flask框架的基础知识\",\n        \"content_url\": \"s3://...\",\n        \"content_version\": 3,\n        \"is_latest\": true,\n        \"content_status\": \"completed\",\n        \"estimated_completion_time\": 2.5,\n        \"generated_at\": \"2024-01-01T00:00:00Z\"\n    }\n    ```",
+        "operationId": "get_latest_tutorial_api_v1_roadmaps__roadmap_id__concepts__concept_id__tutorials_latest_get",
+        "parameters": [
+          {
+            "name": "roadmap_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Roadmap Id"
+            }
+          },
+          {
+            "name": "concept_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Concept Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/roadmaps/{roadmap_id}/concepts/{concept_id}/tutorials/v{version}": {
+      "get": {
+        "tags": [
+          "tutorial"
+        ],
+        "summary": "Get Tutorial By Version",
+        "description": "获取指定概念的特定版本教程\n\nArgs:\n    roadmap_id: 路线图 ID\n    concept_id: 概念 ID\n    version: 版本号\n    db: 数据库会话\n    \nReturns:\n    指定版本的教程元数据\n    \nRaises:\n    HTTPException: 404 - 指定版本的教程不存在\n    \nExample:\n    ```json\n    {\n        \"roadmap_id\": \"python-web-dev-2024\",\n        \"concept_id\": \"flask-basics\",\n        \"tutorial_id\": \"tut-001\",\n        \"title\": \"Flask基础入门\",\n        \"content_version\": 2,\n        \"is_latest\": false,\n        \"content_status\": \"completed\",\n        \"generated_at\": \"2023-12-01T00:00:00Z\"\n    }\n    ```",
+        "operationId": "get_tutorial_by_version_api_v1_roadmaps__roadmap_id__concepts__concept_id__tutorials_v_version__get",
+        "parameters": [
+          {
+            "name": "roadmap_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Roadmap Id"
+            }
+          },
+          {
+            "name": "concept_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Concept Id"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/roadmaps/{roadmap_id}/concepts/{concept_id}/resources": {
+      "get": {
+        "tags": [
+          "resource"
+        ],
+        "summary": "Get Concept Resources",
+        "description": "获取指定概念的学习资源\n\nArgs:\n    roadmap_id: 路线图 ID\n    concept_id: 概念 ID\n    db: 数据库会话\n    \nReturns:\n    资源推荐列表\n    \nRaises:\n    HTTPException: 404 - 概念没有资源推荐\n    \nExample:\n    ```json\n    {\n        \"roadmap_id\": \"python-web-dev-2024\",\n        \"concept_id\": \"flask-basics\",\n        \"resources_id\": \"res-001\",\n        \"resources\": [\n            {\n                \"title\": \"Flask官方文档\",\n                \"url\": \"https://flask.palletsprojects.com/\",\n                \"type\": \"official_docs\",\n                \"description\": \"Flask框架的官方文档\"\n            },\n            {\n                \"title\": \"Flask教程视频\",\n                \"url\": \"https://youtube.com/...\",\n                \"type\": \"video\",\n                \"description\": \"B站Flask入门视频教程\"\n            }\n        ],\n        \"resources_count\": 2,\n        \"search_queries_used\": [\"Flask教程\", \"Flask文档\"],\n        \"generated_at\": \"2024-01-01T00:00:00Z\"\n    }\n    ```",
+        "operationId": "get_concept_resources_api_v1_roadmaps__roadmap_id__concepts__concept_id__resources_get",
+        "parameters": [
+          {
+            "name": "roadmap_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Roadmap Id"
+            }
+          },
+          {
+            "name": "concept_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Concept Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/roadmaps/{roadmap_id}/concepts/{concept_id}/quiz": {
+      "get": {
+        "tags": [
+          "quiz"
+        ],
+        "summary": "Get Concept Quiz",
+        "description": "获取指定概念的测验\n\nArgs:\n    roadmap_id: 路线图 ID\n    concept_id: 概念 ID\n    db: 数据库会话\n    \nReturns:\n    测验数据，包含题目列表\n    \nRaises:\n    HTTPException: 404 - 概念没有测验\n    \nExample:\n    ```json\n    {\n        \"roadmap_id\": \"python-web-dev-2024\",\n        \"concept_id\": \"flask-basics\",\n        \"quiz_id\": \"quiz-001\",\n        \"questions\": [\n            {\n                \"question\": \"Flask是什么类型的框架？\",\n                \"options\": [\"Web框架\", \"数据分析框架\", \"游戏框架\", \"GUI框架\"],\n                \"correct_answer\": 0,\n                \"explanation\": \"Flask是一个轻量级的Python Web框架\",\n                \"difficulty\": \"easy\"\n            },\n            ...\n        ],\n        \"total_questions\": 10,\n        \"easy_count\": 3,\n        \"medium_count\": 5,\n        \"hard_count\": 2,\n        \"generated_at\": \"2024-01-01T00:00:00Z\"\n    }\n    ```",
+        "operationId": "get_concept_quiz_api_v1_roadmaps__roadmap_id__concepts__concept_id__quiz_get",
+        "parameters": [
+          {
+            "name": "roadmap_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Roadmap Id"
+            }
+          },
+          {
+            "name": "concept_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Concept Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/roadmaps/{roadmap_id}/concepts/{concept_id}/tutorial/modify": {
+      "post": {
+        "tags": [
+          "modification"
+        ],
+        "summary": "Modify Tutorial",
+        "description": "修改指定概念的教程内容\n\n使用 TutorialModifierAgent 增量修改现有教程\n\nArgs:\n    roadmap_id: 路线图 ID\n    concept_id: 概念 ID\n    request: 修改请求，包含修改要求\n    db: 数据库会话\n    \nReturns:\n    修改后的教程信息\n    \nRaises:\n    HTTPException:\n        - 404: 路线图、概念或教程不存在\n        - 500: 修改失败\n        \nExample:\n    ```json\n    {\n        \"success\": true,\n        \"concept_id\": \"flask-basics\",\n        \"tutorial_id\": \"tut-001\",\n        \"title\": \"Flask基础入门（修订版）\",\n        \"content_version\": 4,\n        \"modification_summary\": \"增加了代码示例，简化了技术术语\",\n        \"changes_made\": [\"添加3个实战代码示例\", \"重写专业术语说明\"]\n    }\n    ```",
+        "operationId": "modify_tutorial_api_v1_roadmaps__roadmap_id__concepts__concept_id__tutorial_modify_post",
+        "parameters": [
+          {
+            "name": "roadmap_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Roadmap Id"
+            }
+          },
+          {
+            "name": "concept_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Concept Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModifyContentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/roadmaps/{roadmap_id}/concepts/{concept_id}/resources/modify": {
+      "post": {
+        "tags": [
+          "modification"
+        ],
+        "summary": "Modify Resources",
+        "description": "修改指定概念的学习资源\n\n使用 ResourceModifierAgent 调整现有资源推荐\n\nArgs:\n    roadmap_id: 路线图 ID\n    concept_id: 概念 ID\n    request: 修改请求，包含修改要求\n    db: 数据库会话\n    \nReturns:\n    修改后的资源信息\n    \nRaises:\n    HTTPException:\n        - 404: 路线图、概念或资源不存在\n        - 500: 修改失败\n        \nExample:\n    ```json\n    {\n        \"success\": true,\n        \"concept_id\": \"flask-basics\",\n        \"resources_id\": \"res-001-v2\",\n        \"resources_count\": 5,\n        \"modification_summary\": \"添加了视频教程资源，移除了过时链接\",\n        \"changes_made\": [\"新增2个视频教程\", \"替换1个官方文档链接\"]\n    }\n    ```",
+        "operationId": "modify_resources_api_v1_roadmaps__roadmap_id__concepts__concept_id__resources_modify_post",
+        "parameters": [
+          {
+            "name": "roadmap_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Roadmap Id"
+            }
+          },
+          {
+            "name": "concept_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Concept Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModifyContentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/roadmaps/{roadmap_id}/concepts/{concept_id}/quiz/modify": {
+      "post": {
+        "tags": [
+          "modification"
+        ],
+        "summary": "Modify Quiz",
+        "description": "修改指定概念的测验内容\n\n使用 QuizModifierAgent 调整现有测验题目\n\nArgs:\n    roadmap_id: 路线图 ID\n    concept_id: 概念 ID\n    request: 修改请求，包含修改要求\n    db: 数据库会话\n    \nReturns:\n    修改后的测验信息\n    \nRaises:\n    HTTPException:\n        - 404: 路线图、概念或测验不存在\n        - 500: 修改失败\n        \nExample:\n    ```json\n    {\n        \"success\": true,\n        \"concept_id\": \"flask-basics\",\n        \"quiz_id\": \"quiz-001-v2\",\n        \"total_questions\": 12,\n        \"modification_summary\": \"增加了难题，调整了题目顺序\",\n        \"changes_made\": [\"新增3道hard难度题\", \"重新排序题目\"]\n    }\n    ```",
+        "operationId": "modify_quiz_api_v1_roadmaps__roadmap_id__concepts__concept_id__quiz_modify_post",
+        "parameters": [
+          {
+            "name": "roadmap_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Roadmap Id"
+            }
+          },
+          {
+            "name": "concept_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Concept Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModifyContentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/roadmaps/{roadmap_id}/concepts/{concept_id}/regenerate": {
+      "post": {
+        "tags": [
+          "retry"
+        ],
+        "summary": "Regenerate Concept Content",
+        "description": "重新生成指定概念的所有内容（教程+资源+测验）\n\n用于用户不满意当前内容，想要完全重新生成的场景\n\nArgs:\n    roadmap_id: 路线图 ID\n    concept_id: 概念 ID\n    request: 包含用户 ID 和学习偏好\n    db: 数据库会话\n    \nReturns:\n    重新生成的结果\n    \nRaises:\n    HTTPException: 404 - 路线图或概念不存在\n    \nExample:\n    ```json\n    {\n        \"success\": true,\n        \"concept_id\": \"flask-basics\",\n        \"regenerated\": {\n            \"tutorial\": true,\n            \"resources\": true,\n            \"quiz\": true\n        },\n        \"message\": \"内容重新生成成功\"\n    }\n    ```",
+        "operationId": "regenerate_concept_content_api_v1_roadmaps__roadmap_id__concepts__concept_id__regenerate_post",
+        "parameters": [
+          {
+            "name": "roadmap_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Roadmap Id"
+            }
+          },
+          {
+            "name": "concept_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Concept Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegenerateContentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health Check",
+        "description": "健康检查端点",
+        "operationId": "health_check_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "LearningPreferences": {
+        "properties": {
+          "learning_goal": {
+            "type": "string",
+            "title": "Learning Goal",
+            "description": "学习目标，如'成为全栈工程师'"
+          },
+          "available_hours_per_week": {
+            "type": "integer",
+            "maximum": 168,
+            "minimum": 1,
+            "title": "Available Hours Per Week",
+            "description": "每周可投入小时数"
+          },
+          "motivation": {
+            "type": "string",
+            "title": "Motivation",
+            "description": "学习动机，如'转行'、'升职'、'兴趣'"
+          },
+          "current_level": {
+            "type": "string",
+            "enum": [
+              "beginner",
+              "intermediate",
+              "advanced"
+            ],
+            "title": "Current Level",
+            "description": "当前掌握程度"
+          },
+          "career_background": {
+            "type": "string",
+            "title": "Career Background",
+            "description": "职业背景，如'市场营销 5 年经验'"
+          },
+          "content_preference": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "visual",
+                "text",
+                "audio",
+                "hands_on"
+              ]
+            },
+            "type": "array",
+            "title": "Content Preference",
+            "description": "偏好的内容类型",
+            "default": [
+              "visual",
+              "text"
+            ]
+          },
+          "target_deadline": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Deadline",
+            "description": "期望完成时间"
+          },
+          "industry": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Industry",
+            "description": "所属行业"
+          },
+          "current_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Role",
+            "description": "当前职位"
+          },
+          "tech_stack": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tech Stack",
+            "description": "技术栈列表"
+          },
+          "preferred_language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preferred Language",
+            "description": "偏好的学习语言（向后兼容）"
+          },
+          "primary_language": {
+            "type": "string",
+            "title": "Primary Language",
+            "description": "主要语言（教程、路线图语言）",
+            "default": "zh"
+          },
+          "secondary_language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secondary Language",
+            "description": "次要语言（资源推荐补充语言）"
+          }
+        },
+        "type": "object",
+        "required": [
+          "learning_goal",
+          "available_hours_per_week",
+          "motivation",
+          "current_level",
+          "career_background"
+        ],
+        "title": "LearningPreferences",
+        "description": "学习偏好配置"
+      },
+      "ModifyContentRequest": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "title": "User Id",
+            "description": "用户ID"
+          },
+          "preferences": {
+            "$ref": "#/components/schemas/LearningPreferences",
+            "description": "用户学习偏好"
+          },
+          "requirements": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Requirements",
+            "description": "修改要求列表",
+            "examples": [
+              [
+                "增加更多代码示例",
+                "简化技术术语"
+              ]
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "preferences",
+          "requirements"
+        ],
+        "title": "ModifyContentRequest",
+        "description": "修改内容请求"
+      },
+      "RegenerateContentRequest": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "title": "User Id",
+            "description": "用户ID"
+          },
+          "preferences": {
+            "$ref": "#/components/schemas/LearningPreferences",
+            "description": "用户学习偏好"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "preferences"
+        ],
+        "title": "RegenerateContentRequest",
+        "description": "重新生成内容请求"
+      },
+      "RetryFailedRequest": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "title": "User Id",
+            "description": "用户ID"
+          },
+          "content_types": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Content Types",
+            "description": "要重试的内容类型列表",
+            "default": [
+              "tutorial",
+              "resources",
+              "quiz"
+            ]
+          },
+          "preferences": {
+            "$ref": "#/components/schemas/LearningPreferences",
+            "description": "用户学习偏好"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "preferences"
+        ],
+        "title": "RetryFailedRequest",
+        "description": "重试失败内容请求"
+      },
+      "UserRequest": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "preferences": {
+            "$ref": "#/components/schemas/LearningPreferences"
+          },
+          "additional_context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Additional Context",
+            "description": "额外补充信息"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "session_id",
+          "preferences"
+        ],
+        "title": "UserRequest",
+        "description": "系统输入：用户请求"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

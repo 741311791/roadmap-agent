@@ -1,38 +1,37 @@
 """
-全局依赖项管理
+全局依赖项管理（已重构）
+
+使用新的模块化架构：
+- OrchestratorFactory 管理组件创建
+- WorkflowExecutor 替代原有的 RoadmapOrchestrator
 """
 import asyncio
 import structlog
-from app.core.orchestrator import RoadmapOrchestrator
+from app.core.orchestrator_factory import (
+    OrchestratorFactory,
+    get_workflow_executor as _get_workflow_executor,
+)
+from app.core.orchestrator.executor import WorkflowExecutor
+from app.db.repository_factory import RepositoryFactory
 
 logger = structlog.get_logger()
-
-# 全局 orchestrator 实例（单例）
-_orchestrator: RoadmapOrchestrator | None = None
 
 
 async def init_orchestrator():
     """
-    初始化全局 orchestrator 实例（在应用启动时调用）
+    初始化 Orchestrator（在应用启动时调用）
     
     流程：
-    1. 调用 RoadmapOrchestrator.initialize() 初始化连接池和 checkpointer
-    2. 创建 RoadmapOrchestrator 实例
-    3. 记录初始化成功
+    1. 初始化 OrchestratorFactory（创建 Checkpointer 和 StateManager）
+    2. 记录初始化成功
     """
-    global _orchestrator
-    
     logger.info("orchestrator_initializing")
     
     try:
-        # 初始化 Orchestrator 类级别资源（连接池、checkpointer）
         await asyncio.wait_for(
-            RoadmapOrchestrator.initialize(),
+            OrchestratorFactory.initialize(),
             timeout=30.0
         )
-        
-        # 创建实例
-        _orchestrator = RoadmapOrchestrator()
         
         logger.info("orchestrator_initialized", checkpointer_type="AsyncPostgresSaver")
         
@@ -57,32 +56,54 @@ async def init_orchestrator():
 
 async def cleanup_orchestrator():
     """
-    清理 orchestrator（在应用关闭时调用）
+    清理 Orchestrator（在应用关闭时调用）
     
     流程：
     1. 关闭 PostgreSQL 连接池
     2. 清空全局实例
     """
-    global _orchestrator
-    
     try:
-        # 关闭类级别资源
-        await RoadmapOrchestrator.shutdown()
+        await OrchestratorFactory.cleanup()
         logger.info("orchestrator_shutdown_completed")
     except Exception as e:
         logger.warning("orchestrator_cleanup_error", error=str(e))
     finally:
-        _orchestrator = None
         logger.info("orchestrator_cleaned_up")
 
 
-def get_orchestrator() -> RoadmapOrchestrator:
+def get_workflow_executor() -> WorkflowExecutor:
     """
-    获取全局 orchestrator 实例
+    获取 WorkflowExecutor 实例
     
     用作 FastAPI 依赖注入：
-        orchestrator: RoadmapOrchestrator = Depends(get_orchestrator)
+        executor: WorkflowExecutor = Depends(get_workflow_executor)
+    
+    Returns:
+        WorkflowExecutor 实例（每次调用创建新实例，但共享 StateManager 和 Checkpointer）
     """
-    if _orchestrator is None:
-        raise RuntimeError("Orchestrator 尚未初始化，请确保应用已正确启动")
-    return _orchestrator
+    return _get_workflow_executor()
+
+
+# 向后兼容：保留旧的函数名
+def get_orchestrator() -> WorkflowExecutor:
+    """
+    【已废弃】向后兼容函数，请使用 get_workflow_executor()
+    
+    Returns:
+        WorkflowExecutor 实例
+    """
+    return get_workflow_executor()
+
+
+def get_repository_factory() -> RepositoryFactory:
+    """
+    获取 RepositoryFactory 实例
+    
+    用作 FastAPI 依赖注入：
+        repo_factory: RepositoryFactory = Depends(get_repository_factory)
+    
+    Returns:
+        RepositoryFactory 实例（每次调用创建新实例）
+    """
+    logger.debug("repository_factory_created")
+    return RepositoryFactory()

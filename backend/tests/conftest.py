@@ -34,7 +34,7 @@ def sample_learning_preferences() -> LearningPreferences:
         motivation="转行进入技术领域",
         current_level="beginner",
         career_background="市场营销 3 年经验",
-        content_preference=["text", "interactive", "project"],
+        content_preference=["text", "hands_on", "visual"],
         target_deadline=None,
     )
 
@@ -260,4 +260,26 @@ def mock_web_search_tool():
         )
         mock_registry.get.return_value = mock_search
         yield mock_search
+
+
+# ============================================================
+# OrchestratorFactory 初始化 Fixture
+# ============================================================
+
+@pytest.fixture(scope="session", autouse=True)
+async def initialize_orchestrator_factory():
+    """
+    初始化 OrchestratorFactory（测试会话级别）
+    
+    这个 fixture 会在所有测试开始前自动运行一次。
+    """
+    from app.core.orchestrator_factory import OrchestratorFactory
+    
+    # 初始化 OrchestratorFactory
+    await OrchestratorFactory.initialize()
+    
+    yield
+    
+    # 清理（关闭 checkpointer）
+    await OrchestratorFactory.cleanup()
 

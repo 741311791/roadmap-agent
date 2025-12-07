@@ -67,7 +67,7 @@ const config: Config = {
       fontFamily: {
         sans: [
           'var(--font-inter)',
-          'var(--font-noto-sans-sc)',
+          'Noto Sans SC', // 本地字体
           '-apple-system',
           'BlinkMacSystemFont',
           'system-ui',
@@ -75,7 +75,7 @@ const config: Config = {
         ],
         serif: [
           'var(--font-playfair)',
-          'var(--font-noto-serif-sc)',
+          'Noto Serif SC', // 本地字体
           'Georgia',
           'serif',
         ],

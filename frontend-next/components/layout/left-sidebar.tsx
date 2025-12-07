@@ -19,6 +19,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
+import { UserMenu } from '@/components/user-menu';
 
 interface LeftSidebarProps {
   className?: string;
@@ -82,7 +83,8 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
   // Get recent 3 roadmaps from store, sorted by created_at (most recent first)
   const recentRoadmaps = history
     .slice()
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .filter((item) => item.created_at) // 过滤掉没有 created_at 的项
+    .sort((a, b) => new Date(b.created_at!).getTime() - new Date(a.created_at!).getTime())
     .slice(0, 3)
     .map((item) => ({
       id: item.roadmap_id,
@@ -148,7 +150,7 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
       {/* New Roadmap Button */}
       {!isCollapsed ? (
         <div className="px-4 pb-2">
-          <Link href="/app/new">
+          <Link href="/new">
             <Button variant="sage" className="w-full gap-2">
               <Plus size={16} /> New Roadmap
             </Button>
@@ -157,7 +159,7 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
       ) : (
         <div className="px-2 py-2 flex justify-center">
           <Tooltip text="New Roadmap">
-            <Link href="/app/new">
+            <Link href="/new">
               <Button variant="sage" size="icon" className="w-10 h-10">
                 <Plus size={18} />
               </Button>
@@ -179,15 +181,15 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
           <NavItem
             icon={Home}
             label="Home"
-            href="/app/home"
-            active={isActive('/app/home')}
+            href="/home"
+            active={isActive('/home')}
             isCollapsed={isCollapsed}
           />
           <NavItem
             icon={User}
             label="Profile"
-            href="/app/profile"
-            active={isActive('/app/profile')}
+            href="/profile"
+            active={isActive('/profile')}
             isCollapsed={isCollapsed}
           />
 
@@ -219,8 +221,8 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
                           key={roadmap.id}
                           icon={Bot}
                           label={roadmap.title}
-                          href={`/app/roadmap/${roadmap.id}`}
-                          active={isActive(`/app/roadmap/${roadmap.id}`)}
+                          href={`/roadmap/${roadmap.id}`}
+                          active={isActive(`/roadmap/${roadmap.id}`)}
                           isCollapsed={false}
                         />
                       ))}
@@ -243,8 +245,8 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
                       key={roadmap.id}
                       icon={Bot}
                       label={roadmap.title}
-                      href={`/app/roadmap/${roadmap.id}`}
-                      active={isActive(`/app/roadmap/${roadmap.id}`)}
+                      href={`/roadmap/${roadmap.id}`}
+                      active={isActive(`/roadmap/${roadmap.id}`)}
                       isCollapsed={true}
                     />
                   ))}
@@ -257,29 +259,7 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
 
       {/* User Footer */}
       <div className="p-4 border-t border-border/5">
-        {isCollapsed ? (
-          <Tooltip text="User - Settings">
-            <Link href="/app/settings" className="block">
-              <div className="w-8 h-8 rounded-full bg-sage-200 flex items-center justify-center text-foreground font-bold text-xs mx-auto cursor-pointer hover:bg-sage-300 transition-colors">
-                L
-              </div>
-            </Link>
-          </Tooltip>
-        ) : (
-          <Link
-            href="/app/settings"
-            className="flex items-center gap-3 p-2 rounded-xl hover:bg-primary/5 cursor-pointer transition-colors"
-          >
-            <div className="w-8 h-8 rounded-full bg-sage-200 flex items-center justify-center text-foreground font-bold text-xs">
-              L
-            </div>
-            <div className="flex-1 overflow-hidden">
-              <div className="text-sm font-medium truncate">Learner</div>
-              <div className="text-xs text-foreground/50 truncate">Free Plan</div>
-            </div>
-            <Settings size={16} className="text-foreground/40" />
-          </Link>
-        )}
+        <UserMenu />
       </div>
     </div>
   );

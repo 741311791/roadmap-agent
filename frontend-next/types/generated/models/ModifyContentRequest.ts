@@ -4,11 +4,11 @@
 /* eslint-disable */
 import type { LearningPreferences } from './LearningPreferences';
 /**
- * 内容修改请求
+ * 修改内容请求
  */
 export type ModifyContentRequest = {
     /**
-     * 用户 ID
+     * 用户ID
      */
     user_id: string;
     /**
@@ -16,7 +16,7 @@ export type ModifyContentRequest = {
      */
     preferences: LearningPreferences;
     /**
-     * 具体修改要求列表
+     * 修改要求列表
      */
     requirements: Array<string>;
 };

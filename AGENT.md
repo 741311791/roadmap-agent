@@ -9,7 +9,7 @@
 - **个性化定制**：基于用户学习目标、时间、动机、基础、背景、偏好，生成专属学习路线图
 - **智能协作**：通过 7 个专业 Agent 协作，确保路线图结构合理、内容完整
 - **人机协同**：支持 Human-in-the-Loop，用户可审核和修改生成的路线图框架
-- **流式体验**：采用 SSE（Server-Sent Events）实时推送生成进度，提升用户体验
+- **实时反馈**：通过 WebSocket 实时推送生成进度，结合状态轮询确保可靠性
 
 ### 技术特点
 
@@ -28,19 +28,19 @@
 graph TB
     subgraph "前端层 (Frontend)"
         UI[Next.js 14 App]
-        SSE[SSE 客户端]
         WS[WebSocket 客户端]
+        POLL[轮询客户端]
     end
     
     subgraph "API 网关层 (API Gateway)"
         REST[REST API]
-        SSE_API[SSE Stream API]
         WS_API[WebSocket API]
     end
     
     subgraph "编排层 (Orchestration)"
         ORCH[LangGraph Orchestrator]
         STATE[Global State Machine]
+        BG[Background Tasks]
     end
     
     subgraph "Agent 层 (7 Agents)"
@@ -59,19 +59,19 @@ graph TB
     end
     
     subgraph "基础设施层 (Infrastructure)"
-        PG[("PostgreSQL<br/>State & Checkpoints")]
+        PG[("PostgreSQL<br/>State & Data")]
         S3[("S3/OSS<br/>Content Storage")]
-        REDIS[("Redis<br/>Cache & Pub/Sub")]
+        REDIS[("Redis<br/>WebSocket Pub/Sub")]
     end
     
-    UI --> REST
-    UI --> SSE
-    UI --> WS
+    UI -->|POST /generate| REST
+    UI <-->|实时进度| WS
+    UI -->|GET /status| POLL
     
-    REST --> ORCH
-    SSE_API --> ORCH
-    WS_API --> ORCH
+    REST -->|创建任务| ORCH
+    REST -->|后台任务| BG
     
+    BG --> ORCH
     ORCH --> STATE
     STATE --> PG
     
@@ -81,7 +81,7 @@ graph TB
     A3 -->|验证失败| A2E
     A2E --> A3
     A3 -->|验证通过| ORCH
-    ORCH -->|人工审核| UI
+    ORCH -->|等待人工审核| UI
     ORCH --> A4
     ORCH --> A5
     ORCH --> A6
@@ -93,25 +93,32 @@ graph TB
     A5 -.->|调用| T1
     
     T2 --> S3
-    STATE --> REDIS
+    WS_API <--> REDIS
+    ORCH -->|发布事件| REDIS
 ```
 
 ### 数据流
 
 ```
-用户输入 → API Gateway → Orchestrator → Agent Layer → Tools → Infrastructure
+用户提交 → POST /generate → 返回 task_id
+    ↓
+后台任务执行 → Orchestrator → Agent Layer → Tools → Infrastructure
                 ↓
-            SSE Stream → Frontend (实时更新)
+实时进度通过 WebSocket 推送到前端
+    ↓
+前端轮询 /status 查询任务状态和结果
 ```
 
 ### 核心流程
 
-1. **需求分析**：用户提交学习目标 → Intent Analyzer 解析需求
-2. **框架设计**：Curriculum Architect 设计三层路线图框架（Stage → Module → Concept）
-3. **结构验证**：Structure Validator 验证框架合理性 → 如有问题，Roadmap Editor 修正
-4. **人工审核**：用户确认或修改框架（Human-in-the-Loop）
-5. **内容生成**：并行生成教程、资源推荐、测验
-6. **结果交付**：返回路线图框架和内容引用
+1. **提交请求**：用户提交学习目标 → POST `/roadmaps/generate` → 返回 `task_id`
+2. **建立连接**：前端建立 WebSocket 连接，订阅任务进度
+3. **需求分析**：Intent Analyzer 解析需求 → 进度通过 WebSocket 推送
+4. **框架设计**：Curriculum Architect 设计三层路线图框架（Stage → Module → Concept）
+5. **结构验证**：Structure Validator 验证框架合理性 → 如有问题，Roadmap Editor 修正
+6. **人工审核**：用户确认或修改框架（Human-in-the-Loop）→ POST `/roadmaps/{task_id}/approve`
+7. **内容生成**：并行生成教程、资源推荐、测验 → 进度实时推送
+8. **结果查询**：前端轮询 GET `/roadmaps/{task_id}/status` 获取最终结果
 
 ---
 

@@ -45,10 +45,21 @@ export type LearningPreferences = {
     /**
      * 技术栈列表
      */
-    tech_stack?: null;
+    tech_stack?: Array<{
+        name: string;
+        proficiency: 'beginner' | 'intermediate' | 'advanced';
+    }> | null;
     /**
-     * 偏好的学习语言
+     * 偏好的学习语言（向后兼容）
      */
     preferred_language?: (string | null);
+    /**
+     * 主要语言（教程、路线图语言）
+     */
+    primary_language?: string;
+    /**
+     * 次要语言（资源推荐补充语言）
+     */
+    secondary_language?: (string | null);
 };
 

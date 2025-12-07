@@ -13,6 +13,7 @@ import rehypeHighlight from 'rehype-highlight';
 import { RotateCw, Edit, Clock, ExternalLink, CheckCircle2, Loader2 } from 'lucide-react';
 import { getLatestTutorial, downloadTutorialContent, getResourcesByConceptId, getQuizByConceptId, regenerateTutorial, getTutorialVersions } from '@/lib/api/endpoints';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
+import { useAuthStore } from '@/lib/store/auth-store';
 import type { LearningPreferences } from '@/types/generated/models';
 import 'highlight.js/styles/github-dark.css';
 
@@ -33,6 +34,7 @@ export function TutorialDialog({
   onModify,
   userPreferences,
 }: TutorialDialogProps) {
+  const { getUserId } = useAuthStore();
   const [tutorial, setTutorial] = useState<any>(null);
   const [content, setContent] = useState<string>('');
   const [resources, setResources] = useState<any[]>([]);
