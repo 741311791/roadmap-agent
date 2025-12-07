@@ -74,10 +74,10 @@ export function HumanReviewDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <BookOpen className="w-5 h-5 text-blue-500" />
-            人工审核
+            Human Review
           </DialogTitle>
           <DialogDescription>
-            请审核生成的路线图框架，确认后将开始生成学习内容
+            Please review the generated roadmap framework. Once approved, content generation will begin.
           </DialogDescription>
         </DialogHeader>
 
@@ -85,13 +85,13 @@ export function HumanReviewDialog({
           {/* Roadmap Info */}
           <div className="p-4 bg-muted/50 rounded-lg space-y-3">
             <div>
-              <p className="text-sm text-muted-foreground">路线图标题</p>
+              <p className="text-sm text-muted-foreground">Roadmap title</p>
               <p className="font-medium">{roadmapTitle}</p>
             </div>
             <div className="flex items-center gap-4">
               <Badge variant="secondary" className="gap-1">
                 <Clock className="w-3 h-3" />
-                {stagesCount} 个阶段
+                {stagesCount} stages
               </Badge>
               <span className="text-xs text-muted-foreground">
                 ID: {roadmapId.slice(0, 20)}...
@@ -102,16 +102,16 @@ export function HumanReviewDialog({
           {/* Feedback Input (shown when rejecting) */}
           {showFeedback && (
             <div className="space-y-2">
-              <p className="text-sm font-medium">请说明需要修改的内容：</p>
+              <p className="text-sm font-medium">Please describe the changes you need:</p>
               <Textarea
-                placeholder="例如：希望增加更多实践项目、减少理论内容比例..."
+                placeholder="e.g., add more projects, reduce theory-heavy content..."
                 value={feedback}
                 onChange={(e) => setFeedback(e.target.value)}
                 rows={4}
                 className="resize-none"
               />
               <p className="text-xs text-muted-foreground">
-                您的反馈将帮助我们优化路线图结构
+                Your feedback will help us refine the roadmap structure.
               </p>
             </div>
           )}
@@ -125,7 +125,7 @@ export function HumanReviewDialog({
                 onClick={handleCancel}
                 disabled={isSubmitting}
               >
-                取消
+              Cancel
               </Button>
               <Button
                 variant="destructive"
@@ -137,7 +137,7 @@ export function HumanReviewDialog({
                 ) : (
                   <X className="w-4 h-4 mr-2" />
                 )}
-                提交修改意见
+              Submit changes
               </Button>
             </>
           ) : (
@@ -148,7 +148,7 @@ export function HumanReviewDialog({
                 disabled={isSubmitting}
               >
                 <X className="w-4 h-4 mr-2" />
-                需要修改
+              Needs changes
               </Button>
               <Button
                 onClick={handleApprove}
@@ -160,7 +160,7 @@ export function HumanReviewDialog({
                 ) : (
                   <Check className="w-4 h-4 mr-2" />
                 )}
-                批准并继续
+              Approve and continue
               </Button>
             </>
           )}

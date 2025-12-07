@@ -36,9 +36,9 @@ interface RetryFailedButtonProps {
 type ContentType = 'tutorial' | 'resources' | 'quiz';
 
 const CONTENT_TYPE_INFO: Record<ContentType, { label: string; icon: React.ReactNode }> = {
-  tutorial: { label: '教程', icon: <BookOpen className="w-4 h-4" /> },
-  resources: { label: '资源推荐', icon: <Library className="w-4 h-4" /> },
-  quiz: { label: '测验', icon: <HelpCircle className="w-4 h-4" /> },
+  tutorial: { label: 'Tutorials', icon: <BookOpen className="w-4 h-4" /> },
+  resources: { label: 'Resources', icon: <Library className="w-4 h-4" /> },
+  quiz: { label: 'Quizzes', icon: <HelpCircle className="w-4 h-4" /> },
 };
 
 /**
@@ -108,7 +108,7 @@ export function RetryFailedButton({
       <DialogTrigger asChild>
         <Button variant="outline" className={className}>
           <RefreshCw className="w-4 h-4 mr-2" />
-          重试失败任务
+          Retry failed items
           <Badge variant="destructive" className="ml-2">
             {totalFailed}
           </Badge>
@@ -118,10 +118,10 @@ export function RetryFailedButton({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <RefreshCw className="w-5 h-5 text-blue-500" />
-            重试失败任务
+            Retry failed items
           </DialogTitle>
           <DialogDescription>
-            选择要重新生成的内容类型，已成功的内容不会被覆盖
+            Select content types to regenerate. Successful content stays untouched.
           </DialogDescription>
         </DialogHeader>
 
@@ -156,7 +156,7 @@ export function RetryFailedButton({
                     </div>
                   </div>
                   <Badge variant={count > 0 ? 'destructive' : 'secondary'}>
-                    {count} 个失败
+                    {count} failed
                   </Badge>
                 </div>
               );
@@ -166,7 +166,7 @@ export function RetryFailedButton({
           {/* Summary */}
           <div className="p-3 bg-muted/50 rounded-lg">
             <p className="text-sm text-muted-foreground">
-              将重试 <span className="font-semibold text-foreground">{getSelectedCount()}</span> 个失败项目
+              Will retry <span className="font-semibold text-foreground">{getSelectedCount()}</span> failed items
             </p>
           </div>
         </div>
@@ -177,7 +177,7 @@ export function RetryFailedButton({
             onClick={() => setOpen(false)}
             disabled={isSubmitting}
           >
-            取消
+            Cancel
           </Button>
           <Button
             onClick={handleRetry}
@@ -188,7 +188,7 @@ export function RetryFailedButton({
             ) : (
               <RefreshCw className="w-4 h-4 mr-2" />
             )}
-            开始重试
+            Start retry
           </Button>
         </DialogFooter>
       </DialogContent>

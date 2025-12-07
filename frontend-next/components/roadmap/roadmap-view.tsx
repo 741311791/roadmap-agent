@@ -19,7 +19,7 @@ type ViewMode = 'list' | 'flow';
  * RoadmapView - 路线图整体视图
  * 
  * 功能:
- * - 支持列表视图和流程图视图
+ * - Supports Knowledge Outline and Knowledge Graph (placeholder)
  * - 视图切换
  * - 渲染所有 Stage
  * - 统计信息展示
@@ -81,7 +81,7 @@ export function RoadmapView({
             className="flex items-center gap-2"
           >
             <LayoutList className="w-4 h-4" />
-            列表
+            Knowledge Outline
           </Button>
           <Button
             variant={viewMode === 'flow' ? 'default' : 'outline'}
@@ -90,7 +90,7 @@ export function RoadmapView({
             className="flex items-center gap-2"
           >
             <Network className="w-4 h-4" />
-            流程图
+            Knowledge Graph (coming soon)
           </Button>
         </div>
       </div>
@@ -106,7 +106,7 @@ export function RoadmapView({
 }
 
 /**
- * ListView - 列表视图
+ * ListView - Knowledge Outline
  */
 function ListView({
   framework,
@@ -138,8 +138,8 @@ function ListView({
 }
 
 /**
- * FlowView - 流程图视图（简化版本，暂时显示提示）
- * TODO: 使用 reactflow 或其他图形库实现完整的流程图视图
+ * FlowView - Knowledge Graph (placeholder, coming soon)
+ * TODO: 使用 reactflow 或其他图形库实现完整的 Knowledge Graph 视图
  */
 function FlowView({
   framework,
@@ -151,9 +151,9 @@ function FlowView({
   return (
     <div className="p-12 bg-muted/30 rounded-lg border-2 border-dashed text-center">
       <Network className="w-16 h-16 mx-auto mb-4 text-muted-foreground" />
-      <h3 className="text-lg font-semibold mb-2">流程图视图</h3>
+      <h3 className="text-lg font-semibold mb-2">Knowledge Graph</h3>
       <p className="text-muted-foreground">
-        流程图视图正在开发中，请使用列表视图
+        Knowledge Graph view is under development. Please use Knowledge Outline.
       </p>
       <Button
         variant="outline"
@@ -162,7 +162,7 @@ function FlowView({
           // 这里可以触发视图切换回列表模式
         }}
       >
-        返回列表视图
+        Back to Knowledge Outline
       </Button>
     </div>
   );

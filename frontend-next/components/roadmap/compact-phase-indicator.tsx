@@ -10,11 +10,11 @@ interface PhaseStep {
 }
 
 const PHASE_STEPS: PhaseStep[] = [
-  { id: 'intent_analysis', label: '分析' },
-  { id: 'curriculum_design', label: '设计' },
-  { id: 'human_review', label: '审核' },
-  { id: 'content_generation', label: '生成' },
-  { id: 'completed', label: '完成' },
+  { id: 'intent_analysis', label: 'Analysis' },
+  { id: 'curriculum_design', label: 'Design' },
+  { id: 'human_review', label: 'Review' },
+  { id: 'content_generation', label: 'Content' },
+  { id: 'completed', label: 'Done' },
 ];
 
 interface CompactPhaseIndicatorProps {
@@ -107,7 +107,7 @@ export function CompactPhaseIndicator({
         <div className="mt-4 flex items-start gap-2 p-3 rounded-lg bg-amber-50/60 dark:bg-amber-900/20 backdrop-blur-sm border-l-2 border-amber-500 dark:border-amber-600 text-amber-800 dark:text-amber-300">
           <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
           <span className="text-xs leading-relaxed">
-            {failedCount} 个概念生成失败，您可以点击右上角的重试按钮重新生成
+            {failedCount} concepts failed to generate. Use the retry button to regenerate.
           </span>
         </div>
       )}

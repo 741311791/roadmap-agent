@@ -44,41 +44,41 @@ export interface PhaseState {
 export const GENERATION_PHASES: PhaseConfig[] = [
   {
     id: 'intent_analysis',
-    label: '需求分析',
+    label: 'Analysis',
     labelEn: 'Analysis',
-    description: '分析学习目标和用户背景',
+    description: 'Analyze learning goals and user background',
   },
   {
     id: 'curriculum_design',
-    label: '结构设计',
+    label: 'Design',
     labelEn: 'Design',
-    description: '设计 Stage-Module-Concept 结构',
+    description: 'Design the Stage-Module-Concept structure',
   },
   {
     id: 'structure_validation',
-    label: '结构验证',
+    label: 'Validate',
     labelEn: 'Validate',
-    description: '验证路线图结构完整性',
+    description: 'Validate roadmap structure completeness',
     optional: true,
   },
   {
     id: 'human_review',
-    label: '人工审核',
+    label: 'Review',
     labelEn: 'Review',
-    description: '等待确认路线图框架',
+    description: 'Await confirmation of the roadmap framework',
     optional: true,
   },
   {
     id: 'content_generation',
-    label: '内容生成',
+    label: 'Content',
     labelEn: 'Content',
-    description: '生成教程、测验和资源推荐',
+    description: 'Generate tutorials, quizzes, and resources',
   },
   {
     id: 'completed',
-    label: '完成',
+    label: 'Done',
     labelEn: 'Done',
-    description: '路线图生成完成',
+    description: 'Roadmap generation completed',
   },
 ];
 
@@ -146,9 +146,9 @@ export function parseStepWithSubStatus(
 export function getSubStatusLabel(subStatus: HumanReviewSubStatus): string {
   switch (subStatus) {
     case 'waiting':
-      return '等待审核...';
+      return 'Waiting for review...';
     case 'editing':
-      return '正在修正...';
+      return 'Editing...';
     default:
       return '';
   }

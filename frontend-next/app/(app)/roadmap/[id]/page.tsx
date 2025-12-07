@@ -45,11 +45,11 @@ import type { Stage, Module, Concept, LearningPreferences, RoadmapFramework } fr
 import { cn } from '@/lib/utils';
 
 const PHASE_LABELS: Record<string, string> = {
-  intent_analysis: '需求分析',
-  curriculum_design: '课程设计',
-  human_review: '人工审核',
-  content_generation: '内容生成',
-  completed: '完成',
+  intent_analysis: 'Intent Analysis',
+  curriculum_design: 'Curriculum Design',
+  human_review: 'Human Review',
+  content_generation: 'Content Generation',
+  completed: 'Completed',
 };
 
 export default function RoadmapDetailPage() {
@@ -114,7 +114,7 @@ export default function RoadmapDetailPage() {
   const userPreferences: LearningPreferences = {
     learning_goal: currentRoadmap?.title || '',
     available_hours_per_week: 10,
-    motivation: '系统学习',
+    motivation: 'Systematic learning',
     current_level: 'intermediate',
     career_background: '',
     content_preference: ['text', 'hands_on'],
@@ -627,7 +627,7 @@ export default function RoadmapDetailPage() {
           {isLiveGenerating && (
             <div className="flex items-center gap-2 text-sm text-blue-600 dark:text-blue-400">
               <Loader2 className="w-4 h-4 animate-spin" />
-              <span>路线图正在生成中，请稍候...</span>
+              <span>Generating roadmap, please wait...</span>
             </div>
           )}
         </div>
@@ -645,13 +645,13 @@ export default function RoadmapDetailPage() {
             <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center mb-4">
                <AlertCircle className="w-6 h-6 text-red-500" />
             </div>
-            <p className="text-lg font-serif font-medium text-zinc-900 dark:text-zinc-50 mb-2">加载失败</p>
+            <p className="text-lg font-serif font-medium text-zinc-900 dark:text-zinc-50 mb-2">Load failed</p>
             <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-6">
-              {roadmapError instanceof Error ? roadmapError.message : '加载失败'}
+              {roadmapError instanceof Error ? roadmapError.message : 'Load failed'}
             </p>
             <Button onClick={() => refetchRoadmap()} variant="outline" className="gap-2">
               <RefreshCw className="w-4 h-4" />
-              重试
+              Retry
             </Button>
           </CardContent>
         </Card>
@@ -664,7 +664,7 @@ export default function RoadmapDetailPage() {
     return (
       <div className="container mx-auto px-4 py-20 flex justify-center">
          <div className="text-center text-zinc-400">
-           <p className="text-lg font-serif">未找到路线图</p>
+           <p className="text-lg font-serif">Roadmap not found</p>
          </div>
       </div>
     );
@@ -694,16 +694,16 @@ export default function RoadmapDetailPage() {
              <div className="flex items-center gap-6 text-sm text-zinc-500 dark:text-zinc-400">
                 <div className="flex items-center gap-1.5">
                   <Clock className="h-4 w-4 opacity-70" />
-                  <span>{currentRoadmap.total_estimated_hours} 小时</span>
+                  <span>{currentRoadmap.total_estimated_hours} hours</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <span className="opacity-70">周期:</span>
-                  <span>{currentRoadmap.recommended_completion_weeks} 周</span>
+                  <span className="opacity-70">Duration:</span>
+                  <span>{currentRoadmap.recommended_completion_weeks} weeks</span>
                 </div>
                 {generationStats.failed > 0 && !isGenerating && (
                   <div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-500">
                      <AlertTriangle className="h-4 w-4" />
-                     <span>{generationStats.failed} 个概念失败</span>
+                     <span>{generationStats.failed} concepts failed</span>
                   </div>
                 )}
              </div>
@@ -727,7 +727,7 @@ export default function RoadmapDetailPage() {
         {/* Progress Bar - Slim & Elegant */}
         <div className="space-y-2">
           <div className="flex items-center justify-between text-xs font-medium text-zinc-500 dark:text-zinc-400">
-            <span>{isGenerating || isRetrying ? '内容生成进度' : '学习进度'}</span>
+            <span>{isGenerating || isRetrying ? 'Content generation progress' : 'Learning progress'}</span>
             <span>{Math.round(calculateProgress())}%</span>
           </div>
           <Progress 
@@ -747,11 +747,11 @@ export default function RoadmapDetailPage() {
               </div>
               <div>
                 <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                  正在生成学习内容
+                  Generating learning content
                 </p>
                 <p className="text-xs text-zinc-500">
-                  {generationStats.completed} / {generationStats.total} 个概念已完成
-                  {generationStats.failed > 0 && ` (${generationStats.failed} 个失败)`}
+                  {generationStats.completed} / {generationStats.total} concepts completed
+                  {generationStats.failed > 0 && ` (${generationStats.failed} failed)`}
                 </p>
               </div>
             </div>
@@ -772,14 +772,14 @@ export default function RoadmapDetailPage() {
               className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-sage-600 data-[state=active]:text-sage-700 dark:data-[state=active]:text-sage-300 rounded-none px-4 py-2 text-zinc-500 transition-all"
             >
               <List className="h-4 w-4 mr-2" />
-              列表视图
+              Knowledge Outline
             </TabsTrigger>
             <TabsTrigger 
               value="flow" 
               className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-sage-600 data-[state=active]:text-sage-700 dark:data-[state=active]:text-sage-300 rounded-none px-4 py-2 text-zinc-500 transition-all"
             >
               <Network className="h-4 w-4 mr-2" />
-              流程图视图
+              Knowledge Graph (coming soon)
             </TabsTrigger>
           </TabsList>
         </Tabs>
@@ -852,7 +852,7 @@ export default function RoadmapDetailPage() {
                                    <div className="flex items-center justify-between mb-1">
                                       <h3 className="text-base font-medium text-zinc-800 dark:text-zinc-200">{module.name}</h3>
                                       <Badge variant="secondary" className="bg-zinc-100/80 dark:bg-zinc-800/80 text-zinc-500 text-xs font-normal">
-                                        {module.concepts.length} 个概念
+                                        {module.concepts.length} concepts
                                       </Badge>
                                    </div>
                                    {expandedModules.has(module.module_id) && module.description && (
@@ -896,10 +896,10 @@ export default function RoadmapDetailPage() {
           <div className="flex items-center justify-center h-full min-h-[400px]">
             <div className="text-center text-zinc-400">
               <Network className="h-16 w-16 mx-auto mb-4 opacity-20" />
-              <p className="text-lg font-serif mb-2">流程图视图</p>
-              <p className="text-sm">此功能正在开发中</p>
+              <p className="text-lg font-serif mb-2">Knowledge Graph</p>
+              <p className="text-sm">This feature is under development</p>
               <Button variant="link" className="mt-4 text-sage-600" onClick={() => setViewMode('list' as ViewMode)}>
-                返回列表视图
+                Back to Knowledge Outline
               </Button>
             </div>
           </div>
@@ -957,7 +957,7 @@ function StageProgressBadge({
   if (isGenerating && generating > 0) {
     return (
       <Badge variant="secondary" className="bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 border border-blue-100 dark:border-blue-900/50 font-normal">
-        生成中 {completed}/{total}
+        Generating {completed}/{total}
       </Badge>
     );
   }
@@ -965,7 +965,7 @@ function StageProgressBadge({
   if (completed === total) {
     return (
       <Badge variant="secondary" className="bg-sage-50 text-sage-700 dark:bg-sage-900/30 dark:text-sage-300 border border-sage-100 dark:border-sage-900/50 font-normal">
-        已完成
+        Completed
       </Badge>
     );
   }

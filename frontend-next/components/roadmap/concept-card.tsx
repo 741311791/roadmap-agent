@@ -108,10 +108,10 @@ export function ConceptCard({
           status === 'completed' && 'text-muted-foreground',
           status === 'failed' && 'text-red-600 dark:text-red-400',
         )}>
-          {status === 'pending' && '排队中...'}
-          {status === 'generating' && 'AI 正在生成内容...'}
+          {status === 'pending' && 'Queued...'}
+          {status === 'generating' && 'AI is generating content...'}
           {status === 'completed' && concept.description}
-          {status === 'failed' && '生成失败'}
+          {status === 'failed' && 'Generation failed'}
         </p>
       </div>
 

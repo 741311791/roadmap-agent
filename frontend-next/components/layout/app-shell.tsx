@@ -18,7 +18,7 @@ interface AppShellProps {
  * │   (260px)   │           (flex-1)              │     (350px)     │
  * └─────────────────────────────────────────────────────────────────┘
  */
-export function AppShell({ children, showRightSidebar = true }: AppShellProps) {
+export function AppShell({ children, showRightSidebar = false }: AppShellProps) {
   return (
     <div className="flex h-screen bg-background overflow-hidden text-foreground font-sans">
       {/* Left Sidebar - Navigation */}
@@ -29,7 +29,7 @@ export function AppShell({ children, showRightSidebar = true }: AppShellProps) {
         {children}
       </main>
 
-      {/* Right Sidebar - AI Assistant */}
+      {/* Right Sidebar - AI Assistant (暂时隐藏，待沉浸式学习阶段启用) */}
       {showRightSidebar && <RightSidebar />}
     </div>
   );

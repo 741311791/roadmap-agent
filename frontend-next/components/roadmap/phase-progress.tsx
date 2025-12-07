@@ -17,7 +17,7 @@ interface PhaseProgressProps {
   currentPhase: GenerationPhase | null;
   subStatus?: HumanReviewSubStatus;
   skippedPhases?: GenerationPhase[];  // 跳过的阶段（如 structure_validation, human_review）
-  failedCount?: number;  // 失败数量（在 completed 阶段显示）
+  failedCount?: number;  // number of failed items (shown in completed phase)
   className?: string;
 }
 
@@ -25,12 +25,12 @@ interface PhaseProgressProps {
  * PhaseProgress - Linear progress indicator for roadmap generation phases
  * 
  * Displays up to 6 phases:
- * 1. Intent Analysis (需求分析)
- * 2. Curriculum Design (结构设计)
- * 3. Structure Validation (结构验证) [可选]
- * 4. Human Review (人工审核) [可选]
- * 5. Content Generation (内容生成)
- * 6. Completed (完成)
+   * 1. Intent Analysis
+   * 2. Curriculum Design
+   * 3. Structure Validation [optional]
+   * 4. Human Review [optional]
+   * 5. Content Generation
+   * 6. Completed
  */
 export function PhaseProgress({ 
   currentPhase, 
@@ -52,7 +52,7 @@ export function PhaseProgress({
       return getSubStatusLabel(subStatus);
     }
     if (phase.id === 'completed' && currentPhase === 'completed' && failedCount && failedCount > 0) {
-      return `${failedCount} 个失败`;
+      return `${failedCount} failed`;
     }
     return null;
   };
@@ -194,7 +194,7 @@ export function PhaseProgress({
               <span className="text-blue-500 ml-1">({getSubStatusLabel(subStatus)})</span>
             )}
             {failedCount && failedCount > 0 && currentPhase === 'completed' && (
-              <span className="text-amber-500 ml-1">({failedCount} 个失败)</span>
+              <span className="text-amber-500 ml-1">({failedCount} failed)</span>
             )}
           </p>
         )}
@@ -250,7 +250,7 @@ export function PhaseProgressCompact({
               <span className="text-blue-500 ml-1">({getSubStatusLabel(subStatus)})</span>
             )}
             {hasError && currentPhase === 'completed' && (
-              <span className="text-amber-500 ml-1">({failedCount}失败)</span>
+              <span className="text-amber-500 ml-1">({failedCount} failed)</span>
             )}
           </span>
         )}
