@@ -8,14 +8,16 @@ const inter = Inter({
   subsets: ['latin'],
   variable: '--font-inter',
   display: 'swap',
-  preload: false,
+  preload: true, // 启用预加载，减少字体延迟
+  adjustFontFallback: true, // 自动计算回退字体，避免布局偏移
 });
 
 const playfair = Playfair_Display({
   subsets: ['latin'],
   variable: '--font-playfair',
   display: 'swap',
-  preload: false,
+  preload: true, // 启用预加载
+  adjustFontFallback: true,
 });
 
 // 中文字体现在通过 fonts.css 从本地加载

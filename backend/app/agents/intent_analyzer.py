@@ -22,13 +22,20 @@ class IntentAnalyzerAgent(BaseAgent):
     - ANALYZER_API_KEY: API 密钥（必需）
     """
     
-    def __init__(self):
+    def __init__(
+        self,
+        agent_id: str = "intent_analyzer",
+        model_provider: str | None = None,
+        model_name: str | None = None,
+        base_url: str | None = None,
+        api_key: str | None = None,
+    ):
         super().__init__(
-            agent_id="intent_analyzer",
-            model_provider=settings.ANALYZER_PROVIDER,
-            model_name=settings.ANALYZER_MODEL,
-            base_url=settings.ANALYZER_BASE_URL,
-            api_key=settings.ANALYZER_API_KEY,
+            agent_id=agent_id,
+            model_provider=model_provider or settings.ANALYZER_PROVIDER,
+            model_name=model_name or settings.ANALYZER_MODEL,
+            base_url=base_url or settings.ANALYZER_BASE_URL,
+            api_key=api_key or settings.ANALYZER_API_KEY,
             temperature=0.3,
             max_tokens=2048,
         )
@@ -488,21 +495,46 @@ class IntentAnalyzerAgent(BaseAgent):
         content = response.choices[0].message.content
         logger.debug("intent_analysis_llm_response", content_length=len(content))
         
+        # 提取 JSON（可能包含 markdown 代码块）
+        if "```json" in content:
+            json_start = content.find("```json") + 7
+            json_end = content.find("```", json_start)
+            content = content[json_start:json_end].strip()
+        elif "```" in content:
+            json_start = content.find("```") + 3
+            json_end = content.find("```", json_start)
+            content = content[json_start:json_end].strip()
+        
         # 尝试解析 JSON
         try:
-            result_data = json.loads(content)
+            result_dict = json.loads(content)
             
-            # 验证并构造输出
-            result = IntentAnalysisOutput(**result_data)
+            # 确保 language_preferences 被正确设置（LLM 可能不返回或返回格式不对）
+            if "language_preferences" not in result_dict or result_dict["language_preferences"] is None:
+                # 使用用户输入的语言偏好
+                result_dict["language_preferences"] = language_prefs.model_dump()
+            else:
+                # 验证并补充 LLM 返回的语言偏好
+                llm_lang_prefs = result_dict["language_preferences"]
+                if not isinstance(llm_lang_prefs, dict):
+                    result_dict["language_preferences"] = language_prefs.model_dump()
+                else:
+                    # 确保有有效的资源分配比例
+                    if "resource_ratio" not in llm_lang_prefs:
+                        llm_lang_prefs["resource_ratio"] = language_prefs.get_effective_ratio()
+            
+            # 使用 Pydantic 验证输出格式
+            result = IntentAnalysisOutput.model_validate(result_dict)
             
             logger.info(
                 "intent_analysis_completed",
+                user_id=user_request.user_id,
                 roadmap_id=result.roadmap_id,
-                topic=result.analysis.primary_topic,
-                difficulty_score=result.analysis.overall_difficulty_score,
-                estimated_hours=result.analysis.total_estimated_hours,
-                skills_to_learn_count=len(result.analysis.skill_gaps.skills_to_learn),
-                recommendations_count=len(result.recommendations),
+                parsed_goal=result.parsed_goal,
+                key_technologies_count=len(result.key_technologies) if result.key_technologies else 0,
+                difficulty_profile=result.difficulty_profile,
+                primary_language=result.language_preferences.primary_language if result.language_preferences else None,
+                secondary_language=result.language_preferences.secondary_language if result.language_preferences else None,
             )
             
             return result
@@ -511,6 +543,6 @@ class IntentAnalyzerAgent(BaseAgent):
             logger.error("intent_analysis_json_decode_error", error=str(e), content=content[:500])
             raise ValueError(f"LLM 输出不是有效的 JSON 格式: {e}")
         except Exception as e:
-            logger.error("intent_analysis_output_invalid", error=str(e), content=content)
+            logger.error("intent_analysis_output_invalid", error=str(e), content=content[:500])
             raise ValueError(f"LLM 输出格式不符合 Schema: {e}")
 

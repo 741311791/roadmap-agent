@@ -5,6 +5,7 @@
 提供单例和工厂函数来创建 Orchestrator 组件。
 """
 import structlog
+from psycopg_pool import AsyncConnectionPool
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from app.config.settings import settings
@@ -31,11 +32,12 @@ class OrchestratorFactory:
     工作流编排器工厂
     
     使用单例模式管理共享组件（StateManager, Checkpointer）
+    使用连接池来管理数据库连接，防止长时间运行时连接超时。
     """
     
     _state_manager: StateManager | None = None
     _checkpointer: AsyncPostgresSaver | None = None
-    _checkpointer_cm = None
+    _connection_pool: AsyncConnectionPool | None = None
     _agent_factory: AgentFactory | None = None
     _initialized: bool = False
     
@@ -45,6 +47,7 @@ class OrchestratorFactory:
         初始化工厂（应用启动时调用一次）
         
         创建 Checkpointer 和 StateManager 单例。
+        使用连接池来管理连接生命周期，防止长时间运行时连接超时。
         """
         if cls._initialized:
             logger.info("orchestrator_factory_already_initialized")
@@ -56,20 +59,42 @@ class OrchestratorFactory:
         # 创建 AgentFactory 单例
         cls._agent_factory = AgentFactory(settings)
         
-        # 创建 AsyncPostgresSaver
+        # 创建 AsyncPostgresSaver（使用连接池）
         try:
-            checkpointer_cm = AsyncPostgresSaver.from_conn_string(
-                settings.CHECKPOINTER_DATABASE_URL
+            # 使用连接池管理连接
+            # - min_size=2: 最小保持 2 个连接
+            # - max_size=10: 最大 10 个连接
+            # - max_idle=300: 空闲连接最多保持 5 分钟
+            # - timeout=30: 获取连接超时 30 秒
+            # - reconnect_timeout=60: 重连超时 60 秒（0 表示自动重试）
+            cls._connection_pool = AsyncConnectionPool(
+                conninfo=settings.CHECKPOINTER_DATABASE_URL,
+                min_size=2,
+                max_size=10,
+                max_idle=300,
+                timeout=30,
+                reconnect_timeout=0,  # 自动重连
+                kwargs={
+                    "autocommit": True,
+                    "prepare_threshold": 0,
+                },
             )
-            cls._checkpointer_cm = checkpointer_cm
-            cls._checkpointer = await checkpointer_cm.__aenter__()
             
+            # 打开连接池
+            await cls._connection_pool.open()
+            
+            # 使用连接池创建 AsyncPostgresSaver
+            cls._checkpointer = AsyncPostgresSaver(cls._connection_pool)
+            
+            # 设置 checkpointer 表
             await cls._checkpointer.setup()
             
             logger.info(
                 "orchestrator_factory_initialized",
                 checkpointer_type="AsyncPostgresSaver",
-                database_url=settings.CHECKPOINTER_DATABASE_URL.split("@")[-1],  # 隐藏凭据
+                pool_min_size=2,
+                pool_max_size=10,
+                database_url=settings.CHECKPOINTER_DATABASE_URL.split("@")[-1].split("?")[0],  # 隐藏凭据和参数
             )
             
             cls._initialized = True
@@ -80,15 +105,23 @@ class OrchestratorFactory:
                 error=str(e),
                 error_type=type(e).__name__,
             )
+            # 清理已创建的资源
+            if cls._connection_pool:
+                try:
+                    await cls._connection_pool.close()
+                except Exception:
+                    pass
+                cls._connection_pool = None
             raise
     
     @classmethod
     async def cleanup(cls) -> None:
         """清理资源（应用关闭时调用）"""
-        if cls._checkpointer_cm:
+        # 关闭连接池
+        if cls._connection_pool:
             try:
-                await cls._checkpointer_cm.__aexit__(None, None, None)
-                logger.info("orchestrator_factory_cleaned_up")
+                await cls._connection_pool.close()
+                logger.info("orchestrator_factory_pool_closed")
             except Exception as e:
                 logger.error(
                     "orchestrator_factory_cleanup_failed",
@@ -96,10 +129,11 @@ class OrchestratorFactory:
                 )
         
         cls._checkpointer = None
-        cls._checkpointer_cm = None
+        cls._connection_pool = None
         cls._state_manager = None
         cls._agent_factory = None
         cls._initialized = False
+        logger.info("orchestrator_factory_cleaned_up")
     
     @classmethod
     def get_state_manager(cls) -> StateManager:

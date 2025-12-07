@@ -32,13 +32,20 @@ class ResourceRecommenderAgent(BaseAgent):
     - RECOMMENDER_API_KEY: API 密钥（必需）
     """
     
-    def __init__(self):
+    def __init__(
+        self,
+        agent_id: str = "resource_recommender",
+        model_provider: str | None = None,
+        model_name: str | None = None,
+        base_url: str | None = None,
+        api_key: str | None = None,
+    ):
         super().__init__(
-            agent_id="resource_recommender",
-            model_provider=settings.RECOMMENDER_PROVIDER,
-            model_name=settings.RECOMMENDER_MODEL,
-            base_url=settings.RECOMMENDER_BASE_URL,
-            api_key=settings.RECOMMENDER_API_KEY,
+            agent_id=agent_id,
+            model_provider=model_provider or settings.RECOMMENDER_PROVIDER,
+            model_name=model_name or settings.RECOMMENDER_MODEL,
+            base_url=base_url or settings.RECOMMENDER_BASE_URL,
+            api_key=api_key or settings.RECOMMENDER_API_KEY,
             temperature=0.5,
             max_tokens=4096,
         )

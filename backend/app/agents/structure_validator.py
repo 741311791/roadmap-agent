@@ -26,13 +26,20 @@ class StructureValidatorAgent(BaseAgent):
     - VALIDATOR_API_KEY: API 密钥（必需）
     """
     
-    def __init__(self):
+    def __init__(
+        self,
+        agent_id: str = "structure_validator",
+        model_provider: str | None = None,
+        model_name: str | None = None,
+        base_url: str | None = None,
+        api_key: str | None = None,
+    ):
         super().__init__(
-            agent_id="structure_validator",
-            model_provider=settings.VALIDATOR_PROVIDER,
-            model_name=settings.VALIDATOR_MODEL,
-            base_url=settings.VALIDATOR_BASE_URL,
-            api_key=settings.VALIDATOR_API_KEY,
+            agent_id=agent_id,
+            model_provider=model_provider or settings.VALIDATOR_PROVIDER,
+            model_name=model_name or settings.VALIDATOR_MODEL,
+            base_url=base_url or settings.VALIDATOR_BASE_URL,
+            api_key=api_key or settings.VALIDATOR_API_KEY,
             temperature=0.2,  # 低温度，确保审查的严谨性
             max_tokens=4096,
         )

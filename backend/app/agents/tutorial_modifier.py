@@ -35,13 +35,20 @@ class TutorialModifierAgent(BaseAgent):
     - TUTORIAL_MODIFIER_API_KEY: API 密钥（默认复用 RECOMMENDER_API_KEY）
     """
     
-    def __init__(self):
+    def __init__(
+        self,
+        agent_id: str = "tutorial_modifier",
+        model_provider: str | None = None,
+        model_name: str | None = None,
+        base_url: str | None = None,
+        api_key: str | None = None,
+    ):
         super().__init__(
-            agent_id="tutorial_modifier",
-            model_provider=settings.TUTORIAL_MODIFIER_PROVIDER,
-            model_name=settings.TUTORIAL_MODIFIER_MODEL,
-            base_url=settings.TUTORIAL_MODIFIER_BASE_URL,
-            api_key=settings.get_tutorial_modifier_api_key,
+            agent_id=agent_id,
+            model_provider=model_provider or settings.TUTORIAL_MODIFIER_PROVIDER,
+            model_name=model_name or settings.TUTORIAL_MODIFIER_MODEL,
+            base_url=base_url or settings.TUTORIAL_MODIFIER_BASE_URL,
+            api_key=api_key or settings.get_tutorial_modifier_api_key,
             temperature=0.7,
             max_tokens=16384,
         )

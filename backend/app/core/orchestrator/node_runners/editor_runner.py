@@ -69,12 +69,19 @@ class EditorRunner:
             roadmap_id=state.get("roadmap_id"),
         )
         
-        # 记录执行日志
+        # 获取 roadmap_id
+        roadmap_id = state.get("roadmap_id")
+        
+        # 记录执行日志（包含 roadmap_id）
         await execution_logger.log_workflow_start(
             task_id=task_id,
             step="roadmap_edit",
             message=f"开始修改路线图（第 {modification_count + 1} 次）",
+            roadmap_id=roadmap_id,
         )
+        
+        # 更新数据库状态
+        await self._update_task_status(task_id, "roadmap_edit", roadmap_id)
         
         # 发布进度通知
         await notification_service.publish_progress(
@@ -149,6 +156,32 @@ class EditorRunner:
         
         # 返回状态更新
         return ctx["result"]
+    
+    async def _update_task_status(self, task_id: str, current_step: str, roadmap_id: str | None):
+        """
+        更新任务状态到数据库
+        
+        Args:
+            task_id: 任务 ID
+            current_step: 当前步骤
+            roadmap_id: 路线图 ID
+        """
+        async with AsyncSessionLocal() as session:
+            repo = RoadmapRepository(session)
+            await repo.update_task_status(
+                task_id=task_id,
+                status="processing",
+                current_step=current_step,
+                roadmap_id=roadmap_id,
+            )
+            await session.commit()
+            
+            logger.debug(
+                "task_status_updated",
+                task_id=task_id,
+                current_step=current_step,
+                roadmap_id=roadmap_id,
+            )
     
     async def _update_roadmap_framework(self, state: RoadmapState, framework):
         """

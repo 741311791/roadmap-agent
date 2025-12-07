@@ -35,13 +35,20 @@ class ResourceModifierAgent(BaseAgent):
     - RESOURCE_MODIFIER_API_KEY: API 密钥（默认复用 RECOMMENDER_API_KEY）
     """
     
-    def __init__(self):
+    def __init__(
+        self,
+        agent_id: str = "resource_modifier",
+        model_provider: str | None = None,
+        model_name: str | None = None,
+        base_url: str | None = None,
+        api_key: str | None = None,
+    ):
         super().__init__(
-            agent_id="resource_modifier",
-            model_provider=settings.RESOURCE_MODIFIER_PROVIDER,
-            model_name=settings.RESOURCE_MODIFIER_MODEL,
-            base_url=settings.RESOURCE_MODIFIER_BASE_URL,
-            api_key=settings.get_resource_modifier_api_key,
+            agent_id=agent_id,
+            model_provider=model_provider or settings.RESOURCE_MODIFIER_PROVIDER,
+            model_name=model_name or settings.RESOURCE_MODIFIER_MODEL,
+            base_url=base_url or settings.RESOURCE_MODIFIER_BASE_URL,
+            api_key=api_key or settings.get_resource_modifier_api_key,
             temperature=0.5,
             max_tokens=4096,
         )

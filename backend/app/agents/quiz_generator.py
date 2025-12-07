@@ -32,13 +32,20 @@ class QuizGeneratorAgent(BaseAgent):
     注意：此 Agent 不使用任何工具，直接基于 LLM 知识生成测验题目。
     """
     
-    def __init__(self):
+    def __init__(
+        self,
+        agent_id: str = "quiz_generator",
+        model_provider: str | None = None,
+        model_name: str | None = None,
+        base_url: str | None = None,
+        api_key: str | None = None,
+    ):
         super().__init__(
-            agent_id="quiz_generator",
-            model_provider=settings.QUIZ_PROVIDER,
-            model_name=settings.QUIZ_MODEL,
-            base_url=settings.QUIZ_BASE_URL,
-            api_key=settings.QUIZ_API_KEY,
+            agent_id=agent_id,
+            model_provider=model_provider or settings.QUIZ_PROVIDER,
+            model_name=model_name or settings.QUIZ_MODEL,
+            base_url=base_url or settings.QUIZ_BASE_URL,
+            api_key=api_key or settings.QUIZ_API_KEY,
             temperature=0.7,
             max_tokens=4096,
         )

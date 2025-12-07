@@ -9,6 +9,7 @@ WebSocket 实时推送端点
 客户端连接后，会实时收到与 task_id 相关的所有事件。
 """
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+from starlette.websockets import WebSocketState
 from typing import Optional
 import json
 import asyncio
@@ -18,7 +19,7 @@ from app.services.notification_service import notification_service, TaskEvent
 from app.db.repositories.roadmap_repo import RoadmapRepository
 from app.db.session import AsyncSessionLocal
 
-router = APIRouter()
+router = APIRouter(prefix="/api/v1")
 logger = structlog.get_logger()
 
 
@@ -205,11 +206,21 @@ async def _send_current_status(websocket: WebSocket, task_id: str):
             task_id=task_id,
             error=str(e),
         )
-        await websocket.send_json({
-            "type": "error",
-            "task_id": task_id,
-            "message": f"获取任务状态失败: {str(e)}",
-        })
+        # 发送错误消息前检查连接状态，避免在已关闭的连接上发送
+        try:
+            if websocket.client_state == WebSocketState.CONNECTED:
+                await websocket.send_json({
+                    "type": "error",
+                    "task_id": task_id,
+                    "message": f"获取任务状态失败: {str(e)}",
+                })
+        except Exception as send_error:
+            # WebSocket 已关闭，记录调试日志
+            logger.debug(
+                "websocket_already_closed",
+                task_id=task_id,
+                error=str(send_error),
+            )
 
 
 async def _forward_redis_events(websocket: WebSocket, task_id: str):
@@ -241,11 +252,17 @@ async def _forward_redis_events(websocket: WebSocket, task_id: str):
             task_id=task_id,
             error=str(e),
         )
-        await websocket.send_json({
-            "type": "error",
-            "task_id": task_id,
-            "message": f"事件订阅失败: {str(e)}",
-        })
+        # 发送错误消息前检查连接状态
+        try:
+            if websocket.client_state == WebSocketState.CONNECTED:
+                await websocket.send_json({
+                    "type": "error",
+                    "task_id": task_id,
+                    "message": f"事件订阅失败: {str(e)}",
+                })
+        except Exception:
+            # WebSocket 已关闭，忽略
+            pass
 
 
 async def _handle_client_messages(websocket: WebSocket, task_id: str):
@@ -284,10 +301,12 @@ async def _handle_client_messages(websocket: WebSocket, task_id: str):
                 )
     
     except WebSocketDisconnect:
-        raise
+        # 客户端正常断开连接，不需要重新抛出异常
+        logger.debug("websocket_client_messages_disconnected", task_id=task_id)
     
     except asyncio.CancelledError:
-        raise
+        # 任务被取消（通常是因为 Redis 任务完成），正常情况
+        logger.debug("websocket_client_messages_cancelled", task_id=task_id)
     
     except Exception as e:
         logger.error(

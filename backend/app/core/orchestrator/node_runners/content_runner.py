@@ -74,11 +74,26 @@ class ContentRunner:
         # 设置当前步骤
         self.state_manager.set_live_step(task_id, "content_generation")
         
+        # 获取 roadmap_id
+        roadmap_id = state.get("roadmap_id")
+        
         logger.info(
             "workflow_step_started",
             step="content_generation",
             task_id=task_id,
+            roadmap_id=roadmap_id,
         )
+        
+        # 记录执行日志（包含 roadmap_id）
+        await execution_logger.log_workflow_start(
+            task_id=task_id,
+            step="content_generation",
+            message="开始生成内容",
+            roadmap_id=roadmap_id,
+        )
+        
+        # 更新数据库状态
+        await self._update_task_status(task_id, "content_generation", roadmap_id)
         
         framework = state.get("roadmap_framework")
         if not framework:
@@ -227,6 +242,74 @@ class ContentRunner:
         
         return concepts_with_context
     
+    def _update_framework_concept_statuses(
+        self,
+        framework,
+        tutorial_refs: dict,
+        resource_refs: dict,
+        quiz_refs: dict,
+        failed_concepts: list,
+    ):
+        """
+        更新 framework 中 Concept 的状态字段
+        
+        Args:
+            framework: RoadmapFramework 对象
+            tutorial_refs: 教程引用字典
+            resource_refs: 资源引用字典
+            quiz_refs: 测验引用字典
+            failed_concepts: 失败的概念ID列表
+        """
+        if not framework:
+            return
+        
+        logger.info(
+            "updating_framework_concept_statuses",
+            tutorial_count=len(tutorial_refs),
+            resource_count=len(resource_refs),
+            quiz_count=len(quiz_refs),
+            failed_count=len(failed_concepts),
+        )
+        
+        for stage in framework.stages:
+            for module in stage.modules:
+                for concept in module.concepts:
+                    concept_id = concept.concept_id
+                    
+                    # 更新教程状态
+                    if concept_id in tutorial_refs:
+                        tutorial_output = tutorial_refs[concept_id]
+                        concept.content_status = "completed"
+                        # 更新教程引用信息
+                        if hasattr(tutorial_output, 'tutorial_id'):
+                            concept.content_ref = tutorial_output.tutorial_id
+                        if hasattr(tutorial_output, 'content_summary'):
+                            concept.content_summary = tutorial_output.content_summary
+                    elif concept_id in failed_concepts:
+                        concept.content_status = "failed"
+                    
+                    # 更新资源推荐状态
+                    if concept_id in resource_refs:
+                        resource_output = resource_refs[concept_id]
+                        concept.resources_status = "completed"
+                        # 更新资源引用信息
+                        if hasattr(resource_output, 'resources_id'):
+                            concept.resources_id = resource_output.resources_id
+                        if hasattr(resource_output, 'resources'):
+                            concept.resources_count = len(resource_output.resources)
+                    
+                    # 更新测验状态
+                    if concept_id in quiz_refs:
+                        quiz_output = quiz_refs[concept_id]
+                        concept.quiz_status = "completed"
+                        # 更新测验引用信息
+                        if hasattr(quiz_output, 'quiz_id'):
+                            concept.quiz_id = quiz_output.quiz_id
+                        if hasattr(quiz_output, 'questions'):
+                            concept.quiz_questions_count = len(quiz_output.questions)
+        
+        logger.info("framework_concept_statuses_updated")
+    
     async def _generate_all_content(
         self, state: RoadmapState, concepts_with_context: list[tuple[Concept, dict]]
     ):
@@ -305,7 +388,7 @@ class ContentRunner:
                 ):
                     tasks.append(
                         self._generate_resources(
-                            resource_recommender, concept, context, task_id
+                            resource_recommender, concept, context, user_preferences, task_id
                         )
                     )
                 else:
@@ -315,7 +398,7 @@ class ContentRunner:
                 if quiz_generator and concept.concept_id not in existing_quiz_refs:
                     tasks.append(
                         self._generate_quiz(
-                            quiz_generator, concept, context, task_id
+                            quiz_generator, concept, context, user_preferences, task_id
                         )
                     )
                 else:
@@ -366,6 +449,15 @@ class ContentRunner:
             if result["quiz"] and not isinstance(result["quiz"], Exception):
                 new_quiz_refs[concept_id] = result["quiz"]
         
+        # 更新 framework 中的 Concept 状态
+        self._update_framework_concept_statuses(
+            state.get("roadmap_framework"),
+            new_tutorial_refs,
+            new_resource_refs,
+            new_quiz_refs,
+            new_failed_concepts
+        )
+        
         return new_tutorial_refs, new_resource_refs, new_quiz_refs, new_failed_concepts
     
     async def _generate_tutorial(
@@ -394,12 +486,13 @@ class ContentRunner:
             )
             return e
     
-    async def _generate_resources(self, agent, concept, context, task_id):
+    async def _generate_resources(self, agent, concept, context, user_preferences, task_id):
         """生成资源推荐"""
         try:
             input_data = ResourceRecommendationInput(
                 concept=concept,
                 context=context,
+                user_preferences=user_preferences,
             )
             result = await agent.execute(input_data)
             logger.info(
@@ -417,12 +510,13 @@ class ContentRunner:
             )
             return e
     
-    async def _generate_quiz(self, agent, concept, context, task_id):
+    async def _generate_quiz(self, agent, concept, context, user_preferences, task_id):
         """生成测验"""
         try:
             input_data = QuizGenerationInput(
                 concept=concept,
                 context=context,
+                user_preferences=user_preferences,
             )
             result = await agent.execute(input_data)
             logger.info(
@@ -439,4 +533,30 @@ class ContentRunner:
                 error=str(e),
             )
             return e
+    
+    async def _update_task_status(self, task_id: str, current_step: str, roadmap_id: str | None):
+        """
+        更新任务状态到数据库
+        
+        Args:
+            task_id: 任务 ID
+            current_step: 当前步骤
+            roadmap_id: 路线图 ID
+        """
+        async with AsyncSessionLocal() as session:
+            repo = RoadmapRepository(session)
+            await repo.update_task_status(
+                task_id=task_id,
+                status="processing",
+                current_step=current_step,
+                roadmap_id=roadmap_id,
+            )
+            await session.commit()
+            
+            logger.debug(
+                "task_status_updated",
+                task_id=task_id,
+                current_step=current_step,
+                roadmap_id=roadmap_id,
+            )
 

@@ -34,13 +34,20 @@ class TutorialGeneratorAgent(BaseAgent):
     - GENERATOR_API_KEY: API 密钥（必需）
     """
     
-    def __init__(self):
+    def __init__(
+        self,
+        agent_id: str = "tutorial_generator",
+        model_provider: str | None = None,
+        model_name: str | None = None,
+        base_url: str | None = None,
+        api_key: str | None = None,
+    ):
         super().__init__(
-            agent_id="tutorial_generator",
-            model_provider=settings.GENERATOR_PROVIDER,
-            model_name=settings.GENERATOR_MODEL,
-            base_url=settings.GENERATOR_BASE_URL,
-            api_key=settings.GENERATOR_API_KEY,
+            agent_id=agent_id,
+            model_provider=model_provider or settings.GENERATOR_PROVIDER,
+            model_name=model_name or settings.GENERATOR_MODEL,
+            base_url=base_url or settings.GENERATOR_BASE_URL,
+            api_key=api_key or settings.GENERATOR_API_KEY,
             temperature=0.8,
             max_tokens=16384,
         )

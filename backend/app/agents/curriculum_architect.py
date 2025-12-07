@@ -2,8 +2,8 @@
 Curriculum Architect Agent（课程架构师）
 """
 import json
-import re
 import uuid
+import yaml
 from typing import AsyncIterator
 from app.agents.base import BaseAgent
 from app.models.domain import (
@@ -16,6 +16,140 @@ from app.config.settings import settings
 import structlog
 
 logger = structlog.get_logger()
+
+
+def _try_extract_yaml(content: str) -> str | None:
+    """
+    尝试从内容中提取 YAML
+    
+    支持：
+    1. 直接的 YAML 内容
+    2. 被 ```yaml ... ``` 包裹的 YAML
+    3. 被 ``` ... ``` 包裹的 YAML
+    
+    Returns:
+        提取的 YAML 字符串，如果没找到则返回 None
+    """
+    content = content.strip()
+    
+    # 情况1: 被 ```yaml 包裹
+    if "```yaml" in content or "```yml" in content:
+        start_marker = "```yaml" if "```yaml" in content else "```yml"
+        start = content.find(start_marker)
+        if start != -1:
+            start += len(start_marker)
+            end = content.find("```", start)
+            if end != -1:
+                yaml_content = content[start:end].strip()
+                logger.debug("yaml_extracted_from_code_block", format="yaml")
+                return yaml_content
+    
+    # 情况2: 被 ``` 包裹（尝试解析为YAML）
+    if content.startswith("```") and content.count("```") >= 2:
+        start = content.find("```")
+        # 跳过第一行的 ``` 标记
+        start = content.find("\n", start) + 1
+        end = content.find("```", start)
+        if end != -1:
+            yaml_content = content[start:end].strip()
+            # 简单检查是否像YAML（包含冒号和换行）
+            if ":" in yaml_content and "\n" in yaml_content:
+                logger.debug("yaml_extracted_from_generic_code_block")
+                return yaml_content
+    
+    # 情况3: 直接的YAML内容（启发式检测）
+    # YAML通常以键值对开始，检查是否有顶层字段
+    lines = content.split("\n")
+    if lines and any(line.strip().startswith(key + ":") for line in lines[:10] 
+                     for key in ["roadmap_id", "title", "stages"]):
+        logger.debug("yaml_detected_as_plain_text")
+        return content
+    
+    return None
+
+
+def _parse_yaml_roadmap(yaml_content: str) -> dict:
+    """
+    解析 YAML 格式的路线图
+    
+    Args:
+        yaml_content: YAML 字符串
+        
+    Returns:
+        包含 framework 和 design_rationale 的字典
+        
+    Raises:
+        ValueError: YAML 解析失败
+    """
+    try:
+        data = yaml.safe_load(yaml_content)
+        
+        if not isinstance(data, dict):
+            raise ValueError(f"YAML 解析结果不是字典: {type(data)}")
+        
+        # 提取 design_rationale
+        design_rationale = data.pop("design_rationale", "")
+        
+        # 确保必填字段存在
+        required_fields = ["roadmap_id", "title", "stages"]
+        missing_fields = [f for f in required_fields if f not in data]
+        if missing_fields:
+            raise ValueError(f"YAML 缺少必填字段: {missing_fields}")
+        
+        # 确保 stages 是列表
+        if not isinstance(data.get("stages"), list):
+            raise ValueError(f"stages 字段必须是数组，实际类型: {type(data.get('stages'))}")
+        
+        # 补全可选字段
+        if "total_estimated_hours" not in data:
+            # 计算总时长
+            total_hours = 0.0
+            for stage in data.get("stages", []):
+                for module in stage.get("modules", []):
+                    for concept in module.get("concepts", []):
+                        total_hours += concept.get("estimated_hours", 0.0)
+            data["total_estimated_hours"] = total_hours
+        
+        if "recommended_completion_weeks" not in data:
+            # 假设每周学习10小时
+            data["recommended_completion_weeks"] = max(1, int(data.get("total_estimated_hours", 0) / 10))
+        
+        # 补全 stage.order（如果缺失）
+        for idx, stage in enumerate(data.get("stages", []), start=1):
+            if "order" not in stage:
+                stage["order"] = idx
+        
+        # 补全 concept 的默认字段（如果LLM遗漏）
+        for stage in data.get("stages", []):
+            for module in stage.get("modules", []):
+                for concept in module.get("concepts", []):
+                    # 补全 content_status 等字段
+                    if "content_status" not in concept:
+                        concept["content_status"] = "pending"
+                    if "content_ref" not in concept:
+                        concept["content_ref"] = None
+                    if "content_version" not in concept:
+                        concept["content_version"] = "v1"
+                    if "content_summary" not in concept:
+                        concept["content_summary"] = None
+        
+        logger.info(
+            "yaml_roadmap_parsed",
+            stages_count=len(data.get("stages", [])),
+            roadmap_id=data.get("roadmap_id"),
+        )
+        
+        return {
+            "framework": data,
+            "design_rationale": design_rationale
+        }
+        
+    except yaml.YAMLError as e:
+        logger.error("yaml_parse_error", error=str(e), yaml_content_preview=yaml_content[:500])
+        raise ValueError(f"YAML 解析失败: {e}")
+    except Exception as e:
+        logger.error("yaml_processing_error", error=str(e), error_type=type(e).__name__)
+        raise ValueError(f"YAML 处理失败: {e}")
 
 
 def _try_extract_json(content: str) -> str | None:
@@ -136,230 +270,68 @@ def _parse_json_roadmap(json_str: str) -> dict:
 
 def _parse_compact_roadmap(content: str) -> dict:
     """
-    解析简洁格式的路线图（支持文本格式或JSON格式）
+    解析路线图输出（支持 YAML、JSON 和旧的文本格式）
     
-    支持两种格式：
-    1. 文本格式（带 ===ROADMAP START=== 标记）
-    2. JSON格式（可能被 ```json 包裹）
-    
-    输入格式示例（文本）：
-    ===ROADMAP START===
-    ROADMAP_ID: python-web-dev
-    TITLE: Python Web开发完整学习路线
-    TOTAL_HOURS: 120
-    WEEKS: 8
-    
-    Stage 1: 基础知识（掌握Python语法）[30小时]
-      Module 1.1: Python核心语法（学习Python基础）
-        - Concept: 变量与数据类型（理解基本数据结构）[2小时]
-    
-    DESIGN_RATIONALE: 设计说明
-    ===ROADMAP END===
+    优先级：
+    1. YAML 格式（推荐）- 结构化、易读、可靠
+    2. JSON 格式（兼容）- 结构化、但冗长
+    3. 文本格式（已废弃）- 仅作为回退兼容
     
     Args:
-        content: LLM 响应内容
+        content: LLM 输出内容
         
     Returns:
-        符合 CurriculumDesignOutput 的字典
+        包含 framework 和 design_rationale 的字典
         
     Raises:
-        ValueError: 无法解析文本格式
+        ValueError: 无法解析任何支持的格式
     """
-    try:
-        # 1. 先尝试JSON格式
-        json_content = _try_extract_json(content)
-        if json_content:
-            logger.debug("curriculum_design_detected_json_format")
-            return _parse_json_roadmap(json_content)
-        
-        # 2. 尝试文本格式
-        logger.debug("curriculum_design_parsing_text_format")
-        
-        # 提取路线图内容（去除标记）
-        start_marker = "===ROADMAP START==="
-        end_marker = "===ROADMAP END==="
-        
-        start_idx = content.find(start_marker)
-        end_idx = content.find(end_marker)
-        
-        if start_idx == -1 or end_idx == -1:
-            # 提供更详细的错误信息
-            content_preview = content[:300] if len(content) > 300 else content
-            raise ValueError(
-                f"无法识别输出格式。期望: (1) JSON格式（可被```json包裹）或 (2) 文本格式（带{start_marker}标记）。"
-                f"\n内容预览: {content_preview}..."
+    errors = {}
+    
+    # 1. 优先尝试 YAML 格式
+    yaml_content = _try_extract_yaml(content)
+    if yaml_content:
+        try:
+            result = _parse_yaml_roadmap(yaml_content)
+            logger.info("parse_format_detected", format="yaml")
+            return result
+        except Exception as e:
+            errors['yaml'] = str(e)
+            logger.warning(
+                "yaml_parse_failed",
+                error=str(e),
+                yaml_preview=yaml_content[:200] if yaml_content else None,
             )
-        
-        roadmap_content = content[start_idx + len(start_marker):end_idx].strip()
-        lines = roadmap_content.split('\n')
-        
-        # 解析元信息
-        roadmap_id = None
-        title = None
-        total_hours = 0
-        weeks = 0
-        design_rationale = ""
-        
-        stages = []
-        current_stage = None
-        current_module = None
-        stage_counter = 0
-        module_counter_in_stage = 0
-        concept_counter_in_module = 0
-        
-        for line in lines:
-            line_stripped = line.strip()
-            if not line_stripped:
-                continue
-            
-            # 解析元信息
-            if line_stripped.startswith("ROADMAP_ID:"):
-                roadmap_id = line_stripped.split(":", 1)[1].strip()
-            elif line_stripped.startswith("TITLE:"):
-                title = line_stripped.split(":", 1)[1].strip()
-            elif line_stripped.startswith("TOTAL_HOURS:"):
-                total_hours = float(line_stripped.split(":", 1)[1].strip())
-            elif line_stripped.startswith("WEEKS:"):
-                weeks = int(line_stripped.split(":", 1)[1].strip())
-            elif line_stripped.startswith("DESIGN_RATIONALE:"):
-                design_rationale = line_stripped.split(":", 1)[1].strip()
-            
-            # 解析 Stage
-            elif line_stripped.startswith("Stage "):
-                if current_stage:
-                    stages.append(current_stage)
-                
-                stage_counter += 1
-                module_counter_in_stage = 0
-                
-                # 格式: Stage 1: 基础知识（描述）[30小时]
-                # 支持中英文括号和小时标记
-                match = re.match(r'Stage\s+(\d+):\s*([^（(]+)[（(]([^）)]+)[）)]\[([0-9.]+)(?:小时|hours?)\]', line_stripped, re.IGNORECASE)
-                if not match:
-                    logger.warning("stage_parse_failed", line=line_stripped, line_length=len(line_stripped))
-                    continue
-                
-                stage_order = int(match.group(1))
-                stage_name = match.group(2).strip()
-                stage_desc = match.group(3).strip()
-                
-                current_stage = {
-                    "stage_id": f"stage-{stage_order}",
-                    "name": stage_name,
-                    "description": stage_desc,
-                    "order": stage_order,
-                    "modules": []
-                }
-                current_module = None
-            
-            # 解析 Module
-            elif line_stripped.startswith("Module "):
-                module_counter_in_stage += 1
-                concept_counter_in_module = 0
-                
-                # 格式: Module 1.1: Python核心语法（描述）
-                # 支持中英文括号
-                match = re.match(r'Module\s+\d+\.(\d+):\s*([^（(]+)[（(]([^）)]+)[）)]', line_stripped)
-                if not match:
-                    logger.warning("module_parse_failed", line=line_stripped, line_length=len(line_stripped))
-                    continue
-                
-                module_num = int(match.group(1))
-                module_name = match.group(2).strip()
-                module_desc = match.group(3).strip()
-                
-                current_module = {
-                    "module_id": f"mod-{stage_counter}-{module_counter_in_stage}",
-                    "name": module_name,
-                    "description": module_desc,
-                    "concepts": []
-                }
-                
-                if current_stage:
-                    current_stage["modules"].append(current_module)
-            
-            # 解析 Concept
-            elif line_stripped.startswith("- Concept:"):
-                if not current_module:
-                    logger.warning("concept_without_module", line=line_stripped)
-                    continue
-                
-                concept_counter_in_module += 1
-                
-                # 格式: - Concept: 变量与数据类型（描述）[2小时]
-                # 支持中英文括号和小时标记
-                match = re.match(r'-\s*Concept:\s*([^（(]+)[（(]([^）)]+)[）)]\[([0-9.]+)(?:小时|hours?)\]', line_stripped, re.IGNORECASE)
-                if not match:
-                    logger.warning("concept_parse_failed", line=line_stripped, line_length=len(line_stripped))
-                    continue
-                
-                concept_name = match.group(1).strip()
-                concept_desc = match.group(2).strip()
-                concept_hours = float(match.group(3))
-                
-                # 自动推断难度
-                if concept_hours <= 2:
-                    difficulty = "easy"
-                elif concept_hours <= 4:
-                    difficulty = "medium"
-                else:
-                    difficulty = "hard"
-                
-                concept = {
-                    "concept_id": f"c-{stage_counter}-{module_counter_in_stage}-{concept_counter_in_module}",
-                    "name": concept_name,
-                    "description": concept_desc,
-                    "estimated_hours": concept_hours,
-                    "prerequisites": [],  # 初始为空，后续可通过其他流程补充
-                    "difficulty": difficulty,
-                    "keywords": _extract_keywords_from_description(concept_name, concept_desc),
-                    "content_status": "pending",
-                    "content_ref": None,
-                    "content_version": "v1",
-                    "content_summary": None
-                }
-                
-                current_module["concepts"].append(concept)
-        
-        # 添加最后一个 stage
-        if current_stage:
-            stages.append(current_stage)
-        
-        # 构建完整结果
-        result = {
-            "framework": {
-                "roadmap_id": roadmap_id or "roadmap",
-                "title": title or "学习路线图",
-                "stages": stages,
-                "total_estimated_hours": total_hours,
-                "recommended_completion_weeks": weeks
-            },
-            "design_rationale": design_rationale
-        }
-        
-        logger.info(
-            "compact_roadmap_parsed",
-            stages_count=len(stages),
-            total_hours=total_hours,
-            weeks=weeks,
-        )
-        
-        return result
-        
-    except Exception as e:
-        # 详细记录解析错误，包括完整内容和具体的错误位置
-        logger.error(
-            "compact_roadmap_parse_error",
-            error=str(e),
-            error_type=type(e).__name__,
-            content_preview=content[:500],
-            content_length=len(content),
-            has_start_marker=start_marker in content if 'start_marker' in locals() else False,
-            has_end_marker=end_marker in content if 'end_marker' in locals() else False,
-            stages_parsed=len(stages) if 'stages' in locals() else 0,
-        )
-        # 如果解析失败，尝试记录到日志系统（如果有trace_id的话会在调用方记录）
-        raise ValueError(f"无法解析简洁格式的路线图: {e}")
+    
+    # 2. 回退到 JSON 格式
+    json_content = _try_extract_json(content)
+    if json_content:
+        try:
+            result = _parse_json_roadmap(json_content)
+            logger.info("parse_format_detected", format="json")
+            return result
+        except Exception as e:
+            errors['json'] = str(e)
+            logger.warning(
+                "json_parse_failed",
+                error=str(e),
+            )
+    
+    # 3. 所有格式都失败
+    logger.error(
+        "all_parse_formats_failed",
+        errors=errors,
+        content_preview=content[:500],
+        content_length=len(content),
+    )
+    
+    error_msg = "无法解析路线图输出。请确保输出为有效的 YAML 或 JSON 格式。\n"
+    if errors:
+        error_msg += "解析错误:\n"
+        for fmt, err in errors.items():
+            error_msg += f"  - {fmt.upper()}: {err}\n"
+    
+    raise ValueError(error_msg)
 
 
 def _extract_keywords_from_description(name: str, description: str) -> list[str]:
@@ -476,13 +448,20 @@ class CurriculumArchitectAgent(BaseAgent):
     - ARCHITECT_API_KEY: API 密钥（必需）
     """
     
-    def __init__(self):
+    def __init__(
+        self,
+        agent_id: str = "curriculum_architect",
+        model_provider: str | None = None,
+        model_name: str | None = None,
+        base_url: str | None = None,
+        api_key: str | None = None,
+    ):
         super().__init__(
-            agent_id="curriculum_architect",
-            model_provider=settings.ARCHITECT_PROVIDER,
-            model_name=settings.ARCHITECT_MODEL,
-            base_url=settings.ARCHITECT_BASE_URL,
-            api_key=settings.ARCHITECT_API_KEY,
+            agent_id=agent_id,
+            model_provider=model_provider or settings.ARCHITECT_PROVIDER,
+            model_name=model_name or settings.ARCHITECT_MODEL,
+            base_url=base_url or settings.ARCHITECT_BASE_URL,
+            api_key=api_key or settings.ARCHITECT_API_KEY,
             temperature=0.7,
             max_tokens=16384,  # 增加 token 限制，避免复杂路线图被截断
         )
@@ -556,7 +535,7 @@ class CurriculumArchitectAgent(BaseAgent):
 4. 总时长和推荐完成周数合理
 5. **路线图标题、阶段名称、模块名称和概念描述使用用户的主要语言（{language_prefs.primary_language}）**
 
-请以 JSON 格式返回结果，严格遵循输出 Schema。
+**重要**: 请以 YAML 格式返回结果，严格遵循 prompt 中定义的 YAML Schema 和示例格式。
 """
         
         messages = [
@@ -575,9 +554,18 @@ class CurriculumArchitectAgent(BaseAgent):
         
         # 解析输出
         content = response.choices[0].message.content
-        logger.debug(
+        logger.info(
             "curriculum_design_llm_response_received",
             response_length=len(content),
+            # 记录完整输出以便调试（截取前1000字符避免日志过大）
+            llm_output_preview=content[:1000] if len(content) > 1000 else content,
+            llm_output_full_length=len(content),
+        )
+        
+        # 为了方便调试，在 warning 级别记录完整输出（可以通过日志级别控制）
+        logger.debug(
+            "curriculum_design_llm_full_output",
+            llm_output_full=content,
         )
         
         try:
@@ -599,6 +587,36 @@ class CurriculumArchitectAgent(BaseAgent):
             
             # 验证并构建输出
             logger.debug("curriculum_design_validating_schema")
+            
+            # 添加详细的结构检查日志
+            logger.info(
+                "curriculum_design_structure_check",
+                has_stages=bool(framework_dict.get("stages")),
+                stages_count=len(framework_dict.get("stages", [])),
+                roadmap_id=framework_dict.get("roadmap_id"),
+            )
+            
+            # 检查每个 stage 和 module 的完整性
+            for stage_idx, stage in enumerate(framework_dict.get("stages", [])):
+                logger.debug(
+                    "stage_structure_check",
+                    stage_idx=stage_idx,
+                    stage_id=stage.get("stage_id"),
+                    has_modules=bool(stage.get("modules")),
+                    modules_count=len(stage.get("modules", [])),
+                )
+                for module_idx, module in enumerate(stage.get("modules", [])):
+                    logger.debug(
+                        "module_structure_check",
+                        stage_idx=stage_idx,
+                        module_idx=module_idx,
+                        module_id=module.get("module_id"),
+                        has_name=bool(module.get("name")),
+                        has_description=bool(module.get("description")),
+                        has_concepts=bool(module.get("concepts")),
+                        concepts_count=len(module.get("concepts", [])),
+                    )
+            
             framework = RoadmapFramework.model_validate(framework_dict)
             design_rationale = result_dict.get("design_rationale", "")
             
@@ -628,15 +646,34 @@ class CurriculumArchitectAgent(BaseAgent):
             return result
             
         except ValueError as e:
-            logger.error(
-                "curriculum_design_parse_error",
-                error=str(e),
-                content_length=len(content),
-                content_preview=content[:500] + "..." if len(content) > 500 else content,
-            )
+            # 检查是否是 Pydantic ValidationError
+            error_str = str(e)
+            if "validation error" in error_str.lower():
+                # 提取验证错误的详细信息
+                logger.error(
+                    "curriculum_design_validation_error",
+                    error=error_str,
+                    parsed_data_keys=list(framework_dict.keys()) if 'framework_dict' in locals() else None,
+                    stages_count=len(framework_dict.get("stages", [])) if 'framework_dict' in locals() else 0,
+                    content_length=len(content),
+                    content_full=content,  # 记录完整输出以便调试
+                )
+            else:
+                logger.error(
+                    "curriculum_design_parse_error",
+                    error=error_str,
+                    content_length=len(content),
+                    content_preview=content[:500] + "..." if len(content) > 500 else content,
+                )
             raise ValueError(f"LLM 输出格式解析失败: {e}\n请检查是否超出 token 限制或格式不正确")
         except Exception as e:
-            logger.error("curriculum_design_output_invalid", error=str(e), content=content)
+            logger.error(
+                "curriculum_design_output_invalid",
+                error=str(e),
+                error_type=type(e).__name__,
+                content_length=len(content),
+                content_full=content,
+            )
             raise ValueError(f"LLM 输出格式不符合 Schema: {e}")
     
     async def design_stream(
@@ -711,7 +748,7 @@ class CurriculumArchitectAgent(BaseAgent):
 4. 总时长和推荐完成周数合理
 5. **路线图标题、阶段名称、模块名称和概念描述使用用户的主要语言（{language_prefs.primary_language}）**
 
-请以 JSON 格式返回结果，严格遵循输出 Schema。
+**重要**: 请以 YAML 格式返回结果，严格遵循 prompt 中定义的 YAML Schema 和示例格式。
 """
             
             messages = [
@@ -842,5 +879,6 @@ class CurriculumArchitectAgent(BaseAgent):
         return await self.design(
             intent_analysis=input_data["intent_analysis"],
             user_preferences=input_data["user_preferences"],
+            roadmap_id=input_data["roadmap_id"],
         )
 

@@ -30,13 +30,20 @@ class ModificationAnalyzerAgent(BaseAgent):
     - MODIFICATION_ANALYZER_API_KEY: API 密钥（默认复用 ANALYZER_API_KEY）
     """
     
-    def __init__(self):
+    def __init__(
+        self,
+        agent_id: str = "modification_analyzer",
+        model_provider: str | None = None,
+        model_name: str | None = None,
+        base_url: str | None = None,
+        api_key: str | None = None,
+    ):
         super().__init__(
-            agent_id="modification_analyzer",
-            model_provider=settings.MODIFICATION_ANALYZER_PROVIDER,
-            model_name=settings.MODIFICATION_ANALYZER_MODEL,
-            base_url=settings.MODIFICATION_ANALYZER_BASE_URL,
-            api_key=settings.get_modification_analyzer_api_key,
+            agent_id=agent_id,
+            model_provider=model_provider or settings.MODIFICATION_ANALYZER_PROVIDER,
+            model_name=model_name or settings.MODIFICATION_ANALYZER_MODEL,
+            base_url=base_url or settings.MODIFICATION_ANALYZER_BASE_URL,
+            api_key=api_key or settings.get_modification_analyzer_api_key,
             temperature=0.3,  # 低温度，确保分析准确
             max_tokens=2048,
         )

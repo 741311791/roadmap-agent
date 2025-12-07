@@ -62,11 +62,15 @@ class ReviewRunner:
             roadmap_id=state.get("roadmap_id"),
         )
         
-        # 记录执行日志
+        # 获取 roadmap_id
+        roadmap_id = state.get("roadmap_id")
+        
+        # 记录执行日志（包含 roadmap_id）
         await execution_logger.log_workflow_start(
             task_id=task_id,
             step="human_review",
             message="等待人工审核",
+            roadmap_id=roadmap_id,
         )
         
         # 更新任务状态为 "human_review_pending"
@@ -76,6 +80,7 @@ class ReviewRunner:
                 task_id=task_id,
                 status="human_review_pending",
                 current_step="human_review",
+                roadmap_id=roadmap_id,
             )
             await session.commit()
         

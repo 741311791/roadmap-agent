@@ -27,13 +27,20 @@ class RoadmapEditorAgent(BaseAgent):
     - EDITOR_API_KEY: API 密钥（必需）
     """
     
-    def __init__(self):
+    def __init__(
+        self,
+        agent_id: str = "roadmap_editor",
+        model_provider: str | None = None,
+        model_name: str | None = None,
+        base_url: str | None = None,
+        api_key: str | None = None,
+    ):
         super().__init__(
-            agent_id="roadmap_editor",
-            model_provider=settings.EDITOR_PROVIDER,
-            model_name=settings.EDITOR_MODEL,
-            base_url=settings.EDITOR_BASE_URL,
-            api_key=settings.EDITOR_API_KEY,
+            agent_id=agent_id,
+            model_provider=model_provider or settings.EDITOR_PROVIDER,
+            model_name=model_name or settings.EDITOR_MODEL,
+            base_url=base_url or settings.EDITOR_BASE_URL,
+            api_key=api_key or settings.EDITOR_API_KEY,
             temperature=0.4,  # 较低温度，确保修改的严谨性
             max_tokens=8192,
         )

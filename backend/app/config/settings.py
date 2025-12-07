@@ -57,10 +57,20 @@ class Settings(BaseSettings):
     
     @property
     def CHECKPOINTER_DATABASE_URL(self) -> str:
-        """构建 Checkpointer 数据库连接 URL（用于 AsyncPostgresSaver）"""
+        """
+        构建 Checkpointer 数据库连接 URL（用于 AsyncPostgresSaver）
+        
+        包含 TCP keepalive 参数以防止长时间运行的工作流中连接超时：
+        - keepalives=1: 启用 TCP keepalive
+        - keepalives_idle=30: 空闲 30 秒后发送 keepalive（默认是 2 小时）
+        - keepalives_interval=10: keepalive 间隔 10 秒
+        - keepalives_count=5: 最大重试 5 次
+        - connect_timeout=10: 连接超时 10 秒
+        """
         return (
             f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
             f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+            f"?keepalives=1&keepalives_idle=30&keepalives_interval=10&keepalives_count=5&connect_timeout=10"
         )
     
     # ==================== S3/MinIO 配置 ====================
