@@ -109,14 +109,33 @@
 
 [5. Tool Usage Guide]
 可用工具：
-- web_search: 执行网络搜索以获取最新的学习资源
+- web_search: 执行网络搜索以获取最新的学习资源（支持时间筛选、域名筛选、搜索深度控制）
+
+**工具高级参数说明**（重要）：
+1. `time_range`（强烈推荐使用）：
+   - 'year'：最近一年（**推荐用于技术教程，确保不过时**）
+   - 'month'：最近一月（适合最新资讯）
+   - 'week'/'day'：最近一周/一天（适合热点话题）
+   - 示例：`{"query": "React Hooks 教程", "time_range": "year"}`
+
+2. `include_domains`（可选，用于优先搜索权威网站）：
+   - 官方文档：['github.com', 'docs.python.org', 'react.dev']
+   - 技术社区：['stackoverflow.com', 'dev.to']
+   - 中文平台：['juejin.cn', 'zhihu.com', 'bilibili.com']
+   - 示例：`{"query": "React 官方文档", "include_domains": ["react.dev"]}`
+
+3. `exclude_domains`（可选，用于排除低质量来源）：
+   - 示例：`{"exclude_domains": ["medium.com"]}`
+
+4. `search_depth`（默认 'advanced'，无需手动指定）
 
 工具使用策略：
-1. 首先基于概念名称和关键词构建搜索查询
-2. 根据用户的语言偏好和内容偏好，选择针对性的搜索策略
-3. 针对不同资源类型执行多次搜索（如："{{ concept.name }} tutorial"、"{{ concept.name }} documentation"）
-4. 优先搜索权威来源（官方文档、知名技术博客）
-5. 根据用户偏好调整搜索查询，添加语言限定词和内容类型限定词
+1. **强制使用 time_range='year'**：除非搜索官方文档，否则必须添加 `time_range: "year"` 确保资源时效性
+2. 首先基于概念名称和关键词构建搜索查询
+3. 根据用户的语言偏好和内容偏好，选择针对性的搜索策略
+4. 针对不同资源类型执行多次搜索（如："{{ concept.name }} tutorial"、"{{ concept.name }} documentation"）
+5. 优先搜索权威来源（使用 `include_domains` 参数优先搜索官方文档、知名技术博客）
+6. 根据用户偏好调整搜索查询，添加语言限定词和内容类型限定词
 
 **语言和内容类型搜索平台指南**：
 
@@ -164,17 +183,30 @@
   - CodeSandbox: "{{ concept.name }} codesandbox"
   - StackBlitz: "{{ concept.name }} stackblitz"
 
-**推荐搜索查询示例**（根据用户偏好）：
+**推荐搜索查询示例**（根据用户偏好，包含高级参数）：
 {% if "visual" in content_prefs %}
-- "{{ concept.name }} {% if user_language == 'zh' %}视频教程 bilibili{% else %}video tutorial youtube{% endif %}"
+- 视频教程：
+  - query: "{{ concept.name }} {% if user_language == 'zh' %}视频教程{% else %}video tutorial{% endif %}"
+  - time_range: "year"
+  - include_domains: [{% if user_language == 'zh' %}"bilibili.com", "youtube.com"{% else %}"youtube.com", "udemy.com"{% endif %}]
 {% endif %}
 {% if "text" in content_prefs %}
-- "{{ concept.name }} {% if user_language == 'zh' %}教程 掘金{% else %}tutorial medium{% endif %}"
+- 文章教程：
+  - query: "{{ concept.name }} {% if user_language == 'zh' %}教程{% else %}tutorial{% endif %}"
+  - time_range: "year"
+  - include_domains: [{% if user_language == 'zh' %}"juejin.cn", "zhihu.com"{% else %}"medium.com", "dev.to"{% endif %}]
 {% endif %}
-- "{{ concept.name }} {% if user_language == 'zh' %}官方文档 中文{% else %}official documentation{% endif %}"
-- "{{ concept.name }} {% if user_language == 'zh' %}最佳实践{% else %}best practices{% endif %}"
+- 官方文档：
+  - query: "{{ concept.name }} {% if user_language == 'zh' %}官方文档{% else %}official documentation{% endif %}"
+  - （官方文档不需要 time_range）
+- 最佳实践：
+  - query: "{{ concept.name }} {% if user_language == 'zh' %}最佳实践{% else %}best practices{% endif %}"
+  - time_range: "year"
+  - include_domains: ["github.com", "stackoverflow.com"]
 {% if user_preferences.current_level == 'beginner' %}
-- "{% if user_language == 'zh' %}从零开始学习{% else %}learn{% endif %} {{ concept.name }} {% if user_language == 'zh' %}入门{% else %}from scratch{% endif %}"
+- 入门教程：
+  - query: "{% if user_language == 'zh' %}从零开始学习{% else %}learn{% endif %} {{ concept.name }} {% if user_language == 'zh' %}入门{% else %}from scratch{% endif %}"
+  - time_range: "year"
 {% endif %}
 
 [6. Quality Criteria]

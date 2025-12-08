@@ -479,12 +479,36 @@ class QuizGenerationOutput(BaseModel):
 # ============================================================
 
 class SearchQuery(BaseModel):
-    """Web 搜索查询"""
+    """
+    Web 搜索查询
+    
+    支持 Tavily API 的高级参数，用于精确控制搜索行为。
+    """
     query: str = Field(..., description="搜索查询字符串")
     search_type: Literal["web", "academic", "video"] = Field(default="web", description="搜索类型")
     max_results: int = Field(default=5, ge=1, le=20, description="最大结果数量")
+    
+    # 基础参数
     language: Optional[str] = Field(None, description="搜索语言（如 'zh', 'en'），用于优化搜索结果")
     content_type: Optional[str] = Field(None, description="内容类型提示（如 'video', 'article', 'documentation'），用于优化搜索策略")
+    
+    # Tavily 高级参数
+    search_depth: Literal["basic", "advanced"] = Field(
+        default="advanced",
+        description="搜索深度：basic（快速）或 advanced（高质量，推荐）"
+    )
+    time_range: Optional[Literal["day", "week", "month", "year"]] = Field(
+        None,
+        description="时间筛选：day（最近1天）、week（最近1周）、month（最近1月）、year（最近1年）"
+    )
+    include_domains: Optional[List[str]] = Field(
+        None,
+        description="优先搜索的域名列表，如 ['github.com', 'stackoverflow.com']"
+    )
+    exclude_domains: Optional[List[str]] = Field(
+        None,
+        description="排除的域名列表，如 ['medium.com']（避免低质量内容）"
+    )
 
 
 class SearchResult(BaseModel):

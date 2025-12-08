@@ -7,7 +7,9 @@
 """
 from typing import Dict, Optional
 from app.tools.base import BaseTool
-from app.tools.search.web_search import WebSearchTool
+from app.tools.search.web_search_router import WebSearchRouter
+from app.tools.search.tavily_api_search import TavilyAPISearchTool
+from app.tools.search.duckduckgo_search import DuckDuckGoSearchTool
 from app.tools.storage.s3_client import S3StorageTool
 import structlog
 
@@ -27,12 +29,53 @@ class ToolRegistry:
         return cls._instance
     
     def _initialize(self):
-        """初始化工具注册表"""
-        # 注册 Web Search Tool
-        self.register(WebSearchTool())
+        """
+        初始化工具注册表
+        
+        工具架构（重构后）：
+        - WebSearchRouter (web_search_v1): 主要搜索工具，按优先级路由
+        - TavilyAPISearchTool (tavily_api_search): Tavily API 专用工具
+        - DuckDuckGoSearchTool (duckduckgo_search): DuckDuckGo 专用工具
+        - S3StorageTool: 对象存储工具
+        """
+        # 注册 Web Search Router（统一的搜索入口）
+        # 按优先级：Tavily API → DuckDuckGo
+        try:
+            self.register(WebSearchRouter())
+        except Exception as e:
+            logger.error(
+                "web_search_router_registration_failed",
+                error=str(e),
+                message="Web Search Router 注册失败"
+            )
+        
+        # 注册独立的搜索工具（可被其他组件直接使用）
+        try:
+            self.register(TavilyAPISearchTool())
+        except Exception as e:
+            logger.warning(
+                "tavily_api_tool_registration_failed",
+                error=str(e),
+                message="Tavily API 工具注册失败"
+            )
+        
+        try:
+            self.register(DuckDuckGoSearchTool())
+        except Exception as e:
+            logger.warning(
+                "duckduckgo_tool_registration_failed",
+                error=str(e),
+                message="DuckDuckGo 工具注册失败"
+            )
+        
         # 注册 S3 Storage Tool
         self.register(S3StorageTool())
-        logger.info("tool_registry_initialized", tools_count=len(self._tools))
+        
+        logger.info(
+            "tool_registry_initialized",
+            tools_count=len(self._tools),
+            tools=list(self._tools.keys())
+        )
     
     def register(self, tool: BaseTool):
         """

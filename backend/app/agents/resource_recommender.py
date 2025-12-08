@@ -56,15 +56,22 @@ class ResourceRecommenderAgent(BaseAgent):
         """
         获取工具定义（符合 OpenAI Function Calling 格式）
         
+        返回 web_search 工具（通过 WebSearchRouter 自动路由到 Tavily API 或 DuckDuckGo）
+        
         Returns:
             工具定义列表
         """
-        return [
+        tools = [
+            # 普通搜索工具（通过 WebSearchRouter 路由）
             {
                 "type": "function",
                 "function": {
                     "name": "web_search",
-                    "description": "执行网络搜索以获取学习资源、官方文档、教程和课程。使用此工具搜索与概念相关的高质量学习资源。",
+                    "description": (
+                        "执行网络搜索以获取学习资源、官方文档、教程和课程。"
+                        "支持时间筛选（最近一年/月/周）、域名筛选（优先搜索权威网站）等高级功能。"
+                        "优先级：Tavily API → DuckDuckGo。"
+                    ),
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -77,12 +84,42 @@ class ResourceRecommenderAgent(BaseAgent):
                                 "description": "最大结果数量，默认5，范围1-20",
                                 "default": 5,
                             },
+                            "time_range": {
+                                "type": "string",
+                                "enum": ["day", "week", "month", "year"],
+                                "description": (
+                                    "时间筛选（推荐使用，确保资源时效性）："
+                                    "'year'=最近一年（推荐，适合技术教程）、"
+                                    "'month'=最近一月（最新资讯）、"
+                                    "'week'=最近一周、'day'=最近一天"
+                                ),
+                            },
+                            "search_depth": {
+                                "type": "string",
+                                "enum": ["basic", "advanced"],
+                                "description": "搜索深度：'advanced'（高质量，推荐）或 'basic'（快速）",
+                                "default": "advanced",
+                            },
+                            "include_domains": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": (
+                                    "优先搜索的权威域名列表，例如：['github.com', 'stackoverflow.com', 'docs.python.org']"
+                                ),
+                            },
+                            "exclude_domains": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "排除的域名列表，例如：['medium.com']（避免低质量内容）",
+                            },
                         },
                         "required": ["query"],
                     },
                 },
             }
         ]
+        
+        return tools
     
     async def _handle_tool_calls(
         self, 
@@ -123,10 +160,10 @@ class ResourceRecommenderAgent(BaseAgent):
                     # 记录搜索查询
                     search_queries_used.append(tool_args["query"])
                     
-                    # 获取搜索工具
+                    # 使用 WebSearchRouter（会按优先级自动选择：Tavily API → DuckDuckGo）
                     search_tool = tool_registry.get("web_search_v1")
                     if not search_tool:
-                        raise RuntimeError("Web Search Tool 未注册")
+                        raise RuntimeError("Web Search Router 未注册")
                     
                     # 构建搜索查询（包含语言和内容类型信息）
                     # 从 user_preferences 提取语言信息（如果可用）
@@ -144,11 +181,17 @@ class ResourceRecommenderAgent(BaseAgent):
                     elif any(keyword in query_lower for keyword in ["article", "blog", "post"]):
                         content_type = "article"
                     
+                    # 构建 SearchQuery（支持 Tavily 高级参数）
                     search_query = SearchQuery(
                         query=tool_args["query"],
                         max_results=tool_args.get("max_results", 5),
                         language=language,
                         content_type=content_type,
+                        # Tavily 高级参数
+                        search_depth=tool_args.get("search_depth", "advanced"),
+                        time_range=tool_args.get("time_range"),
+                        include_domains=tool_args.get("include_domains"),
+                        exclude_domains=tool_args.get("exclude_domains"),
                     )
                     
                     # 执行搜索
