@@ -2,6 +2,7 @@
 Curriculum Architect Agent（课程架构师）
 """
 import json
+import re
 import uuid
 import yaml
 from typing import AsyncIterator

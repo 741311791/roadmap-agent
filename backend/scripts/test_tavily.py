@@ -1,6 +1,6 @@
 # To install: pip install tavily-python
 from tavily import TavilyClient
-client = TavilyClient("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")
+client = TavilyClient("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")
 response = client.search(
     query="langgraph教程",
     search_depth="advanced",

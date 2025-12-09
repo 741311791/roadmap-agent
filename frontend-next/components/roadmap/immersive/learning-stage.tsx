@@ -2,9 +2,10 @@
 
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { cn } from '@/lib/utils';
-import type { Concept } from '@/types/generated/models';
+import type { Concept, LearningPreferences } from '@/types/generated/models';
 import type { ResourcesResponse, QuizResponse } from '@/types/generated/services';
 import { getConceptResources, getConceptQuiz } from '@/lib/api/endpoints';
+import { FailedContentAlert, GeneratingContentAlert } from '@/components/common/retry-content-button';
 import { 
   Sparkles, 
   BookOpen, 
@@ -23,7 +24,9 @@ import {
   Award,
   CheckCircle2,
   Circle,
-  Loader2 as Loader2Icon
+  Loader2 as Loader2Icon,
+  AlertCircle,
+  RefreshCw
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -408,11 +411,19 @@ function ResourceCard({
 function ResourceList({ 
   resources, 
   isLoading, 
-  error 
+  error,
+  roadmapId,
+  conceptId,
+  userPreferences,
+  onRetrySuccess
 }: { 
   resources: ResourcesResponse['resources'];
   isLoading: boolean;
   error: string | null;
+  roadmapId?: string;
+  conceptId?: string;
+  userPreferences?: LearningPreferences;
+  onRetrySuccess?: () => void;
 }) {
   if (isLoading) {
     return (
@@ -436,6 +447,21 @@ function ResourceList({
   }
 
   if (!resources || resources.length === 0) {
+    // 如果有重试所需的参数，显示重试按钮
+    if (roadmapId && conceptId && userPreferences) {
+      return (
+        <FailedContentAlert
+          roadmapId={roadmapId}
+          conceptId={conceptId}
+          contentType="resources"
+          preferences={userPreferences}
+          message="学习资源暂未生成"
+          onSuccess={onRetrySuccess}
+        />
+      );
+    }
+    
+    // 否则显示默认的空状态提示
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center">
         <div className="w-16 h-16 rounded-full bg-stone-100 flex items-center justify-center mb-4">
@@ -612,11 +638,19 @@ function QuizQuestionCard({
 function QuizList({ 
   quiz, 
   isLoading, 
-  error 
+  error,
+  roadmapId,
+  conceptId,
+  userPreferences,
+  onRetrySuccess
 }: { 
   quiz: QuizResponse | null;
   isLoading: boolean;
   error: string | null;
+  roadmapId?: string;
+  conceptId?: string;
+  userPreferences?: LearningPreferences;
+  onRetrySuccess?: () => void;
 }) {
   const [answers, setAnswers] = useState<Record<string, number[]>>({});
   const [submittedQuestions, setSubmittedQuestions] = useState<Set<string>>(new Set());
@@ -683,6 +717,21 @@ function QuizList({
   }
 
   if (!quiz || quiz.questions.length === 0) {
+    // 如果有重试所需的参数，显示重试按钮
+    if (roadmapId && conceptId && userPreferences) {
+      return (
+        <FailedContentAlert
+          roadmapId={roadmapId}
+          conceptId={conceptId}
+          contentType="quiz"
+          preferences={userPreferences}
+          message="测验题目暂未生成"
+          onSuccess={onRetrySuccess}
+        />
+      );
+    }
+    
+    // 否则显示默认的空状态提示
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center">
         <div className="w-16 h-16 rounded-full bg-stone-100 flex items-center justify-center mb-4">
@@ -794,6 +843,10 @@ interface LearningStageProps {
   tutorialContent?: string;
   /** 路线图 ID (用于获取资源和测验) */
   roadmapId?: string;
+  /** 用户学习偏好（用于重试生成） */
+  userPreferences?: LearningPreferences;
+  /** 内容重试成功回调（用于刷新数据） */
+  onRetrySuccess?: () => void;
 }
 
 /**
@@ -808,7 +861,7 @@ interface LearningStageProps {
  * - 显示测验题目
  * - 提供"标记完成"操作
  */
-export function LearningStage({ concept, className, tutorialContent, roadmapId }: LearningStageProps) {
+export function LearningStage({ concept, className, tutorialContent, roadmapId, userPreferences, onRetrySuccess }: LearningStageProps) {
   const [activeFormat, setActiveFormat] = useState<LearningFormat>('immersive-text');
   
   // Resources state
@@ -820,6 +873,19 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId }
   const [quiz, setQuiz] = useState<QuizResponse | null>(null);
   const [quizLoading, setQuizLoading] = useState(false);
   const [quizError, setQuizError] = useState<string | null>(null);
+  
+  // 检测内容生成状态
+  const tutorialFailed = concept?.content_status === 'failed';
+  const tutorialGenerating = concept?.content_status === 'generating';
+  const tutorialPending = concept?.content_status === 'pending';
+  
+  const resourcesFailed = concept?.resources_status === 'failed';
+  const resourcesGenerating = concept?.resources_status === 'generating';
+  const resourcesPending = concept?.resources_status === 'pending';
+  
+  const quizFailed = concept?.quiz_status === 'failed';
+  const quizGenerating = concept?.quiz_status === 'generating';
+  const quizPending = concept?.quiz_status === 'pending';
   
   // Extract TOC from markdown content
   const tocItems = useMemo(() => {
@@ -834,7 +900,15 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId }
     }
   }, []);
 
-  // Fetch resources when tab is activated
+  // Reset resources and quiz data when concept changes
+  useEffect(() => {
+    setResources(null);
+    setResourcesError(null);
+    setQuiz(null);
+    setQuizError(null);
+  }, [concept?.concept_id]);
+
+  // Fetch resources when tab is activated or concept changes
   useEffect(() => {
     if (activeFormat === 'learning-resources' && concept && roadmapId && concept.resources_id) {
       setResourcesLoading(true);
@@ -851,9 +925,9 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId }
           setResourcesLoading(false);
         });
     }
-  }, [activeFormat, concept, roadmapId]);
+  }, [activeFormat, concept?.concept_id, roadmapId]);
 
-  // Fetch quiz when tab is activated
+  // Fetch quiz when tab is activated or concept changes
   useEffect(() => {
     if (activeFormat === 'quiz' && concept && roadmapId && concept.quiz_id) {
       setQuizLoading(true);
@@ -870,7 +944,7 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId }
           setQuizLoading(false);
         });
     }
-  }, [activeFormat, concept, roadmapId]);
+  }, [activeFormat, concept?.concept_id, roadmapId]);
 
   if (!concept) {
     return (
@@ -923,7 +997,21 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId }
                 prose-a:text-sage-600 prose-a:no-underline hover:prose-a:underline hover:prose-a:text-sage-700
                 prose-blockquote:border-l-sage-300 prose-blockquote:bg-sage-50/50 prose-blockquote:rounded-r-lg prose-blockquote:py-1 prose-blockquote:text-foreground/70"
               >
-                {tutorialContent ? (
+                {tutorialGenerating || tutorialPending ? (
+                  /* 教程正在生成中，显示加载状态 */
+                  <GeneratingContentAlert
+                    contentType="tutorial"
+                  />
+                ) : tutorialFailed && roadmapId && concept && userPreferences ? (
+                  /* 教程生成失败，显示重试按钮 */
+                  <FailedContentAlert
+                    roadmapId={roadmapId}
+                    conceptId={concept.concept_id}
+                    contentType="tutorial"
+                    preferences={userPreferences}
+                    onSuccess={() => onRetrySuccess?.()}
+                  />
+                ) : tutorialContent ? (
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm]}
                     rehypePlugins={[rehypeHighlight]}
@@ -980,19 +1068,59 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId }
 
           {/* Placeholder for other formats */}
           {activeFormat === 'learning-resources' && (
-            <ResourceList 
-              resources={resources?.resources || []}
-              isLoading={resourcesLoading}
-              error={resourcesError}
-            />
+            resourcesGenerating || resourcesPending ? (
+              /* 资源推荐正在生成中，显示加载状态 */
+              <GeneratingContentAlert
+                contentType="resources"
+              />
+            ) : resourcesFailed && roadmapId && concept && userPreferences ? (
+              /* 资源推荐生成失败，显示重试按钮 */
+              <FailedContentAlert
+                roadmapId={roadmapId}
+                conceptId={concept.concept_id}
+                contentType="resources"
+                preferences={userPreferences}
+                onSuccess={() => onRetrySuccess?.()}
+              />
+            ) : (
+              <ResourceList 
+                resources={resources?.resources || []}
+                isLoading={resourcesLoading}
+                error={resourcesError}
+                roadmapId={roadmapId}
+                conceptId={concept?.concept_id}
+                userPreferences={userPreferences}
+                onRetrySuccess={onRetrySuccess}
+              />
+            )
           )}
 
           {activeFormat === 'quiz' && (
-            <QuizList 
-              quiz={quiz}
-              isLoading={quizLoading}
-              error={quizError}
-            />
+            quizGenerating || quizPending ? (
+              /* 测验正在生成中，显示加载状态 */
+              <GeneratingContentAlert
+                contentType="quiz"
+              />
+            ) : quizFailed && roadmapId && concept && userPreferences ? (
+              /* 测验生成失败，显示重试按钮 */
+              <FailedContentAlert
+                roadmapId={roadmapId}
+                conceptId={concept.concept_id}
+                contentType="quiz"
+                preferences={userPreferences}
+                onSuccess={() => onRetrySuccess?.()}
+              />
+            ) : (
+              <QuizList 
+                quiz={quiz}
+                isLoading={quizLoading}
+                error={quizError}
+                roadmapId={roadmapId}
+                conceptId={concept?.concept_id}
+                userPreferences={userPreferences}
+                onRetrySuccess={onRetrySuccess}
+              />
+            )
           )}
 
           {activeFormat === 'slides' && (

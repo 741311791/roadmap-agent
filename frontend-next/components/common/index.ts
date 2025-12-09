@@ -12,4 +12,5 @@ export {
   ProfileSkeleton,
   FullPageSkeleton,
 } from './loading-skeleton';
+export { RetryContentButton, FailedContentAlert } from './retry-content-button';
 

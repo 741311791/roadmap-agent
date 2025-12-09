@@ -1,0 +1,23 @@
+---
+alwaysApply: true
+---
+
+# Rule: Strict Enum & Constant Consistency
+# Priority: Critical
+
+## Context
+When handling code involving State Machines, Database Models, Status Flags, or Configuration Types, you are prone to hallucinations due to limited context.
+
+## Directives
+1.  **Single Source of Truth:** You must NEVER guess or infer a value for an Enum, Constant, or Fixed String Union. You must strictly use the values defined in the codebase.
+2.  **Verification Protocol:**
+    * **Step 1:** Identify the type/class defining the allowed values (e.g., `UserStatusEnum`, `OrderState`).
+    * **Step 2:** Explicitly read/reference the file where this definition resides.
+    * **Step 3:** If the definition file is NOT in the current context, you must perform a codebase search (e.g., `codebase_search`) to retrieve the exact values before writing any assignment logic.
+3.  **Strict Assignment:**
+    * Prefer using the Enum reference (e.g., `UserRole.ADMIN`) over raw strings/numbers (e.g., `"admin"` or `1`) unless the language strictly forbids it.
+    * If you are unsure of the exact enum key, STOP and ask me to provide the definition file (e.g., "Please reference the file containing `OrderState`").
+
+## Negative Constraints
+* DO NOT generate a value that "sounds plausible" (e.g., creating `STATUS_FAILED` if only `STATUS_ERROR` exists).
+* DO NOT assume standard naming conventions apply (e.g., assuming snake_case value for a camelCase key) without verification.

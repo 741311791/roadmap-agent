@@ -110,6 +110,28 @@ class RoadmapRepository:
         )
         return result.scalar_one_or_none()
     
+    async def get_in_progress_tasks_by_user(self, user_id: str) -> List[RoadmapTask]:
+        """
+        获取用户所有进行中的任务
+        
+        用于在首页显示正在生成中的路线图。
+        
+        Args:
+            user_id: 用户 ID
+            
+        Returns:
+            进行中的任务列表（状态为 pending、processing、human_review_pending 或 failed）
+        """
+        result = await self.session.execute(
+            select(RoadmapTask)
+            .where(
+                RoadmapTask.user_id == user_id,
+                RoadmapTask.status.in_(["pending", "processing", "human_review_pending", "failed"])
+            )
+            .order_by(RoadmapTask.created_at.desc())
+        )
+        return list(result.scalars().all())
+    
     async def update_task_status(
         self,
         task_id: str,
@@ -258,7 +280,7 @@ class RoadmapRepository:
         offset: int = 0,
     ) -> List[RoadmapMetadata]:
         """
-        获取用户的所有路线图列表
+        获取用户的所有路线图列表（排除已删除的）
         
         Args:
             user_id: 用户 ID
@@ -266,14 +288,183 @@ class RoadmapRepository:
             offset: 分页偏移
             
         Returns:
-            路线图元数据列表（按创建时间降序排列，最新的在前）
+            路线图元数据列表（按创建时间降序排列，最新的在前，排除已软删除的）
         """
         result = await self.session.execute(
             select(RoadmapMetadata)
-            .where(RoadmapMetadata.user_id == user_id)
+            .where(
+                RoadmapMetadata.user_id == user_id,
+                RoadmapMetadata.deleted_at.is_(None)  # 排除已删除的
+            )
             .order_by(RoadmapMetadata.created_at.desc())
             .offset(offset)
             .limit(limit)
+        )
+        return list(result.scalars().all())
+    
+    async def get_deleted_roadmaps(
+        self,
+        user_id: str,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[RoadmapMetadata]:
+        """
+        获取用户回收站中的路线图列表
+        
+        Args:
+            user_id: 用户 ID
+            limit: 返回数量限制
+            offset: 分页偏移
+            
+        Returns:
+            已删除的路线图元数据列表（按删除时间降序排列）
+        """
+        result = await self.session.execute(
+            select(RoadmapMetadata)
+            .where(
+                RoadmapMetadata.user_id == user_id,
+                RoadmapMetadata.deleted_at.isnot(None)  # 只查询已删除的
+            )
+            .order_by(RoadmapMetadata.deleted_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+    
+    async def soft_delete_roadmap(
+        self,
+        roadmap_id: str,
+        user_id: str,
+    ) -> Optional[RoadmapMetadata]:
+        """
+        软删除路线图（移至回收站）
+        
+        Args:
+            roadmap_id: 路线图 ID
+            user_id: 用户 ID
+            
+        Returns:
+            更新后的路线图元数据，如果不存在或用户 ID 不匹配则返回 None
+        """
+        metadata = await self.get_roadmap_metadata(roadmap_id)
+        if not metadata or metadata.user_id != user_id:
+            logger.warning(
+                "soft_delete_failed_not_found_or_unauthorized",
+                roadmap_id=roadmap_id,
+                user_id=user_id,
+            )
+            return None
+        
+        # 设置删除时间和删除者
+        metadata.deleted_at = beijing_now()
+        metadata.deleted_by = user_id
+        
+        await self.session.commit()
+        await self.session.refresh(metadata)
+        
+        logger.info(
+            "roadmap_soft_deleted",
+            roadmap_id=roadmap_id,
+            user_id=user_id,
+            deleted_at=metadata.deleted_at,
+        )
+        return metadata
+    
+    async def restore_roadmap(
+        self,
+        roadmap_id: str,
+        user_id: str,
+    ) -> Optional[RoadmapMetadata]:
+        """
+        从回收站恢复路线图
+        
+        Args:
+            roadmap_id: 路线图 ID
+            user_id: 用户 ID
+            
+        Returns:
+            恢复后的路线图元数据，如果不存在或用户 ID 不匹配则返回 None
+        """
+        metadata = await self.get_roadmap_metadata(roadmap_id)
+        if not metadata or metadata.user_id != user_id:
+            logger.warning(
+                "restore_failed_not_found_or_unauthorized",
+                roadmap_id=roadmap_id,
+                user_id=user_id,
+            )
+            return None
+        
+        # 清除删除标记
+        metadata.deleted_at = None
+        metadata.deleted_by = None
+        
+        await self.session.commit()
+        await self.session.refresh(metadata)
+        
+        logger.info(
+            "roadmap_restored",
+            roadmap_id=roadmap_id,
+            user_id=user_id,
+        )
+        return metadata
+    
+    async def permanent_delete_roadmap(
+        self,
+        roadmap_id: str,
+    ) -> bool:
+        """
+        永久删除路线图（从数据库中删除）
+        
+        注意：此操作不可逆，会删除所有关联数据
+        
+        Args:
+            roadmap_id: 路线图 ID
+            
+        Returns:
+            True 如果删除成功，False 如果路线图不存在
+        """
+        metadata = await self.get_roadmap_metadata(roadmap_id)
+        if not metadata:
+            logger.warning(
+                "permanent_delete_failed_not_found",
+                roadmap_id=roadmap_id,
+            )
+            return False
+        
+        # 删除元数据（级联删除会处理关联的教程、资源、测验元数据）
+        await self.session.delete(metadata)
+        await self.session.commit()
+        
+        logger.info(
+            "roadmap_permanently_deleted",
+            roadmap_id=roadmap_id,
+        )
+        return True
+    
+    async def get_expired_deleted_roadmaps(
+        self,
+        days: int = 30,
+    ) -> List[RoadmapMetadata]:
+        """
+        获取超过指定天数的已删除路线图（用于自动清理）
+        
+        Args:
+            days: 删除后经过的天数，默认 30 天
+            
+        Returns:
+            符合条件的路线图元数据列表
+        """
+        from datetime import timedelta
+        
+        cutoff_date = beijing_now() - timedelta(days=days)
+        
+        result = await self.session.execute(
+            select(RoadmapMetadata)
+            .where(
+                RoadmapMetadata.deleted_at.isnot(None),
+                RoadmapMetadata.deleted_at < cutoff_date
+            )
+            .order_by(RoadmapMetadata.deleted_at.asc())
         )
         return list(result.scalars().all())
     

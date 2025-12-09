@@ -12,13 +12,15 @@ import { LearningStage } from '@/components/roadmap/immersive/learning-stage';
 import { MentorSidecar } from '@/components/roadmap/immersive/mentor-sidecar';
 import { useRoadmap } from '@/lib/hooks/api/use-roadmap';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
+import { useAuthStore } from '@/lib/store/auth-store';
 import { 
   getRoadmapActiveTask, 
   getLatestTutorial, 
-  downloadTutorialContent 
+  downloadTutorialContent,
+  getUserProfile
 } from '@/lib/api/endpoints';
 import { TaskWebSocket } from '@/lib/api/websocket';
-import type { RoadmapFramework, Concept, Stage, Module } from '@/types/generated/models';
+import type { RoadmapFramework, Concept, Stage, Module, LearningPreferences } from '@/types/generated/models';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -33,6 +35,9 @@ import { cn } from '@/lib/utils';
 export default function RoadmapDetailPage() {
   const params = useParams();
   const roadmapId = params.id as string;
+
+  // Auth Store
+  const { getUserId } = useAuthStore();
 
   // Global Store
   const { 
@@ -54,6 +59,7 @@ export default function RoadmapDetailPage() {
   // Local State
   const [tutorialContent, setTutorialContent] = useState<string | undefined>(undefined);
   const [activeTask, setActiveTask] = useState<{ taskId: string; status: string } | null>(null);
+  const [userPreferences, setUserPreferences] = useState<LearningPreferences | undefined>(undefined);
 
   // WebSocket ref
   const wsRef = useRef<TaskWebSocket | null>(null);
@@ -65,7 +71,35 @@ export default function RoadmapDetailPage() {
     }
   }, [roadmapData, setRoadmap]);
 
-  // 2. Check for Active Task on Mount
+  // 2. Load User Preferences for Retry Functionality
+  useEffect(() => {
+    const loadUserPreferences = async () => {
+      const userId = getUserId();
+      if (!userId) return;
+      
+      try {
+        const profile = await getUserProfile(userId);
+        // 构建 LearningPreferences 对象
+        setUserPreferences({
+          learning_goal: roadmapData?.learning_goal || '',
+          available_hours_per_week: profile.weekly_commitment_hours || 10,
+          current_level: 'intermediate', // 默认值
+          career_background: profile.current_role || 'Not specified',
+          motivation: 'Continue learning',
+          content_preference: (profile.learning_style || ['text', 'visual']) as any,
+          preferred_language: profile.primary_language || 'zh-CN',
+        });
+      } catch (error) {
+        console.error('[RoadmapDetail] Failed to load user preferences:', error);
+      }
+    };
+    
+    if (roadmapData) {
+      loadUserPreferences();
+    }
+  }, [roadmapData, getUserId]);
+
+  // 3. Check for Active Task on Mount
   useEffect(() => {
     if (!roadmapData) return;
     
@@ -86,7 +120,7 @@ export default function RoadmapDetailPage() {
     checkActiveTask();
   }, [roadmapId, roadmapData]);
 
-  // 3. Setup WebSocket for Real-time Updates
+  // 4. Setup WebSocket for Real-time Updates
   useEffect(() => {
     if (!activeTask?.taskId) return;
 
@@ -123,7 +157,7 @@ export default function RoadmapDetailPage() {
     };
   }, [activeTask?.taskId, updateConceptStatus, refetchRoadmap]);
 
-  // 4. Fetch Tutorial Content when Concept Selected
+  // 5. Fetch Tutorial Content when Concept Selected
   useEffect(() => {
     if (!selectedConceptId) {
       setTutorialContent(undefined);
@@ -148,6 +182,37 @@ export default function RoadmapDetailPage() {
 
     loadContent();
   }, [selectedConceptId, roadmapId]);
+
+  // 6. Poll Roadmap Data when Content is Generating
+  useEffect(() => {
+    if (!currentRoadmap) return;
+
+    // 检查是否有任何概念正在生成内容
+    const hasGeneratingContent = currentRoadmap.stages.some(stage =>
+      stage.modules.some(module =>
+        module.concepts.some(concept =>
+          concept.content_status === 'generating' ||
+          concept.resources_status === 'generating' ||
+          concept.quiz_status === 'generating'
+        )
+      )
+    );
+
+    if (!hasGeneratingContent) return;
+
+    console.log('[RoadmapDetail] 检测到生成中的内容，启动定时刷新');
+
+    // 每 5 秒刷新一次路线图数据
+    const pollInterval = setInterval(() => {
+      console.log('[RoadmapDetail] 定时刷新路线图数据');
+      refetchRoadmap();
+    }, 5000);
+
+    return () => {
+      console.log('[RoadmapDetail] 清理定时刷新');
+      clearInterval(pollInterval);
+    };
+  }, [currentRoadmap, refetchRoadmap]);
 
   // Helper: Find concept object by ID
   const getActiveConcept = useCallback((): Concept | null => {
@@ -245,6 +310,14 @@ export default function RoadmapDetailPage() {
               concept={getActiveConcept()}
               tutorialContent={tutorialContent}
               roadmapId={roadmapId}
+              userPreferences={userPreferences}
+              onRetrySuccess={() => {
+                // 重试成功后，重新加载路线图数据和教程内容
+                refetchRoadmap();
+                if (selectedConceptId) {
+                  setTutorialContent(undefined); // 清空内容，触发重新加载
+                }
+              }}
             />
           </ResizablePanel>
 

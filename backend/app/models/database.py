@@ -113,6 +113,17 @@ class RoadmapMetadata(SQLModel, table=True):
         default_factory=beijing_now,
         sa_column=Column(DateTime(timezone=False))  # 无时区，直接存储北京时间
     )
+    
+    # 软删除字段
+    deleted_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=False), nullable=True),
+        description="软删除时间，None 表示未删除"
+    )
+    deleted_by: Optional[str] = Field(
+        default=None,
+        description="删除操作的用户 ID"
+    )
 
 
 class TutorialMetadata(SQLModel, table=True):

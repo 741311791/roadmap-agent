@@ -13,8 +13,10 @@ DuckDuckGo Search Tool（使用 ddgs 包）
 - 使用新包名 ddgs（duckduckgo_search 已重命名）
 """
 import asyncio
+import time
 import structlog
 from typing import Dict, List
+from collections import deque
 
 from app.tools.base import BaseTool
 from app.models.domain import SearchQuery, SearchResult
@@ -30,10 +32,87 @@ class DuckDuckGoSearchTool(BaseTool[SearchQuery, SearchResult]):
     - 使用 ddgs 包（duckduckgo_search 的新名称）
     - 支持语言和区域配置
     - 异步执行（通过 asyncio.to_thread）
+    - 内置速率控制（避免触发限流）
     """
     
     def __init__(self):
         super().__init__(tool_id="duckduckgo_search")
+        
+        # 速率控制 - 保守策略
+        self._search_semaphore = asyncio.Semaphore(2)  # 最多2个并发请求
+        self._last_request_time = 0
+        self._min_request_interval = 1.0  # 最小请求间隔1秒
+        
+        # 滑动窗口速率限制器（每分钟最多30次，保守估计）
+        self._request_timestamps = deque()
+        self._max_requests_per_minute = 30  # 每分钟最多30次请求
+        self._rate_limit_window = 60.0  # 时间窗口60秒
+    
+    async def _rate_limited_request(self, func):
+        """
+        带速率限制的请求包装器
+        
+        功能：
+        - 限制并发数量（最多2个）
+        - 确保请求间隔（最少1秒）
+        - 滑动窗口速率限制（每分钟最多30次）
+        - 避免触发API限流
+        """
+        async with self._search_semaphore:
+            now = time.time()
+            
+            # 第一层：确保最小请求间隔（1秒）
+            elapsed = now - self._last_request_time
+            if elapsed < self._min_request_interval:
+                wait_time = self._min_request_interval - elapsed
+                logger.debug(
+                    "duckduckgo_rate_limit_min_interval",
+                    wait_time=wait_time,
+                    elapsed=elapsed
+                )
+                await asyncio.sleep(wait_time)
+                now = time.time()
+            
+            # 第二层：滑动窗口速率限制（每分钟最多30次）
+            cutoff_time = now - self._rate_limit_window
+            while self._request_timestamps and self._request_timestamps[0] < cutoff_time:
+                self._request_timestamps.popleft()
+            
+            # 检查是否超过速率限制
+            if len(self._request_timestamps) >= self._max_requests_per_minute:
+                oldest_timestamp = self._request_timestamps[0]
+                wait_time = oldest_timestamp + self._rate_limit_window - now
+                
+                if wait_time > 0:
+                    logger.warning(
+                        "duckduckgo_rate_limit_per_minute_throttle",
+                        wait_time=wait_time,
+                        requests_in_window=len(self._request_timestamps),
+                        max_requests=self._max_requests_per_minute,
+                        message=f"达到每分钟{self._max_requests_per_minute}次限制，等待 {wait_time:.2f}秒"
+                    )
+                    await asyncio.sleep(wait_time)
+                    now = time.time()
+                    
+                    # 再次清理过期的时间戳
+                    cutoff_time = now - self._rate_limit_window
+                    while self._request_timestamps and self._request_timestamps[0] < cutoff_time:
+                        self._request_timestamps.popleft()
+            
+            # 执行搜索
+            result = await asyncio.to_thread(func)
+            
+            # 记录请求时间
+            self._last_request_time = time.time()
+            self._request_timestamps.append(self._last_request_time)
+            
+            logger.debug(
+                "duckduckgo_request_executed",
+                requests_in_last_minute=len(self._request_timestamps),
+                max_requests=self._max_requests_per_minute
+            )
+            
+            return result
     
     async def execute(self, input_data: SearchQuery) -> SearchResult:
         """
@@ -76,8 +155,9 @@ class DuckDuckGoSearchTool(BaseTool[SearchQuery, SearchResult]):
                         region = lang_to_region.get(input_data.language.lower())
                     
                     # 执行搜索
+                    # 注意：ddgs.text() 第一个参数是位置参数 query，不是 keywords
                     search_results = ddgs.text(
-                        keywords=input_data.query,
+                        input_data.query,  # 第一个位置参数是 query
                         max_results=input_data.max_results,
                         region=region,
                     )
@@ -94,8 +174,8 @@ class DuckDuckGoSearchTool(BaseTool[SearchQuery, SearchResult]):
                     
                     return results
             
-            # 在线程池中执行同步搜索
-            results = await asyncio.to_thread(_sync_search)
+            # 在线程池中执行同步搜索（带速率限制）
+            results = await self._rate_limited_request(_sync_search)
             
             logger.info(
                 "duckduckgo_search_success",

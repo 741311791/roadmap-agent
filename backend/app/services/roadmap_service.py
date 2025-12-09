@@ -363,14 +363,13 @@ class RoadmapService:
                         execution_summary=execution_summary,
                     )
                     
-                    # 发布完成通知
-                    if not tutorial_refs:
-                        await notification_service.publish_completed(
-                            task_id=task_id,
-                            roadmap_id=framework.roadmap_id,
-                            tutorials_count=0,
-                            failed_count=len(failed_concept_ids),
-                        )
+                    # 发布完成通知（无论是否有教程生成，都需要发送完成通知以触发前端跳转）
+                    await notification_service.publish_completed(
+                        task_id=task_id,
+                        roadmap_id=framework.roadmap_id,
+                        tutorials_count=len(tutorial_refs),
+                        failed_count=len(failed_concept_ids),
+                    )
                 else:
                     # 如果没有生成框架，标记为失败
                     task_repo = self.repo_factory.create_task_repo(session)

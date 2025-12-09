@@ -17,6 +17,7 @@ import {
   Plus,
   ChevronDown,
   ChevronRight,
+  Trash2,
 } from 'lucide-react';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import { UserMenu } from '@/components/user-menu';
@@ -256,6 +257,35 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
           )}
         </nav>
       </ScrollArea>
+
+      {/* Trash Button (Above User Footer) */}
+      <div className="px-4 pb-2 border-t border-border/5">
+        {!isCollapsed ? (
+          <NavItem
+            icon={Trash2}
+            label="Trash"
+            href="/trash"
+            active={isActive('/trash')}
+            isCollapsed={false}
+          />
+        ) : (
+          <div className="flex justify-center">
+            <Tooltip text="Trash">
+              <Link
+                href="/trash"
+                className={cn(
+                  'flex items-center justify-center px-3 py-2 rounded-lg cursor-pointer transition-colors',
+                  isActive('/trash')
+                    ? 'bg-primary/5 text-foreground font-medium'
+                    : 'text-foreground/60 hover:bg-primary/5 hover:text-foreground'
+                )}
+              >
+                <Trash2 size={18} />
+              </Link>
+            </Tooltip>
+          </div>
+        )}
+      </div>
 
       {/* User Footer */}
       <div className="p-4 border-t border-border/5">

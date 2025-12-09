@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
@@ -17,7 +17,7 @@ import {
   AlertCircle,
   User,
 } from 'lucide-react';
-import { getUserProfile, type UserProfileData } from '@/lib/api/endpoints';
+import { getUserProfile, getRoadmapStatus, type UserProfileData } from '@/lib/api/endpoints';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import { useRoadmapGeneration } from '@/lib/hooks/api/use-roadmap-generation';
 import { useRoadmapGenerationWS } from '@/lib/hooks/websocket/use-roadmap-generation-ws';
@@ -66,6 +66,7 @@ const stepProgress: Record<string, { progress: number; status: string }> = {
 
 export default function NewRoadmapClient() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [step, setStep] = useState<Step>('goal');
   
   // Auth
@@ -86,9 +87,12 @@ export default function NewRoadmapClient() {
   });
 
   // Use new Hooks
-  const { generationProgress, currentStep, error: storeError } = useRoadmapStore();
+  const { generationProgress, currentStep, error: storeError, updateProgress } = useRoadmapStore();
   const { mutate: generateRoadmap, isPending } = useRoadmapGeneration();
   const [taskId, setTaskId] = useState<string | null>(null);
+  
+  // 从 URL 参数恢复任务（用于继续未完成的路线图生成）
+  const resumeTaskId = searchParams.get('task_id');
   
   // WebSocket Hook (only starts when taskId is available)
   const { connectionType, isConnected } = useRoadmapGenerationWS(taskId, {
@@ -103,6 +107,51 @@ export default function NewRoadmapClient() {
 
   // AbortController for request cancellation
   const abortControllerRef = useRef<AbortController | null>(null);
+  
+  // 如果 URL 中有 task_id，自动恢复到生成页面
+  useEffect(() => {
+    if (resumeTaskId && !taskId) {
+      console.log('[NewRoadmap] Resuming task from URL:', resumeTaskId);
+      
+      // 先获取任务状态
+      getRoadmapStatus(resumeTaskId)
+        .then((status) => {
+          console.log('[NewRoadmap] Task status:', status);
+          
+          const taskStatus = status.status;
+          
+          // 如果任务已完成或部分失败，跳转到路线图详情页
+          if ((taskStatus === 'completed' || taskStatus === 'partial_failure') && status.roadmap_id) {
+            console.log('[NewRoadmap] Task finished with status:', taskStatus, 'Navigating to roadmap:', status.roadmap_id);
+            router.push(`/roadmap/${status.roadmap_id}`);
+            return;
+          }
+          
+          // 如果任务还在进行中，恢复到生成页面
+          if (taskStatus === 'processing' || taskStatus === 'pending' || taskStatus === 'human_review_pending') {
+            setTaskId(resumeTaskId);
+            setStep('generating');
+            // 更新进度状态
+            if (status.current_step) {
+              const stepInfo = stepProgress[status.current_step];
+              if (stepInfo) {
+                updateProgress(status.current_step, stepInfo.progress);
+              }
+            }
+            return;
+          }
+          
+          // 如果任务失败，显示错误
+          if (taskStatus === 'failed') {
+            console.error('[NewRoadmap] Task failed:', status.error_message);
+            return;
+          }
+        })
+        .catch((error) => {
+          console.error('[NewRoadmap] Failed to get task status:', error);
+        });
+    }
+  }, [resumeTaskId, taskId, router, updateProgress]);
 
   // Load user profile on mount with abort controller
   useEffect(() => {

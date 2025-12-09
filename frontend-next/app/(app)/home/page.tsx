@@ -2,47 +2,27 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import Link from 'next/link';
-import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { EmptyState } from '@/components/common/empty-state';
-import { getCoverImage, getGradientFallback, getTopicInitial } from '@/lib/cover-image';
+import { RoadmapCard, CoverImage, MyRoadmap, CommunityRoadmap } from '@/components/roadmap';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   Plus,
-  Clock,
   BookOpen,
   ArrowRight,
-  Heart,
-  Eye,
   Sparkles,
   TrendingUp,
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
-
-// Format relative time
-function formatRelativeTime(dateString: string): string {
-  const date = new Date(dateString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-  
-  if (diffDays === 0) return 'Today';
-  if (diffDays === 1) return 'Yesterday';
-  if (diffDays < 7) return `${diffDays} days ago`;
-  if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
-  return `${Math.floor(diffDays / 30)} months ago`;
-}
-
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import { getUserRoadmaps } from '@/lib/api/endpoints';
 import { useAuthStore } from '@/lib/store/auth-store';
 
 // Mock data - Community Roadmaps
-const communityRoadmaps = [
+const communityRoadmaps: CommunityRoadmap[] = [
   {
     id: 'cr-1',
     title: 'Machine Learning Engineer Path',
@@ -116,176 +96,6 @@ const communityRoadmaps = [
     topic: 'cybersecurity',
   },
 ];
-
-// Cover Image Component with fallback
-function CoverImage({
-  topic,
-  title,
-  className = '',
-}: {
-  topic: string;
-  title: string;
-  className?: string;
-}) {
-  const [imageError, setImageError] = useState(false);
-  const imageUrl = getCoverImage(topic);
-  const gradient = getGradientFallback(title);
-  const initial = getTopicInitial(title);
-
-  const handleError = useCallback(() => {
-    setImageError(true);
-  }, []);
-
-  if (imageError) {
-    return (
-      <div
-        className={`aspect-[16/9] ${gradient.className} flex items-center justify-center ${className}`}
-      >
-        <span className={`text-3xl font-serif font-bold ${gradient.text} opacity-80`}>
-          {initial}
-        </span>
-      </div>
-    );
-  }
-
-  return (
-    <div className={`aspect-[16/9] relative overflow-hidden ${className}`}>
-      <Image
-        src={imageUrl}
-        alt={title}
-        fill
-        className="object-cover transition-transform duration-500 group-hover:scale-105"
-        onError={handleError}
-        sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 25vw"
-      />
-      <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent" />
-    </div>
-  );
-}
-
-// Type for my roadmaps
-interface MyRoadmap {
-  id: string;
-  title: string;
-  status: string;
-  totalConcepts: number;
-  completedConcepts: number;
-  totalHours: number;
-  lastAccessedAt: string;
-  topic: string;
-}
-
-// Unified Roadmap Card Component (same size for both sections)
-function RoadmapCard({
-  roadmap,
-  type,
-}: {
-  roadmap: MyRoadmap | typeof communityRoadmaps[0];
-  type: 'my' | 'community';
-}) {
-  const [avatarError, setAvatarError] = useState(false);
-  
-  const isMyRoadmap = type === 'my';
-  const myRoadmap = isMyRoadmap ? roadmap as MyRoadmap : null;
-  const communityRoadmap = !isMyRoadmap ? roadmap as typeof communityRoadmaps[0] : null;
-  
-  const progress = myRoadmap ? (myRoadmap.completedConcepts / myRoadmap.totalConcepts) * 100 : 0;
-  const isCompleted = myRoadmap?.status === 'completed';
-
-  return (
-    <Link href={`/roadmap/${roadmap.id}`} className="group flex-shrink-0 w-[220px]">
-      <Card className="overflow-hidden hover:shadow-md transition-all duration-300 border-border/30 hover:border-sage-200 h-full">
-        <CoverImage
-          topic={roadmap.topic}
-          title={roadmap.title}
-          className="rounded-t-lg"
-        />
-        <CardContent className="p-4">
-          <h3 className="font-serif font-medium text-sm text-foreground line-clamp-2 mb-2 group-hover:text-sage-600 transition-colors min-h-[40px]">
-            {roadmap.title}
-          </h3>
-
-          {isMyRoadmap && myRoadmap ? (
-            <>
-              {/* Progress Bar */}
-              <div className="space-y-1.5 mb-2">
-                <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                  <span>{myRoadmap.completedConcepts}/{myRoadmap.totalConcepts}</span>
-                  <span className="font-medium text-foreground">{progress.toFixed(0)}%</span>
-                </div>
-                <Progress value={progress} className="h-1.5" />
-              </div>
-
-              {/* Status & Time */}
-              <div className="flex items-center justify-between">
-                <Badge
-                  variant={isCompleted ? 'success' : 'sage'}
-                  className="text-[10px] px-1.5 py-0"
-                >
-                  {isCompleted ? 'Done' : 'Learning'}
-                </Badge>
-                <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                  <Clock size={10} />
-                  {formatRelativeTime(myRoadmap.lastAccessedAt)}
-                </span>
-              </div>
-            </>
-          ) : communityRoadmap ? (
-            <>
-              {/* Author */}
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-5 h-5 rounded-full overflow-hidden bg-sage-100 flex-shrink-0">
-                  {!avatarError ? (
-                    <Image
-                      src={communityRoadmap.author.avatar}
-                      alt={communityRoadmap.author.name}
-                      width={20}
-                      height={20}
-                      className="object-cover"
-                      onError={() => setAvatarError(true)}
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-[10px] font-medium text-sage-600">
-                      {communityRoadmap.author.name.charAt(0)}
-                    </div>
-                  )}
-                </div>
-                <span className="text-[11px] text-muted-foreground truncate">
-                  {communityRoadmap.author.name}
-                </span>
-              </div>
-
-              {/* Tags */}
-              <div className="flex flex-wrap gap-1 mb-2">
-                {communityRoadmap.tags.slice(0, 2).map((tag) => (
-                  <Badge
-                    key={tag}
-                    variant="secondary"
-                    className="text-[9px] px-1.5 py-0 font-normal"
-                  >
-                    {tag}
-                  </Badge>
-                ))}
-              </div>
-
-              {/* Social Stats */}
-              <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
-                <span className="flex items-center gap-1">
-                  <Heart size={10} className="text-rose-400" />
-                  {communityRoadmap.likes.toLocaleString()}
-                </span>
-                <span className="flex items-center gap-1">
-                  <Eye size={10} />
-                  {communityRoadmap.views.toLocaleString()}
-                </span>
-              </div>
-            </>
-          ) : null}
-        </CardContent>
-      </Card>
-    </Link>
-  );
-}
 
 // Create New Roadmap Card (matching size)
 function CreateRoadmapCard() {
@@ -429,6 +239,7 @@ export default function HomePage() {
   const { history, setHistory } = useRoadmapStore();
   const { getUserId } = useAuthStore();
   const [isLoading, setIsLoading] = useState(true);
+  const [showCommunity, setShowCommunity] = useState(true);
   
   // Fetch user roadmaps on mount
   useEffect(() => {
@@ -445,10 +256,7 @@ export default function HomePage() {
         const response = await getUserRoadmaps(userId);
         // Map API response to store format
         const historyData = response.roadmaps.map((item) => {
-          let status: 'draft' | 'completed' | 'archived' = 'completed';
-          if (item.status === 'completed' || item.status === 'draft' || item.status === 'archived') {
-            status = item.status;
-          }
+          let status = item.status || 'completed';
           
           return {
             roadmap_id: item.roadmap_id,
@@ -458,12 +266,14 @@ export default function HomePage() {
             completed_concepts: item.completed_concepts,
             topic: item.topic || undefined,
             status,
+            task_id: item.task_id,
+            task_status: item.task_status,
+            current_step: item.current_step,
           };
         });
-        setHistory(historyData);
+        setHistory(historyData as any);
       } catch (error) {
         console.error('Failed to fetch roadmaps:', error);
-        // Keep existing history on error
       } finally {
         setIsLoading(false);
       }
@@ -473,18 +283,24 @@ export default function HomePage() {
   }, [getUserId, setHistory]);
   
   // Map history to roadmap format for display
-  const roadmaps = history.map((item) => ({
+  const allRoadmaps: MyRoadmap[] = history.map((item) => ({
     id: item.roadmap_id,
     title: item.title,
     status: item.status || 'completed',
     totalConcepts: item.total_concepts || 0,
     completedConcepts: item.completed_concepts || 0,
-    totalHours: 0, // Not stored in history
+    totalHours: 0,
     lastAccessedAt: item.created_at || new Date().toISOString(),
     topic: item.topic || item.title.toLowerCase(),
+    taskId: (item as any).task_id || null,
+    taskStatus: (item as any).task_status || null,
+    currentStep: (item as any).current_step || null,
   }));
   
-  const hasRoadmaps = roadmaps.length > 0;
+  // 只显示前 4 个路线图
+  const displayedRoadmaps = allRoadmaps.slice(0, 4);
+  const hasMore = allRoadmaps.length > 4;
+  const hasRoadmaps = allRoadmaps.length > 0;
 
   return (
     <ScrollArea className="h-full">
@@ -508,15 +324,15 @@ export default function HomePage() {
           <SectionHeader
             icon={BookOpen}
             title="My Learning Journeys"
-            subtitle={hasRoadmaps ? `${roadmaps.length} roadmaps` : undefined}
-            action={hasRoadmaps ? { label: 'View all', href: '/app/roadmaps' } : undefined}
+            subtitle={hasRoadmaps ? `${allRoadmaps.length} roadmaps` : undefined}
+            action={hasMore ? { label: 'View all', href: '/roadmaps' } : undefined}
           />
 
           {hasRoadmaps ? (
             <HorizontalScrollSection>
               <CreateRoadmapCard />
-              {roadmaps.map((roadmap) => (
-                <RoadmapCard key={roadmap.id} roadmap={roadmap} type="my" />
+              {displayedRoadmaps.map((roadmap) => (
+                <RoadmapCard key={roadmap.id} roadmap={roadmap} type="my" showActions={false} />
               ))}
             </HorizontalScrollSection>
           ) : (
@@ -534,21 +350,29 @@ export default function HomePage() {
           )}
         </section>
 
-        {/* Section B: Community Picks */}
-        <section>
-          <SectionHeader
-            icon={TrendingUp}
-            title="Popular on Muset"
-            subtitle="Discover roadmaps loved by the community"
-            action={{ label: 'Explore all', href: '/app/explore' }}
-          />
+        {/* Section B: Community Picks (with animation) */}
+        <AnimatePresence>
+          {showCommunity && (
+            <motion.section
+              initial={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 100 }}
+              transition={{ duration: 0.5 }}
+            >
+              <SectionHeader
+                icon={TrendingUp}
+                title="Popular on Muset"
+                subtitle="Discover roadmaps loved by the community"
+                action={{ label: 'Explore all', href: '/app/explore' }}
+              />
 
-          <HorizontalScrollSection>
-            {communityRoadmaps.map((roadmap) => (
-              <RoadmapCard key={roadmap.id} roadmap={roadmap} type="community" />
-            ))}
-          </HorizontalScrollSection>
-        </section>
+              <HorizontalScrollSection>
+                {communityRoadmaps.map((roadmap) => (
+                  <RoadmapCard key={roadmap.id} roadmap={roadmap} type="community" showActions={false} />
+                ))}
+              </HorizontalScrollSection>
+            </motion.section>
+          )}
+        </AnimatePresence>
 
         {/* Bottom Spacing */}
         <div className="h-8" />

@@ -18,7 +18,7 @@ export interface RoadmapHistory {
   roadmap_id: string;
   title: string;
   created_at: string;
-  status: 'draft' | 'completed' | 'archived';
+  status: 'draft' | 'completed' | 'archived' | 'generating' | 'failed' | 'learning';
   total_concepts: number;
   completed_concepts: number;
   topic?: string;

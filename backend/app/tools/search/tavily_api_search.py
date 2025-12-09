@@ -16,6 +16,7 @@ import asyncio
 import time
 import structlog
 from typing import Dict, List, Optional
+from collections import deque
 
 from tavily import TavilyClient
 from app.tools.base import BaseTool
@@ -31,7 +32,7 @@ class TavilyAPISearchTool(BaseTool[SearchQuery, SearchResult]):
     
     特性：
     - 使用官方 TavilyClient（按照官方示例调用）
-    - 内置速率控制（最多3个并发，最少500ms间隔）
+    - 内置速率控制（最多3个并发，最少500ms间隔，每分钟最多100次）
     - 支持高级搜索参数（search_depth, time_range, include_domains 等）
     """
     
@@ -40,10 +41,15 @@ class TavilyAPISearchTool(BaseTool[SearchQuery, SearchResult]):
         self.api_key = settings.TAVILY_API_KEY
         self.client = None  # 延迟初始化
         
-        # 速率控制
+        # 速率控制 - 多层次限制
         self._search_semaphore = asyncio.Semaphore(3)  # 最多3个并发请求
         self._last_request_time = 0
         self._min_request_interval = 0.5  # 最小请求间隔500ms
+        
+        # 滑动窗口速率限制器（每分钟最多100次）
+        self._request_timestamps = deque()  # 存储最近的请求时间戳
+        self._max_requests_per_minute = 100  # 每分钟最多100次请求
+        self._rate_limit_window = 60.0  # 时间窗口60秒
     
     def _get_client(self) -> TavilyClient:
         """
@@ -63,25 +69,66 @@ class TavilyAPISearchTool(BaseTool[SearchQuery, SearchResult]):
         功能：
         - 限制并发数量（最多3个）
         - 确保请求间隔（最少500ms）
+        - 滑动窗口速率限制（每分钟最多100次）
         - 避免触发API限流
         - 使用 asyncio.to_thread 包装同步调用
         """
         async with self._search_semaphore:
-            # 确保请求间隔
             now = time.time()
+            
+            # 第一层：确保最小请求间隔（500ms）
             elapsed = now - self._last_request_time
             if elapsed < self._min_request_interval:
                 wait_time = self._min_request_interval - elapsed
                 logger.debug(
-                    "tavily_api_rate_limit_throttle",
+                    "tavily_api_rate_limit_min_interval",
                     wait_time=wait_time,
                     elapsed=elapsed
                 )
                 await asyncio.sleep(wait_time)
+                now = time.time()
+            
+            # 第二层：滑动窗口速率限制（每分钟最多100次）
+            # 清理过期的时间戳（超过60秒的）
+            cutoff_time = now - self._rate_limit_window
+            while self._request_timestamps and self._request_timestamps[0] < cutoff_time:
+                self._request_timestamps.popleft()
+            
+            # 检查是否超过速率限制
+            if len(self._request_timestamps) >= self._max_requests_per_minute:
+                # 计算需要等待的时间（直到最旧的请求过期）
+                oldest_timestamp = self._request_timestamps[0]
+                wait_time = oldest_timestamp + self._rate_limit_window - now
+                
+                if wait_time > 0:
+                    logger.warning(
+                        "tavily_api_rate_limit_per_minute_throttle",
+                        wait_time=wait_time,
+                        requests_in_window=len(self._request_timestamps),
+                        max_requests=self._max_requests_per_minute,
+                        message=f"达到每分钟{self._max_requests_per_minute}次限制，等待 {wait_time:.2f}秒"
+                    )
+                    await asyncio.sleep(wait_time)
+                    now = time.time()
+                    
+                    # 再次清理过期的时间戳
+                    cutoff_time = now - self._rate_limit_window
+                    while self._request_timestamps and self._request_timestamps[0] < cutoff_time:
+                        self._request_timestamps.popleft()
             
             # 使用 asyncio.to_thread 在线程中执行同步调用
             result = await asyncio.to_thread(func, *args, **kwargs)
+            
+            # 记录请求时间
             self._last_request_time = time.time()
+            self._request_timestamps.append(self._last_request_time)
+            
+            logger.debug(
+                "tavily_api_request_executed",
+                requests_in_last_minute=len(self._request_timestamps),
+                max_requests=self._max_requests_per_minute
+            )
+            
             return result
     
     async def execute(self, input_data: SearchQuery) -> SearchResult:

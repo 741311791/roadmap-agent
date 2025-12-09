@@ -283,8 +283,9 @@ class ContentRunner:
                         # 更新教程引用信息
                         if hasattr(tutorial_output, 'tutorial_id'):
                             concept.content_ref = tutorial_output.tutorial_id
-                        if hasattr(tutorial_output, 'content_summary'):
-                            concept.content_summary = tutorial_output.content_summary
+                        # 注意：TutorialGenerationOutput 的字段是 summary，不是 content_summary
+                        if hasattr(tutorial_output, 'summary') and tutorial_output.summary:
+                            concept.content_summary = tutorial_output.summary
                     elif concept_id in failed_concepts:
                         concept.content_status = "failed"
                     

@@ -244,9 +244,12 @@ export interface Quiz {
  */
 export type TaskStatus = 
   | 'pending'
+  | 'processing'
   | 'running'
   | 'completed'
+  | 'partial_failure'
   | 'failed'
+  | 'human_review_pending'
   | 'human_review_required'
   | 'approved'
   | 'rejected';
