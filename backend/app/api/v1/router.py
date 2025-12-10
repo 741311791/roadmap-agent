@@ -15,7 +15,7 @@ from .endpoints import (
     modification,
     retry,
 )
-from .roadmap import users_router
+from .roadmap import users_router, router as roadmap_router
 
 # 创建v1主路由
 router = APIRouter(prefix="/api/v1")
@@ -44,6 +44,9 @@ router.include_router(modification.router)
 
 # 失败重试相关
 router.include_router(retry.router)
+
+# 路线图管理相关（删除、恢复等）
+router.include_router(roadmap_router)
 
 # 用户相关（画像等）
 router.include_router(users_router)

@@ -1,5 +1,6 @@
 /* Editorial Cream & Sage Design System - CSS Variables */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;600;700;800&family=Noto+Sans+SC:wght@300;400;500;600;700&family=Noto+Serif+SC:wght@400;500;600;700&display=swap');
+/* 只从 Google Fonts 加载英文字体，中文字体使用本地文件（在 fonts.css 中定义） */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;600;700;800&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -109,6 +110,7 @@
   }
 
   /* Typography Hierarchy - Editorial Style */
+  /* 标题使用 serif 字体（英文），但中文会自动降级到 Noto Sans SC */
   h1,
   h2,
   h3 {

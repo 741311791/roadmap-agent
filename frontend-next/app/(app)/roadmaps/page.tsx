@@ -55,9 +55,6 @@ export default function MyRoadmapsPage() {
           completed_concepts: item.completed_concepts,
           topic: item.topic || undefined,
           status: item.status || 'completed',
-          task_id: item.task_id,
-          task_status: item.task_status,
-          current_step: item.current_step,
         }));
         setHistory(historyData as any);
       } catch (error) {
@@ -70,20 +67,19 @@ export default function MyRoadmapsPage() {
     fetchRoadmaps();
   }, [getUserId, setHistory]);
   
-  // Map history to roadmap format
-  const allRoadmaps: MyRoadmap[] = history.map((item) => ({
-    id: item.roadmap_id,
-    title: item.title,
-    status: item.status || 'completed',
-    totalConcepts: item.total_concepts || 0,
-    completedConcepts: item.completed_concepts || 0,
-    totalHours: 0,
-    lastAccessedAt: item.created_at || new Date().toISOString(),
-    topic: item.topic || item.title.toLowerCase(),
-    taskId: (item as any).task_id || null,
-    taskStatus: (item as any).task_status || null,
-    currentStep: (item as any).current_step || null,
-  }));
+  // Map history to roadmap format (只包含已完成的路线图)
+  const allRoadmaps: MyRoadmap[] = history
+    .filter(item => item.status !== 'generating')  // 过滤掉生成中的任务
+    .map((item) => ({
+      id: item.roadmap_id,
+      title: item.title,
+      status: item.status || 'completed',
+      totalConcepts: item.total_concepts || 0,
+      completedConcepts: item.completed_concepts || 0,
+      totalHours: 0,
+      lastAccessedAt: item.created_at || new Date().toISOString(),
+      topic: item.topic || item.title.toLowerCase(),
+    }));
   
   // Pagination
   const totalPages = Math.ceil(allRoadmaps.length / itemsPerPage);
@@ -103,24 +99,21 @@ export default function MyRoadmapsPage() {
     const userId = getUserId();
     if (!userId) return;
     
-    try {
-      await deleteRoadmap(roadmapToDelete, userId);
-      
-      // Refresh the list
-      const response = await getUserRoadmaps(userId);
-      const historyData = response.roadmaps.map((item) => ({
-        roadmap_id: item.roadmap_id,
-        title: item.title,
-        created_at: item.created_at,
-        total_concepts: item.total_concepts,
-        completed_concepts: item.completed_concepts,
-        topic: item.topic || undefined,
-        status: item.status || 'completed',
-        task_id: item.task_id,
-        task_status: item.task_status,
-        current_step: item.current_step,
-      }));
-      setHistory(historyData as any);
+      try {
+        await deleteRoadmap(roadmapToDelete, userId);
+        
+        // Refresh the list
+        const response = await getUserRoadmaps(userId);
+        const historyData = response.roadmaps.map((item) => ({
+          roadmap_id: item.roadmap_id,
+          title: item.title,
+          created_at: item.created_at,
+          total_concepts: item.total_concepts,
+          completed_concepts: item.completed_concepts,
+          topic: item.topic || undefined,
+          status: item.status || 'completed',
+        }));
+        setHistory(historyData as any);
       
       // Reset to page 1 if current page becomes empty
       const newTotalPages = Math.ceil(historyData.length / itemsPerPage);

@@ -132,6 +132,35 @@ class RoadmapRepository:
         )
         return list(result.scalars().all())
     
+    async def get_tasks_by_user(
+        self,
+        user_id: str,
+        status: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[RoadmapTask]:
+        """
+        获取用户的所有任务，可按状态筛选
+        
+        Args:
+            user_id: 用户 ID
+            status: 任务状态筛选（可选）：pending, processing, completed, failed
+            limit: 返回数量限制
+            offset: 分页偏移
+            
+        Returns:
+            任务列表（按创建时间降序）
+        """
+        query = select(RoadmapTask).where(RoadmapTask.user_id == user_id)
+        
+        if status:
+            query = query.where(RoadmapTask.status == status)
+        
+        query = query.order_by(RoadmapTask.created_at.desc()).offset(offset).limit(limit)
+        
+        result = await self.session.execute(query)
+        return list(result.scalars().all())
+    
     async def update_task_status(
         self,
         task_id: str,

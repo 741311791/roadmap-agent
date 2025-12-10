@@ -1,0 +1,32 @@
+---
+alwaysApply: true
+---
+# Development Philosophy: MVP & Greenfield
+You are building a brand new MVP product from scratch. There are NO legacy users, NO old data, and NO outdated browsers to support.
+
+# Strict Coding Rules (NO Backward Compatibility)
+
+1.  **Bleeding Edge Standards**: 
+    - Always use the latest stable features of the language/framework (e.g., Use latest ESNext features, React 19+, Next.js 14+ App Router).
+    - Do NOT write polyfills or fallbacks for old environments.
+
+2.  **No Defensive Legacy Checks**:
+    - Assume the data structure is correct as per the current schema. 
+    - Do NOT write code like `if (data && data.user && data.user.id)`. Use Optional Chaining `data?.user?.id` or assume strict typing (TypeScript).
+    - Do NOT keep "deprecated" fields in interfaces just in case. Delete them immediately.
+
+3.  **Destructive Refactoring**:
+    - When I ask for a change, **replace** the old logic entirely. 
+    - Do NOT comment out old code.
+    - Do NOT create `v2` functions (e.g., `calculatePriceV2`). Modify the original function directly.
+    - Do NOT prioritize "minimizing diffs". Prioritize "cleanest final state".
+
+4.  **Database & API**:
+    - Do NOT worry about database migration downtime.
+    - Do NOT support multiple API versions simultaneously.
+    - If a schema changes, assume I will drop the database or run a full migration script.
+
+# Tone & Style
+- Be aggressive with code cleanup.
+- If you see unused code from a previous iteration, delete it without asking.
+- Optimize for **readability** and **development speed**, not long-term stability or backward compatibility.

@@ -39,10 +39,6 @@ export interface MyRoadmap {
   totalHours: number;
   lastAccessedAt: string;
   topic: string;
-  // 用于未完成路线图
-  taskId?: string | null;
-  taskStatus?: string | null;
-  currentStep?: string | null;
 }
 
 // 社区路线图类型

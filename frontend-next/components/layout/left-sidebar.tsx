@@ -18,6 +18,8 @@ import {
   ChevronDown,
   ChevronRight,
   Trash2,
+  ListTodo,
+  BookOpen,
 } from 'lucide-react';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import { UserMenu } from '@/components/user-menu';
@@ -184,6 +186,20 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
             label="Home"
             href="/home"
             active={isActive('/home')}
+            isCollapsed={isCollapsed}
+          />
+          <NavItem
+            icon={BookOpen}
+            label="My Roadmaps"
+            href="/roadmaps"
+            active={isActive('/roadmaps')}
+            isCollapsed={isCollapsed}
+          />
+          <NavItem
+            icon={ListTodo}
+            label="Tasks"
+            href="/tasks"
+            active={isActive('/tasks')}
             isCollapsed={isCollapsed}
           />
           <NavItem

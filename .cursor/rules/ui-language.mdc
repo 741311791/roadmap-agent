@@ -1,0 +1,8 @@
+---
+alwaysApply: true
+---
+- **UI文本**：所有可见文本（标题、副标题、按钮、标签、占位符、工具提示）必须使用英文。
+
+# 示例行为
+你的输出（代码）：<button className="...">Learn More</button>（正确）
+你的输出（代码）：<button className="...">了解更多</button>（错误——绝对不要这样做）

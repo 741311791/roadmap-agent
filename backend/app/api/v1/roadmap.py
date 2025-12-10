@@ -3232,7 +3232,7 @@ async def get_user_roadmaps(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    获取用户的所有路线图列表（包括已完成和进行中的）
+    获取用户的路线图列表（只包括已生成完成的路线图）
     
     Args:
         user_id: 用户 ID
@@ -3240,26 +3240,19 @@ async def get_user_roadmaps(
         offset: 分页偏移（默认0）
         
     Returns:
-        用户的路线图列表，包括：
-        - 已完成的路线图（从 roadmap_metadata 表）
-        - 正在生成中的任务（从 roadmap_tasks 表，status 为 processing/pending/human_review_pending）
+        用户的路线图列表（从 roadmap_metadata 表查询）
     """
     logger.info("get_user_roadmaps_requested", user_id=user_id, limit=limit, offset=offset)
     
     repo = RoadmapRepository(db)
     
-    # 1. 获取已保存的路线图
+    # 获取已保存的路线图
     roadmaps = await repo.get_roadmaps_by_user(user_id, limit=limit, offset=offset)
-    
-    # 已保存的路线图 ID 集合（用于去重）
-    saved_roadmap_ids = set()
     
     roadmap_items = []
     
     # 转换已保存的路线图
     for roadmap in roadmaps:
-        saved_roadmap_ids.add(roadmap.roadmap_id)
-        
         # 从 framework_data 中提取概念信息
         framework_data = roadmap.framework_data or {}
         stages = framework_data.get("stages", [])
@@ -3280,21 +3273,12 @@ async def get_user_roadmaps(
         # 从 user_request 中提取 topic
         task = await repo.get_task(roadmap.task_id)
         topic = None
-        task_status = None
-        current_step = None
-        if task:
-            if task.user_request:
-                learning_goal = task.user_request.get("preferences", {}).get("learning_goal", "")
-                topic = learning_goal.lower()[:50] if learning_goal else None
-            task_status = task.status
-            current_step = task.current_step
+        if task and task.user_request:
+            learning_goal = task.user_request.get("preferences", {}).get("learning_goal", "")
+            topic = learning_goal.lower()[:50] if learning_goal else None
         
-        # 根据任务状态确定路线图状态
-        if task_status == "failed":
-            status = "failed"
-        elif task_status in ["processing", "pending", "human_review_pending"]:
-            status = "generating"
-        elif completed_concepts == total_concepts and total_concepts > 0:
+        # 根据完成度确定状态
+        if completed_concepts == total_concepts and total_concepts > 0:
             status = "completed"
         else:
             status = "learning"
@@ -3307,51 +3291,11 @@ async def get_user_roadmaps(
             completed_concepts=completed_concepts,
             topic=topic,
             status=status,
-            task_id=roadmap.task_id,
-            task_status=task_status,
-            current_step=current_step,
-        ))
-    
-    # 2. 查询正在进行中但尚未保存到 roadmap_metadata 的任务
-    in_progress_tasks = await repo.get_in_progress_tasks_by_user(user_id)
-    in_progress_count = 0
-    
-    for task in in_progress_tasks:
-        # 跳过已经有路线图记录的任务
-        if task.roadmap_id and task.roadmap_id in saved_roadmap_ids:
-            continue
-        
-        in_progress_count += 1
-        
-        # 从 user_request 中提取标题和 topic
-        title = "生成中的路线图"
-        topic = None
-        if task.user_request:
-            learning_goal = task.user_request.get("preferences", {}).get("learning_goal", "")
-            if learning_goal:
-                title = learning_goal[:100]  # 用学习目标作为标题
-                topic = learning_goal.lower()[:50]
-        
-        # 根据任务状态确定显示状态
-        display_status = "failed" if task.status == "failed" else "generating"
-        
-        roadmap_items.insert(0, RoadmapHistoryItem(  # 插入到列表开头
-            roadmap_id=task.roadmap_id or f"task-{task.task_id}",  # 如果没有 roadmap_id，使用 task_id
-            title=title,
-            created_at=task.created_at.isoformat() if task.created_at else "",
-            total_concepts=0,
-            completed_concepts=0,
-            topic=topic,
-            status=display_status,
-            task_id=task.task_id,
-            task_status=task.status,
-            current_step=task.current_step,
         ))
     
     return RoadmapHistoryResponse(
         roadmaps=roadmap_items,
         total=len(roadmap_items),
-        in_progress_count=in_progress_count,
     )
 
 
@@ -3427,6 +3371,103 @@ async def get_deleted_roadmaps(
         roadmaps=roadmap_items,
         total=len(roadmap_items),
         in_progress_count=0,
+    )
+
+
+# ============================================================
+# 任务列表 API
+# ============================================================
+
+from typing import Optional as OptionalType
+
+
+class TaskListItem(BaseModel):
+    """任务列表项"""
+    task_id: str
+    status: str  # pending, processing, completed, failed
+    current_step: str
+    title: str  # 从 user_request 提取
+    created_at: str
+    updated_at: str
+    completed_at: OptionalType[str] = None
+    error_message: OptionalType[str] = None
+    roadmap_id: OptionalType[str] = None  # 如果任务成功，关联的路线图ID
+
+
+class TaskListResponse(BaseModel):
+    """任务列表响应"""
+    tasks: list[TaskListItem]
+    total: int
+    pending_count: int
+    processing_count: int
+    completed_count: int
+    failed_count: int
+
+
+@users_router.get("/{user_id}/tasks", response_model=TaskListResponse)
+async def get_user_tasks(
+    user_id: str,
+    status: OptionalType[str] = None,  # 筛选：pending, processing, completed, failed
+    limit: int = 50,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    获取用户的任务列表，支持按状态筛选
+    
+    Args:
+        user_id: 用户 ID
+        status: 任务状态筛选（可选）
+        limit: 返回数量限制（默认50）
+        offset: 分页偏移（默认0）
+        
+    Returns:
+        任务列表及各状态统计
+    """
+    logger.info("get_user_tasks_requested", user_id=user_id, status=status, limit=limit, offset=offset)
+    
+    repo = RoadmapRepository(db)
+    
+    # 查询任务
+    tasks = await repo.get_tasks_by_user(user_id, status=status, limit=limit, offset=offset)
+    
+    # 统计各状态数量（查询全部任务）
+    all_tasks = await repo.get_tasks_by_user(user_id)
+    stats = {
+        "pending": sum(1 for t in all_tasks if t.status == "pending"),
+        "processing": sum(1 for t in all_tasks if t.status == "processing"),
+        "completed": sum(1 for t in all_tasks if t.status == "completed"),
+        "failed": sum(1 for t in all_tasks if t.status == "failed"),
+    }
+    
+    task_items = []
+    for task in tasks:
+        # 从 user_request 中提取标题
+        title = "生成中的路线图"
+        if task.user_request:
+            learning_goal = task.user_request.get("preferences", {}).get("learning_goal", "")
+            if learning_goal:
+                title = learning_goal[:100]
+        
+        task_items.append(TaskListItem(
+            task_id=task.task_id,
+            status=task.status,
+            current_step=task.current_step,
+            title=title,
+            created_at=task.created_at.isoformat() if task.created_at else "",
+            updated_at=task.updated_at.isoformat() if task.updated_at else "",
+            completed_at=task.completed_at.isoformat() if task.completed_at else None,
+            error_message=task.error_message,
+            roadmap_id=task.roadmap_id,
+        ))
+    
+    return TaskListResponse(
+        tasks=task_items,
+        total=len(task_items),
+        pending_count=stats["pending"],
+        processing_count=stats["processing"],
+        completed_count=stats["completed"],
+        failed_count=stats["failed"],
     )
 
 
@@ -3606,7 +3647,17 @@ async def soft_delete_roadmap(
     session: AsyncSession = Depends(get_db),
 ):
     """
-    软删除路线图（移至回收站）
+    删除路线图
+    
+    根据 roadmap_id 格式自动判断删除方式：
+    1. 如果是 "task-{uuid}" 格式：
+       - 物理删除 roadmap_tasks 表中的任务记录
+       - 适用于失败或进行中的任务（尚未生成完整路线图）
+    
+    2. 如果是普通格式（如 "python-guide-xxx"）：
+       - 软删除 roadmap_metadata 表中的记录（设置 deleted_at 字段）
+       - 关联的 roadmap_tasks 记录保留用于追踪
+       - 可通过回收站恢复
     
     Args:
         roadmap_id: 路线图 ID
@@ -3620,25 +3671,118 @@ async def soft_delete_roadmap(
     """
     try:
         repo = RoadmapRepository(session)
-        result = await repo.soft_delete_roadmap(roadmap_id, user_id)
+        from app.models.database import RoadmapTask
+        from sqlalchemy import delete
         
-        if not result:
-            raise HTTPException(
-                status_code=404,
-                detail="Roadmap not found or unauthorized"
+        # 检查是否是 task- 前缀的临时 ID
+        if roadmap_id.startswith("task-"):
+            # 提取真实的 task_id
+            actual_task_id = roadmap_id[5:]  # 去掉 "task-" 前缀
+            
+            logger.info(
+                "delete_in_progress_task_requested",
+                task_id=actual_task_id,
+                user_id=user_id,
             )
+            
+            # 获取任务信息以验证权限
+            task = await repo.get_task(actual_task_id)
+            
+            if not task:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Task not found"
+                )
+            
+            # 验证用户权限
+            if task.user_request and task.user_request.get("user_id") != user_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Unauthorized to delete this task"
+                )
+            
+            # 删除任务记录（直接从数据库删除）
+            stmt = delete(RoadmapTask).where(RoadmapTask.task_id == actual_task_id)
+            await session.execute(stmt)
+            await session.commit()
+            
+            logger.info(
+                "in_progress_task_deleted",
+                task_id=actual_task_id,
+                user_id=user_id,
+            )
+            
+            return {
+                "success": True,
+                "roadmap_id": roadmap_id,
+                "task_id": actual_task_id,
+                "deleted_at": None,
+            }
         
-        logger.info(
-            "roadmap_soft_deleted_via_api",
-            roadmap_id=roadmap_id,
-            user_id=user_id,
-        )
+        # 普通格式的 roadmap_id：先检查 metadata 是否存在
+        metadata = await repo.get_roadmap_metadata(roadmap_id)
         
-        return {
-            "success": True,
-            "roadmap_id": roadmap_id,
-            "deleted_at": result.deleted_at.isoformat() if result.deleted_at else None,
-        }
+        if metadata:
+            # Metadata 存在：执行软删除
+            if metadata.user_id != user_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Unauthorized to delete this roadmap"
+                )
+            
+            result = await repo.soft_delete_roadmap(roadmap_id, user_id)
+            
+            logger.info(
+                "roadmap_soft_deleted_via_api",
+                roadmap_id=roadmap_id,
+                user_id=user_id,
+            )
+            
+            return {
+                "success": True,
+                "roadmap_id": roadmap_id,
+                "deleted_at": result.deleted_at.isoformat() if result.deleted_at else None,
+            }
+        else:
+            # Metadata 不存在：查找对应的 task 并删除
+            # 通过 roadmap_id 查找 task
+            from sqlalchemy import select
+            result = await session.execute(
+                select(RoadmapTask).where(RoadmapTask.roadmap_id == roadmap_id)
+            )
+            task = result.scalar_one_or_none()
+            
+            if not task:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Roadmap not found"
+                )
+            
+            # 验证用户权限
+            if task.user_request and task.user_request.get("user_id") != user_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Unauthorized to delete this task"
+                )
+            
+            # 删除任务记录
+            stmt = delete(RoadmapTask).where(RoadmapTask.task_id == task.task_id)
+            await session.execute(stmt)
+            await session.commit()
+            
+            logger.info(
+                "failed_task_deleted_by_roadmap_id",
+                roadmap_id=roadmap_id,
+                task_id=task.task_id,
+                user_id=user_id,
+            )
+            
+            return {
+                "success": True,
+                "roadmap_id": roadmap_id,
+                "task_id": task.task_id,
+                "deleted_at": None,
+            }
         
     except HTTPException:
         raise

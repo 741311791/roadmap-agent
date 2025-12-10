@@ -64,10 +64,11 @@ const config: Config = {
         },
       },
       // Typography with Chinese support
+      // 统一使用 Noto Sans SC 作为中文字体，避免视觉割裂
       fontFamily: {
         sans: [
           'var(--font-inter)',
-          'Noto Sans SC', // 本地字体
+          'Noto Sans SC', // 本地字体 - 统一的中文字体
           '-apple-system',
           'BlinkMacSystemFont',
           'system-ui',
@@ -75,7 +76,7 @@ const config: Config = {
         ],
         serif: [
           'var(--font-playfair)',
-          'Noto Serif SC', // 本地字体
+          'Noto Sans SC', // 中文也使用 Noto Sans SC，保持一致性
           'Georgia',
           'serif',
         ],
