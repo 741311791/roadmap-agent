@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ChevronLeft, ListTodo, RefreshCw } from 'lucide-react';
-import { getUserTasks, retryTask, TaskItem } from '@/lib/api/endpoints';
+import { getUserTasks, retryTask, deleteTask, TaskItem } from '@/lib/api/endpoints';
 import { TaskList } from '@/components/task';
 import { useAuthStore } from '@/lib/store/auth-store';
 import { cn } from '@/lib/utils';
@@ -91,9 +91,7 @@ export default function TasksPage() {
     if (!userId) return;
     
     try {
-      // TODO: 实现删除任务的 API 调用
-      // await deleteTask(taskId, userId);
-      console.log('Delete task:', taskId);
+      await deleteTask(taskId, userId);
       // 刷新列表
       await fetchTasks(activeFilter);
     } catch (error) {

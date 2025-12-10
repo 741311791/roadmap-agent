@@ -11,6 +11,8 @@ import Image from 'next/image';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import { MagicCard } from '@/components/ui/magic-card';
+import { ShineBorder } from '@/components/ui/shine-border';
 import { 
   Clock, 
   Heart, 
@@ -19,6 +21,7 @@ import {
   Loader2,
   MoreVertical,
   Trash2,
+  Sparkles,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -39,6 +42,9 @@ export interface MyRoadmap {
   totalHours: number;
   lastAccessedAt: string;
   topic: string;
+  taskId?: string | null;
+  taskStatus?: string | null;
+  currentStep?: string | null;
 }
 
 // 社区路线图类型
@@ -128,13 +134,13 @@ export function RoadmapCard({
     <div className="group relative flex-shrink-0 w-[220px]">
       {/* 操作菜单 - 只在 my 类型且显示 actions 时显示 */}
       {isMyRoadmap && showActions && onDelete && (
-        <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="absolute top-3 right-3 z-20 opacity-0 group-hover:opacity-100 transition-opacity">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 bg-white/90 hover:bg-white shadow-sm"
+                className="h-8 w-8 bg-white/95 hover:bg-white shadow-lg backdrop-blur-sm border border-sage-100"
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
@@ -157,32 +163,50 @@ export function RoadmapCard({
       )}
       
       <Link href={href} className="block">
-        <Card className="overflow-hidden hover:shadow-md transition-all duration-300 border-border/30 hover:border-sage-200 h-full">
-          <CoverImage
-            topic={roadmap.topic}
-            title={roadmap.title}
-            className="rounded-t-lg"
-          />
-          <CardContent className="p-4">
-            <h3 className="font-serif font-medium text-sm text-foreground line-clamp-2 mb-2 group-hover:text-sage-600 transition-colors min-h-[40px]">
-              {roadmap.title}
-            </h3>
+        <MagicCard
+          className="overflow-hidden h-full rounded-xl"
+          gradientSize={300}
+          gradientColor="rgba(96, 117, 96, 0.1)"
+          gradientFrom="#a3b1a3"
+          gradientTo="#607560"
+        >
+          <Card className="overflow-hidden border-0 shadow-none bg-transparent h-full">
+            {/* Shine Border 效果 */}
+            <ShineBorder
+              borderWidth={2}
+              duration={12}
+              shineColor={["#a3b1a3", "#607560", "#7d8f7d"]}
+              className="opacity-0 group-hover:opacity-100 transition-opacity duration-500"
+            />
+            
+            <CoverImage
+              topic={roadmap.topic}
+              title={roadmap.title}
+              className="rounded-t-xl"
+            />
+            <CardContent className="p-4 bg-white/95 backdrop-blur-sm">
+            <div className="flex items-start gap-2 mb-2">
+              <Sparkles className="w-3.5 h-3.5 text-sage-500 mt-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+              <h3 className="font-serif font-medium text-sm text-foreground line-clamp-2 group-hover:text-sage-700 transition-colors min-h-[40px] flex-1">
+                {roadmap.title}
+              </h3>
+            </div>
 
             {isMyRoadmap && myRoadmap ? (
               isFailed ? (
                 /* 生成失败的路线图 */
                 <>
                   {/* 失败指示 */}
-                  <div className="space-y-1.5 mb-2">
-                    <div className="flex items-center gap-2 text-[10px] text-red-600">
-                      <AlertCircle size={12} />
-                      <span className="font-medium">
+                  <div className="space-y-2 mb-3">
+                    <div className="flex items-center gap-2 text-[10px] text-red-600 font-medium bg-red-50 px-2 py-1.5 rounded-lg">
+                      <AlertCircle size={12} className="flex-shrink-0" />
+                      <span className="truncate">
                         {STEP_LABELS[myRoadmap.currentStep || 'failed'] || '生成失败'}
                       </span>
                     </div>
                     {/* 失败进度条 */}
-                    <div className="h-1.5 bg-red-100 rounded-full overflow-hidden">
-                      <div className="h-full w-full bg-red-500 rounded-full" />
+                    <div className="h-1.5 bg-red-100 rounded-full overflow-hidden shadow-inner">
+                      <div className="h-full w-full bg-gradient-to-r from-red-400 to-red-600 rounded-full" />
                     </div>
                   </div>
 
@@ -190,9 +214,9 @@ export function RoadmapCard({
                   <div className="flex items-center justify-between">
                     <Badge
                       variant="outline"
-                      className="text-[10px] px-1.5 py-0 border-red-300 text-red-600 bg-red-50"
+                      className="text-[10px] px-2 py-0.5 border-red-300 text-red-600 bg-red-50 font-medium"
                     >
-                      生成失败
+                      Failed
                     </Badge>
                     <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
                       <Clock size={10} />
@@ -204,16 +228,16 @@ export function RoadmapCard({
                 /* 正在生成中的路线图 */
                 <>
                   {/* 生成进度指示 */}
-                  <div className="space-y-1.5 mb-2">
-                    <div className="flex items-center gap-2 text-[10px] text-sage-600">
-                      <Loader2 size={12} className="animate-spin" />
-                      <span className="font-medium">
+                  <div className="space-y-2 mb-3">
+                    <div className="flex items-center gap-2 text-[10px] text-sage-700 font-medium bg-sage-50 px-2 py-1.5 rounded-lg">
+                      <Loader2 size={12} className="animate-spin flex-shrink-0" />
+                      <span className="truncate">
                         {STEP_LABELS[myRoadmap.currentStep || 'queued'] || '生成中...'}
                       </span>
                     </div>
                     {/* 无限进度条动画 */}
-                    <div className="h-1.5 bg-sage-100 rounded-full overflow-hidden">
-                      <div className="h-full w-1/3 bg-sage-500 rounded-full animate-pulse" 
+                    <div className="h-1.5 bg-sage-100 rounded-full overflow-hidden shadow-inner relative">
+                      <div className="absolute inset-0 bg-gradient-to-r from-sage-400 via-sage-500 to-sage-400 animate-pulse" 
                            style={{ animation: 'pulse 1.5s ease-in-out infinite' }} />
                     </div>
                   </div>
@@ -222,9 +246,9 @@ export function RoadmapCard({
                   <div className="flex items-center justify-between">
                     <Badge
                       variant="outline"
-                      className="text-[10px] px-1.5 py-0 border-sage-300 text-sage-600 bg-sage-50"
+                      className="text-[10px] px-2 py-0.5 border-sage-300 text-sage-700 bg-sage-50 font-medium"
                     >
-                      生成中
+                      Generating
                     </Badge>
                     <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
                       <Clock size={10} />
@@ -236,21 +260,35 @@ export function RoadmapCard({
                 /* 已完成或学习中的路线图 */
                 <>
                   {/* Progress Bar */}
-                  <div className="space-y-1.5 mb-2">
-                    <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                      <span>{myRoadmap.completedConcepts}/{myRoadmap.totalConcepts}</span>
-                      <span className="font-medium text-foreground">{progress.toFixed(0)}%</span>
+                  <div className="space-y-2 mb-3">
+                    <div className="flex items-center justify-between text-[10px]">
+                      <span className="text-muted-foreground font-medium">
+                        {myRoadmap.completedConcepts}/{myRoadmap.totalConcepts} concepts
+                      </span>
+                      <span className="font-bold text-sage-700 bg-sage-50 px-2 py-0.5 rounded-full">
+                        {progress.toFixed(0)}%
+                      </span>
                     </div>
-                    <Progress value={progress} className="h-1.5" />
+                    <div className="relative">
+                      <Progress value={progress} className="h-2 bg-sage-100" />
+                      {progress > 0 && (
+                        <div className="absolute inset-0 h-2 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-gradient-to-r from-sage-400 via-sage-500 to-sage-600 transition-all duration-500"
+                            style={{ width: `${progress}%` }}
+                          />
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   {/* Status & Time */}
                   <div className="flex items-center justify-between">
                     <Badge
                       variant={isCompleted ? 'success' : 'sage'}
-                      className="text-[10px] px-1.5 py-0"
+                      className="text-[10px] px-2 py-0.5 font-medium"
                     >
-                      {isCompleted ? 'Done' : 'Learning'}
+                      {isCompleted ? '✓ Done' : '→ Learning'}
                     </Badge>
                     <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
                       <Clock size={10} />
@@ -262,35 +300,35 @@ export function RoadmapCard({
             ) : communityRoadmap ? (
               <>
                 {/* Author */}
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="w-5 h-5 rounded-full overflow-hidden bg-sage-100 flex-shrink-0">
+                <div className="flex items-center gap-2 mb-3 bg-sage-50/50 px-2 py-1.5 rounded-lg">
+                  <div className="w-6 h-6 rounded-full overflow-hidden bg-sage-100 flex-shrink-0 ring-2 ring-white shadow-sm">
                     {!avatarError ? (
                       <Image
                         src={communityRoadmap.author.avatar}
                         alt={communityRoadmap.author.name}
-                        width={20}
-                        height={20}
+                        width={24}
+                        height={24}
                         className="object-cover"
                         onError={() => setAvatarError(true)}
                       />
                     ) : (
-                      <div className="w-full h-full flex items-center justify-center text-[10px] font-medium text-sage-600">
+                      <div className="w-full h-full flex items-center justify-center text-[11px] font-bold text-sage-600">
                         {communityRoadmap.author.name.charAt(0)}
                       </div>
                     )}
                   </div>
-                  <span className="text-[11px] text-muted-foreground truncate">
+                  <span className="text-[11px] text-foreground font-medium truncate">
                     {communityRoadmap.author.name}
                   </span>
                 </div>
 
                 {/* Tags */}
-                <div className="flex flex-wrap gap-1 mb-2">
+                <div className="flex flex-wrap gap-1.5 mb-3">
                   {communityRoadmap.tags.slice(0, 2).map((tag) => (
                     <Badge
                       key={tag}
                       variant="secondary"
-                      className="text-[9px] px-1.5 py-0 font-normal"
+                      className="text-[9px] px-2 py-0.5 font-medium bg-sage-100 text-sage-700 border-0"
                     >
                       {tag}
                     </Badge>
@@ -298,20 +336,21 @@ export function RoadmapCard({
                 </div>
 
                 {/* Social Stats */}
-                <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
-                  <span className="flex items-center gap-1">
-                    <Heart size={10} className="text-rose-400" />
-                    {communityRoadmap.likes.toLocaleString()}
+                <div className="flex items-center gap-4 text-[10px] text-muted-foreground">
+                  <span className="flex items-center gap-1.5 hover:text-rose-500 transition-colors">
+                    <Heart size={11} className="text-rose-400 fill-rose-100" />
+                    <span className="font-medium">{communityRoadmap.likes.toLocaleString()}</span>
                   </span>
-                  <span className="flex items-center gap-1">
-                    <Eye size={10} />
-                    {communityRoadmap.views.toLocaleString()}
+                  <span className="flex items-center gap-1.5">
+                    <Eye size={11} className="text-sage-500" />
+                    <span className="font-medium">{communityRoadmap.views.toLocaleString()}</span>
                   </span>
                 </div>
               </>
             ) : null}
           </CardContent>
-        </Card>
+          </Card>
+        </MagicCard>
       </Link>
     </div>
   );

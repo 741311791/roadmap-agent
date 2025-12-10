@@ -9,11 +9,11 @@
     "/api/v1/roadmaps/generate": {
       "post": {
         "tags": [
-          "generation"
+          "roadmaps"
         ],
-        "summary": "Generate Roadmap Async",
-        "description": "生成学习路线图（异步任务）\n\nArgs:\n    request: 用户请求，包含学习目标和偏好\n    background_tasks: FastAPI后台任务\n    orchestrator: 工作流执行器\n    repo_factory: Repository 工厂\n    \nReturns:\n    任务 ID，roadmap_id将在需求分析完成后通过WebSocket发送给前端\n    \nExample:\n    ```json\n    {\n        \"task_id\": \"550e8400-e29b-41d4-a716-446655440000\",\n        \"status\": \"processing\",\n        \"message\": \"路线图生成任务已启动\"\n    }\n    ```",
-        "operationId": "generate_roadmap_async_api_v1_roadmaps_generate_post",
+        "summary": "Generate Roadmap",
+        "description": "生成学习路线图（异步任务）\n\nReturns:\n    任务 ID，roadmap_id将在需求分析完成后通过WebSocket发送给前端",
+        "operationId": "generate_roadmap_api_v1_roadmaps_generate_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -29,7 +29,11 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Generate Roadmap Api V1 Roadmaps Generate Post"
+                }
               }
             }
           },
@@ -49,11 +53,11 @@
     "/api/v1/roadmaps/{task_id}/status": {
       "get": {
         "tags": [
-          "generation"
+          "roadmaps"
         ],
-        "summary": "Get Generation Status",
-        "description": "查询路线图生成任务状态\n\nArgs:\n    task_id: 任务ID\n    orchestrator: 工作流执行器\n    repo_factory: Repository 工厂\n    \nReturns:\n    任务状态信息\n    \nRaises:\n    HTTPException: 404 - 任务不存在\n    \nExample:\n    ```json\n    {\n        \"task_id\": \"550e8400-e29b-41d4-a716-446655440000\",\n        \"status\": \"completed\",\n        \"current_step\": \"tutorial_generation\",\n        \"roadmap_id\": \"python-web-dev-2024\",\n        \"created_at\": \"2024-01-01T00:00:00Z\"\n    }\n    ```",
-        "operationId": "get_generation_status_api_v1_roadmaps__task_id__status_get",
+        "summary": "Get Roadmap Status",
+        "description": "查询路线图生成状态",
+        "operationId": "get_roadmap_status_api_v1_roadmaps__task_id__status_get",
         "parameters": [
           {
             "name": "task_id",
@@ -90,10 +94,10 @@
     "/api/v1/roadmaps/{roadmap_id}/retry-failed": {
       "post": {
         "tags": [
-          "retry"
+          "roadmaps"
         ],
         "summary": "Retry Failed Content",
-        "description": "断点续传：重新生成失败的内容\n\n精确到内容类型粒度，只重跑失败的部分：\n- content_status='failed' 的教程\n- resources_status='failed' 的资源推荐\n- quiz_status='failed' 的测验\n\nArgs:\n    roadmap_id: 路线图 ID\n    request: 包含用户偏好和要重试的内容类型\n    background_tasks: FastAPI后台任务\n    db: 数据库会话\n    \nReturns:\n    task_id 用于 WebSocket 订阅进度\n    \nExample:\n    ```json\n    {\n        \"task_id\": \"550e8400-e29b-41d4-a716-446655440000\",\n        \"roadmap_id\": \"python-web-dev-2024\",\n        \"status\": \"processing\",\n        \"items_to_retry\": {\n            \"tutorial\": 3,\n            \"resources\": 2,\n            \"quiz\": 1\n        },\n        \"total_items\": 6,\n        \"message\": \"开始重试 6 个失败项目\"\n    }\n    ```",
+        "description": "断点续传：重新生成失败的内容\n\n精确到内容类型粒度，只重跑失败的部分：\n- content_status='failed' 的教程\n- resources_status='failed' 的资源推荐\n- quiz_status='failed' 的测验\n\nArgs:\n    roadmap_id: 路线图 ID\n    request: 包含用户偏好和要重试的内容类型\n    \nReturns:\n    task_id 用于 WebSocket 订阅进度",
         "operationId": "retry_failed_content_api_v1_roadmaps__roadmap_id__retry_failed_post",
         "parameters": [
           {
@@ -111,7 +115,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RetryFailedRequest"
+                "$ref": "#/components/schemas/app__api__v1__roadmap__RetryFailedRequest"
               }
             }
           }
@@ -138,13 +142,199 @@
         }
       }
     },
+    "/api/v1/roadmaps/{roadmap_id}/concepts/{concept_id}/tutorial/retry": {
+      "post": {
+        "tags": [
+          "generation"
+        ],
+        "summary": "Retry Tutorial",
+        "description": "重试单个概念的教程生成\n\n当教程生成失败时，用户可以调用此接口重新生成教程内容。\n支持实时 WebSocket 推送生成状态。\n\nArgs:\n    roadmap_id: 路线图 ID\n    concept_id: 概念 ID\n    request: 包含用户学习偏好的请求\n    \nReturns:\n    重试结果，包含是否成功和生成的数据",
+        "operationId": "retry_tutorial_api_v1_roadmaps__roadmap_id__concepts__concept_id__tutorial_retry_post",
+        "parameters": [
+          {
+            "name": "roadmap_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Roadmap Id"
+            }
+          },
+          {
+            "name": "concept_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Concept Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetryContentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetryContentResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/roadmaps/{roadmap_id}/concepts/{concept_id}/resources/retry": {
+      "post": {
+        "tags": [
+          "generation"
+        ],
+        "summary": "Retry Resources",
+        "description": "重试单个概念的资源推荐生成\n\n当资源推荐生成失败时，用户可以调用此接口重新生成资源列表。\n支持实时 WebSocket 推送生成状态。\n\nArgs:\n    roadmap_id: 路线图 ID\n    concept_id: 概念 ID\n    request: 包含用户学习偏好的请求\n    \nReturns:\n    重试结果，包含是否成功和生成的数据",
+        "operationId": "retry_resources_api_v1_roadmaps__roadmap_id__concepts__concept_id__resources_retry_post",
+        "parameters": [
+          {
+            "name": "roadmap_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Roadmap Id"
+            }
+          },
+          {
+            "name": "concept_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Concept Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetryContentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetryContentResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/roadmaps/{roadmap_id}/concepts/{concept_id}/quiz/retry": {
+      "post": {
+        "tags": [
+          "generation"
+        ],
+        "summary": "Retry Quiz",
+        "description": "重试单个概念的测验生成\n\n当测验生成失败时，用户可以调用此接口重新生成测验题目。\n支持实时 WebSocket 推送生成状态。\n\nArgs:\n    roadmap_id: 路线图 ID\n    concept_id: 概念 ID\n    request: 包含用户学习偏好的请求\n    \nReturns:\n    重试结果，包含是否成功和生成的数据",
+        "operationId": "retry_quiz_api_v1_roadmaps__roadmap_id__concepts__concept_id__quiz_retry_post",
+        "parameters": [
+          {
+            "name": "roadmap_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Roadmap Id"
+            }
+          },
+          {
+            "name": "concept_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Concept Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetryContentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetryContentResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/roadmaps/{roadmap_id}": {
       "get": {
         "tags": [
-          "retrieval"
+          "roadmaps"
         ],
         "summary": "Get Roadmap",
-        "description": "获取完整的路线图数据\n\nArgs:\n    roadmap_id: 路线图ID\n    db: 数据库会话\n    repo_factory: Repository 工厂\n    orchestrator: 工作流执行器\n    \nReturns:\n    - 如果路线图存在，返回完整的路线图框架数据\n    - 如果路线图不存在但有活跃任务，返回生成中状态\n    - 如果都不存在，返回 404\n    \nRaises:\n    HTTPException: 404 - 路线图不存在\n    \nExample:\n    ```json\n    {\n        \"roadmap_id\": \"python-web-dev-2024\",\n        \"title\": \"Python Web开发学习路线\",\n        \"topic\": \"Python Web开发\",\n        \"concepts\": [...],\n        \"status\": \"completed\"\n    }\n    ```",
+        "description": "获取完整的路线图数据\n\nReturns:\n    - 如果路线图存在，返回完整的路线图框架数据\n    - 如果路线图不存在但有活跃任务，返回生成中状态\n    - 如果都不存在，返回 404",
         "operationId": "get_roadmap_api_v1_roadmaps__roadmap_id__get",
         "parameters": [
           {
@@ -177,16 +367,64 @@
             }
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "roadmaps"
+        ],
+        "summary": "Soft Delete Roadmap",
+        "description": "删除路线图\n\n根据 roadmap_id 格式自动判断删除方式：\n1. 如果是 \"task-{uuid}\" 格式：\n   - 物理删除 roadmap_tasks 表中的任务记录\n   - 适用于失败或进行中的任务（尚未生成完整路线图）\n\n2. 如果是普通格式（如 \"python-guide-xxx\"）：\n   - 软删除 roadmap_metadata 表中的记录（设置 deleted_at 字段）\n   - 关联的 roadmap_tasks 记录保留用于追踪\n   - 可通过回收站恢复\n\nArgs:\n    roadmap_id: 路线图 ID\n    user_id: 用户 ID（用于权限验证）\n    \nReturns:\n    删除结果\n    \nRaises:\n    HTTPException: 如果路线图不存在或无权限",
+        "operationId": "soft_delete_roadmap_api_v1_roadmaps__roadmap_id__delete",
+        "parameters": [
+          {
+            "name": "roadmap_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Roadmap Id"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/roadmaps/{roadmap_id}/active-task": {
       "get": {
         "tags": [
-          "retrieval"
+          "roadmaps"
         ],
-        "summary": "Get Active Task",
-        "description": "获取路线图当前的活跃任务\n\n用于前端轮询：查询该路线图是否有正在进行的任务\n- 如果有正在进行的任务，返回task_id和状态\n- 如果没有，返回null\n\nArgs:\n    roadmap_id: 路线图 ID\n    db: 数据库会话\n    \nReturns:\n    活跃任务信息或null\n    \nRaises:\n    HTTPException: 404 - 路线图不存在\n    \nExample:\n    ```json\n    {\n        \"has_active_task\": true,\n        \"task_id\": \"550e8400-e29b-41d4-a716-446655440000\",\n        \"status\": \"processing\",\n        \"current_step\": \"tutorial_generation\",\n        \"created_at\": \"2024-01-01T00:00:00Z\"\n    }\n    ```",
-        "operationId": "get_active_task_api_v1_roadmaps__roadmap_id__active_task_get",
+        "summary": "Get Roadmap Active Task",
+        "description": "获取路线图当前的活跃任务\n\n用于前端轮询：查询该路线图是否有正在进行的任务\n- 如果有正在进行的任务，返回task_id和状态\n- 如果没有，返回null\n\nArgs:\n    roadmap_id: 路线图 ID\n    \nReturns:\n    活跃任务信息或null",
+        "operationId": "get_roadmap_active_task_api_v1_roadmaps__roadmap_id__active_task_get",
         "parameters": [
           {
             "name": "roadmap_id",
@@ -223,10 +461,10 @@
     "/api/v1/roadmaps/{task_id}/approve": {
       "post": {
         "tags": [
-          "approval"
+          "roadmaps"
         ],
         "summary": "Approve Roadmap",
-        "description": "人工审核端点（Human-in-the-Loop）\n\n在路线图框架生成后，允许用户审核并决定是否继续生成详细内容\n\nArgs:\n    task_id: 任务 ID\n    approved: 是否批准（True=批准继续生成，False=拒绝需要修改）\n    feedback: 用户反馈（如果未批准，说明需要修改的内容）\n    db: 数据库会话\n    orchestrator: 工作流执行器\n    \nReturns:\n    审核处理结果\n    \nRaises:\n    HTTPException: \n        - 400: 任务状态不正确或参数错误\n        - 500: 处理审核结果时发生错误\n        \nExample Request:\n    ```json\n    {\n        \"approved\": true,\n        \"feedback\": null\n    }\n    ```\n    \nExample Response (Approved):\n    ```json\n    {\n        \"status\": \"approved\",\n        \"message\": \"审核通过，继续生成详细内容\",\n        \"task_id\": \"550e8400-e29b-41d4-a716-446655440000\"\n    }\n    ```\n    \nExample Response (Rejected):\n    ```json\n    {\n        \"status\": \"rejected\",\n        \"message\": \"审核未通过，需要重新设计\",\n        \"task_id\": \"550e8400-e29b-41d4-a716-446655440000\",\n        \"feedback\": \"需要增加更多实战项目\"\n    }\n    ```",
+        "description": "人工审核端点（Human-in-the-Loop）\n\nArgs:\n    task_id: 任务 ID\n    approved: 是否批准\n    feedback: 用户反馈（如果未批准）",
         "operationId": "approve_roadmap_api_v1_roadmaps__task_id__approve_post",
         "parameters": [
           {
@@ -289,10 +527,10 @@
     "/api/v1/roadmaps/{roadmap_id}/concepts/{concept_id}/tutorials": {
       "get": {
         "tags": [
-          "tutorial"
+          "roadmaps"
         ],
         "summary": "Get Tutorial Versions",
-        "description": "获取指定概念的所有教程版本历史\n\nArgs:\n    roadmap_id: 路线图 ID\n    concept_id: 概念 ID\n    db: 数据库会话\n    \nReturns:\n    教程版本列表（按版本号降序，最新版本在前）\n    \nRaises:\n    HTTPException: 404 - 概念没有教程\n    \nExample:\n    ```json\n    {\n        \"roadmap_id\": \"python-web-dev-2024\",\n        \"concept_id\": \"flask-basics\",\n        \"total_versions\": 3,\n        \"tutorials\": [\n            {\n                \"tutorial_id\": \"tut-001\",\n                \"title\": \"Flask基础入门\",\n                \"content_version\": 3,\n                \"is_latest\": true,\n                \"content_status\": \"completed\"\n            },\n            ...\n        ]\n    }\n    ```",
+        "description": "获取指定概念的所有教程版本历史\n\nArgs:\n    roadmap_id: 路线图 ID\n    concept_id: 概念 ID\n    \nReturns:\n    教程版本列表（按版本号降序，最新版本在前）",
         "operationId": "get_tutorial_versions_api_v1_roadmaps__roadmap_id__concepts__concept_id__tutorials_get",
         "parameters": [
           {
@@ -339,10 +577,10 @@
     "/api/v1/roadmaps/{roadmap_id}/concepts/{concept_id}/tutorials/latest": {
       "get": {
         "tags": [
-          "tutorial"
+          "roadmaps"
         ],
         "summary": "Get Latest Tutorial",
-        "description": "获取指定概念的最新教程版本\n\nArgs:\n    roadmap_id: 路线图 ID\n    concept_id: 概念 ID\n    db: 数据库会话\n    \nReturns:\n    最新版本的教程元数据\n    \nRaises:\n    HTTPException: 404 - 概念没有教程\n    \nExample:\n    ```json\n    {\n        \"roadmap_id\": \"python-web-dev-2024\",\n        \"concept_id\": \"flask-basics\",\n        \"tutorial_id\": \"tut-001\",\n        \"title\": \"Flask基础入门\",\n        \"summary\": \"学习Flask框架的基础知识\",\n        \"content_url\": \"s3://...\",\n        \"content_version\": 3,\n        \"is_latest\": true,\n        \"content_status\": \"completed\",\n        \"estimated_completion_time\": 2.5,\n        \"generated_at\": \"2024-01-01T00:00:00Z\"\n    }\n    ```",
+        "description": "获取指定概念的最新教程版本\n\nArgs:\n    roadmap_id: 路线图 ID\n    concept_id: 概念 ID\n    \nReturns:\n    最新版本的教程元数据",
         "operationId": "get_latest_tutorial_api_v1_roadmaps__roadmap_id__concepts__concept_id__tutorials_latest_get",
         "parameters": [
           {
@@ -389,10 +627,10 @@
     "/api/v1/roadmaps/{roadmap_id}/concepts/{concept_id}/tutorials/v{version}": {
       "get": {
         "tags": [
-          "tutorial"
+          "roadmaps"
         ],
         "summary": "Get Tutorial By Version",
-        "description": "获取指定概念的特定版本教程\n\nArgs:\n    roadmap_id: 路线图 ID\n    concept_id: 概念 ID\n    version: 版本号\n    db: 数据库会话\n    \nReturns:\n    指定版本的教程元数据\n    \nRaises:\n    HTTPException: 404 - 指定版本的教程不存在\n    \nExample:\n    ```json\n    {\n        \"roadmap_id\": \"python-web-dev-2024\",\n        \"concept_id\": \"flask-basics\",\n        \"tutorial_id\": \"tut-001\",\n        \"title\": \"Flask基础入门\",\n        \"content_version\": 2,\n        \"is_latest\": false,\n        \"content_status\": \"completed\",\n        \"generated_at\": \"2023-12-01T00:00:00Z\"\n    }\n    ```",
+        "description": "获取指定概念的特定版本教程\n\nArgs:\n    roadmap_id: 路线图 ID\n    concept_id: 概念 ID\n    version: 版本号\n    \nReturns:\n    指定版本的教程元数据",
         "operationId": "get_tutorial_by_version_api_v1_roadmaps__roadmap_id__concepts__concept_id__tutorials_v_version__get",
         "parameters": [
           {
@@ -448,10 +686,10 @@
     "/api/v1/roadmaps/{roadmap_id}/concepts/{concept_id}/resources": {
       "get": {
         "tags": [
-          "resource"
+          "roadmaps"
         ],
         "summary": "Get Concept Resources",
-        "description": "获取指定概念的学习资源\n\nArgs:\n    roadmap_id: 路线图 ID\n    concept_id: 概念 ID\n    db: 数据库会话\n    \nReturns:\n    资源推荐列表\n    \nRaises:\n    HTTPException: 404 - 概念没有资源推荐\n    \nExample:\n    ```json\n    {\n        \"roadmap_id\": \"python-web-dev-2024\",\n        \"concept_id\": \"flask-basics\",\n        \"resources_id\": \"res-001\",\n        \"resources\": [\n            {\n                \"title\": \"Flask官方文档\",\n                \"url\": \"https://flask.palletsprojects.com/\",\n                \"type\": \"official_docs\",\n                \"description\": \"Flask框架的官方文档\"\n            },\n            {\n                \"title\": \"Flask教程视频\",\n                \"url\": \"https://youtube.com/...\",\n                \"type\": \"video\",\n                \"description\": \"B站Flask入门视频教程\"\n            }\n        ],\n        \"resources_count\": 2,\n        \"search_queries_used\": [\"Flask教程\", \"Flask文档\"],\n        \"generated_at\": \"2024-01-01T00:00:00Z\"\n    }\n    ```",
+        "description": "获取指定概念的学习资源\n\nArgs:\n    roadmap_id: 路线图 ID\n    concept_id: 概念 ID\n    \nReturns:\n    资源推荐列表",
         "operationId": "get_concept_resources_api_v1_roadmaps__roadmap_id__concepts__concept_id__resources_get",
         "parameters": [
           {
@@ -498,10 +736,10 @@
     "/api/v1/roadmaps/{roadmap_id}/concepts/{concept_id}/quiz": {
       "get": {
         "tags": [
-          "quiz"
+          "roadmaps"
         ],
         "summary": "Get Concept Quiz",
-        "description": "获取指定概念的测验\n\nArgs:\n    roadmap_id: 路线图 ID\n    concept_id: 概念 ID\n    db: 数据库会话\n    \nReturns:\n    测验数据，包含题目列表\n    \nRaises:\n    HTTPException: 404 - 概念没有测验\n    \nExample:\n    ```json\n    {\n        \"roadmap_id\": \"python-web-dev-2024\",\n        \"concept_id\": \"flask-basics\",\n        \"quiz_id\": \"quiz-001\",\n        \"questions\": [\n            {\n                \"question\": \"Flask是什么类型的框架？\",\n                \"options\": [\"Web框架\", \"数据分析框架\", \"游戏框架\", \"GUI框架\"],\n                \"correct_answer\": 0,\n                \"explanation\": \"Flask是一个轻量级的Python Web框架\",\n                \"difficulty\": \"easy\"\n            },\n            ...\n        ],\n        \"total_questions\": 10,\n        \"easy_count\": 3,\n        \"medium_count\": 5,\n        \"hard_count\": 2,\n        \"generated_at\": \"2024-01-01T00:00:00Z\"\n    }\n    ```",
+        "description": "获取指定概念的测验\n\nArgs:\n    roadmap_id: 路线图 ID\n    concept_id: 概念 ID\n    \nReturns:\n    测验数据，包含题目列表",
         "operationId": "get_concept_quiz_api_v1_roadmaps__roadmap_id__concepts__concept_id__quiz_get",
         "parameters": [
           {
@@ -548,10 +786,10 @@
     "/api/v1/roadmaps/{roadmap_id}/concepts/{concept_id}/tutorial/modify": {
       "post": {
         "tags": [
-          "modification"
+          "roadmaps"
         ],
         "summary": "Modify Tutorial",
-        "description": "修改指定概念的教程内容\n\n使用 TutorialModifierAgent 增量修改现有教程\n\nArgs:\n    roadmap_id: 路线图 ID\n    concept_id: 概念 ID\n    request: 修改请求，包含修改要求\n    db: 数据库会话\n    \nReturns:\n    修改后的教程信息\n    \nRaises:\n    HTTPException:\n        - 404: 路线图、概念或教程不存在\n        - 500: 修改失败\n        \nExample:\n    ```json\n    {\n        \"success\": true,\n        \"concept_id\": \"flask-basics\",\n        \"tutorial_id\": \"tut-001\",\n        \"title\": \"Flask基础入门（修订版）\",\n        \"content_version\": 4,\n        \"modification_summary\": \"增加了代码示例，简化了技术术语\",\n        \"changes_made\": [\"添加3个实战代码示例\", \"重写专业术语说明\"]\n    }\n    ```",
+        "description": "修改指定概念的教程内容\n\n使用 TutorialModifierAgent 增量修改现有教程。",
         "operationId": "modify_tutorial_api_v1_roadmaps__roadmap_id__concepts__concept_id__tutorial_modify_post",
         "parameters": [
           {
@@ -578,7 +816,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ModifyContentRequest"
+                "$ref": "#/components/schemas/app__api__v1__roadmap__ModifyContentRequest"
               }
             }
           }
@@ -608,10 +846,10 @@
     "/api/v1/roadmaps/{roadmap_id}/concepts/{concept_id}/resources/modify": {
       "post": {
         "tags": [
-          "modification"
+          "roadmaps"
         ],
         "summary": "Modify Resources",
-        "description": "修改指定概念的学习资源\n\n使用 ResourceModifierAgent 调整现有资源推荐\n\nArgs:\n    roadmap_id: 路线图 ID\n    concept_id: 概念 ID\n    request: 修改请求，包含修改要求\n    db: 数据库会话\n    \nReturns:\n    修改后的资源信息\n    \nRaises:\n    HTTPException:\n        - 404: 路线图、概念或资源不存在\n        - 500: 修改失败\n        \nExample:\n    ```json\n    {\n        \"success\": true,\n        \"concept_id\": \"flask-basics\",\n        \"resources_id\": \"res-001-v2\",\n        \"resources_count\": 5,\n        \"modification_summary\": \"添加了视频教程资源，移除了过时链接\",\n        \"changes_made\": [\"新增2个视频教程\", \"替换1个官方文档链接\"]\n    }\n    ```",
+        "description": "修改指定概念的学习资源\n\n使用 ResourceModifierAgent 调整现有资源推荐。",
         "operationId": "modify_resources_api_v1_roadmaps__roadmap_id__concepts__concept_id__resources_modify_post",
         "parameters": [
           {
@@ -638,7 +876,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ModifyContentRequest"
+                "$ref": "#/components/schemas/app__api__v1__roadmap__ModifyContentRequest"
               }
             }
           }
@@ -668,10 +906,10 @@
     "/api/v1/roadmaps/{roadmap_id}/concepts/{concept_id}/quiz/modify": {
       "post": {
         "tags": [
-          "modification"
+          "roadmaps"
         ],
         "summary": "Modify Quiz",
-        "description": "修改指定概念的测验内容\n\n使用 QuizModifierAgent 调整现有测验题目\n\nArgs:\n    roadmap_id: 路线图 ID\n    concept_id: 概念 ID\n    request: 修改请求，包含修改要求\n    db: 数据库会话\n    \nReturns:\n    修改后的测验信息\n    \nRaises:\n    HTTPException:\n        - 404: 路线图、概念或测验不存在\n        - 500: 修改失败\n        \nExample:\n    ```json\n    {\n        \"success\": true,\n        \"concept_id\": \"flask-basics\",\n        \"quiz_id\": \"quiz-001-v2\",\n        \"total_questions\": 12,\n        \"modification_summary\": \"增加了难题，调整了题目顺序\",\n        \"changes_made\": [\"新增3道hard难度题\", \"重新排序题目\"]\n    }\n    ```",
+        "description": "修改指定概念的测验题目\n\n使用 QuizModifierAgent 调整现有测验。",
         "operationId": "modify_quiz_api_v1_roadmaps__roadmap_id__concepts__concept_id__quiz_modify_post",
         "parameters": [
           {
@@ -698,7 +936,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ModifyContentRequest"
+                "$ref": "#/components/schemas/app__api__v1__roadmap__ModifyContentRequest"
               }
             }
           }
@@ -728,11 +966,11 @@
     "/api/v1/roadmaps/{roadmap_id}/concepts/{concept_id}/regenerate": {
       "post": {
         "tags": [
-          "retry"
+          "roadmaps"
         ],
-        "summary": "Regenerate Concept Content",
-        "description": "重新生成指定概念的所有内容（教程+资源+测验）\n\n用于用户不满意当前内容，想要完全重新生成的场景\n\nArgs:\n    roadmap_id: 路线图 ID\n    concept_id: 概念 ID\n    request: 包含用户 ID 和学习偏好\n    db: 数据库会话\n    \nReturns:\n    重新生成的结果\n    \nRaises:\n    HTTPException: 404 - 路线图或概念不存在\n    \nExample:\n    ```json\n    {\n        \"success\": true,\n        \"concept_id\": \"flask-basics\",\n        \"regenerated\": {\n            \"tutorial\": true,\n            \"resources\": true,\n            \"quiz\": true\n        },\n        \"message\": \"内容重新生成成功\"\n    }\n    ```",
-        "operationId": "regenerate_concept_content_api_v1_roadmaps__roadmap_id__concepts__concept_id__regenerate_post",
+        "summary": "Regenerate Tutorial",
+        "description": "重新生成指定概念的教程（创建新版本）\n\nArgs:\n    roadmap_id: 路线图 ID\n    concept_id: 概念 ID\n    request: 包含用户 ID 和学习偏好\n    \nReturns:\n    新生成的教程元数据（包含版本号）\n    \n说明：\n- 重新生成会创建新版本，不会覆盖旧版本\n- 新版本会自动标记为最新（is_latest=True）\n- 旧版本会被标记为非最新（is_latest=False）",
+        "operationId": "regenerate_tutorial_api_v1_roadmaps__roadmap_id__concepts__concept_id__regenerate_post",
         "parameters": [
           {
             "name": "roadmap_id",
@@ -758,7 +996,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RegenerateContentRequest"
+                "$ref": "#/components/schemas/RegenerateTutorialRequest"
               }
             }
           }
@@ -769,6 +1007,668 @@
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/roadmaps/generate-stream": {
+      "post": {
+        "tags": [
+          "roadmaps"
+        ],
+        "summary": "Generate Roadmap Stream",
+        "description": "流式生成学习路线图\n\n使用 Server-Sent Events (SSE) 实时推送生成过程。\n\nArgs:\n    request: 用户请求\n    include_tutorials: 是否包含教程生成阶段（默认 False）\n    \nReturns:\n    Server-Sent Events 流\n    \nEvent 格式：\n    需求分析和框架设计阶段：\n    - chunk: {\"type\": \"chunk\", \"content\": \"...\", \"agent\": \"...\"}\n    - complete: {\"type\": \"complete\", \"data\": {...}, \"agent\": \"...\"}\n    \n    教程生成阶段（当 include_tutorials=True）：\n    - tutorials_start: {\"type\": \"tutorials_start\", \"total_count\": N}\n    - batch_start: {\"type\": \"batch_start\", \"batch_index\": 1, \"batch_size\": 2, ...}\n    - tutorial_start: {\"type\": \"tutorial_start\", \"concept_id\": \"...\", \"concept_name\": \"...\"}\n    - tutorial_chunk: {\"type\": \"tutorial_chunk\", \"concept_id\": \"...\", \"content\": \"...\"}\n    - tutorial_complete: {\"type\": \"tutorial_complete\", \"concept_id\": \"...\", \"data\": {...}}\n    - tutorial_error: {\"type\": \"tutorial_error\", \"concept_id\": \"...\", \"error\": \"...\"}\n    - batch_complete: {\"type\": \"batch_complete\", \"batch_index\": 1, \"progress\": {...}}\n    - tutorials_done: {\"type\": \"tutorials_done\", \"summary\": {...}}\n    \n    完成：\n    - done: {\"type\": \"done\", \"summary\": {...}}\n    - error: {\"type\": \"error\", \"message\": \"...\", \"agent\": \"...\"}",
+        "operationId": "generate_roadmap_stream_api_v1_roadmaps_generate_stream_post",
+        "parameters": [
+          {
+            "name": "include_tutorials",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Tutorials"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/roadmaps/generate-full-stream": {
+      "post": {
+        "tags": [
+          "roadmaps"
+        ],
+        "summary": "Generate Full Roadmap Stream",
+        "description": "完整流式生成学习路线图（包含教程生成）\n\n这是 /generate-stream?include_tutorials=true 的便捷端点。\n使用 Server-Sent Events (SSE) 实时推送整个生成过程。\n\n流程：需求分析 → 框架设计 → 批次教程生成\n\nArgs:\n    request: 用户请求\n    \nReturns:\n    Server-Sent Events 流（包含所有阶段）",
+        "operationId": "generate_full_roadmap_stream_api_v1_roadmaps_generate_full_stream_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/roadmaps/{roadmap_id}/concepts/{concept_id}/resources/regenerate": {
+      "post": {
+        "tags": [
+          "roadmaps"
+        ],
+        "summary": "Regenerate Resources",
+        "description": "重新生成指定概念的学习资源\n\nArgs:\n    roadmap_id: 路线图 ID\n    concept_id: 概念 ID\n    request: 包含用户 ID 和学习偏好\n    \nReturns:\n    新生成的资源推荐",
+        "operationId": "regenerate_resources_api_v1_roadmaps__roadmap_id__concepts__concept_id__resources_regenerate_post",
+        "parameters": [
+          {
+            "name": "roadmap_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Roadmap Id"
+            }
+          },
+          {
+            "name": "concept_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Concept Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegenerateTutorialRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/roadmaps/{roadmap_id}/concepts/{concept_id}/quiz/regenerate": {
+      "post": {
+        "tags": [
+          "roadmaps"
+        ],
+        "summary": "Regenerate Quiz",
+        "description": "重新生成指定概念的测验\n\nArgs:\n    roadmap_id: 路线图 ID\n    concept_id: 概念 ID\n    request: 包含用户 ID 和学习偏好\n    \nReturns:\n    新生成的测验",
+        "operationId": "regenerate_quiz_api_v1_roadmaps__roadmap_id__concepts__concept_id__quiz_regenerate_post",
+        "parameters": [
+          {
+            "name": "roadmap_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Roadmap Id"
+            }
+          },
+          {
+            "name": "concept_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Concept Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegenerateTutorialRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/roadmaps/{roadmap_id}/chat-stream": {
+      "post": {
+        "tags": [
+          "roadmaps"
+        ],
+        "summary": "Chat Modification Stream",
+        "description": "聊天式修改入口（流式返回）\n\n分析用户自然语言修改意见 → 执行修改 → 流式返回结果\n\nArgs:\n    roadmap_id: 路线图 ID\n    request: 聊天修改请求（包含用户消息、上下文、偏好）\n    \nReturns:\n    Server-Sent Events 流\n    \nEvent 类型：\n    - analyzing: 正在分析意图\n    - intents: 检测到的修改意图列表\n    - modifying: 正在执行某项修改\n    - result: 单个修改完成\n    - done: 全部完成 + 汇总\n    - error: 错误信息",
+        "operationId": "chat_modification_stream_api_v1_roadmaps__roadmap_id__chat_stream_post",
+        "parameters": [
+          {
+            "name": "roadmap_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Roadmap Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatModificationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/roadmaps/{roadmap_id}/restore": {
+      "post": {
+        "tags": [
+          "roadmaps"
+        ],
+        "summary": "Restore Roadmap",
+        "description": "从回收站恢复路线图\n\nArgs:\n    roadmap_id: 路线图 ID\n    user_id: 用户 ID（用于权限验证）\n    \nReturns:\n    恢复结果\n    \nRaises:\n    HTTPException: 如果路线图不存在或无权限",
+        "operationId": "restore_roadmap_api_v1_roadmaps__roadmap_id__restore_post",
+        "parameters": [
+          {
+            "name": "roadmap_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Roadmap Id"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/roadmaps/{roadmap_id}/permanent": {
+      "delete": {
+        "tags": [
+          "roadmaps"
+        ],
+        "summary": "Permanent Delete Roadmap",
+        "description": "永久删除路线图（不可恢复）\n\n警告：此操作会从数据库中永久删除路线图及所有关联数据\n\nArgs:\n    roadmap_id: 路线图 ID\n    user_id: 用户 ID（用于权限验证）\n    \nReturns:\n    删除结果\n    \nRaises:\n    HTTPException: 如果路线图不存在或无权限",
+        "operationId": "permanent_delete_roadmap_api_v1_roadmaps__roadmap_id__permanent_delete",
+        "parameters": [
+          {
+            "name": "roadmap_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Roadmap Id"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/profile": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Get User Profile",
+        "description": "获取用户画像\n\nArgs:\n    user_id: 用户 ID\n    \nReturns:\n    用户画像数据，如果不存在则返回默认值",
+        "operationId": "get_user_profile_api_v1_users__user_id__profile_get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserProfileResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Save User Profile",
+        "description": "保存或更新用户画像\n\nArgs:\n    user_id: 用户 ID\n    request: 用户画像数据\n    \nReturns:\n    保存后的用户画像",
+        "operationId": "save_user_profile_api_v1_users__user_id__profile_put",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserProfileRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserProfileResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/roadmaps": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Get User Roadmaps",
+        "description": "获取用户的路线图列表（只包括已生成完成的路线图）\n\nArgs:\n    user_id: 用户 ID\n    limit: 返回数量限制（默认50）\n    offset: 分页偏移（默认0）\n    \nReturns:\n    用户的路线图列表（从 roadmap_metadata 表查询）",
+        "operationId": "get_user_roadmaps_api_v1_users__user_id__roadmaps_get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoadmapHistoryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/roadmaps/trash": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Get Deleted Roadmaps",
+        "description": "获取用户回收站中的路线图列表\n\nArgs:\n    user_id: 用户 ID\n    limit: 返回数量限制（默认50）\n    offset: 分页偏移（默认0）\n    \nReturns:\n    回收站中的路线图列表，按删除时间降序排列",
+        "operationId": "get_deleted_roadmaps_api_v1_users__user_id__roadmaps_trash_get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoadmapHistoryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/tasks": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Get User Tasks",
+        "description": "获取用户的任务列表，支持按状态筛选\n\nArgs:\n    user_id: 用户 ID\n    status: 任务状态筛选（可选）\n    limit: 返回数量限制（默认50）\n    offset: 分页偏移（默认0）\n    \nReturns:\n    任务列表及各状态统计",
+        "operationId": "get_user_tasks_api_v1_users__user_id__tasks_get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskListResponse"
+                }
               }
             }
           },
@@ -805,6 +1705,45 @@
   },
   "components": {
     "schemas": {
+      "ChatModificationRequest": {
+        "properties": {
+          "user_message": {
+            "type": "string",
+            "title": "User Message",
+            "description": "用户的自然语言修改意见"
+          },
+          "context": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context",
+            "description": "当前上下文（如正在查看的 concept_id）"
+          },
+          "user_id": {
+            "type": "string",
+            "title": "User Id",
+            "description": "用户 ID"
+          },
+          "preferences": {
+            "$ref": "#/components/schemas/LearningPreferences",
+            "description": "用户学习偏好"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_message",
+          "user_id",
+          "preferences"
+        ],
+        "title": "ChatModificationRequest",
+        "description": "聊天修改请求"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -965,42 +1904,6 @@
         "title": "LearningPreferences",
         "description": "学习偏好配置"
       },
-      "ModifyContentRequest": {
-        "properties": {
-          "user_id": {
-            "type": "string",
-            "title": "User Id",
-            "description": "用户ID"
-          },
-          "preferences": {
-            "$ref": "#/components/schemas/LearningPreferences",
-            "description": "用户学习偏好"
-          },
-          "requirements": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "minItems": 1,
-            "title": "Requirements",
-            "description": "修改要求列表",
-            "examples": [
-              [
-                "增加更多代码示例",
-                "简化技术术语"
-              ]
-            ]
-          }
-        },
-        "type": "object",
-        "required": [
-          "user_id",
-          "preferences",
-          "requirements"
-        ],
-        "title": "ModifyContentRequest",
-        "description": "修改内容请求"
-      },
       "RegenerateContentRequest": {
         "properties": {
           "user_id": {
@@ -1021,25 +1924,12 @@
         "title": "RegenerateContentRequest",
         "description": "重新生成内容请求"
       },
-      "RetryFailedRequest": {
+      "RegenerateTutorialRequest": {
         "properties": {
           "user_id": {
             "type": "string",
             "title": "User Id",
-            "description": "用户ID"
-          },
-          "content_types": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Content Types",
-            "description": "要重试的内容类型列表",
-            "default": [
-              "tutorial",
-              "resources",
-              "quiz"
-            ]
+            "description": "用户 ID"
           },
           "preferences": {
             "$ref": "#/components/schemas/LearningPreferences",
@@ -1051,8 +1941,528 @@
           "user_id",
           "preferences"
         ],
-        "title": "RetryFailedRequest",
-        "description": "重试失败内容请求"
+        "title": "RegenerateTutorialRequest",
+        "description": "重新生成教程请求"
+      },
+      "RetryContentRequest": {
+        "properties": {
+          "preferences": {
+            "$ref": "#/components/schemas/LearningPreferences",
+            "description": "用户学习偏好"
+          }
+        },
+        "type": "object",
+        "required": [
+          "preferences"
+        ],
+        "title": "RetryContentRequest",
+        "description": "单个概念内容重试请求"
+      },
+      "RetryContentResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "description": "是否成功"
+          },
+          "concept_id": {
+            "type": "string",
+            "title": "Concept Id",
+            "description": "概念 ID"
+          },
+          "content_type": {
+            "type": "string",
+            "enum": [
+              "tutorial",
+              "resources",
+              "quiz"
+            ],
+            "title": "Content Type",
+            "description": "内容类型"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "description": "结果消息"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data",
+            "description": "重试成功时返回的数据"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success",
+          "concept_id",
+          "content_type",
+          "message"
+        ],
+        "title": "RetryContentResponse",
+        "description": "单个概念内容重试响应"
+      },
+      "RoadmapHistoryItem": {
+        "properties": {
+          "roadmap_id": {
+            "type": "string",
+            "title": "Roadmap Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "total_concepts": {
+            "type": "integer",
+            "title": "Total Concepts"
+          },
+          "completed_concepts": {
+            "type": "integer",
+            "title": "Completed Concepts"
+          },
+          "topic": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          },
+          "task_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Status"
+          },
+          "current_step": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Step"
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deleted At"
+          },
+          "deleted_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deleted By"
+          }
+        },
+        "type": "object",
+        "required": [
+          "roadmap_id",
+          "title",
+          "created_at",
+          "total_concepts",
+          "completed_concepts"
+        ],
+        "title": "RoadmapHistoryItem",
+        "description": "路线图历史项"
+      },
+      "RoadmapHistoryResponse": {
+        "properties": {
+          "roadmaps": {
+            "items": {
+              "$ref": "#/components/schemas/RoadmapHistoryItem"
+            },
+            "type": "array",
+            "title": "Roadmaps"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "in_progress_count": {
+            "type": "integer",
+            "title": "In Progress Count",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "roadmaps",
+          "total"
+        ],
+        "title": "RoadmapHistoryResponse",
+        "description": "用户路线图历史响应"
+      },
+      "TaskListItem": {
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "title": "Task Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "current_step": {
+            "type": "string",
+            "title": "Current Step"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "roadmap_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Roadmap Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "status",
+          "current_step",
+          "title",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "TaskListItem",
+        "description": "任务列表项"
+      },
+      "TaskListResponse": {
+        "properties": {
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/TaskListItem"
+            },
+            "type": "array",
+            "title": "Tasks"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "pending_count": {
+            "type": "integer",
+            "title": "Pending Count"
+          },
+          "processing_count": {
+            "type": "integer",
+            "title": "Processing Count"
+          },
+          "completed_count": {
+            "type": "integer",
+            "title": "Completed Count"
+          },
+          "failed_count": {
+            "type": "integer",
+            "title": "Failed Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tasks",
+          "total",
+          "pending_count",
+          "processing_count",
+          "completed_count",
+          "failed_count"
+        ],
+        "title": "TaskListResponse",
+        "description": "任务列表响应"
+      },
+      "TechStackItem": {
+        "properties": {
+          "technology": {
+            "type": "string",
+            "title": "Technology",
+            "description": "技术名称"
+          },
+          "proficiency": {
+            "type": "string",
+            "title": "Proficiency",
+            "description": "熟练程度: beginner, intermediate, expert"
+          }
+        },
+        "type": "object",
+        "required": [
+          "technology",
+          "proficiency"
+        ],
+        "title": "TechStackItem",
+        "description": "技术栈项"
+      },
+      "UserProfileRequest": {
+        "properties": {
+          "industry": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Industry",
+            "description": "所属行业"
+          },
+          "current_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Role",
+            "description": "当前职位"
+          },
+          "tech_stack": {
+            "items": {
+              "$ref": "#/components/schemas/TechStackItem"
+            },
+            "type": "array",
+            "title": "Tech Stack",
+            "description": "技术栈列表",
+            "default": []
+          },
+          "primary_language": {
+            "type": "string",
+            "title": "Primary Language",
+            "description": "主要语言",
+            "default": "zh"
+          },
+          "secondary_language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secondary Language",
+            "description": "次要语言"
+          },
+          "weekly_commitment_hours": {
+            "type": "integer",
+            "maximum": 168,
+            "minimum": 1,
+            "title": "Weekly Commitment Hours",
+            "description": "每周学习时间",
+            "default": 10
+          },
+          "learning_style": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Learning Style",
+            "description": "学习风格: visual, text, audio, hands_on",
+            "default": []
+          },
+          "ai_personalization": {
+            "type": "boolean",
+            "title": "Ai Personalization",
+            "description": "是否启用 AI 个性化",
+            "default": true
+          }
+        },
+        "type": "object",
+        "title": "UserProfileRequest",
+        "description": "用户画像请求体"
+      },
+      "UserProfileResponse": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "industry": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Industry"
+          },
+          "current_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Role"
+          },
+          "tech_stack": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Tech Stack",
+            "default": []
+          },
+          "primary_language": {
+            "type": "string",
+            "title": "Primary Language",
+            "default": "zh"
+          },
+          "secondary_language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secondary Language"
+          },
+          "weekly_commitment_hours": {
+            "type": "integer",
+            "title": "Weekly Commitment Hours",
+            "default": 10
+          },
+          "learning_style": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Learning Style",
+            "default": []
+          },
+          "ai_personalization": {
+            "type": "boolean",
+            "title": "Ai Personalization",
+            "default": true
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id"
+        ],
+        "title": "UserProfileResponse",
+        "description": "用户画像响应体"
       },
       "UserRequest": {
         "properties": {
@@ -1121,6 +2531,142 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "app__api__v1__endpoints__modification__ModifyContentRequest": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "title": "User Id",
+            "description": "用户ID"
+          },
+          "preferences": {
+            "$ref": "#/components/schemas/LearningPreferences",
+            "description": "用户学习偏好"
+          },
+          "requirements": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Requirements",
+            "description": "修改要求列表",
+            "examples": [
+              [
+                "增加更多代码示例",
+                "简化技术术语"
+              ]
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "preferences",
+          "requirements"
+        ],
+        "title": "ModifyContentRequest",
+        "description": "修改内容请求"
+      },
+      "app__api__v1__endpoints__retry__RetryFailedRequest": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "title": "User Id",
+            "description": "用户ID"
+          },
+          "content_types": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Content Types",
+            "description": "要重试的内容类型列表",
+            "default": [
+              "tutorial",
+              "resources",
+              "quiz"
+            ]
+          },
+          "preferences": {
+            "$ref": "#/components/schemas/LearningPreferences",
+            "description": "用户学习偏好"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "preferences"
+        ],
+        "title": "RetryFailedRequest",
+        "description": "重试失败内容请求"
+      },
+      "app__api__v1__roadmap__ModifyContentRequest": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "title": "User Id",
+            "description": "用户 ID"
+          },
+          "preferences": {
+            "$ref": "#/components/schemas/LearningPreferences",
+            "description": "用户学习偏好"
+          },
+          "requirements": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Requirements",
+            "description": "具体修改要求列表"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "preferences",
+          "requirements"
+        ],
+        "title": "ModifyContentRequest",
+        "description": "内容修改请求"
+      },
+      "app__api__v1__roadmap__RetryFailedRequest": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "title": "User Id",
+            "description": "用户 ID"
+          },
+          "preferences": {
+            "$ref": "#/components/schemas/LearningPreferences",
+            "description": "用户学习偏好"
+          },
+          "content_types": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "tutorial",
+                "resources",
+                "quiz"
+              ]
+            },
+            "type": "array",
+            "title": "Content Types",
+            "description": "要重试的内容类型列表",
+            "default": [
+              "tutorial",
+              "resources",
+              "quiz"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "preferences"
+        ],
+        "title": "RetryFailedRequest",
+        "description": "断点续传请求"
       }
     }
   }

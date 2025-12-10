@@ -7,6 +7,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { EmptyState } from '@/components/common/empty-state';
 import { RoadmapCard, CoverImage, MyRoadmap, CommunityRoadmap } from '@/components/roadmap';
+import { MagicCard } from '@/components/ui/magic-card';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Plus,
@@ -101,21 +102,35 @@ const communityRoadmaps: CommunityRoadmap[] = [
 function CreateRoadmapCard() {
   return (
     <Link href="/new" className="group flex-shrink-0 w-[220px]">
-      <Card className="overflow-hidden h-full border-2 border-dashed border-sage-200 hover:border-sage-400 hover:bg-sage-50/50 transition-all duration-300 flex flex-col items-center justify-center">
-        <div className="aspect-[16/9] w-full bg-sage-50 flex items-center justify-center">
-          <div className="w-12 h-12 rounded-full bg-sage-100 flex items-center justify-center group-hover:bg-sage-200 transition-colors">
-            <Plus size={24} className="text-sage-600" />
+      <MagicCard
+        className="overflow-hidden h-full rounded-xl"
+        gradientSize={250}
+        gradientColor="rgba(96, 117, 96, 0.15)"
+        gradientFrom="#a3b1a3"
+        gradientTo="#607560"
+      >
+        <Card className="overflow-hidden border-2 border-dashed border-sage-200 hover:border-sage-400 bg-white/95 backdrop-blur-sm hover:bg-sage-50/80 transition-all duration-300 flex flex-col items-center justify-center h-full shadow-none">
+          <div className="aspect-[16/9] w-full bg-gradient-to-br from-sage-50 to-sage-100 flex items-center justify-center relative overflow-hidden">
+            {/* 背景装饰 */}
+            <div className="absolute inset-0 opacity-10">
+              <div className="absolute top-0 left-0 w-32 h-32 bg-sage-300 rounded-full blur-3xl transform -translate-x-1/2 -translate-y-1/2 group-hover:scale-150 transition-transform duration-700" />
+              <div className="absolute bottom-0 right-0 w-32 h-32 bg-sage-400 rounded-full blur-3xl transform translate-x-1/2 translate-y-1/2 group-hover:scale-150 transition-transform duration-700" />
+            </div>
+            
+            <div className="relative w-14 h-14 rounded-2xl bg-gradient-to-br from-sage-100 to-sage-200 flex items-center justify-center group-hover:from-sage-200 group-hover:to-sage-300 transition-all duration-300 shadow-lg group-hover:shadow-xl group-hover:scale-110">
+              <Plus size={28} className="text-sage-600 group-hover:text-sage-700 transition-colors" />
+            </div>
           </div>
-        </div>
-        <CardContent className="p-4 text-center">
-          <h3 className="font-serif font-medium text-sm text-foreground mb-1">
-            Create New
-          </h3>
-          <p className="text-[11px] text-muted-foreground">
-            Start learning journey
-          </p>
-        </CardContent>
-      </Card>
+          <CardContent className="p-4 text-center">
+            <h3 className="font-serif font-medium text-sm text-foreground mb-1 group-hover:text-sage-700 transition-colors">
+              Create New
+            </h3>
+            <p className="text-[11px] text-muted-foreground">
+              Start learning journey
+            </p>
+          </CardContent>
+        </Card>
+      </MagicCard>
     </Link>
   );
 }

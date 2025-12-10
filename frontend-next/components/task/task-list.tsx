@@ -221,7 +221,7 @@ export function TaskList({ tasks, isLoading, onRetry, onDelete }: TaskListProps)
                       {task.status === 'completed' && task.roadmap_id && (
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <Link href={`/roadmaps/${task.roadmap_id}`}>
+                            <Link href={`/roadmap/${task.roadmap_id}`}>
                               <Button 
                                 size="icon" 
                                 variant="ghost" 
