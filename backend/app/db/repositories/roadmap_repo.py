@@ -110,6 +110,38 @@ class RoadmapRepository:
         )
         return result.scalar_one_or_none()
     
+    async def get_active_retry_task_by_roadmap_id(self, roadmap_id: str) -> Optional[RoadmapTask]:
+        """
+        通过 roadmap_id 获取正在进行的重试任务
+        
+        用于前端检测是否有正在进行的重试任务，以便用户切换 tab 返回时恢复订阅。
+        
+        重试任务的特征：
+        - roadmap_id 匹配
+        - status 为 "processing"
+        - user_request.type 为 "retry_failed"
+        
+        Args:
+            roadmap_id: 路线图 ID
+            
+        Returns:
+            正在进行的重试任务记录，如果不存在则返回 None
+        """
+        from sqlalchemy import cast, String
+        
+        result = await self.session.execute(
+            select(RoadmapTask)
+            .where(
+                RoadmapTask.roadmap_id == roadmap_id,
+                RoadmapTask.status == "processing",
+                # JSON 字段查询：检查 user_request.type == "retry_failed"
+                cast(RoadmapTask.user_request["type"], String) == '"retry_failed"'
+            )
+            .order_by(RoadmapTask.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+    
     async def get_in_progress_tasks_by_user(self, user_id: str) -> List[RoadmapTask]:
         """
         获取用户所有进行中的任务

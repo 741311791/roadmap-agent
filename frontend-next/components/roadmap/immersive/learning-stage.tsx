@@ -5,7 +5,8 @@ import { cn } from '@/lib/utils';
 import type { Concept, LearningPreferences } from '@/types/generated/models';
 import type { ResourcesResponse, QuizResponse } from '@/types/generated/services';
 import { getConceptResources, getConceptQuiz } from '@/lib/api/endpoints';
-import { FailedContentAlert, GeneratingContentAlert } from '@/components/common/retry-content-button';
+import { FailedContentAlert } from '@/components/common/retry-content-button';
+import { StaleStatusDetector } from '@/components/common/stale-status-detector';
 import { 
   Sparkles, 
   BookOpen, 
@@ -910,6 +911,8 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId, 
 
   // Fetch resources when tab is activated or concept changes
   useEffect(() => {
+    // 只有当 resources_id 存在时才尝试获取资源
+    // 如果 resources_id 为 null，说明资源还未生成或生成失败，应显示重试按钮
     if (activeFormat === 'learning-resources' && concept && roadmapId && concept.resources_id) {
       setResourcesLoading(true);
       setResourcesError(null);
@@ -925,10 +928,12 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId, 
           setResourcesLoading(false);
         });
     }
-  }, [activeFormat, concept?.concept_id, roadmapId]);
+  }, [activeFormat, concept?.concept_id, concept?.resources_id, roadmapId]);
 
   // Fetch quiz when tab is activated or concept changes
   useEffect(() => {
+    // 只有当 quiz_id 存在时才尝试获取测验
+    // 如果 quiz_id 为 null，说明测验还未生成或生成失败，应显示重试按钮
     if (activeFormat === 'quiz' && concept && roadmapId && concept.quiz_id) {
       setQuizLoading(true);
       setQuizError(null);
@@ -944,7 +949,7 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId, 
           setQuizLoading(false);
         });
     }
-  }, [activeFormat, concept?.concept_id, roadmapId]);
+  }, [activeFormat, concept?.concept_id, concept?.quiz_id, roadmapId]);
 
   if (!concept) {
     return (
@@ -998,9 +1003,15 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId, 
                 prose-blockquote:border-l-sage-300 prose-blockquote:bg-sage-50/50 prose-blockquote:rounded-r-lg prose-blockquote:py-1 prose-blockquote:text-foreground/70"
               >
                 {tutorialGenerating || tutorialPending ? (
-                  /* 教程正在生成中，显示加载状态 */
-                  <GeneratingContentAlert
+                  /* 教程正在生成中，显示带超时检测的加载状态 */
+                  <StaleStatusDetector
+                    roadmapId={roadmapId || ''}
+                    conceptId={concept?.concept_id || ''}
                     contentType="tutorial"
+                    status={concept?.content_status as 'pending' | 'generating'}
+                    preferences={userPreferences}
+                    timeoutSeconds={120}
+                    onSuccess={() => onRetrySuccess?.()}
                   />
                 ) : tutorialFailed && roadmapId && concept && userPreferences ? (
                   /* 教程生成失败，显示重试按钮 */
@@ -1069,9 +1080,15 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId, 
           {/* Placeholder for other formats */}
           {activeFormat === 'learning-resources' && (
             resourcesGenerating || resourcesPending ? (
-              /* 资源推荐正在生成中，显示加载状态 */
-              <GeneratingContentAlert
+              /* 资源推荐正在生成中，显示带超时检测的加载状态 */
+              <StaleStatusDetector
+                roadmapId={roadmapId || ''}
+                conceptId={concept?.concept_id || ''}
                 contentType="resources"
+                status={concept?.resources_status as 'pending' | 'generating'}
+                preferences={userPreferences}
+                timeoutSeconds={120}
+                onSuccess={() => onRetrySuccess?.()}
               />
             ) : resourcesFailed && roadmapId && concept && userPreferences ? (
               /* 资源推荐生成失败，显示重试按钮 */
@@ -1097,9 +1114,15 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId, 
 
           {activeFormat === 'quiz' && (
             quizGenerating || quizPending ? (
-              /* 测验正在生成中，显示加载状态 */
-              <GeneratingContentAlert
+              /* 测验正在生成中，显示带超时检测的加载状态 */
+              <StaleStatusDetector
+                roadmapId={roadmapId || ''}
+                conceptId={concept?.concept_id || ''}
                 contentType="quiz"
+                status={concept?.quiz_status as 'pending' | 'generating'}
+                preferences={userPreferences}
+                timeoutSeconds={120}
+                onSuccess={() => onRetrySuccess?.()}
               />
             ) : quizFailed && roadmapId && concept && userPreferences ? (
               /* 测验生成失败，显示重试按钮 */

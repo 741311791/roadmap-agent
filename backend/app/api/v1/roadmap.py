@@ -264,6 +264,154 @@ async def get_roadmap_active_task(
         }
 
 
+@router.get("/{roadmap_id}/active-retry-task")
+async def get_roadmap_active_retry_task(
+    roadmap_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    获取路线图当前正在进行的重试任务
+    
+    用于前端检测是否有正在进行的重试任务：
+    - 用户切换 tab 返回时，检查是否有正在进行的重试任务
+    - 如果有，前端可以用返回的 task_id 重新订阅 WebSocket
+    
+    Args:
+        roadmap_id: 路线图 ID
+        
+    Returns:
+        正在进行的重试任务信息，包含：
+        - has_active_retry_task: 是否有正在进行的重试任务
+        - task_id: 重试任务 ID（用于 WebSocket 订阅）
+        - current_step: 当前执行步骤
+        - items_to_retry: 正在重试的内容类型及数量
+        - created_at: 任务创建时间
+    """
+    repo = RoadmapRepository(db)
+    
+    # 检查路线图是否存在
+    metadata = await repo.get_roadmap_metadata(roadmap_id)
+    if not metadata:
+        raise HTTPException(status_code=404, detail="路线图不存在")
+    
+    # 获取正在进行的重试任务
+    retry_task = await repo.get_active_retry_task_by_roadmap_id(roadmap_id)
+    
+    if retry_task:
+        # 从 user_request 中提取重试信息
+        user_request = retry_task.user_request or {}
+        items_to_retry = user_request.get("items_to_retry", {})
+        content_types = user_request.get("content_types", [])
+        
+        return {
+            "has_active_retry_task": True,
+            "task_id": retry_task.task_id,
+            "status": retry_task.status,
+            "current_step": retry_task.current_step,
+            "items_to_retry": items_to_retry,
+            "content_types": content_types,
+            "created_at": retry_task.created_at.isoformat() if retry_task.created_at else None,
+            "updated_at": retry_task.updated_at.isoformat() if retry_task.updated_at else None,
+        }
+    else:
+        return {
+            "has_active_retry_task": False,
+            "task_id": None,
+            "status": None,
+            "current_step": None,
+            "items_to_retry": None,
+            "content_types": None,
+        }
+
+
+@router.get("/{roadmap_id}/status-check")
+async def check_roadmap_status_quick(
+    roadmap_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    快速检查路线图状态，用于检测僵尸状态
+    
+    检测逻辑：
+    1. 获取路线图的 task_id
+    2. 检查任务是否还在运行
+    3. 如果任务不在运行，但概念状态为 pending/generating，则为僵尸状态
+    
+    Args:
+        roadmap_id: 路线图 ID
+        
+    Returns:
+        {
+            "roadmap_id": str,
+            "has_active_task": bool,
+            "task_status": str | None,
+            "stale_concepts": [
+                {
+                    "concept_id": str,
+                    "concept_name": str,
+                    "content_type": "tutorial" | "resources" | "quiz",
+                    "current_status": "pending" | "generating"
+                }
+            ]
+        }
+    """
+    repo = RoadmapRepository(db)
+    
+    # 获取路线图元数据
+    metadata = await repo.get_roadmap_metadata(roadmap_id)
+    if not metadata:
+        raise HTTPException(status_code=404, detail="路线图不存在")
+    
+    # 获取关联的任务状态
+    task = await repo.get_task(metadata.task_id) if metadata.task_id else None
+    has_active_task = task and task.status in ['pending', 'processing', 'human_review_pending']
+    
+    # 如果有活跃任务，说明正在正常生成，不是僵尸状态
+    if has_active_task:
+        return {
+            "roadmap_id": roadmap_id,
+            "has_active_task": True,
+            "task_status": task.status,
+            "stale_concepts": [],
+        }
+    
+    # 检查是否有僵尸状态的概念
+    framework_data = metadata.framework_data
+    stale_concepts = []
+    
+    for stage in framework_data.get("stages", []):
+        for module in stage.get("modules", []):
+            for concept in module.get("concepts", []):
+                concept_id = concept.get("concept_id")
+                concept_name = concept.get("name")
+                
+                # 检查三种内容类型的状态
+                checks = [
+                    ("tutorial", "content_status"),
+                    ("resources", "resources_status"),
+                    ("quiz", "quiz_status"),
+                ]
+                
+                for content_type, status_key in checks:
+                    status = concept.get(status_key)
+                    
+                    # pending 或 generating 但没有活跃任务 → 僵尸状态
+                    if status in ["pending", "generating"]:
+                        stale_concepts.append({
+                            "concept_id": concept_id,
+                            "concept_name": concept_name,
+                            "content_type": content_type,
+                            "current_status": status,
+                        })
+    
+    return {
+        "roadmap_id": roadmap_id,
+        "has_active_task": False,
+        "task_status": task.status if task else None,
+        "stale_concepts": stale_concepts,
+    }
+
+
 @router.post("/{task_id}/approve")
 async def approve_roadmap(
     task_id: str,
@@ -1131,16 +1279,39 @@ async def retry_failed_content(
             }
         }
     
-    # 4. 创建重试任务
+    # 4. 创建重试任务 ID
     retry_task_id = str(uuid.uuid4())
     
-    # 5. 启动后台重试任务
+    # 5. 创建 RoadmapTask 数据库记录（支持用户切换 tab 返回时查询状态）
+    await repo.create_task(
+        task_id=retry_task_id,
+        user_id=request.user_id,
+        user_request={
+            "type": "retry_failed",
+            "roadmap_id": roadmap_id,
+            "content_types": request.content_types,
+            "items_to_retry": {
+                content_type: len(items) for content_type, items in items_to_retry.items()
+            },
+            "preferences": request.preferences.model_dump(mode='json'),
+        },
+    )
+    await repo.update_task_status(
+        task_id=retry_task_id,
+        status="processing",
+        current_step="retry_started",
+        roadmap_id=roadmap_id,
+    )
+    await db.commit()
+    
+    # 6. 启动后台重试任务
     background_tasks.add_task(
         _execute_retry_failed_task,
         retry_task_id=retry_task_id,
         roadmap_id=roadmap_id,
         items_to_retry=items_to_retry,
         user_preferences=request.preferences,
+        user_id=request.user_id,
     )
     
     return {
@@ -1160,6 +1331,7 @@ async def _execute_retry_failed_task(
     roadmap_id: str,
     items_to_retry: dict,
     user_preferences: LearningPreferences,
+    user_id: str,
 ):
     """
     后台执行重试失败任务
@@ -1169,8 +1341,10 @@ async def _execute_retry_failed_task(
         roadmap_id: 路线图 ID
         items_to_retry: 要重试的项目 {"tutorial": [...], "resources": [...], "quiz": [...]}
         user_preferences: 用户偏好
+        user_id: 用户 ID（用于日志记录）
     """
     from app.services.notification_service import notification_service
+    from app.services.execution_logger import execution_logger
     from app.agents.tutorial_generator import TutorialGeneratorAgent
     from app.agents.resource_recommender import ResourceRecommenderAgent
     from app.agents.quiz_generator import QuizGeneratorAgent
@@ -1180,12 +1354,29 @@ async def _execute_retry_failed_task(
         ResourceRecommendationInput, 
         QuizGenerationInput,
     )
+    import time
+    
+    # 记录任务开始时间（用于计算总耗时）
+    task_start_time = time.time()
     
     logger.info(
         "retry_failed_task_started",
         retry_task_id=retry_task_id,
         roadmap_id=roadmap_id,
         items_count={k: len(v) for k, v in items_to_retry.items()},
+    )
+    
+    # 记录 ExecutionLog：重试任务开始
+    await execution_logger.log_workflow_start(
+        task_id=retry_task_id,
+        step="retry_started",
+        message="开始重试失败内容",
+        roadmap_id=roadmap_id,
+        details={
+            "user_id": user_id,
+            "items_by_type": {k: len(v) for k, v in items_to_retry.items()},
+            "total_items": sum(len(v) for v in items_to_retry.values()),
+        },
     )
     
     # 发布重试开始事件
@@ -1220,6 +1411,15 @@ async def _execute_retry_failed_task(
         concept_id = item["concept_id"]
         concept_data = item["concept_data"]
         context = item["context"]
+        item_start_time = time.time()
+        
+        # Agent 名称映射
+        agent_name_map = {
+            "tutorial": "TutorialGenerator",
+            "resources": "ResourceRecommender",
+            "quiz": "QuizGenerator",
+        }
+        agent_name = agent_name_map.get(content_type, "UnknownAgent")
         
         # 构建 Concept 对象
         concept = Concept(
@@ -1230,6 +1430,20 @@ async def _execute_retry_failed_task(
             prerequisites=concept_data.get("prerequisites", []),
             difficulty=concept_data.get("difficulty", "medium"),
             keywords=concept_data.get("keywords", []),
+        )
+        
+        # 记录 ExecutionLog：单个项目开始
+        await execution_logger.log_agent_start(
+            task_id=retry_task_id,
+            agent_name=agent_name,
+            message=f"开始重试 {content_type} 内容",
+            concept_id=concept_id,
+            details={
+                "concept_name": concept.name,
+                "content_type": content_type,
+                "current": current,
+                "total": total,
+            },
         )
         
         # 发布概念开始事件
@@ -1282,6 +1496,21 @@ async def _execute_retry_failed_task(
                     raise ValueError(f"未知的内容类型: {content_type}")
                 
                 success_count += 1
+                item_duration_ms = int((time.time() - item_start_time) * 1000)
+                
+                # 记录 ExecutionLog：单个项目成功
+                await execution_logger.log_agent_complete(
+                    task_id=retry_task_id,
+                    agent_name=agent_name,
+                    message=f"重试 {content_type} 内容成功",
+                    duration_ms=item_duration_ms,
+                    concept_id=concept_id,
+                    details={
+                        "concept_name": concept.name,
+                        "content_type": content_type,
+                        "output": output_data,
+                    },
+                )
                 
                 # 发布概念完成事件（使用标准事件）
                 await notification_service.publish_concept_complete(
@@ -1300,12 +1529,28 @@ async def _execute_retry_failed_task(
                 
         except Exception as e:
             failed_count += 1
+            item_duration_ms = int((time.time() - item_start_time) * 1000)
+            
             logger.error(
                 "retry_item_failed",
                 retry_task_id=retry_task_id,
                 concept_id=concept_id,
                 content_type=content_type,
                 error=str(e),
+            )
+            
+            # 记录 ExecutionLog：单个项目失败
+            await execution_logger.log_agent_error(
+                task_id=retry_task_id,
+                agent_name=agent_name,
+                message=f"重试 {content_type} 内容失败",
+                error=str(e),
+                concept_id=concept_id,
+                details={
+                    "concept_name": concept.name,
+                    "content_type": content_type,
+                    "duration_ms": item_duration_ms,
+                },
             )
             
             # 发布概念失败事件（使用标准事件）
@@ -1335,6 +1580,13 @@ async def _execute_retry_failed_task(
     
     # 并行执行
     results = await asyncio.gather(*all_tasks, return_exceptions=True)
+    
+    # 初始化 remaining_failed（防止后面引用时未定义）
+    remaining_failed = {
+        "tutorial": 0,
+        "resources": 0,
+        "quiz": 0,
+    }
     
     # 更新数据库中的框架数据
     async with AsyncSessionLocal() as session:
@@ -1410,6 +1662,44 @@ async def _execute_retry_failed_task(
                         if concept.get("quiz_status") == "failed":
                             remaining_failed["quiz"] += 1
     
+    # 计算任务总耗时
+    task_duration_ms = int((time.time() - task_start_time) * 1000)
+    
+    # 确定最终状态：如果有成功的项目则视为部分成功，否则为失败
+    final_status = "completed" if success_count > 0 else "failed"
+    
+    # 更新 RoadmapTask 状态
+    async with AsyncSessionLocal() as session:
+        repo = RoadmapRepository(session)
+        await repo.update_task_status(
+            task_id=retry_task_id,
+            status=final_status,
+            current_step="retry_completed",
+            execution_summary={
+                "success_count": success_count,
+                "failed_count": failed_count,
+                "remaining_failed": remaining_failed,
+                "duration_ms": task_duration_ms,
+            },
+        )
+        await session.commit()
+    
+    # 记录 ExecutionLog：重试任务完成
+    await execution_logger.log_workflow_complete(
+        task_id=retry_task_id,
+        step="retry_completed",
+        message=f"重试任务完成: {success_count} 成功, {failed_count} 失败",
+        duration_ms=task_duration_ms,
+        roadmap_id=roadmap_id,
+        details={
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "remaining_failed": remaining_failed,
+            "total_items": sum(len(v) for v in items_to_retry.values()),
+            "final_status": final_status,
+        },
+    )
+    
     # 发布重试完成事件（包含详细的统计数据）
     await notification_service.publish_completed(
         task_id=retry_task_id,
@@ -1422,7 +1712,7 @@ async def _execute_retry_failed_task(
     await notification_service.publish_progress(
         task_id=retry_task_id,
         step="retry_completed",
-        status="completed",
+        status=final_status,
         message=f"重试完成: {success_count} 成功, {failed_count} 失败",
         extra_data={
             "roadmap_id": roadmap_id,
@@ -1440,6 +1730,7 @@ async def _execute_retry_failed_task(
         success_count=success_count,
         failed_count=failed_count,
         remaining_failed=remaining_failed,
+        duration_ms=task_duration_ms,
     )
 
 

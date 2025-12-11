@@ -294,8 +294,9 @@ class ContentRunner:
                         resource_output = resource_refs[concept_id]
                         concept.resources_status = "completed"
                         # 更新资源引用信息
-                        if hasattr(resource_output, 'resources_id'):
-                            concept.resources_id = resource_output.resources_id
+                        # 注意：ResourceRecommendationOutput 的字段是 id，不是 resources_id
+                        if hasattr(resource_output, 'id'):
+                            concept.resources_id = resource_output.id
                         if hasattr(resource_output, 'resources'):
                             concept.resources_count = len(resource_output.resources)
                     
