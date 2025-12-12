@@ -1023,6 +1023,88 @@
         }
       }
     },
+    "/api/v1/roadmaps/{roadmap_id}/active-retry-task": {
+      "get": {
+        "tags": [
+          "roadmaps"
+        ],
+        "summary": "Get Roadmap Active Retry Task",
+        "description": "获取路线图当前正在进行的重试任务\n\n用于前端检测是否有正在进行的重试任务：\n- 用户切换 tab 返回时，检查是否有正在进行的重试任务\n- 如果有，前端可以用返回的 task_id 重新订阅 WebSocket\n\nArgs:\n    roadmap_id: 路线图 ID\n    \nReturns:\n    正在进行的重试任务信息，包含：\n    - has_active_retry_task: 是否有正在进行的重试任务\n    - task_id: 重试任务 ID（用于 WebSocket 订阅）\n    - current_step: 当前执行步骤\n    - items_to_retry: 正在重试的内容类型及数量\n    - created_at: 任务创建时间",
+        "operationId": "get_roadmap_active_retry_task_api_v1_roadmaps__roadmap_id__active_retry_task_get",
+        "parameters": [
+          {
+            "name": "roadmap_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Roadmap Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/roadmaps/{roadmap_id}/status-check": {
+      "get": {
+        "tags": [
+          "roadmaps"
+        ],
+        "summary": "Check Roadmap Status Quick",
+        "description": "快速检查路线图状态，用于检测僵尸状态\n\n检测逻辑：\n1. 获取路线图的 task_id\n2. 检查任务是否还在运行\n3. 如果任务不在运行，但概念状态为 pending/generating，则为僵尸状态\n\nArgs:\n    roadmap_id: 路线图 ID\n    \nReturns:\n    {\n        \"roadmap_id\": str,\n        \"has_active_task\": bool,\n        \"task_status\": str | None,\n        \"stale_concepts\": [\n            {\n                \"concept_id\": str,\n                \"concept_name\": str,\n                \"content_type\": \"tutorial\" | \"resources\" | \"quiz\",\n                \"current_status\": \"pending\" | \"generating\"\n            }\n        ]\n    }",
+        "operationId": "check_roadmap_status_quick_api_v1_roadmaps__roadmap_id__status_check_get",
+        "parameters": [
+          {
+            "name": "roadmap_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Roadmap Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/roadmaps/generate-stream": {
       "post": {
         "tags": [

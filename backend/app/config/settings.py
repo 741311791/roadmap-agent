@@ -235,6 +235,24 @@ class Settings(BaseSettings):
         False,
         description="跳过测验生成（Quiz Generator）"
     )
+    
+    # ==================== 任务恢复配置 ====================
+    ENABLE_TASK_RECOVERY: bool = Field(
+        True,
+        description="启用服务器重启后自动恢复被中断的任务"
+    )
+    TASK_RECOVERY_MAX_AGE_HOURS: int = Field(
+        24,
+        description="任务恢复最大年龄（小时），超过此时间的任务不会被恢复"
+    )
+    TASK_RECOVERY_MAX_CONCURRENT: int = Field(
+        3,
+        description="任务恢复最大并发数量"
+    )
+    TASK_RECOVERY_DELAY_SECONDS: float = Field(
+        5.0,
+        description="任务恢复之间的延迟（秒），避免瞬间压力"
+    )
 
 
 settings = Settings()

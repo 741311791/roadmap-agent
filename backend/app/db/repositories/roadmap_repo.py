@@ -48,6 +48,9 @@ class RoadmapRepository:
         task_id: str,
         user_id: str,
         user_request: dict,
+        task_type: str = "creation",
+        concept_id: Optional[str] = None,
+        content_type: Optional[str] = None,
     ) -> RoadmapTask:
         """
         创建路线图生成任务
@@ -56,6 +59,9 @@ class RoadmapRepository:
             task_id: 任务 ID
             user_id: 用户 ID
             user_request: 用户请求（字典格式）
+            task_type: 任务类型（'creation', 'retry_tutorial', 'retry_resources', 'retry_quiz', 'retry_batch'）
+            concept_id: 概念 ID（重试任务需要）
+            content_type: 内容类型（重试任务需要）
             
         Returns:
             创建的任务记录
@@ -66,12 +72,18 @@ class RoadmapRepository:
             user_request=user_request,
             status="pending",
             current_step="init",
+            task_type=task_type,
+            concept_id=concept_id,
+            content_type=content_type,
         )
         self.session.add(task)
         await self.session.commit()
         await self.session.refresh(task)
         
-        logger.info("roadmap_task_created", task_id=task_id, user_id=user_id)
+        logger.info("roadmap_task_created", 
+                   task_id=task_id, 
+                   user_id=user_id,
+                   task_type=task_type)
         return task
     
     async def get_task(self, task_id: str) -> Optional[RoadmapTask]:
@@ -86,6 +98,24 @@ class RoadmapRepository:
         """
         result = await self.session.execute(
             select(RoadmapTask).where(RoadmapTask.task_id == task_id)
+        )
+        return result.scalar_one_or_none()
+    
+    async def get_task_by_roadmap_id(self, roadmap_id: str) -> Optional[RoadmapTask]:
+        """
+        通过 roadmap_id 获取任务（任何状态）
+        
+        Args:
+            roadmap_id: 路线图 ID
+            
+        Returns:
+            任务记录（按创建时间倒序，返回最新的），如果不存在则返回 None
+        """
+        result = await self.session.execute(
+            select(RoadmapTask)
+            .where(RoadmapTask.roadmap_id == roadmap_id)
+            .order_by(RoadmapTask.created_at.desc())
+            .limit(1)
         )
         return result.scalar_one_or_none()
     
@@ -109,6 +139,26 @@ class RoadmapRepository:
             .limit(1)
         )
         return result.scalar_one_or_none()
+    
+    async def get_active_tasks_by_roadmap_id(self, roadmap_id: str) -> list[RoadmapTask]:
+        """
+        获取路线图的所有活跃任务（包括创建任务和重试任务）
+        
+        Args:
+            roadmap_id: 路线图 ID
+            
+        Returns:
+            活跃任务列表（按创建时间降序排序）
+        """
+        result = await self.session.execute(
+            select(RoadmapTask)
+            .where(
+                RoadmapTask.roadmap_id == roadmap_id,
+                RoadmapTask.status.in_(["pending", "processing", "human_review_pending"])
+            )
+            .order_by(RoadmapTask.created_at.desc())
+        )
+        return list(result.scalars().all())
     
     async def get_active_retry_task_by_roadmap_id(self, roadmap_id: str) -> Optional[RoadmapTask]:
         """
@@ -257,7 +307,6 @@ class RoadmapRepository:
         self,
         roadmap_id: str,
         user_id: str,
-        task_id: str,
         framework: RoadmapFramework,
     ) -> RoadmapMetadata:
         """
@@ -266,7 +315,6 @@ class RoadmapRepository:
         Args:
             roadmap_id: 路线图 ID
             user_id: 用户 ID
-            task_id: 任务 ID
             framework: 路线图框架
             
         Returns:
@@ -278,7 +326,6 @@ class RoadmapRepository:
         if existing:
             # 更新现有记录
             existing.user_id = user_id
-            existing.task_id = task_id
             existing.title = framework.title
             existing.total_estimated_hours = framework.total_estimated_hours
             existing.recommended_completion_weeks = framework.recommended_completion_weeks
@@ -292,7 +339,6 @@ class RoadmapRepository:
             metadata = RoadmapMetadata(
                 roadmap_id=roadmap_id,
                 user_id=user_id,
-                task_id=task_id,
                 title=framework.title,
                 total_estimated_hours=framework.total_estimated_hours,
                 recommended_completion_weeks=framework.recommended_completion_weeks,

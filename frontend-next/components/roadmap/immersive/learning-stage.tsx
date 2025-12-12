@@ -6,6 +6,7 @@ import type { Concept, LearningPreferences } from '@/types/generated/models';
 import type { ResourcesResponse, QuizResponse } from '@/types/generated/services';
 import { getConceptResources, getConceptQuiz } from '@/lib/api/endpoints';
 import { FailedContentAlert } from '@/components/common/retry-content-button';
+import { GeneratingContentLoader } from '@/components/common/generating-content-loader';
 import { StaleStatusDetector } from '@/components/common/stale-status-detector';
 import { 
   Sparkles, 
@@ -1003,16 +1004,20 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId, 
                 prose-blockquote:border-l-sage-300 prose-blockquote:bg-sage-50/50 prose-blockquote:rounded-r-lg prose-blockquote:py-1 prose-blockquote:text-foreground/70"
               >
                 {tutorialGenerating || tutorialPending ? (
-                  /* 教程正在生成中，显示带超时检测的加载状态 */
-                  <StaleStatusDetector
-                    roadmapId={roadmapId || ''}
-                    conceptId={concept?.concept_id || ''}
-                    contentType="tutorial"
-                    status={concept?.content_status as 'pending' | 'generating'}
-                    preferences={userPreferences}
-                    timeoutSeconds={120}
-                    onSuccess={() => onRetrySuccess?.()}
-                  />
+                  /* 教程正在生成中，使用僵尸状态检测器 */
+                  roadmapId && concept && userPreferences ? (
+                    <StaleStatusDetector
+                      roadmapId={roadmapId}
+                      conceptId={concept.concept_id}
+                      contentType="tutorial"
+                      status={concept.content_status}
+                      preferences={userPreferences}
+                      timeoutSeconds={120}
+                      onSuccess={() => onRetrySuccess?.()}
+                    />
+                  ) : (
+                    <GeneratingContentLoader contentType="tutorial" />
+                  )
                 ) : tutorialFailed && roadmapId && concept && userPreferences ? (
                   /* 教程生成失败，显示重试按钮 */
                   <FailedContentAlert
@@ -1080,16 +1085,20 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId, 
           {/* Placeholder for other formats */}
           {activeFormat === 'learning-resources' && (
             resourcesGenerating || resourcesPending ? (
-              /* 资源推荐正在生成中，显示带超时检测的加载状态 */
-              <StaleStatusDetector
-                roadmapId={roadmapId || ''}
-                conceptId={concept?.concept_id || ''}
-                contentType="resources"
-                status={concept?.resources_status as 'pending' | 'generating'}
-                preferences={userPreferences}
-                timeoutSeconds={120}
-                onSuccess={() => onRetrySuccess?.()}
-              />
+              /* 资源推荐正在生成中，使用僵尸状态检测器 */
+              roadmapId && concept && userPreferences ? (
+                <StaleStatusDetector
+                  roadmapId={roadmapId}
+                  conceptId={concept.concept_id}
+                  contentType="resources"
+                  status={concept.resources_status}
+                  preferences={userPreferences}
+                  timeoutSeconds={120}
+                  onSuccess={() => onRetrySuccess?.()}
+                />
+              ) : (
+                <GeneratingContentLoader contentType="resources" />
+              )
             ) : resourcesFailed && roadmapId && concept && userPreferences ? (
               /* 资源推荐生成失败，显示重试按钮 */
               <FailedContentAlert
@@ -1114,16 +1123,20 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId, 
 
           {activeFormat === 'quiz' && (
             quizGenerating || quizPending ? (
-              /* 测验正在生成中，显示带超时检测的加载状态 */
-              <StaleStatusDetector
-                roadmapId={roadmapId || ''}
-                conceptId={concept?.concept_id || ''}
-                contentType="quiz"
-                status={concept?.quiz_status as 'pending' | 'generating'}
-                preferences={userPreferences}
-                timeoutSeconds={120}
-                onSuccess={() => onRetrySuccess?.()}
-              />
+              /* 测验正在生成中，使用僵尸状态检测器 */
+              roadmapId && concept && userPreferences ? (
+                <StaleStatusDetector
+                  roadmapId={roadmapId}
+                  conceptId={concept.concept_id}
+                  contentType="quiz"
+                  status={concept.quiz_status}
+                  preferences={userPreferences}
+                  timeoutSeconds={120}
+                  onSuccess={() => onRetrySuccess?.()}
+                />
+              ) : (
+                <GeneratingContentLoader contentType="quiz" />
+              )
             ) : quizFailed && roadmapId && concept && userPreferences ? (
               /* 测验生成失败，显示重试按钮 */
               <FailedContentAlert

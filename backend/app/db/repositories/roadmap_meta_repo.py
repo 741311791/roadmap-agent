@@ -145,7 +145,6 @@ class RoadmapMetadataRepository(BaseRepository[RoadmapMetadata]):
         self,
         roadmap_id: str,
         user_id: str,
-        task_id: str,
         framework: RoadmapFramework,
     ) -> RoadmapMetadata:
         """
@@ -154,7 +153,6 @@ class RoadmapMetadataRepository(BaseRepository[RoadmapMetadata]):
         Args:
             roadmap_id: 路线图 ID
             user_id: 用户 ID
-            task_id: 任务 ID
             framework: 路线图框架
             
         Returns:
@@ -168,7 +166,6 @@ class RoadmapMetadataRepository(BaseRepository[RoadmapMetadata]):
             await self.update_by_id(
                 roadmap_id,
                 user_id=user_id,
-                task_id=task_id,
                 title=framework.title,
                 total_estimated_hours=framework.total_estimated_hours,
                 recommended_completion_weeks=framework.recommended_completion_weeks,
@@ -190,7 +187,6 @@ class RoadmapMetadataRepository(BaseRepository[RoadmapMetadata]):
             metadata = RoadmapMetadata(
                 roadmap_id=roadmap_id,
                 user_id=user_id,
-                task_id=task_id,
                 title=framework.title,
                 total_estimated_hours=framework.total_estimated_hours,
                 recommended_completion_weeks=framework.recommended_completion_weeks,

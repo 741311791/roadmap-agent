@@ -227,7 +227,6 @@ class CurriculumDesignRunner:
             await repo.save_roadmap_metadata(
                 roadmap_id=framework.roadmap_id,
                 user_id=state["user_request"].user_id,
-                task_id=task_id,
                 framework=framework,
             )
             

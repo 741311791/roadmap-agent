@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { EmptyState } from '@/components/common/empty-state';
 import { TaskItem } from '@/lib/api/endpoints';
-import { ListTodo, RefreshCw, Eye, AlertCircle, Clock, CheckCircle2, Loader2, FileText, Trash2 } from 'lucide-react';
+import { ListTodo, RefreshCw, Eye, AlertCircle, Clock, CheckCircle2, Loader2, FileText, Trash2, Activity } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -217,7 +217,27 @@ export function TaskList({ tasks, isLoading, onRetry, onDelete }: TaskListProps)
                         </Tooltip>
                       )}
                       
-                      {/* View Roadmap Button */}
+                      {/* View Generation Progress Button - 正在生成时显示 */}
+                      {(task.status === 'processing' || task.status === 'pending' || task.status === 'human_review_pending' || task.status === 'human_review_required') && task.roadmap_id && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Link href={`/roadmap/${task.roadmap_id}`}>
+                              <Button 
+                                size="icon" 
+                                variant="ghost" 
+                                className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                              >
+                                <Activity className="h-4 w-4" />
+                              </Button>
+                            </Link>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>View generation progress</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                      
+                      {/* View Roadmap Button - 完成后显示 */}
                       {task.status === 'completed' && task.roadmap_id && (
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -274,4 +294,3 @@ export function TaskList({ tasks, isLoading, onRetry, onDelete }: TaskListProps)
     </TooltipProvider>
   );
 }
-

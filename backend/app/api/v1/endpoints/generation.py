@@ -389,10 +389,8 @@ async def _update_concept_status_in_framework(
         # 保存更新后的框架
         from app.models.domain import RoadmapFramework
         updated_framework = RoadmapFramework.model_validate(framework_data)
-        await roadmap_repo.save_roadmap(
+        await roadmap_repo.update_framework_data(
             roadmap_id=roadmap_id,
-            user_id=roadmap_metadata.user_id,
-            task_id=roadmap_metadata.task_id,
             framework=updated_framework,
         )
         await session.commit()
@@ -440,6 +438,30 @@ async def retry_tutorial(
     if not concept:
         raise HTTPException(status_code=404, detail=f"概念 {concept_id} 不存在")
     
+    # 创建任务记录并关联到路线图
+    async with repo_factory.create_session() as session:
+        task_repo = repo_factory.create_task_repo(session)
+        await task_repo.create_task(
+            task_id=task_id,
+            user_id=roadmap_metadata.user_id,
+            user_request={
+                "type": "retry_tutorial",
+                "roadmap_id": roadmap_id,
+                "concept_id": concept_id,
+                "preferences": request.preferences.model_dump(mode='json'),
+            },
+            task_type="retry_tutorial",
+            concept_id=concept_id,
+            content_type="tutorial",
+        )
+        await task_repo.update_task_status(
+            task_id=task_id,
+            status="processing",
+            current_step="tutorial_generation",
+            roadmap_id=roadmap_id,
+        )
+        await session.commit()
+    
     try:
         # 1. 立即更新状态为 'generating'
         await _update_concept_status_in_framework(
@@ -458,6 +480,7 @@ async def retry_tutorial(
             concept_name=concept.name,
             current=1,
             total=1,
+            content_type="tutorial",
         )
         
         # 3. 初始化教程生成器并执行
@@ -493,12 +516,23 @@ async def retry_tutorial(
             task_id=task_id,
             concept_id=concept_id,
             concept_name=concept.name,
+            content_type="tutorial",
             data={
                 "tutorial_id": result.tutorial_id,
                 "title": result.title,
                 "content_url": result.content_url,
             },
         )
+        
+        # 7. 更新任务状态为 completed
+        async with repo_factory.create_session() as session:
+            task_repo = repo_factory.create_task_repo(session)
+            await task_repo.update_task_status(
+                task_id=task_id,
+                status="completed",
+                current_step="completed",
+            )
+            await session.commit()
         
         logger.info(
             "retry_tutorial_success",
@@ -549,7 +583,19 @@ async def retry_tutorial(
             concept_id=concept_id,
             concept_name=concept.name,
             error=str(e),
+            content_type="tutorial",
         )
+        
+        # 9. 更新任务状态为 failed
+        async with repo_factory.create_session() as session:
+            task_repo = repo_factory.create_task_repo(session)
+            await task_repo.update_task_status(
+                task_id=task_id,
+                status="failed",
+                current_step="failed",
+                error_message=str(e)[:500],
+            )
+            await session.commit()
         
         return RetryContentResponse(
             success=False,
@@ -602,6 +648,30 @@ async def retry_resources(
     if not concept:
         raise HTTPException(status_code=404, detail=f"概念 {concept_id} 不存在")
     
+    # 创建任务记录并关联到路线图
+    async with repo_factory.create_session() as session:
+        task_repo = repo_factory.create_task_repo(session)
+        await task_repo.create_task(
+            task_id=task_id,
+            user_id=roadmap_metadata.user_id,
+            user_request={
+                "type": "retry_resources",
+                "roadmap_id": roadmap_id,
+                "concept_id": concept_id,
+                "preferences": request.preferences.model_dump(mode='json'),
+            },
+            task_type="retry_resources",
+            concept_id=concept_id,
+            content_type="resources",
+        )
+        await task_repo.update_task_status(
+            task_id=task_id,
+            status="processing",
+            current_step="resource_recommendation",
+            roadmap_id=roadmap_id,
+        )
+        await session.commit()
+    
     try:
         # 1. 立即更新状态为 'generating'
         await _update_concept_status_in_framework(
@@ -620,6 +690,7 @@ async def retry_resources(
             concept_name=concept.name,
             current=1,
             total=1,
+            content_type="resources",
         )
         
         # 3. 初始化资源推荐器并执行
@@ -655,11 +726,22 @@ async def retry_resources(
             task_id=task_id,
             concept_id=concept_id,
             concept_name=concept.name,
+            content_type="resources",
             data={
                 "resources_id": result.id,
                 "resources_count": len(result.resources),
             },
         )
+        
+        # 7. 更新任务状态为 completed
+        async with repo_factory.create_session() as session:
+            task_repo = repo_factory.create_task_repo(session)
+            await task_repo.update_task_status(
+                task_id=task_id,
+                status="completed",
+                current_step="completed",
+            )
+            await session.commit()
         
         logger.info(
             "retry_resources_success",
@@ -709,7 +791,19 @@ async def retry_resources(
             concept_id=concept_id,
             concept_name=concept.name,
             error=str(e),
+            content_type="resources",
         )
+        
+        # 9. 更新任务状态为 failed
+        async with repo_factory.create_session() as session:
+            task_repo = repo_factory.create_task_repo(session)
+            await task_repo.update_task_status(
+                task_id=task_id,
+                status="failed",
+                current_step="failed",
+                error_message=str(e)[:500],
+            )
+            await session.commit()
         
         return RetryContentResponse(
             success=False,
@@ -762,6 +856,30 @@ async def retry_quiz(
     if not concept:
         raise HTTPException(status_code=404, detail=f"概念 {concept_id} 不存在")
     
+    # 创建任务记录并关联到路线图
+    async with repo_factory.create_session() as session:
+        task_repo = repo_factory.create_task_repo(session)
+        await task_repo.create_task(
+            task_id=task_id,
+            user_id=roadmap_metadata.user_id,
+            user_request={
+                "type": "retry_quiz",
+                "roadmap_id": roadmap_id,
+                "concept_id": concept_id,
+                "preferences": request.preferences.model_dump(mode='json'),
+            },
+            task_type="retry_quiz",
+            concept_id=concept_id,
+            content_type="quiz",
+        )
+        await task_repo.update_task_status(
+            task_id=task_id,
+            status="processing",
+            current_step="quiz_generation",
+            roadmap_id=roadmap_id,
+        )
+        await session.commit()
+    
     try:
         # 1. 立即更新状态为 'generating'
         await _update_concept_status_in_framework(
@@ -780,6 +898,7 @@ async def retry_quiz(
             concept_name=concept.name,
             current=1,
             total=1,
+            content_type="quiz",
         )
         
         # 3. 初始化测验生成器并执行
@@ -815,11 +934,22 @@ async def retry_quiz(
             task_id=task_id,
             concept_id=concept_id,
             concept_name=concept.name,
+            content_type="quiz",
             data={
                 "quiz_id": result.quiz_id,
                 "total_questions": result.total_questions,
             },
         )
+        
+        # 7. 更新任务状态为 completed
+        async with repo_factory.create_session() as session:
+            task_repo = repo_factory.create_task_repo(session)
+            await task_repo.update_task_status(
+                task_id=task_id,
+                status="completed",
+                current_step="completed",
+            )
+            await session.commit()
         
         logger.info(
             "retry_quiz_success",
@@ -869,7 +999,19 @@ async def retry_quiz(
             concept_id=concept_id,
             concept_name=concept.name,
             error=str(e),
+            content_type="quiz",
         )
+        
+        # 9. 更新任务状态为 failed
+        async with repo_factory.create_session() as session:
+            task_repo = repo_factory.create_task_repo(session)
+            await task_repo.update_task_status(
+                task_id=task_id,
+                status="failed",
+                current_step="failed",
+                error_message=str(e)[:500],
+            )
+            await session.commit()
         
         return RetryContentResponse(
             success=False,

@@ -119,7 +119,7 @@ export function RetryContentButton({
       }
       
       if (response.success) {
-        const taskId = response.data?.task_id;
+        const taskId = response.data?.task_id as string | undefined;
         
         // 如果后端返回了 task_id，订阅 WebSocket 实时更新
         if (taskId) {

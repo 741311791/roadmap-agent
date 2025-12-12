@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, Loader2, AlertTriangle, Clock } from 'lucide-react';
+import { RefreshCw, Loader2, AlertCircle, Clock, Info } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { RetryContentButton } from './retry-content-button';
 import { checkRoadmapStatusQuick } from '@/lib/api/endpoints';
@@ -35,29 +35,6 @@ interface StaleStatusDetectorProps {
  * 
  * 用于检测 pending/generating 状态是否已经过期（可能由于任务异常中断）。
  * 如果超时，会提示用户重新生成内容。
- * 
- * 使用场景：
- * - 任务在生成过程中服务器崩溃
- * - 任务被手动中断
- * - WebSocket 连接断开导致状态未更新
- * - 任何导致状态"卡住"的异常情况
- * 
- * 使用示例：
- * ```tsx
- * {resourcesGenerating || resourcesPending ? (
- *   <StaleStatusDetector
- *     roadmapId={roadmapId}
- *     conceptId={concept.concept_id}
- *     contentType="resources"
- *     status={concept.resources_status}
- *     preferences={userPreferences}
- *     timeoutSeconds={120}
- *     onSuccess={() => onRetrySuccess?.()}
- *   />
- * ) : (
- *   // 正常内容显示
- * )}
- * ```
  */
 export function StaleStatusDetector({
   roadmapId,
@@ -65,7 +42,7 @@ export function StaleStatusDetector({
   contentType,
   status,
   preferences,
-  timeoutSeconds = 120, // 默认 2 分钟超时
+  timeoutSeconds = 120,
   onSuccess,
   className,
 }: StaleStatusDetectorProps) {
@@ -75,9 +52,9 @@ export function StaleStatusDetector({
   const [quickCheckDone, setQuickCheckDone] = useState(false);
 
   const contentTypeLabels = {
-    tutorial: { name: '教程', verb: '生成' },
-    resources: { name: '学习资源', verb: '获取' },
-    quiz: { name: '测验', verb: '生成' },
+    tutorial: { name: 'Tutorial', verb: 'Generating', gerund: 'generation' },
+    resources: { name: 'Learning Resources', verb: 'Fetching', gerund: 'fetch' },
+    quiz: { name: 'Quiz', verb: 'Generating', gerund: 'generation' },
   };
 
   const label = contentTypeLabels[contentType];
@@ -86,10 +63,10 @@ export function StaleStatusDetector({
   useEffect(() => {
     const quickCheck = async () => {
       try {
-        console.log('[StaleStatusDetector] 开始快速检查僵尸状态...');
+        console.log('[StaleStatusDetector] Starting quick status check...');
         const result = await checkRoadmapStatusQuick(roadmapId);
         
-        console.log('[StaleStatusDetector] 快速检查结果:', result);
+        console.log('[StaleStatusDetector] Quick check result:', result);
         
         // 检查当前概念是否在僵尸状态列表中
         const isConceptStale = result.stale_concepts.some(
@@ -99,18 +76,15 @@ export function StaleStatusDetector({
         );
         
         if (isConceptStale) {
-          console.warn('[StaleStatusDetector] 检测到僵尸状态，立即显示警告');
+          console.warn('[StaleStatusDetector] Stale status detected');
           setIsStale(true);
         } else if (!result.has_active_task) {
-          // 没有活跃任务，但概念也不在僵尸列表中
-          // 可能是状态已经更新但前端未刷新
-          console.log('[StaleStatusDetector] 任务已完成但概念不在僵尸列表，可能需要刷新');
+          console.log('[StaleStatusDetector] No active task, status might need refresh');
         }
         
         setQuickCheckDone(true);
       } catch (error) {
-        console.error('[StaleStatusDetector] 快速检查失败:', error);
-        // 检查失败，降级到计时器检测
+        console.error('[StaleStatusDetector] Quick check failed:', error);
         setQuickCheckDone(true);
       }
     };
@@ -120,17 +94,15 @@ export function StaleStatusDetector({
 
   // 计时器：每秒递增（作为兜底检测）
   useEffect(() => {
-    // 如果快速检查已经发现僵尸状态，不启动计时器
     if (isStale) return;
     
     const timer = setInterval(() => {
       setElapsedTime((prev) => {
         const next = prev + 1;
-        // 检查是否超时（兜底机制）
         if (next >= timeoutSeconds && !isStale) {
           setIsStale(true);
           console.warn(
-            `[StaleStatusDetector] 超时检测触发: ${contentType} 已处于 ${status} 状态超过 ${timeoutSeconds} 秒`
+            `[StaleStatusDetector] Timeout detected: ${contentType} in ${status} for ${timeoutSeconds}s`
           );
         }
         return next;
@@ -152,33 +124,53 @@ export function StaleStatusDetector({
     return (
       <div
         className={cn(
-          'flex flex-col items-center justify-center gap-4 py-12 px-6 text-center',
-          'bg-sage-50 dark:bg-sage-950/20 rounded-xl border border-sage-200 dark:border-sage-900',
+          'flex flex-col items-center justify-center gap-6 py-16 px-6 text-center',
+          'bg-gradient-to-br from-sage-50 to-sage-100/50 dark:from-sage-950/20 dark:to-sage-900/10',
+          'rounded-2xl border border-sage-200/50 dark:border-sage-800/50 shadow-sm',
           className
         )}
       >
-        <div className="w-16 h-16 rounded-full bg-sage-100 dark:bg-sage-900/50 flex items-center justify-center">
-          <Loader2 className="w-8 h-8 text-sage-600 dark:text-sage-400 animate-spin" />
-        </div>
-        <div className="space-y-1">
-          <h3 className="text-lg font-medium text-sage-800 dark:text-sage-200">
-            {label.name}正在{label.verb}中
-          </h3>
-          <p className="text-sm text-sage-600 dark:text-sage-400">
-            这可能需要几分钟时间，请稍候...
-          </p>
-          <div className="flex items-center justify-center gap-2 mt-3 text-xs text-sage-500">
-            <Clock className="w-3 h-3" />
-            <span>已等待 {formatTime(elapsedTime)}</span>
+        {/* Loading Icon */}
+        <div className="relative">
+          <div className="absolute inset-0 bg-sage-400/20 dark:bg-sage-600/20 rounded-full blur-xl animate-pulse" />
+          <div className="relative w-20 h-20 rounded-full bg-gradient-to-br from-sage-100 to-sage-200 dark:from-sage-900/50 dark:to-sage-800/50 flex items-center justify-center shadow-lg">
+            <Loader2 className="w-10 h-10 text-sage-600 dark:text-sage-400 animate-spin" />
           </div>
         </div>
-        {/* 进度条动画 */}
-        <div className="w-48 h-1 bg-sage-200 dark:bg-sage-800 rounded-full overflow-hidden">
-          <div
-            className="h-full bg-sage-500 dark:bg-sage-400 animate-pulse rounded-full transition-all duration-1000"
-            style={{ width: `${Math.min((elapsedTime / timeoutSeconds) * 100, 95)}%` }}
-          />
+
+        {/* Message */}
+        <div className="space-y-2 max-w-md">
+          <h3 className="text-xl font-semibold text-sage-900 dark:text-sage-100">
+            {label.verb} {label.name}
+          </h3>
+          <p className="text-sm text-sage-600 dark:text-sage-400 leading-relaxed">
+            This may take a few moments. Please wait while we prepare your content...
+          </p>
         </div>
+
+        {/* Timer */}
+        <div className="flex items-center gap-2 px-4 py-2 bg-sage-100/50 dark:bg-sage-900/30 rounded-full">
+          <Clock className="w-4 h-4 text-sage-500 dark:text-sage-400" />
+          <span className="text-sm font-medium text-sage-700 dark:text-sage-300">
+            {formatTime(elapsedTime)}
+          </span>
+        </div>
+
+        {/* Progress Bar */}
+        <div className="w-full max-w-xs">
+          <div className="h-1.5 bg-sage-200 dark:bg-sage-800 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-gradient-to-r from-sage-500 to-sage-600 dark:from-sage-400 dark:to-sage-500 rounded-full transition-all duration-1000 ease-out"
+              style={{ width: `${Math.min((elapsedTime / timeoutSeconds) * 100, 95)}%` }}
+            />
+          </div>
+        </div>
+
+        {/* Hint */}
+        <p className="text-xs text-sage-500 dark:text-sage-500 flex items-center gap-1.5">
+          <Info className="w-3.5 h-3.5" />
+          Status updates are delivered in real-time
+        </p>
       </div>
     );
   }
@@ -187,33 +179,42 @@ export function StaleStatusDetector({
   return (
     <div
       className={cn(
-        'flex flex-col items-center justify-center gap-4 py-12 px-6 text-center',
-        'bg-amber-50 dark:bg-amber-950/20 rounded-xl border-2 border-amber-300 dark:border-amber-800',
+        'flex flex-col items-center justify-center gap-6 py-16 px-6 text-center',
+        'bg-gradient-to-br from-red-50 to-orange-50/50 dark:from-red-950/20 dark:to-orange-950/10',
+        'rounded-2xl border-2 border-red-200/70 dark:border-red-800/50 shadow-lg',
         className
       )}
     >
-      <div className="w-16 h-16 rounded-full bg-amber-100 dark:bg-amber-900/50 flex items-center justify-center">
-        <AlertTriangle className="w-8 h-8 text-amber-600 dark:text-amber-400" />
+      {/* Warning Icon */}
+      <div className="relative">
+        <div className="absolute inset-0 bg-red-400/20 dark:bg-red-600/20 rounded-full blur-xl animate-pulse" />
+        <div className="relative w-20 h-20 rounded-full bg-gradient-to-br from-red-100 to-orange-100 dark:from-red-900/50 dark:to-orange-900/50 flex items-center justify-center shadow-lg">
+          <AlertCircle className="w-10 h-10 text-red-600 dark:text-red-400" />
+        </div>
       </div>
       
-      <div className="space-y-2">
-        <h3 className="text-lg font-medium text-amber-900 dark:text-amber-200">
-          {label.name}{label.verb}超时
+      {/* Message */}
+      <div className="space-y-3 max-w-md">
+        <h3 className="text-xl font-semibold text-red-900 dark:text-red-100">
+          {label.name} {label.gerund.charAt(0).toUpperCase() + label.gerund.slice(1)} Timeout
         </h3>
-        <p className="text-sm text-amber-700 dark:text-amber-400">
-          {label.name}已处于"{status === 'pending' ? '排队中' : '生成中'}"状态超过 {Math.floor(timeoutSeconds / 60)} 分钟
+        <p className="text-sm text-red-700 dark:text-red-300 leading-relaxed">
+          The {label.name.toLowerCase()} has been in "{status === 'pending' ? 'pending' : 'generating'}" state for over {Math.floor(timeoutSeconds / 60)} minutes.
         </p>
-        <p className="text-xs text-amber-600 dark:text-amber-500 max-w-md">
-          这可能是由于后台任务异常中断。建议您重新{label.verb}{label.name}。
+        <p className="text-xs text-red-600 dark:text-red-400">
+          This may be due to a background task interruption. We recommend retrying the {label.gerund}.
         </p>
       </div>
 
-      <div className="flex items-center gap-2 text-xs text-amber-600 dark:text-amber-500">
-        <Clock className="w-3 h-3" />
-        <span>已等待 {formatTime(elapsedTime)}</span>
+      {/* Timer Badge */}
+      <div className="flex items-center gap-2 px-4 py-2 bg-red-100/50 dark:bg-red-900/30 rounded-full">
+        <Clock className="w-4 h-4 text-red-500 dark:text-red-400" />
+        <span className="text-sm font-medium text-red-700 dark:text-red-300">
+          Waited {formatTime(elapsedTime)}
+        </span>
       </div>
 
-      {/* 操作按钮 */}
+      {/* Action Buttons */}
       {preferences ? (
         <div className="flex items-center gap-3 mt-2">
           <RetryContentButton
@@ -224,63 +225,87 @@ export function StaleStatusDetector({
             onSuccess={onSuccess}
             variant="default"
             size="default"
-            className="bg-amber-600 hover:bg-amber-700 text-white"
+            className="bg-red-600 hover:bg-red-700 dark:bg-red-600 dark:hover:bg-red-700 text-white shadow-md"
+            showLabel={true}
           />
           <Button
             variant="outline"
             size="default"
             onClick={() => setShowDetails(!showDetails)}
-            className="gap-2"
+            className="gap-2 border-red-300 dark:border-red-700 hover:bg-red-50 dark:hover:bg-red-900/20"
           >
-            {showDetails ? '隐藏详情' : '查看详情'}
+            {showDetails ? 'Hide Details' : 'View Details'}
           </Button>
         </div>
       ) : (
-        <div className="p-3 bg-amber-100 dark:bg-amber-900/30 rounded-lg">
-          <p className="text-xs text-amber-800 dark:text-amber-300">
-            无法自动重试：缺少用户学习偏好
+        <div className="p-4 bg-red-100 dark:bg-red-900/30 rounded-lg border border-red-200 dark:border-red-800">
+          <p className="text-sm text-red-800 dark:text-red-200">
+            Unable to retry: Missing user preferences
           </p>
         </div>
       )}
 
-      {/* 详细信息（可折叠） */}
+      {/* Diagnostic Details (Collapsible) */}
       {showDetails && (
-        <div className="w-full mt-4 p-4 bg-amber-100 dark:bg-amber-900/30 rounded-lg text-left">
-          <h4 className="text-sm font-medium text-amber-900 dark:text-amber-200 mb-2">
-            诊断信息
+        <div className="w-full mt-4 p-5 bg-red-50 dark:bg-red-900/20 rounded-xl border border-red-200 dark:border-red-800 text-left">
+          <h4 className="text-sm font-semibold text-red-900 dark:text-red-100 mb-3 flex items-center gap-2">
+            <Info className="w-4 h-4" />
+            Diagnostic Information
           </h4>
-          <ul className="space-y-1.5 text-xs text-amber-800 dark:text-amber-300">
-            <li className="flex items-start gap-2">
-              <span className="text-amber-500">•</span>
-              <span><strong>路线图 ID:</strong> <code className="bg-amber-200 dark:bg-amber-800 px-1 py-0.5 rounded">{roadmapId}</code></span>
-            </li>
-            <li className="flex items-start gap-2">
-              <span className="text-amber-500">•</span>
-              <span><strong>概念 ID:</strong> <code className="bg-amber-200 dark:bg-amber-800 px-1 py-0.5 rounded">{conceptId}</code></span>
-            </li>
-            <li className="flex items-start gap-2">
-              <span className="text-amber-500">•</span>
-              <span><strong>当前状态:</strong> <code className="bg-amber-200 dark:bg-amber-800 px-1 py-0.5 rounded">{status}</code></span>
-            </li>
-            <li className="flex items-start gap-2">
-              <span className="text-amber-500">•</span>
-              <span><strong>等待时间:</strong> {formatTime(elapsedTime)} ({elapsedTime} 秒)</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <span className="text-amber-500">•</span>
-              <span><strong>超时阈值:</strong> {formatTime(timeoutSeconds)} ({timeoutSeconds} 秒)</span>
-            </li>
-          </ul>
+          <div className="space-y-2 text-xs">
+            <div className="flex items-start gap-2">
+              <span className="text-red-500 font-bold">•</span>
+              <span className="text-red-800 dark:text-red-200">
+                <strong>Roadmap ID:</strong> <code className="ml-1 bg-red-100 dark:bg-red-800/50 px-2 py-0.5 rounded font-mono">{roadmapId}</code>
+              </span>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="text-red-500 font-bold">•</span>
+              <span className="text-red-800 dark:text-red-200">
+                <strong>Concept ID:</strong> <code className="ml-1 bg-red-100 dark:bg-red-800/50 px-2 py-0.5 rounded font-mono">{conceptId}</code>
+              </span>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="text-red-500 font-bold">•</span>
+              <span className="text-red-800 dark:text-red-200">
+                <strong>Current Status:</strong> <code className="ml-1 bg-red-100 dark:bg-red-800/50 px-2 py-0.5 rounded font-mono">{status}</code>
+              </span>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="text-red-500 font-bold">•</span>
+              <span className="text-red-800 dark:text-red-200">
+                <strong>Wait Time:</strong> {formatTime(elapsedTime)} ({elapsedTime}s)
+              </span>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="text-red-500 font-bold">•</span>
+              <span className="text-red-800 dark:text-red-200">
+                <strong>Timeout Threshold:</strong> {formatTime(timeoutSeconds)} ({timeoutSeconds}s)
+              </span>
+            </div>
+          </div>
           
-          <div className="mt-3 pt-3 border-t border-amber-300 dark:border-amber-700">
-            <p className="text-xs text-amber-700 dark:text-amber-400">
-              <strong>可能原因：</strong>
+          <div className="mt-4 pt-4 border-t border-red-200 dark:border-red-800">
+            <p className="text-xs font-semibold text-red-800 dark:text-red-200 mb-2">
+              Possible Causes:
             </p>
-            <ul className="mt-1 space-y-0.5 text-xs text-amber-600 dark:text-amber-500">
-              <li>• 后台生成任务被异常中断</li>
-              <li>• 服务器在生成过程中重启</li>
-              <li>• WebSocket 连接断开导致状态未更新</li>
-              <li>• 任务队列处理异常</li>
+            <ul className="space-y-1 text-xs text-red-700 dark:text-red-300">
+              <li className="flex items-start gap-1.5">
+                <span className="text-red-400 mt-0.5">→</span>
+                <span>Background generation task was interrupted</span>
+              </li>
+              <li className="flex items-start gap-1.5">
+                <span className="text-red-400 mt-0.5">→</span>
+                <span>Server restarted during generation</span>
+              </li>
+              <li className="flex items-start gap-1.5">
+                <span className="text-red-400 mt-0.5">→</span>
+                <span>WebSocket connection lost</span>
+              </li>
+              <li className="flex items-start gap-1.5">
+                <span className="text-red-400 mt-0.5">→</span>
+                <span>Task queue processing error</span>
+              </li>
             </ul>
           </div>
         </div>

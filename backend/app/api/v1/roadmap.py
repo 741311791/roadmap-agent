@@ -237,13 +237,9 @@ async def get_roadmap_active_task(
         活跃任务信息或null
     """
     repo = RoadmapRepository(db)
-    metadata = await repo.get_roadmap_metadata(roadmap_id)
     
-    if not metadata:
-        raise HTTPException(status_code=404, detail="路线图不存在")
-    
-    # 获取关联的任务
-    task = await repo.get_task(metadata.task_id) if metadata.task_id else None
+    # 直接通过 roadmap_id 查询活跃任务
+    task = await repo.get_active_task_by_roadmap_id(roadmap_id)
     
     # 只有当任务状态为 processing 或 human_review_pending 时才算活跃
     if task and task.status in ['processing', 'human_review_pending']:
@@ -252,6 +248,9 @@ async def get_roadmap_active_task(
             "task_id": task.task_id,
             "status": task.status,
             "current_step": task.current_step,
+            "task_type": task.task_type,
+            "concept_id": task.concept_id,
+            "content_type": task.content_type,
             "created_at": task.created_at.isoformat() if task.created_at else None,
             "updated_at": task.updated_at.isoformat() if task.updated_at else None,
         }
@@ -362,16 +361,26 @@ async def check_roadmap_status_quick(
     if not metadata:
         raise HTTPException(status_code=404, detail="路线图不存在")
     
-    # 获取关联的任务状态
-    task = await repo.get_task(metadata.task_id) if metadata.task_id else None
-    has_active_task = task and task.status in ['pending', 'processing', 'human_review_pending']
+    # 获取所有活跃任务（包括创建任务和重试任务）
+    active_tasks = await repo.get_active_tasks_by_roadmap_id(roadmap_id)
+    has_active_task = len(active_tasks) > 0
     
     # 如果有活跃任务，说明正在正常生成，不是僵尸状态
     if has_active_task:
         return {
             "roadmap_id": roadmap_id,
             "has_active_task": True,
-            "task_status": task.status,
+            "active_tasks": [
+                {
+                    "task_id": task.task_id,
+                    "task_type": task.task_type,
+                    "status": task.status,
+                    "current_step": task.current_step,
+                    "concept_id": task.concept_id,
+                    "content_type": task.content_type,
+                }
+                for task in active_tasks
+            ],
             "stale_concepts": [],
         }
     
@@ -407,7 +416,7 @@ async def check_roadmap_status_quick(
     return {
         "roadmap_id": roadmap_id,
         "has_active_task": False,
-        "task_status": task.status if task else None,
+        "active_tasks": [],
         "stale_concepts": stale_concepts,
     }
 
@@ -944,7 +953,6 @@ async def _generate_sse_stream(
                     await repo.save_roadmap_metadata(
                         roadmap_id=framework_obj.roadmap_id,
                         user_id=request.user_id,
-                        task_id=task_id,
                         framework=framework_obj,
                     )
                     
@@ -1627,7 +1635,6 @@ async def _execute_retry_failed_task(
             await repo.save_roadmap_metadata(
                 roadmap_id=roadmap_id,
                 user_id=roadmap_metadata.user_id,
-                task_id=roadmap_metadata.task_id,
                 framework=updated_framework,
             )
             
@@ -3562,7 +3569,7 @@ async def get_user_roadmaps(
                         completed_concepts += 1
         
         # 从 user_request 中提取 topic
-        task = await repo.get_task(roadmap.task_id)
+        task = await repo.get_task_by_roadmap_id(roadmap.roadmap_id)
         topic = None
         if task and task.user_request:
             learning_goal = task.user_request.get("preferences", {}).get("learning_goal", "")
@@ -3637,7 +3644,7 @@ async def get_deleted_roadmaps(
                         completed_concepts += 1
         
         # 从 user_request 中提取 topic
-        task = await repo.get_task(roadmap.task_id)
+        task = await repo.get_task_by_roadmap_id(roadmap.roadmap_id)
         topic = None
         if task and task.user_request:
             learning_goal = task.user_request.get("preferences", {}).get("learning_goal", "")
@@ -3651,7 +3658,7 @@ async def get_deleted_roadmaps(
             completed_concepts=completed_concepts,
             topic=topic,
             status="deleted",
-            task_id=roadmap.task_id,
+            task_id=task.task_id if task else None,
             task_status=None,
             current_step=None,
             deleted_at=roadmap.deleted_at.isoformat() if roadmap.deleted_at else None,

@@ -200,7 +200,6 @@ class RoadmapService:
                         await roadmap_repo.save_roadmap(
                             roadmap_id=framework.roadmap_id,
                             user_id=enriched_request.user_id,
-                            task_id=task_id,
                             framework=framework,
                         )
                         await session.commit()
@@ -233,7 +232,6 @@ class RoadmapService:
                     await roadmap_repo.save_roadmap(
                         roadmap_id=framework.roadmap_id,
                         user_id=enriched_request.user_id,
-                        task_id=task_id,
                         framework=framework,
                     )
                     
@@ -574,7 +572,6 @@ class RoadmapService:
                         await roadmap_repo.save_roadmap(
                             roadmap_id=framework.roadmap_id,
                             user_id=task.user_id,
-                            task_id=task_id,
                             framework=framework,
                         )
                         

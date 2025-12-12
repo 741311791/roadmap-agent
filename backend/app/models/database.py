@@ -61,6 +61,11 @@ class RoadmapTask(SQLModel, table=True):
     user_request: dict = Field(sa_column=Column(JSON))
     roadmap_id: Optional[str] = Field(default=None)
     
+    # 任务类型信息（用于区分创建任务和重试任务）
+    task_type: Optional[str] = Field(default=None)  # 'creation', 'retry_tutorial', 'retry_resources', 'retry_quiz', 'retry_batch'
+    concept_id: Optional[str] = Field(default=None)  # 单 Concept 重试时的概念 ID
+    content_type: Optional[str] = Field(default=None)  # 'tutorial', 'resources', 'quiz'（单 Concept 重试时）
+    
     # 元数据（所有时间字段使用北京时间）
     created_at: datetime = Field(
         default_factory=beijing_now,
@@ -100,7 +105,6 @@ class RoadmapMetadata(SQLModel, table=True):
     roadmap_id: str = Field(primary_key=True)
     # 移除外键约束，user_id 可能来自外部身份验证服务
     user_id: str = Field(index=True)
-    task_id: str = Field(index=True)
     
     title: str
     total_estimated_hours: float

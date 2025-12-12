@@ -2,15 +2,12 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import Link from 'next/link';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { EmptyState } from '@/components/common/empty-state';
-import { RoadmapCard, CoverImage, MyRoadmap, CommunityRoadmap } from '@/components/roadmap';
-import { MagicCard } from '@/components/ui/magic-card';
+import { CoverImage, MyRoadmap, CommunityRoadmap } from '@/components/roadmap';
+import { LearningCard } from '@/components/roadmap/learning-card';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Plus,
   BookOpen,
   ArrowRight,
   Sparkles,
@@ -98,42 +95,6 @@ const communityRoadmaps: CommunityRoadmap[] = [
   },
 ];
 
-// Create New Roadmap Card (matching size)
-function CreateRoadmapCard() {
-  return (
-    <Link href="/new" className="group flex-shrink-0 w-[220px]">
-      <MagicCard
-        className="overflow-hidden h-full rounded-xl"
-        gradientSize={250}
-        gradientColor="rgba(96, 117, 96, 0.15)"
-        gradientFrom="#a3b1a3"
-        gradientTo="#607560"
-      >
-        <Card className="overflow-hidden border-2 border-dashed border-sage-200 hover:border-sage-400 bg-white/95 backdrop-blur-sm hover:bg-sage-50/80 transition-all duration-300 flex flex-col items-center justify-center h-full shadow-none">
-          <div className="aspect-[16/9] w-full bg-gradient-to-br from-sage-50 to-sage-100 flex items-center justify-center relative overflow-hidden">
-            {/* 背景装饰 */}
-            <div className="absolute inset-0 opacity-10">
-              <div className="absolute top-0 left-0 w-32 h-32 bg-sage-300 rounded-full blur-3xl transform -translate-x-1/2 -translate-y-1/2 group-hover:scale-150 transition-transform duration-700" />
-              <div className="absolute bottom-0 right-0 w-32 h-32 bg-sage-400 rounded-full blur-3xl transform translate-x-1/2 translate-y-1/2 group-hover:scale-150 transition-transform duration-700" />
-            </div>
-            
-            <div className="relative w-14 h-14 rounded-2xl bg-gradient-to-br from-sage-100 to-sage-200 flex items-center justify-center group-hover:from-sage-200 group-hover:to-sage-300 transition-all duration-300 shadow-lg group-hover:shadow-xl group-hover:scale-110">
-              <Plus size={28} className="text-sage-600 group-hover:text-sage-700 transition-colors" />
-            </div>
-          </div>
-          <CardContent className="p-4 text-center">
-            <h3 className="font-serif font-medium text-sm text-foreground mb-1 group-hover:text-sage-700 transition-colors">
-              Create New
-            </h3>
-            <p className="text-[11px] text-muted-foreground">
-              Start learning journey
-            </p>
-          </CardContent>
-        </Card>
-      </MagicCard>
-    </Link>
-  );
-}
 
 // Horizontal Scroll Container with Navigation
 function HorizontalScrollSection({
@@ -159,7 +120,9 @@ function HorizontalScrollSection({
     const el = scrollRef.current;
     if (!el) return;
     
-    const scrollAmount = 240; // card width + gap
+    // 根据屏幕尺寸调整滚动距离
+    const isMobile = window.innerWidth < 640;
+    const scrollAmount = isMobile ? el.clientWidth * 0.8 : 300; // card width + gap
     const newScrollLeft = direction === 'left' 
       ? el.scrollLeft - scrollAmount 
       : el.scrollLeft + scrollAmount;
@@ -186,7 +149,7 @@ function HorizontalScrollSection({
       <div
         ref={scrollRef}
         onScroll={checkScroll}
-        className="flex gap-4 overflow-x-auto scrollbar-hide pb-2 scroll-smooth"
+        className="grid auto-cols-[minmax(100%,1fr)] sm:auto-cols-[minmax(260px,1fr)] lg:auto-cols-[minmax(280px,1fr)] grid-flow-col gap-3 sm:gap-4 overflow-x-auto scrollbar-hide pb-2 scroll-smooth"
       >
         {children}
       </div>
@@ -345,9 +308,23 @@ export default function HomePage() {
 
           {hasRoadmaps ? (
             <HorizontalScrollSection>
-              <CreateRoadmapCard />
+              <LearningCard type="create" />
               {displayedRoadmaps.map((roadmap) => (
-                <RoadmapCard key={roadmap.id} roadmap={roadmap} type="my" showActions={false} />
+                <LearningCard 
+                  key={roadmap.id}
+                  type="my"
+                  id={roadmap.id}
+                  title={roadmap.title}
+                  topic={roadmap.topic}
+                  status={roadmap.status}
+                  totalConcepts={roadmap.totalConcepts}
+                  completedConcepts={roadmap.completedConcepts}
+                  lastAccessedAt={roadmap.lastAccessedAt}
+                  taskId={roadmap.taskId}
+                  taskStatus={roadmap.taskStatus}
+                  currentStep={roadmap.currentStep}
+                  showActions={false}
+                />
               ))}
             </HorizontalScrollSection>
           ) : (
@@ -382,7 +359,17 @@ export default function HomePage() {
 
               <HorizontalScrollSection>
                 {communityRoadmaps.map((roadmap) => (
-                  <RoadmapCard key={roadmap.id} roadmap={roadmap} type="community" showActions={false} />
+                  <LearningCard 
+                    key={roadmap.id}
+                    type="community"
+                    id={roadmap.id}
+                    title={roadmap.title}
+                    topic={roadmap.topic}
+                    author={roadmap.author}
+                    likes={roadmap.likes}
+                    views={roadmap.views}
+                    tags={roadmap.tags}
+                  />
                 ))}
               </HorizontalScrollSection>
             </motion.section>

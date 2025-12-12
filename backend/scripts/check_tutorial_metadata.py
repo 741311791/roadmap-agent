@@ -71,7 +71,16 @@ async def check_tables():
             for roadmap in roadmaps:
                 print(f"Roadmap ID: {roadmap.roadmap_id}")
                 print(f"  Title: {roadmap.title}")
-                print(f"  Task ID: {roadmap.task_id}")
+                
+                # 查询对应的任务
+                result_task = await session.execute(
+                    select(RoadmapTask)
+                    .where(RoadmapTask.roadmap_id == roadmap.roadmap_id)
+                    .order_by(RoadmapTask.created_at.desc())
+                    .limit(1)
+                )
+                task = result_task.scalar_one_or_none()
+                print(f"  Task ID: {task.task_id if task else 'N/A'}")
                 
                 # 查询该路线图的教程
                 result_tutorials_for_roadmap = await session.execute(

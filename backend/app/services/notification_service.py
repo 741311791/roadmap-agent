@@ -51,6 +51,9 @@ class TaskEvent:
     RETRY_STARTED = "retry_started"
     RETRY_ITEM_COMPLETE = "retry_item_complete"
     RETRY_COMPLETED = "retry_completed"
+    
+    # 任务恢复事件
+    TASK_RECOVERING = "task_recovering"
 
 
 class StepName:
@@ -216,6 +219,43 @@ class NotificationService:
         
         await self._publish(task_id, event)
     
+    async def notify_task_recovering(
+        self,
+        task_id: str,
+        roadmap_id: Optional[str] = None,
+        current_step: Optional[str] = None,
+    ):
+        """
+        发布任务恢复事件
+        
+        当服务器重启后自动恢复被中断的任务时发送此事件。
+        
+        Args:
+            task_id: 任务 ID
+            roadmap_id: 路线图 ID（可选）
+            current_step: 恢复时的步骤（从 checkpoint 获取）
+        """
+        event = {
+            "type": TaskEvent.TASK_RECOVERING,
+            "task_id": task_id,
+            "timestamp": beijing_now().isoformat(),
+            "message": "任务正在从服务器重启中恢复执行",
+        }
+        
+        if roadmap_id:
+            event["roadmap_id"] = roadmap_id
+        if current_step:
+            event["current_step"] = current_step
+        
+        await self._publish(task_id, event)
+        
+        logger.info(
+            "task_recovering_notification_sent",
+            task_id=task_id,
+            roadmap_id=roadmap_id,
+            current_step=current_step,
+        )
+    
     # ============================================================
     # Concept 级别事件发布方法
     # ============================================================
@@ -227,6 +267,7 @@ class NotificationService:
         concept_name: str,
         current: int,
         total: int,
+        content_type: str = "tutorial",
     ):
         """
         发布概念内容生成开始事件
@@ -237,6 +278,7 @@ class NotificationService:
             concept_name: 概念名称
             current: 当前进度（第几个）
             total: 总数
+            content_type: 内容类型 (tutorial/resources/quiz)
         """
         percentage = round(current / total * 100, 1) if total > 0 else 0
         
@@ -245,6 +287,7 @@ class NotificationService:
             "task_id": task_id,
             "concept_id": concept_id,
             "concept_name": concept_name,
+            "content_type": content_type,
             "progress": {
                 "current": current,
                 "total": total,
@@ -262,6 +305,7 @@ class NotificationService:
         concept_id: str,
         concept_name: str,
         data: Optional[dict] = None,
+        content_type: str = "tutorial",
     ):
         """
         发布概念内容生成完成事件
@@ -271,12 +315,14 @@ class NotificationService:
             concept_id: 概念 ID
             concept_name: 概念名称
             data: 生成的内容数据（如 tutorial_id, content_url 等）
+            content_type: 内容类型 (tutorial/resources/quiz)
         """
         event = {
             "type": TaskEvent.CONCEPT_COMPLETE,
             "task_id": task_id,
             "concept_id": concept_id,
             "concept_name": concept_name,
+            "content_type": content_type,
             "timestamp": beijing_now().isoformat(),
             "message": f"内容生成完成: {concept_name}",
         }
@@ -292,6 +338,7 @@ class NotificationService:
         concept_id: str,
         concept_name: str,
         error: str,
+        content_type: str = "tutorial",
     ):
         """
         发布概念内容生成失败事件
@@ -300,6 +347,7 @@ class NotificationService:
             task_id: 任务 ID
             concept_id: 概念 ID
             concept_name: 概念名称
+            content_type: 内容类型 (tutorial/resources/quiz)
             error: 错误信息
         """
         event = {
@@ -307,6 +355,7 @@ class NotificationService:
             "task_id": task_id,
             "concept_id": concept_id,
             "concept_name": concept_name,
+            "content_type": content_type,
             "error": error[:200],  # 限制错误信息长度
             "timestamp": beijing_now().isoformat(),
             "message": f"内容生成失败: {concept_name}",

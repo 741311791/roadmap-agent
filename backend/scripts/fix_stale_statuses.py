@@ -22,8 +22,8 @@ import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from app.db.session import async_session_maker
-from app.models.database import RoadmapMetadata, TaskState
+from app.db.session import AsyncSessionLocal
+from app.models.database import RoadmapMetadata, RoadmapTask
 
 
 async def get_active_task_ids(session: AsyncSession) -> set[str]:
@@ -35,8 +35,8 @@ async def get_active_task_ids(session: AsyncSession) -> set[str]:
     - updated_at 在最近 N 分钟内有更新
     """
     result = await session.execute(
-        select(TaskState.task_id).where(
-            TaskState.status.in_([
+        select(RoadmapTask.task_id).where(
+            RoadmapTask.status.in_([
                 'pending',
                 'processing',
                 'human_review_pending',
@@ -67,6 +67,19 @@ async def find_stale_statuses(
     result = await session.execute(select(RoadmapMetadata))
     roadmaps = result.scalars().all()
     
+    # 构建 roadmap_id 到 task 的映射
+    roadmap_to_task = {}
+    for roadmap in roadmaps:
+        task_result = await session.execute(
+            select(RoadmapTask)
+            .where(RoadmapTask.roadmap_id == roadmap.roadmap_id)
+            .order_by(RoadmapTask.created_at.desc())
+            .limit(1)
+        )
+        task = task_result.scalar_one_or_none()
+        if task:
+            roadmap_to_task[roadmap.roadmap_id] = task
+    
     stale_concepts = []
     now = datetime.now()
     timeout_delta = timedelta(seconds=timeout_seconds)
@@ -75,7 +88,8 @@ async def find_stale_statuses(
         framework_data = roadmap.framework_data
         
         # 检查路线图关联的任务是否活跃
-        is_task_active = roadmap.task_id in active_task_ids
+        task = roadmap_to_task.get(roadmap.roadmap_id)
+        is_task_active = task and task.task_id in active_task_ids
         
         for stage in framework_data.get("stages", []):
             for module in stage.get("modules", []):
@@ -101,7 +115,7 @@ async def find_stale_statuses(
                                     stale_concepts.append({
                                         'roadmap_id': roadmap.roadmap_id,
                                         'roadmap_title': roadmap.title,
-                                        'task_id': roadmap.task_id,
+                                        'task_id': task.task_id if task else None,
                                         'concept_id': concept_id,
                                         'concept_name': concept.get('name'),
                                         'content_type': content_type,
@@ -214,7 +228,7 @@ async def main(dry_run: bool = True, timeout_seconds: int = 3600):
     print(f"超时阈值: {timeout_seconds} 秒 ({timeout_seconds / 60:.1f} 分钟)")
     print()
     
-    async with async_session_maker() as session:
+    async with AsyncSessionLocal() as session:
         # 1. 获取活跃任务
         print("步骤 1/4: 获取活跃任务...")
         active_task_ids = await get_active_task_ids(session)

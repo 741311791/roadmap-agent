@@ -37,8 +37,7 @@ async def generate_tutorials_for_roadmap(roadmap_id: str):
         
         print(f"\n=== 为路线图生成教程 ===")
         print(f"Roadmap ID: {roadmap_id}")
-        print(f"Title: {framework.title}")
-        print(f"Task ID: {metadata.task_id}\n")
+        print(f"Title: {framework.title}\n")
         
         # 提取所有 Concepts
         concepts_with_context = []
@@ -57,9 +56,9 @@ async def generate_tutorials_for_roadmap(roadmap_id: str):
         print(f"共 {len(concepts_with_context)} 个概念需要生成教程\n")
         
         # 获取任务信息（用于用户偏好）
-        task = await repo.get_task(metadata.task_id)
+        task = await repo.get_active_task_by_roadmap_id(roadmap_id)
         if not task:
-            print(f"任务 {metadata.task_id} 不存在")
+            print(f"路线图 {roadmap_id} 没有活跃任务")
             return
         
         # 从 user_request 中提取学习偏好
@@ -109,7 +108,6 @@ async def generate_tutorials_for_roadmap(roadmap_id: str):
         await repo.save_roadmap_metadata(
             roadmap_id=roadmap_id,
             user_id=metadata.user_id,
-            task_id=metadata.task_id,
             framework=updated_framework,
         )
         print(f"✓ 路线图框架已更新\n")
@@ -119,7 +117,7 @@ async def generate_tutorials_for_roadmap(roadmap_id: str):
         # 更新任务状态
         if task.status != "completed":
             await repo.update_task_status(
-                task_id=metadata.task_id,
+                task_id=task.task_id,
                 status="completed",
                 current_step="completed",
                 roadmap_id=roadmap_id,

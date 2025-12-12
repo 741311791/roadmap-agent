@@ -110,13 +110,9 @@ async def get_active_task(
         ```
     """
     repo = RoadmapRepository(db)
-    metadata = await repo.get_roadmap_metadata(roadmap_id)
     
-    if not metadata:
-        raise HTTPException(status_code=404, detail="路线图不存在")
-    
-    # 获取关联的任务
-    task = await repo.get_task(metadata.task_id) if metadata.task_id else None
+    # 直接通过 roadmap_id 查询活跃任务
+    task = await repo.get_active_task_by_roadmap_id(roadmap_id)
     
     # 只有当任务状态为 processing 或 human_review_pending 时才算活跃
     if task and task.status in ['processing', 'human_review_pending']:
@@ -125,6 +121,9 @@ async def get_active_task(
             "task_id": task.task_id,
             "status": task.status,
             "current_step": task.current_step,
+            "task_type": task.task_type,
+            "concept_id": task.concept_id,
+            "content_type": task.content_type,
             "created_at": task.created_at.isoformat() if task.created_at else None,
             "updated_at": task.updated_at.isoformat() if task.updated_at else None,
         }

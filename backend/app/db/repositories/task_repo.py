@@ -171,6 +171,9 @@ class TaskRepository(BaseRepository[RoadmapTask]):
         task_id: str,
         user_id: str,
         user_request: dict,
+        task_type: str = "creation",
+        concept_id: Optional[str] = None,
+        content_type: Optional[str] = None,
     ) -> RoadmapTask:
         """
         创建路线图生成任务
@@ -179,6 +182,9 @@ class TaskRepository(BaseRepository[RoadmapTask]):
             task_id: 任务 ID
             user_id: 用户 ID
             user_request: 用户请求（字典格式）
+            task_type: 任务类型（'creation', 'retry_tutorial', 'retry_resources', 'retry_quiz', 'retry_batch'）
+            concept_id: 概念 ID（重试任务需要）
+            content_type: 内容类型（重试任务需要）
             
         Returns:
             创建的任务记录
@@ -189,6 +195,9 @@ class TaskRepository(BaseRepository[RoadmapTask]):
             user_request=user_request,
             status="pending",
             current_step="init",
+            task_type=task_type,
+            concept_id=concept_id,
+            content_type=content_type,
         )
         
         # flush=True 以立即获取数据库生成的字段
@@ -198,6 +207,7 @@ class TaskRepository(BaseRepository[RoadmapTask]):
             "roadmap_task_created",
             task_id=task_id,
             user_id=user_id,
+            task_type=task_type,
         )
         
         return task
@@ -302,3 +312,89 @@ class TaskRepository(BaseRepository[RoadmapTask]):
             logger.info("roadmap_task_deleted", task_id=task_id)
         
         return deleted
+    
+    # ============================================================
+    # 任务恢复相关方法
+    # ============================================================
+    
+    async def find_interrupted_tasks(
+        self,
+        max_age_hours: int = 24,
+    ) -> List[RoadmapTask]:
+        """
+        查找被中断的任务（服务器重启后需要恢复的任务）
+        
+        中断任务的特征：
+        - 状态为 "processing"（正在执行中被中断）
+        - 创建时间在 max_age_hours 小时内（避免恢复太旧的任务）
+        - 任务类型为 "creation"（只恢复创建任务，不恢复重试任务）
+        
+        注意：不恢复 "human_review_pending" 状态的任务，因为这些任务需要用户手动操作。
+        
+        Args:
+            max_age_hours: 任务最大年龄（小时），超过此时间的任务不会被恢复
+            
+        Returns:
+            被中断的任务列表（按创建时间升序，先创建的先恢复）
+        """
+        from datetime import timedelta
+        
+        # 计算时间阈值（只恢复最近 max_age_hours 小时内的任务）
+        cutoff_time = beijing_now() - timedelta(hours=max_age_hours)
+        
+        result = await self.session.execute(
+            select(RoadmapTask)
+            .where(
+                RoadmapTask.status == "processing",
+                RoadmapTask.created_at >= cutoff_time,
+                # 只恢复创建任务，重试任务需要用户手动触发
+                RoadmapTask.task_type == "creation",
+            )
+            .order_by(RoadmapTask.created_at.asc())  # 先创建的先恢复
+        )
+        
+        tasks = list(result.scalars().all())
+        
+        logger.info(
+            "interrupted_tasks_found",
+            count=len(tasks),
+            max_age_hours=max_age_hours,
+            cutoff_time=cutoff_time.isoformat(),
+        )
+        
+        return tasks
+    
+    async def mark_task_recovery_failed(
+        self,
+        task_id: str,
+        reason: str,
+    ) -> bool:
+        """
+        标记任务恢复失败
+        
+        当无法从 checkpoint 恢复任务时，将任务标记为失败。
+        
+        Args:
+            task_id: 任务 ID
+            reason: 失败原因
+            
+        Returns:
+            True 如果更新成功
+        """
+        error_message = f"任务恢复失败: {reason}"
+        
+        updated = await self.update_task_status(
+            task_id=task_id,
+            status="failed",
+            current_step="recovery_failed",
+            error_message=error_message,
+        )
+        
+        if updated:
+            logger.warning(
+                "task_recovery_marked_failed",
+                task_id=task_id,
+                reason=reason,
+            )
+        
+        return updated
