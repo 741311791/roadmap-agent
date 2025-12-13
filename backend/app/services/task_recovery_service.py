@@ -250,6 +250,7 @@ class TaskRecoveryService:
         执行恢复（后台任务）
         
         使用 LangGraph 的恢复机制：传入 None 作为输入，从 checkpoint 继续执行。
+        恢复完成后，需要保存生成的数据到数据库。
         
         Args:
             executor: 工作流执行器
@@ -276,6 +277,9 @@ class TaskRecoveryService:
                 roadmap_id=roadmap_id,
             )
             
+            # 关键修复：保存工作流生成的数据到数据库
+            await self._save_workflow_results(task_id, final_state)
+            
             # 清除 live_step 缓存
             executor.state_manager.clear_live_step(task_id)
             
@@ -295,6 +299,130 @@ class TaskRecoveryService:
         finally:
             # 清理后台任务引用
             self._recovery_tasks.pop(task_id, None)
+    
+    async def _save_workflow_results(self, task_id: str, final_state: dict) -> None:
+        """
+        保存工作流生成的数据到数据库
+        
+        这个方法复用了 RoadmapService.generate_roadmap() 中的数据保存逻辑。
+        
+        Args:
+            task_id: 任务 ID
+            final_state: 工作流最终状态
+        """
+        try:
+            framework = final_state.get("roadmap_framework")
+            if not framework:
+                logger.warning(
+                    "task_recovery_no_framework",
+                    task_id=task_id,
+                    message="final_state 中没有 roadmap_framework，跳过数据保存",
+                )
+                return
+            
+            async with self.repo_factory.create_session() as session:
+                # 1. 保存/更新路线图元数据
+                # save_roadmap 方法内部会自动判断是更新还是插入
+                roadmap_repo = self.repo_factory.create_roadmap_meta_repo(session)
+                task_repo = self.repo_factory.create_task_repo(session)
+                
+                # 获取 user_id
+                task = await task_repo.get_by_task_id(task_id)
+                if not task:
+                    logger.error(
+                        "task_recovery_task_not_found",
+                        task_id=task_id,
+                    )
+                    return
+                
+                await roadmap_repo.save_roadmap(
+                    roadmap_id=framework.roadmap_id,
+                    user_id=task.user_id,
+                    framework=framework,
+                )
+                logger.info(
+                    "task_recovery_roadmap_metadata_saved",
+                    task_id=task_id,
+                    roadmap_id=framework.roadmap_id,
+                )
+                
+                # 2. 保存教程元数据（A4: 教程生成器产出）
+                tutorial_refs = final_state.get("tutorial_refs", {})
+                if tutorial_refs:
+                    logger.info(
+                        "task_recovery_saving_tutorials",
+                        task_id=task_id,
+                        count=len(tutorial_refs),
+                    )
+                    tutorial_repo = self.repo_factory.create_tutorial_repo(session)
+                    await tutorial_repo.save_tutorials_batch(
+                        tutorial_refs=tutorial_refs,
+                        roadmap_id=framework.roadmap_id,
+                    )
+                    logger.info(
+                        "task_recovery_tutorials_saved",
+                        task_id=task_id,
+                        count=len(tutorial_refs),
+                    )
+                
+                # 3. 保存资源推荐元数据（A5: 资源推荐师产出）
+                resource_refs = final_state.get("resource_refs", {})
+                if resource_refs:
+                    logger.info(
+                        "task_recovery_saving_resources",
+                        task_id=task_id,
+                        count=len(resource_refs),
+                    )
+                    resource_repo = self.repo_factory.create_resource_repo(session)
+                    await resource_repo.save_resources_batch(
+                        resource_refs=resource_refs,
+                        roadmap_id=framework.roadmap_id,
+                    )
+                    logger.info(
+                        "task_recovery_resources_saved",
+                        task_id=task_id,
+                        count=len(resource_refs),
+                    )
+                
+                # 4. 保存测验元数据（A6: 测验生成器产出）
+                quiz_refs = final_state.get("quiz_refs", {})
+                if quiz_refs:
+                    logger.info(
+                        "task_recovery_saving_quizzes",
+                        task_id=task_id,
+                        count=len(quiz_refs),
+                    )
+                    quiz_repo = self.repo_factory.create_quiz_repo(session)
+                    await quiz_repo.save_quizzes_batch(
+                        quiz_refs=quiz_refs,
+                        roadmap_id=framework.roadmap_id,
+                    )
+                    logger.info(
+                        "task_recovery_quizzes_saved",
+                        task_id=task_id,
+                        count=len(quiz_refs),
+                    )
+                
+                # 5. 提交所有更改
+                await session.commit()
+                
+                logger.info(
+                    "task_recovery_data_saved_successfully",
+                    task_id=task_id,
+                    roadmap_id=framework.roadmap_id,
+                    tutorials=len(tutorial_refs),
+                    resources=len(resource_refs),
+                    quizzes=len(quiz_refs),
+                )
+                
+        except Exception as e:
+            logger.error(
+                "task_recovery_save_data_error",
+                task_id=task_id,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            # 数据保存失败不应导致恢复失败，记录错误即可
     
     async def _mark_task_failed(self, task_id: str, reason: str) -> None:
         """

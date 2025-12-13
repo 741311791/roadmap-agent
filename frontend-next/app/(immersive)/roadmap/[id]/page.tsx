@@ -380,8 +380,10 @@ export default function RoadmapDetailPage() {
     );
   }
 
-  // 如果有活跃任务且路线图结构不完整，显示生成进度页面
-  const isGenerating = activeTask && (!currentRoadmap?.stages || currentRoadmap.stages.length === 0);
+  // 如果有活跃任务且任务状态不是 completed 或 partial_failure，显示生成进度页面
+  const isGenerating = activeTask && 
+    activeTask.status !== 'completed' && 
+    activeTask.status !== 'partial_failure';
 
   if (isGenerating) {
     return (
