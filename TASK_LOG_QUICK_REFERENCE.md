@@ -342,3 +342,4 @@ console.log('Card props:', { outputSummary, details });
 
 
 
+

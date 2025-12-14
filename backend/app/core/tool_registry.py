@@ -4,6 +4,7 @@
 按时序图，工具层包含：
 - Web Search: 搜索资料
 - S3 Object Storage: 存储教程内容
+- Mentor Tools: 伴学Agent专用工具
 """
 from typing import Dict, Optional
 from app.tools.base import BaseTool
@@ -11,6 +12,12 @@ from app.tools.search.web_search_router import WebSearchRouter
 from app.tools.search.tavily_api_search import TavilyAPISearchTool
 from app.tools.search.duckduckgo_search import DuckDuckGoSearchTool
 from app.tools.storage.s3_client import S3StorageTool
+# 伴学Agent工具
+from app.tools.mentor.note_recorder_tool import NoteRecorderTool
+from app.tools.mentor.get_concept_tutorial_tool import GetConceptTutorialTool
+from app.tools.mentor.get_user_profile_tool import GetUserProfileTool
+from app.tools.mentor.get_roadmap_metadata_tool import GetRoadmapMetadataTool
+from app.tools.mentor.mark_content_complete_tool import MarkContentCompleteTool
 import structlog
 
 logger = structlog.get_logger()
@@ -70,6 +77,20 @@ class ToolRegistry:
         
         # 注册 S3 Storage Tool
         self.register(S3StorageTool())
+        
+        # 注册伴学Agent工具
+        try:
+            self.register(NoteRecorderTool())
+            self.register(GetConceptTutorialTool())
+            self.register(GetUserProfileTool())
+            self.register(GetRoadmapMetadataTool())
+            self.register(MarkContentCompleteTool())
+        except Exception as e:
+            logger.error(
+                "mentor_tools_registration_failed",
+                error=str(e),
+                message="伴学Agent工具注册失败"
+            )
         
         logger.info(
             "tool_registry_initialized",

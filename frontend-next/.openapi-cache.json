@@ -1023,6 +1023,553 @@
         }
       }
     },
+    "/api/v1/progress/roadmaps/{roadmap_id}/concepts/{concept_id}": {
+      "put": {
+        "tags": [
+          "Progress"
+        ],
+        "summary": "Update Concept Progress",
+        "description": "标记/取消 Concept 完成状态\n\n- **is_completed=true**: 标记完成\n- **is_completed=false**: 取消完成",
+        "operationId": "update_concept_progress_api_v1_progress_roadmaps__roadmap_id__concepts__concept_id__put",
+        "parameters": [
+          {
+            "name": "roadmap_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Roadmap Id"
+            }
+          },
+          {
+            "name": "concept_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Concept Id"
+            }
+          },
+          {
+            "name": "x-user-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-User-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConceptProgressUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConceptProgressResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/progress/roadmaps/{roadmap_id}/concepts": {
+      "get": {
+        "tags": [
+          "Progress"
+        ],
+        "summary": "Get Roadmap Progress",
+        "description": "获取某个路线图的所有Concept进度",
+        "operationId": "get_roadmap_progress_api_v1_progress_roadmaps__roadmap_id__concepts_get",
+        "parameters": [
+          {
+            "name": "roadmap_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Roadmap Id"
+            }
+          },
+          {
+            "name": "x-user-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-User-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ConceptProgressResponse"
+                  },
+                  "title": "Response Get Roadmap Progress Api V1 Progress Roadmaps  Roadmap Id  Concepts Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/progress/roadmaps/{roadmap_id}/concepts/{concept_id}/quiz": {
+      "post": {
+        "tags": [
+          "Progress"
+        ],
+        "summary": "Submit Quiz Attempt",
+        "description": "提交Quiz答题记录",
+        "operationId": "submit_quiz_attempt_api_v1_progress_roadmaps__roadmap_id__concepts__concept_id__quiz_post",
+        "parameters": [
+          {
+            "name": "roadmap_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Roadmap Id"
+            }
+          },
+          {
+            "name": "concept_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Concept Id"
+            }
+          },
+          {
+            "name": "x-user-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-User-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuizAttemptCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuizAttemptResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mentor/chat/stream": {
+      "post": {
+        "tags": [
+          "mentor"
+        ],
+        "summary": "Chat Stream",
+        "description": "伴学Agent流式对话\n\n使用SSE实时推送AI响应，支持打字机效果。\n\nSSE事件格式：\n- {type: 'session_id', session_id: string}: 会话ID\n- {type: 'content', chunk: string}: 内容片段\n- {type: 'done', message_id: string}: 完成标记\n- {type: 'error', message: string}: 错误信息\n\nArgs:\n    request: 聊天请求，包含user_id, roadmap_id, concept_id, message, session_id\n    \nReturns:\n    SSE流",
+        "operationId": "chat_stream_api_v1_mentor_chat_stream_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mentor/sessions/{roadmap_id}": {
+      "get": {
+        "tags": [
+          "mentor"
+        ],
+        "summary": "Get Sessions",
+        "description": "获取用户在指定路线图下的所有聊天会话\n\nArgs:\n    roadmap_id: 路线图ID\n    user_id: 用户ID\n    limit: 返回数量限制\n    offset: 分页偏移\n    \nReturns:\n    会话列表",
+        "operationId": "get_sessions_api_v1_mentor_sessions__roadmap_id__get",
+        "parameters": [
+          {
+            "name": "roadmap_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Roadmap Id"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "用户ID",
+              "title": "User Id"
+            },
+            "description": "用户ID"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "description": "返回数量限制",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "返回数量限制"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "分页偏移",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "分页偏移"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Sessions Api V1 Mentor Sessions  Roadmap Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mentor/messages/{session_id}": {
+      "get": {
+        "tags": [
+          "mentor"
+        ],
+        "summary": "Get Messages",
+        "description": "获取会话的历史消息\n\nArgs:\n    session_id: 会话ID\n    limit: 返回数量限制\n    offset: 分页偏移\n    \nReturns:\n    消息列表",
+        "operationId": "get_messages_api_v1_mentor_messages__session_id__get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "description": "返回数量限制",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "返回数量限制"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "分页偏移",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "分页偏移"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Messages Api V1 Mentor Messages  Session Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mentor/notes/{roadmap_id}": {
+      "get": {
+        "tags": [
+          "mentor"
+        ],
+        "summary": "Get Notes",
+        "description": "获取用户的学习笔记\n\nArgs:\n    roadmap_id: 路线图ID\n    user_id: 用户ID\n    concept_id: 概念ID（可选）\n    limit: 返回数量限制\n    offset: 分页偏移\n    \nReturns:\n    笔记列表",
+        "operationId": "get_notes_api_v1_mentor_notes__roadmap_id__get",
+        "parameters": [
+          {
+            "name": "roadmap_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Roadmap Id"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "用户ID",
+              "title": "User Id"
+            },
+            "description": "用户ID"
+          },
+          {
+            "name": "concept_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "概念ID（可选，用于过滤）",
+              "title": "Concept Id"
+            },
+            "description": "概念ID（可选，用于过滤）"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "description": "返回数量限制",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "返回数量限制"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "分页偏移",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "分页偏移"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Notes Api V1 Mentor Notes  Roadmap Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mentor/notes/{note_id}": {
+      "delete": {
+        "tags": [
+          "mentor"
+        ],
+        "summary": "Delete Note",
+        "description": "删除学习笔记\n\nArgs:\n    note_id: 笔记ID\n    user_id: 用户ID（用于权限验证）\n    \nReturns:\n    删除结果",
+        "operationId": "delete_note_api_v1_mentor_notes__note_id__delete",
+        "parameters": [
+          {
+            "name": "note_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Note Id"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "用户ID",
+              "title": "User Id"
+            },
+            "description": "用户ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Note Api V1 Mentor Notes  Note Id  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/roadmaps/{roadmap_id}/active-retry-task": {
       "get": {
         "tags": [
@@ -1767,6 +2314,197 @@
         }
       }
     },
+    "/api/v1/trace/{task_id}/logs": {
+      "get": {
+        "tags": [
+          "trace"
+        ],
+        "summary": "Get Trace Logs",
+        "description": "获取指定 task_id 的执行日志\n\nArgs:\n    task_id: 追踪 ID（通常等于 task_id）\n    level: 过滤日志级别（debug, info, warning, error）\n    category: 过滤日志分类（workflow, agent, tool, database）\n    limit: 返回数量限制（默认 100，最大 500）\n    offset: 分页偏移\n    \nReturns:\n    执行日志列表",
+        "operationId": "get_trace_logs_api_v1_trace__task_id__logs_get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "level",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Level"
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Category"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionLogListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/trace/{task_id}/summary": {
+      "get": {
+        "tags": [
+          "trace"
+        ],
+        "summary": "Get Trace Summary",
+        "description": "获取指定 task_id 的执行摘要\n\nArgs:\n    task_id: 追踪 ID\n    \nReturns:\n    执行摘要统计",
+        "operationId": "get_trace_summary_api_v1_trace__task_id__summary_get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TraceSummaryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/trace/{task_id}/errors": {
+      "get": {
+        "tags": [
+          "trace"
+        ],
+        "summary": "Get Trace Errors",
+        "description": "获取指定 task_id 的错误日志\n\nArgs:\n    task_id: 追踪 ID\n    limit: 返回数量限制（默认 50）\n    \nReturns:\n    错误日志列表",
+        "operationId": "get_trace_errors_api_v1_trace__task_id__errors_get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionLogListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "summary": "Health Check",
@@ -1787,6 +2525,57 @@
   },
   "components": {
     "schemas": {
+      "ChatMessageRequest": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "title": "User Id",
+            "description": "用户 ID"
+          },
+          "roadmap_id": {
+            "type": "string",
+            "title": "Roadmap Id",
+            "description": "路线图 ID"
+          },
+          "concept_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Concept Id",
+            "description": "当前学习的概念 ID"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "description": "用户消息内容"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id",
+            "description": "会话 ID（新会话时为空）"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "roadmap_id",
+          "message"
+        ],
+        "title": "ChatMessageRequest",
+        "description": "聊天消息请求"
+      },
       "ChatModificationRequest": {
         "properties": {
           "user_message": {
@@ -1825,6 +2614,190 @@
         ],
         "title": "ChatModificationRequest",
         "description": "聊天修改请求"
+      },
+      "ConceptProgressResponse": {
+        "properties": {
+          "concept_id": {
+            "type": "string",
+            "title": "Concept Id"
+          },
+          "is_completed": {
+            "type": "boolean",
+            "title": "Is Completed"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "concept_id",
+          "is_completed"
+        ],
+        "title": "ConceptProgressResponse",
+        "description": "Concept 进度响应"
+      },
+      "ConceptProgressUpdate": {
+        "properties": {
+          "is_completed": {
+            "type": "boolean",
+            "title": "Is Completed",
+            "description": "是否完成"
+          }
+        },
+        "type": "object",
+        "required": [
+          "is_completed"
+        ],
+        "title": "ConceptProgressUpdate",
+        "description": "标记/取消 Concept 完成状态请求"
+      },
+      "ExecutionLogListResponse": {
+        "properties": {
+          "logs": {
+            "items": {
+              "$ref": "#/components/schemas/ExecutionLogResponse"
+            },
+            "type": "array",
+            "title": "Logs"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "logs",
+          "total",
+          "offset",
+          "limit"
+        ],
+        "title": "ExecutionLogListResponse",
+        "description": "执行日志列表响应"
+      },
+      "ExecutionLogResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "task_id": {
+            "type": "string",
+            "title": "Task Id"
+          },
+          "roadmap_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Roadmap Id"
+          },
+          "concept_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Concept Id"
+          },
+          "level": {
+            "type": "string",
+            "title": "Level"
+          },
+          "category": {
+            "type": "string",
+            "title": "Category"
+          },
+          "step": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step"
+          },
+          "agent_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Name"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "details": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "task_id",
+          "level",
+          "category",
+          "message",
+          "created_at"
+        ],
+        "title": "ExecutionLogResponse",
+        "description": "执行日志响应"
       },
       "HTTPValidationError": {
         "properties": {
@@ -1985,6 +2958,97 @@
         ],
         "title": "LearningPreferences",
         "description": "学习偏好配置"
+      },
+      "QuizAttemptCreate": {
+        "properties": {
+          "quiz_id": {
+            "type": "string",
+            "title": "Quiz Id"
+          },
+          "total_questions": {
+            "type": "integer",
+            "title": "Total Questions"
+          },
+          "correct_answers": {
+            "type": "integer",
+            "title": "Correct Answers"
+          },
+          "score_percentage": {
+            "type": "number",
+            "title": "Score Percentage"
+          },
+          "incorrect_question_indices": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Incorrect Question Indices",
+            "description": "答错题目的序号列表（从0开始，如 [0, 2, 5] 表示第1、3、6题答错）",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "quiz_id",
+          "total_questions",
+          "correct_answers",
+          "score_percentage"
+        ],
+        "title": "QuizAttemptCreate",
+        "description": "提交 Quiz 答题记录请求"
+      },
+      "QuizAttemptResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "quiz_id": {
+            "type": "string",
+            "title": "Quiz Id"
+          },
+          "concept_id": {
+            "type": "string",
+            "title": "Concept Id"
+          },
+          "total_questions": {
+            "type": "integer",
+            "title": "Total Questions"
+          },
+          "correct_answers": {
+            "type": "integer",
+            "title": "Correct Answers"
+          },
+          "score_percentage": {
+            "type": "number",
+            "title": "Score Percentage"
+          },
+          "incorrect_question_indices": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Incorrect Question Indices"
+          },
+          "attempted_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Attempted At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "quiz_id",
+          "concept_id",
+          "total_questions",
+          "correct_answers",
+          "score_percentage",
+          "incorrect_question_indices",
+          "attempted_at"
+        ],
+        "title": "QuizAttemptResponse",
+        "description": "Quiz 答题记录响应"
       },
       "RegenerateContentRequest": {
         "properties": {
@@ -2363,6 +3427,68 @@
         ],
         "title": "TechStackItem",
         "description": "技术栈项"
+      },
+      "TraceSummaryResponse": {
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "title": "Task Id"
+          },
+          "level_stats": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Level Stats"
+          },
+          "category_stats": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Category Stats"
+          },
+          "total_duration_ms": {
+            "type": "integer",
+            "title": "Total Duration Ms"
+          },
+          "first_log_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Log At"
+          },
+          "last_log_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Log At"
+          },
+          "total_logs": {
+            "type": "integer",
+            "title": "Total Logs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "level_stats",
+          "category_stats",
+          "total_duration_ms",
+          "total_logs"
+        ],
+        "title": "TraceSummaryResponse",
+        "description": "追踪摘要响应"
       },
       "UserProfileRequest": {
         "properties": {

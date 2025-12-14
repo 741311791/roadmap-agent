@@ -709,3 +709,149 @@ class BatchModificationResult(BaseModel):
     overall_success: bool = Field(..., description="是否全部成功")
     partial_success: bool = Field(..., description="是否部分成功")
     summary: str = Field(..., description="整体修改摘要")
+
+
+# ============================================================
+# 学习进度相关模型
+# ============================================================
+
+class ConceptProgressUpdate(BaseModel):
+    """标记/取消 Concept 完成状态请求"""
+    is_completed: bool = Field(..., description="是否完成")
+
+
+class ConceptProgressResponse(BaseModel):
+    """Concept 进度响应"""
+    concept_id: str
+    is_completed: bool
+    completed_at: Optional[datetime] = None
+
+
+class QuizAttemptCreate(BaseModel):
+    """提交 Quiz 答题记录请求"""
+    quiz_id: str
+    total_questions: int
+    correct_answers: int
+    score_percentage: float
+    incorrect_question_indices: List[int] = Field(
+        default=[],
+        description="答错题目的序号列表（从0开始，如 [0, 2, 5] 表示第1、3、6题答错）"
+    )
+
+
+class QuizAttemptResponse(BaseModel):
+    """Quiz 答题记录响应"""
+    id: str
+    quiz_id: str
+    concept_id: str
+    total_questions: int
+    correct_answers: int
+    score_percentage: float
+    incorrect_question_indices: List[int]
+    attempted_at: datetime
+
+
+# ============================================================
+# 7. 伴学Agent相关模型
+# ============================================================
+
+class ChatMessageRequest(BaseModel):
+    """聊天消息请求"""
+    user_id: str = Field(..., description="用户 ID")
+    roadmap_id: str = Field(..., description="路线图 ID")
+    concept_id: Optional[str] = Field(None, description="当前学习的概念 ID")
+    message: str = Field(..., description="用户消息内容")
+    session_id: Optional[str] = Field(None, description="会话 ID（新会话时为空）")
+
+
+class ChatSession(BaseModel):
+    """聊天会话"""
+    session_id: str
+    user_id: str
+    roadmap_id: str
+    concept_id: Optional[str] = None
+    title: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    message_count: int = 0
+    last_message_preview: Optional[str] = None
+
+
+class ChatMessage(BaseModel):
+    """聊天消息"""
+    message_id: str
+    session_id: str
+    role: Literal["user", "assistant", "system"]
+    content: str
+    intent_type: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    created_at: datetime
+
+
+class LearningNoteCreate(BaseModel):
+    """创建学习笔记请求"""
+    user_id: str = Field(..., description="用户 ID")
+    roadmap_id: str = Field(..., description="路线图 ID")
+    concept_id: str = Field(..., description="概念 ID")
+    title: Optional[str] = Field(None, description="笔记标题")
+    content: str = Field(..., description="笔记内容（Markdown格式）")
+    source: Literal["manual", "ai_generated", "chat_extracted"] = Field(
+        default="manual", description="笔记来源"
+    )
+    tags: List[str] = Field(default=[], description="标签列表")
+
+
+class LearningNote(BaseModel):
+    """学习笔记"""
+    note_id: str
+    user_id: str
+    roadmap_id: str
+    concept_id: str
+    title: Optional[str] = None
+    content: str
+    source: Literal["manual", "ai_generated", "chat_extracted"]
+    tags: List[str] = []
+    created_at: datetime
+    updated_at: datetime
+
+
+class MentorAgentInput(BaseModel):
+    """伴学Agent输入"""
+    user_message: str = Field(..., description="用户消息")
+    user_id: str = Field(..., description="用户 ID")
+    roadmap_id: str = Field(..., description="路线图 ID")
+    concept_id: Optional[str] = Field(None, description="当前学习的概念 ID")
+    session_history: List[ChatMessage] = Field(
+        default=[], description="最近N条历史消息"
+    )
+    # 上下文信息（由API层填充）
+    concept_name: Optional[str] = Field(None, description="概念名称")
+    concept_description: Optional[str] = Field(None, description="概念描述")
+    tutorial_summary: Optional[str] = Field(None, description="教程摘要")
+    roadmap_title: Optional[str] = Field(None, description="路线图标题")
+    user_background: Optional[str] = Field(None, description="用户职业背景")
+    user_level: Optional[str] = Field(None, description="用户技术水平")
+    motivation: Optional[str] = Field(None, description="学习动机")
+
+
+class IntentRecognitionResult(BaseModel):
+    """意图识别结果"""
+    intent: Literal["qa", "quiz_request", "note_record", "explanation_request", "analogy_request"]
+    confidence: float = Field(..., ge=0, le=1, description="置信度")
+    reason: str = Field(..., description="判断理由")
+
+
+class MentorAgentOutput(BaseModel):
+    """伴学Agent输出"""
+    response: str = Field(..., description="AI回复内容")
+    intent_type: str = Field(..., description="识别出的意图类型")
+    tool_calls: List[str] = Field(default=[], description="调用的工具列表")
+    metadata: Dict[str, Any] = Field(default={}, description="额外元数据")
+
+
+class NoteRecordResult(BaseModel):
+    """笔记记录结果"""
+    title: str = Field(..., description="笔记标题")
+    content: str = Field(..., description="笔记内容（Markdown格式）")
+    tags: List[str] = Field(default=[], description="标签列表")
+    key_points: List[str] = Field(default=[], description="关键要点")

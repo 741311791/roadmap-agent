@@ -3,9 +3,13 @@
 import React, { useEffect, useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import type { Stage, Module, Concept } from '@/types/generated/models';
-import { CheckCircle2, Circle, ChevronRight, ChevronDown, ChevronLeft, Sparkles } from 'lucide-react';
+import { CheckCircle2, Circle, ChevronRight, ChevronDown, ChevronLeft, Sparkles, BookOpen } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { useAuthStore } from '@/lib/store/auth-store';
+import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 
@@ -15,6 +19,7 @@ import { Button } from '@/components/ui/button';
 interface KnowledgeRailProps {
   /** 路线图数据，包含阶段列表 */
   roadmap: {
+    title?: string;
     stages: Stage[];
   } | null;
   /** 当前激活的概念 ID */
@@ -83,6 +88,9 @@ export function KnowledgeRail({
     });
   };
 
+  // 获取当前用户信息
+  const { user } = useAuthStore();
+
   if (!roadmap) {
     return (
       <div className={cn("h-full flex items-center justify-center text-muted-foreground", className)}>
@@ -92,61 +100,118 @@ export function KnowledgeRail({
   }
 
   return (
-    <div className={cn(
-      "h-full flex flex-col",
-      "bg-card/80 border-r border-border",
-      className
-    )}>
-      {/* Back / Breadcrumb Header */}
-      <div className="p-4 pb-3 border-b border-border space-y-4">
-        <Link href="/home">
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            className="h-8 px-2 -ml-2 text-muted-foreground hover:text-foreground hover:bg-sage-50 gap-1 transition-colors"
-          >
-            <ChevronLeft className="w-4 h-4" />
-            <span className="text-xs">Dashboard</span>
-          </Button>
-        </Link>
-        
-        <div className="flex items-center justify-between">
-          <h2 className="text-xs font-semibold tracking-widest text-muted-foreground uppercase">
-            Roadmap
-          </h2>
-          <Badge 
-            variant="sage"
-            className="text-xs font-medium flex items-center gap-1"
-          >
-            <Sparkles className="w-3 h-3" />
-            {Math.round(generationProgress || 0)}%
-          </Badge>
+    <TooltipProvider delayDuration={300}>
+      <div className={cn(
+        "h-full flex flex-col",
+        "bg-card/80 border-r border-border",
+        className
+      )}>
+        {/* Brand Header - 品牌区域 */}
+        <div className="p-4 border-b border-border space-y-3">
+          {/* Back to Dashboard Breadcrumb */}
+          <Link href="/home">
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="h-8 px-2 -ml-2 -mt-1 text-muted-foreground hover:text-foreground hover:bg-sage-50 gap-1 transition-colors"
+            >
+              <ChevronLeft className="w-4 h-4" />
+              <span className="text-xs">Dashboard</span>
+            </Button>
+          </Link>
+
+          {/* Brand Logo */}
+          <div className="flex items-center gap-3">
+            {/* Logo */}
+            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-sage-500 to-sage-600 flex items-center justify-center shrink-0 shadow-sm">
+              <BookOpen className="w-5 h-5 text-white" />
+            </div>
+            {/* Product Name */}
+            <div className="flex-1 min-w-0">
+              <h1 className="text-sm font-semibold text-foreground">
+                Roadmap Agent
+              </h1>
+              <p className="text-xs text-muted-foreground truncate">
+                Learning Path
+              </p>
+            </div>
+          </div>
+
+          {/* Roadmap Title */}
+          <div className="space-y-2">
+            <h2 className="text-sm font-serif font-medium text-foreground leading-tight line-clamp-2">
+              {roadmap.title || 'Untitled Roadmap'}
+            </h2>
+            
+            {/* Progress Badge with Tooltip */}
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground uppercase tracking-wide">
+                Progress
+              </span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Badge 
+                    variant="sage"
+                    className="text-xs font-medium flex items-center gap-1 cursor-help"
+                  >
+                    <Sparkles className="w-3 h-3" />
+                    {Math.round(generationProgress || 0)}%
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-xs">
+                  <p>Overall completion: {Math.round(generationProgress || 0)}%</p>
+                </TooltipContent>
+              </Tooltip>
+            </div>
+          </div>
         </div>
+
+        {/* Concept Navigation - 概念导航 */}
+        <ScrollArea className="flex-1 px-2 py-4">
+          <div className="space-y-6 relative">
+            {/* Vertical Timeline Line - 对齐圆圈中心 */}
+            <div 
+              className="absolute left-[20px] top-2 bottom-2 w-px bg-border"
+            />
+
+            {roadmap.stages
+              .slice()
+              .sort((a, b) => a.order - b.order)
+              .map((stage) => (
+                <StageItem
+                  key={stage.stage_id}
+                  stage={stage}
+                  expandedModules={expandedModules}
+                  activeConceptId={activeConceptId}
+                  onToggleModule={toggleModule}
+                  onSelectConcept={onSelectConcept}
+                />
+              ))}
+          </div>
+        </ScrollArea>
+
+        {/* User Avatar Footer - 底部用户区域 */}
+        {user && (
+          <div className="p-3 border-t border-border bg-background/50">
+            <div className="flex items-center gap-3">
+              <Avatar className="w-8 h-8 shrink-0">
+                <AvatarFallback className="bg-sage-100 text-sage-700 text-xs font-medium">
+                  {user.username.slice(0, 2).toUpperCase()}
+                </AvatarFallback>
+              </Avatar>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium text-foreground truncate">
+                  {user.username}
+                </p>
+                <p className="text-xs text-muted-foreground truncate">
+                  {user.email}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
-
-      <ScrollArea className="flex-1 px-2 py-4">
-        <div className="space-y-6 relative">
-          {/* Vertical Timeline Line - 对齐圆圈中心 */}
-          <div 
-            className="absolute left-[20px] top-2 bottom-2 w-px bg-border"
-          />
-
-          {roadmap.stages
-            .slice()
-            .sort((a, b) => a.order - b.order)
-            .map((stage) => (
-              <StageItem
-                key={stage.stage_id}
-                stage={stage}
-                expandedModules={expandedModules}
-                activeConceptId={activeConceptId}
-                onToggleModule={toggleModule}
-                onSelectConcept={onSelectConcept}
-              />
-            ))}
-        </div>
-      </ScrollArea>
-    </div>
+    </TooltipProvider>
   );
 }
 
@@ -270,7 +335,8 @@ interface ConceptItemProps {
 }
 
 function ConceptItem({ concept, isActive, onSelect }: ConceptItemProps) {
-  const isCompleted = concept.content_status === 'completed';
+  const { conceptProgressMap } = useRoadmapStore();
+  const isCompleted = conceptProgressMap[concept.concept_id] || false;
 
   return (
     <button

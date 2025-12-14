@@ -4,7 +4,8 @@ import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import type { Concept, LearningPreferences } from '@/types/generated/models';
 import type { ResourcesResponse, QuizResponse } from '@/types/generated/services';
-import { getConceptResources, getConceptQuiz } from '@/lib/api/endpoints';
+import { getConceptResources, getConceptQuiz, updateConceptProgress, submitQuizAttempt } from '@/lib/api/endpoints';
+import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import { FailedContentAlert } from '@/components/common/retry-content-button';
 import { GeneratingContentLoader } from '@/components/common/generating-content-loader';
 import { StaleStatusDetector } from '@/components/common/stale-status-detector';
@@ -27,6 +28,7 @@ import {
   CheckCircle2,
   Circle,
   Loader2 as Loader2Icon,
+  Loader2,
   AlertCircle,
   RefreshCw
 } from 'lucide-react';
@@ -697,6 +699,45 @@ function QuizList({
     return { correct, total: submittedQuestions.size };
   };
 
+  // Auto-submit quiz attempt when all questions are answered
+  const allAnswered = quiz ? submittedQuestions.size === quiz.total_questions : false;
+  
+  useEffect(() => {
+    if (!allAnswered || !quiz || !roadmapId || !conceptId) return;
+    
+    const submitAttempt = async () => {
+      const score = getScore();
+      
+      // Calculate incorrect question indices
+      const incorrectIndices: number[] = [];
+      quiz.questions.forEach((question, index) => {
+        const userAnswers = answers[question.question_id] || [];
+        const isCorrect = 
+          userAnswers.length === question.correct_answer.length &&
+          userAnswers.every(a => question.correct_answer.includes(a));
+        
+        if (!isCorrect) {
+          incorrectIndices.push(index);
+        }
+      });
+      
+      try {
+        await submitQuizAttempt(roadmapId, conceptId, {
+          quiz_id: quiz.quiz_id,
+          total_questions: quiz.total_questions,
+          correct_answers: score.correct,
+          score_percentage: (score.correct / quiz.total_questions) * 100,
+          incorrect_question_indices: incorrectIndices
+        });
+        console.log('[QuizList] Quiz attempt submitted successfully');
+      } catch (error) {
+        console.error('Failed to submit quiz attempt:', error);
+      }
+    };
+    
+    submitAttempt();
+  }, [allAnswered, quiz, roadmapId, conceptId, answers, submittedQuestions]);
+
   if (isLoading) {
     return (
       <div className="flex flex-col items-center justify-center py-20">
@@ -748,7 +789,6 @@ function QuizList({
   }
 
   const score = getScore();
-  const allAnswered = submittedQuestions.size === quiz.questions.length;
 
   return (
     <div className="space-y-4">
@@ -866,6 +906,10 @@ interface LearningStageProps {
 export function LearningStage({ concept, className, tutorialContent, roadmapId, userPreferences, onRetrySuccess }: LearningStageProps) {
   const [activeFormat, setActiveFormat] = useState<LearningFormat>('immersive-text');
   
+  // Learning progress state
+  const { conceptProgressMap, updateConceptProgress: updateProgressInStore } = useRoadmapStore();
+  const [isTogglingProgress, setIsTogglingProgress] = useState(false);
+  
   // Resources state
   const [resources, setResources] = useState<ResourcesResponse | null>(null);
   const [resourcesLoading, setResourcesLoading] = useState(false);
@@ -951,6 +995,25 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId, 
         });
     }
   }, [activeFormat, concept?.concept_id, concept?.quiz_id, roadmapId]);
+
+  // Compute concept completion status
+  const isConceptCompleted = concept ? (conceptProgressMap[concept.concept_id] || false) : false;
+
+  // Handle toggle completion
+  const handleToggleComplete = async () => {
+    if (!roadmapId || !concept) return;
+    
+    setIsTogglingProgress(true);
+    try {
+      const newStatus = !isConceptCompleted;
+      await updateConceptProgress(roadmapId, concept.concept_id, newStatus);
+      updateProgressInStore(concept.concept_id, newStatus);
+    } catch (error) {
+      console.error('Failed to toggle concept completion:', error);
+    } finally {
+      setIsTogglingProgress(false);
+    }
+  };
 
   if (!concept) {
     return (
@@ -1202,10 +1265,23 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId, 
             </div>
             <Button 
               variant="outline" 
-              className="gap-2 border-sage-300 text-sage-700 hover:bg-sage-50 hover:text-sage-800 hover:border-sage-400 transition-all"
+              className={cn(
+                "gap-2 transition-all",
+                isConceptCompleted 
+                  ? "border-green-300 bg-green-50 text-green-700 hover:bg-green-100 hover:border-green-400"
+                  : "border-sage-300 text-sage-700 hover:bg-sage-50 hover:text-sage-800 hover:border-sage-400"
+              )}
+              onClick={handleToggleComplete}
+              disabled={isTogglingProgress}
             >
-              <Sparkles className="w-4 h-4" />
-              Mark as Complete
+              {isTogglingProgress ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : isConceptCompleted ? (
+                <CheckCircle2 className="w-4 h-4" />
+              ) : (
+                <Sparkles className="w-4 h-4" />
+              )}
+              {isConceptCompleted ? "Completed" : "Mark as Complete"}
             </Button>
           </div>
         </div>

@@ -14,6 +14,8 @@ from .endpoints import (
     quiz,
     modification,
     retry,
+    progress,
+    mentor,
 )
 from .roadmap import users_router, router as roadmap_router, trace_router
 
@@ -44,6 +46,12 @@ router.include_router(modification.router)
 
 # 失败重试相关
 router.include_router(retry.router)
+
+# 学习进度相关
+router.include_router(progress.router)
+
+# 伴学Agent相关（聊天、笔记）
+router.include_router(mentor.router)
 
 # 路线图管理相关（删除、恢复等）
 router.include_router(roadmap_router)

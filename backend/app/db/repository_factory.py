@@ -22,6 +22,8 @@ from app.db.repositories.quiz_repo import QuizRepository
 from app.db.repositories.intent_analysis_repo import IntentAnalysisRepository
 from app.db.repositories.user_profile_repo import UserProfileRepository
 from app.db.repositories.execution_log_repo import ExecutionLogRepository
+from app.db.repositories.chat_repo import ChatRepository
+from app.db.repositories.note_repo import NoteRepository
 
 import structlog
 
@@ -212,6 +214,36 @@ class RepositoryFactory:
         """
         return ExecutionLogRepository(session)
     
+    def create_chat_repo(
+        self,
+        session: AsyncSession,
+    ) -> ChatRepository:
+        """
+        创建聊天会话 Repository
+        
+        Args:
+            session: 数据库会话
+            
+        Returns:
+            ChatRepository 实例
+        """
+        return ChatRepository(session)
+    
+    def create_note_repo(
+        self,
+        session: AsyncSession,
+    ) -> NoteRepository:
+        """
+        创建学习笔记 Repository
+        
+        Args:
+            session: 数据库会话
+            
+        Returns:
+            NoteRepository 实例
+        """
+        return NoteRepository(session)
+    
     # ============================================================
     # 批量创建（便捷方法）
     # ============================================================
@@ -235,6 +267,8 @@ class RepositoryFactory:
             "intent_analysis": self.create_intent_analysis_repo(session),
             "user_profile": self.create_user_profile_repo(session),
             "execution_log": self.create_execution_log_repo(session),
+            "chat": self.create_chat_repo(session),
+            "note": self.create_note_repo(session),
         }
 
 

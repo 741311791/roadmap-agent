@@ -7,6 +7,7 @@ import {
   ResizablePanel, 
   ResizableHandle 
 } from '@/components/ui/resizable';
+import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { KnowledgeRail } from '@/components/roadmap/immersive/knowledge-rail';
 import { LearningStage } from '@/components/roadmap/immersive/learning-stage';
 import { MentorSidecar } from '@/components/roadmap/immersive/mentor-sidecar';
@@ -18,11 +19,12 @@ import {
   getRoadmapActiveTask, 
   getLatestTutorial, 
   downloadTutorialContent,
-  getUserProfile
+  getUserProfile,
+  getRoadmapProgress
 } from '@/lib/api/endpoints';
 import { TaskWebSocket } from '@/lib/api/websocket';
 import type { RoadmapFramework, Concept, Stage, Module, LearningPreferences } from '@/types/generated/models';
-import { Loader2, AlertCircle, ArrowLeft } from 'lucide-react';
+import { Loader2, AlertCircle, ArrowLeft, Menu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
@@ -51,7 +53,8 @@ export default function RoadmapDetailPage() {
     setRoadmap, 
     selectedConceptId, 
     selectConcept,
-    updateConceptStatus
+    updateConceptStatus,
+    setConceptProgressMap
   } = useRoadmapStore();
 
   // Data Fetching
@@ -72,6 +75,10 @@ export default function RoadmapDetailPage() {
   const [generationProgress, setGenerationProgress] = useState(0);
   const [currentGenerationStep, setCurrentGenerationStep] = useState<string | null>(null);
   const [generationLogs, setGenerationLogs] = useState<GenerationLog[]>([]);
+
+  // UI State - 折叠状态和抽屉状态
+  const [isMentorCollapsed, setIsMentorCollapsed] = useState(false);
+  const [isKnowledgeRailOpen, setIsKnowledgeRailOpen] = useState(false);
 
   // WebSocket ref
   const wsRef = useRef<TaskWebSocket | null>(null);
@@ -146,6 +153,26 @@ export default function RoadmapDetailPage() {
       loadUserPreferences();
     }
   }, [roadmapData, getUserId]);
+
+  // 2.5. Load Learning Progress
+  useEffect(() => {
+    if (!roadmapData || !roadmapId) return;
+    
+    const loadProgress = async () => {
+      try {
+        const progressList = await getRoadmapProgress(roadmapId);
+        const progressMap: Record<string, boolean> = {};
+        progressList.forEach(p => {
+          progressMap[p.concept_id] = p.is_completed;
+        });
+        setConceptProgressMap(progressMap);
+      } catch (error) {
+        console.error('[RoadmapDetail] Failed to load progress:', error);
+      }
+    };
+    
+    loadProgress();
+  }, [roadmapData, roadmapId, setConceptProgressMap]);
 
   // 3. Check for Active Task on Mount
   useEffect(() => {
@@ -468,11 +495,42 @@ export default function RoadmapDetailPage() {
         <div className="absolute inset-0 bg-noise opacity-[0.015]" />
       </div>
 
+      {/* Mobile Menu Button - 仅在小屏幕显示 */}
+      <div className="lg:hidden fixed top-4 left-4 z-50">
+        <Sheet open={isKnowledgeRailOpen} onOpenChange={setIsKnowledgeRailOpen}>
+          <SheetTrigger asChild>
+            <Button 
+              variant="outline" 
+              size="icon"
+              className="bg-background/95 backdrop-blur-sm shadow-lg border-sage-200 hover:bg-sage-50"
+            >
+              <Menu className="w-5 h-5" />
+            </Button>
+          </SheetTrigger>
+          <SheetContent side="left" className="p-0 w-[280px]">
+            <KnowledgeRail
+              roadmap={currentRoadmap}
+              activeConceptId={selectedConceptId}
+              onSelectConcept={(id) => {
+                handleConceptSelect(id);
+                setIsKnowledgeRailOpen(false); // 选择后关闭抽屉
+              }}
+              generationProgress={overallProgress}
+            />
+          </SheetContent>
+        </Sheet>
+      </div>
+
       {/* Main Layout */}
       <div className="relative z-10 h-full">
         <ResizablePanelGroup direction="horizontal">
-          {/* LEFT: Knowledge Rail */}
-          <ResizablePanel defaultSize={20} minSize={15} maxSize={30} className="min-w-[240px]">
+          {/* LEFT: Knowledge Rail - 在大屏幕显示 */}
+          <ResizablePanel 
+            defaultSize={20} 
+            minSize={15} 
+            maxSize={30} 
+            className="min-w-[240px] hidden lg:block"
+          >
             <KnowledgeRail
               roadmap={currentRoadmap}
               activeConceptId={selectedConceptId}
@@ -484,14 +542,14 @@ export default function RoadmapDetailPage() {
           <ResizableHandle 
             withHandle 
             className={cn(
-              "w-px bg-border",
+              "w-px bg-border hidden lg:block",
               "hover:bg-sage-300 transition-colors duration-200",
               "data-[resize-handle-active]:bg-sage-400"
             )} 
           />
 
           {/* CENTER: Learning Stage */}
-          <ResizablePanel defaultSize={55} className="min-w-[400px]">
+          <ResizablePanel defaultSize={55} className="min-w-[320px]">
             <LearningStage
               concept={getActiveConcept()}
               tutorialContent={tutorialContent}
@@ -512,15 +570,29 @@ export default function RoadmapDetailPage() {
           <ResizableHandle 
             withHandle 
             className={cn(
-              "w-px bg-border",
+              "w-px bg-border hidden md:block",
               "hover:bg-sage-300 transition-colors duration-200",
               "data-[resize-handle-active]:bg-sage-400"
             )} 
           />
 
-          {/* RIGHT: Mentor Sidecar */}
-          <ResizablePanel defaultSize={25} minSize={20} maxSize={35} className="min-w-[300px]">
-            <MentorSidecar conceptContext={getActiveConcept()?.name} />
+          {/* RIGHT: Mentor Sidecar - 在中等及以上屏幕显示 */}
+          <ResizablePanel 
+            defaultSize={isMentorCollapsed ? 3 : 25} 
+            minSize={isMentorCollapsed ? 3 : 20} 
+            maxSize={isMentorCollapsed ? 3 : 35} 
+            className={cn(
+              isMentorCollapsed ? "min-w-[48px]" : "min-w-[300px]",
+              "hidden md:block"
+            )}
+          >
+            <MentorSidecar 
+              conceptContext={getActiveConcept()?.name}
+              roadmapId={roadmapId}
+              conceptId={selectedConceptId || undefined}
+              isCollapsed={isMentorCollapsed}
+              onToggleCollapse={() => setIsMentorCollapsed(!isMentorCollapsed)}
+            />
           </ResizablePanel>
         </ResizablePanelGroup>
       </div>

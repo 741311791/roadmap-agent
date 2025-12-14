@@ -9,7 +9,7 @@
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from sqlmodel import SQLModel, Field, Column, JSON
-from sqlalchemy import Text, DateTime
+from sqlalchemy import Text, DateTime, UniqueConstraint
 import uuid
 
 # 北京时区 (UTC+8)
@@ -336,6 +336,202 @@ class ExecutionLog(SQLModel, table=True):
     
     # 时间戳
     created_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False))
+    )
+
+
+class ConceptProgress(SQLModel, table=True):
+    """Concept 学习进度表"""
+    __tablename__ = "concept_progress"
+    
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    user_id: str = Field(index=True, description="用户 ID")
+    roadmap_id: str = Field(foreign_key="roadmap_metadata.roadmap_id", index=True)
+    concept_id: str = Field(index=True, description="概念 ID（来自框架数据）")
+    
+    is_completed: bool = Field(default=False, description="是否完成")
+    completed_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=False), nullable=True),
+        description="完成时间（北京时间）"
+    )
+    
+    created_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False))
+    )
+    updated_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False))
+    )
+    
+    # 唯一约束：每个用户对每个Concept只有一条记录
+    __table_args__ = (
+        UniqueConstraint('user_id', 'roadmap_id', 'concept_id', name='uq_user_concept'),
+    )
+
+
+class QuizAttempt(SQLModel, table=True):
+    """Quiz 答题记录表"""
+    __tablename__ = "quiz_attempts"
+    
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    user_id: str = Field(index=True, description="用户 ID")
+    roadmap_id: str = Field(foreign_key="roadmap_metadata.roadmap_id", index=True)
+    concept_id: str = Field(index=True, description="概念 ID")
+    quiz_id: str = Field(foreign_key="quiz_metadata.quiz_id", index=True)
+    
+    # 答题详情
+    total_questions: int = Field(description="总题数")
+    correct_answers: int = Field(description="正确题数")
+    score_percentage: float = Field(description="得分百分比（0-100）")
+    incorrect_question_indices: list = Field(
+        default=[],
+        sa_column=Column(JSON),
+        description="答错题目的序号列表（从0开始）"
+    )
+    
+    # 时间记录
+    attempted_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False)),
+        description="答题时间（北京时间）"
+    )
+
+
+# ============================================================
+# 伴学Agent相关表
+# ============================================================
+
+class ChatSession(SQLModel, table=True):
+    """
+    聊天会话表
+    
+    存储用户与伴学Agent的对话会话，支持多轮对话和历史追踪。
+    """
+    __tablename__ = "chat_sessions"
+    
+    session_id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        primary_key=True,
+        description="会话唯一标识"
+    )
+    user_id: str = Field(index=True, description="用户 ID")
+    roadmap_id: str = Field(index=True, description="关联的路线图 ID")
+    concept_id: Optional[str] = Field(
+        default=None, 
+        index=True,
+        description="当前聚焦的概念 ID（可选）"
+    )
+    
+    # 会话元数据
+    title: Optional[str] = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
+        description="会话标题，如'React Hooks 学习讨论'"
+    )
+    message_count: int = Field(default=0, description="消息数量")
+    last_message_preview: Optional[str] = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
+        description="最后一条消息预览（截断）"
+    )
+    
+    # 时间戳
+    created_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False))
+    )
+    updated_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False))
+    )
+
+
+class ChatMessage(SQLModel, table=True):
+    """
+    聊天消息表
+    
+    存储每一条对话消息，支持流式输出后的完整消息存储。
+    """
+    __tablename__ = "chat_messages"
+    
+    message_id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        primary_key=True,
+        description="消息唯一标识"
+    )
+    session_id: str = Field(
+        foreign_key="chat_sessions.session_id",
+        index=True,
+        description="关联的会话 ID"
+    )
+    
+    # 消息内容
+    role: str = Field(description="消息角色: user, assistant, system")
+    content: str = Field(sa_column=Column(Text), description="消息内容")
+    
+    # 元数据
+    intent_type: Optional[str] = Field(
+        default=None,
+        description="意图类型: qa, quiz_request, note_record, explanation, analogy"
+    )
+    message_metadata: Optional[dict] = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+        description="额外元数据：工具调用记录、引用的概念等"
+    )
+    
+    # 时间戳
+    created_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False))
+    )
+
+
+class LearningNote(SQLModel, table=True):
+    """
+    学习笔记表
+    
+    存储用户的学习笔记，支持AI自动生成和手动记录。
+    """
+    __tablename__ = "learning_notes"
+    
+    note_id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        primary_key=True,
+        description="笔记唯一标识"
+    )
+    user_id: str = Field(index=True, description="用户 ID")
+    roadmap_id: str = Field(index=True, description="关联的路线图 ID")
+    concept_id: str = Field(index=True, description="关联的概念 ID")
+    
+    # 笔记内容
+    title: Optional[str] = Field(
+        default=None,
+        description="笔记标题"
+    )
+    content: str = Field(
+        sa_column=Column(Text),
+        description="笔记内容（Markdown格式）"
+    )
+    source: str = Field(
+        default="manual",
+        description="笔记来源: manual, ai_generated, chat_extracted"
+    )
+    tags: list = Field(
+        default=[],
+        sa_column=Column(JSON),
+        description="标签列表"
+    )
+    
+    # 时间戳
+    created_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False))
+    )
+    updated_at: datetime = Field(
         default_factory=beijing_now,
         sa_column=Column(DateTime(timezone=False))
     )
