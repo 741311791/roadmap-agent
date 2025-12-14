@@ -10,6 +10,7 @@ from app.agents.base import BaseAgent
 from app.models.domain import (
     IntentAnalysisOutput,
     LearningPreferences,
+    CurriculumDesignInput,
     CurriculumDesignOutput,
     RoadmapFramework,
 )
@@ -875,11 +876,19 @@ class CurriculumArchitectAgent(BaseAgent):
                 }
             }
     
-    async def execute(self, input_data: dict) -> CurriculumDesignOutput:
-        """实现基类的抽象方法"""
+    async def execute(self, input_data: CurriculumDesignInput) -> CurriculumDesignOutput:
+        """
+        实现基类的抽象方法
+        
+        Args:
+            input_data: CurriculumDesignInput 对象（包含 intent_analysis 和 user_preferences）
+            
+        Returns:
+            CurriculumDesignOutput: 课程设计输出
+        """
         return await self.design(
-            intent_analysis=input_data["intent_analysis"],
-            user_preferences=input_data["user_preferences"],
-            roadmap_id=input_data["roadmap_id"],
+            intent_analysis=input_data.intent_analysis,
+            user_preferences=input_data.user_preferences,
+            roadmap_id=input_data.intent_analysis.roadmap_id,
         )
 

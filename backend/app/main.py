@@ -12,6 +12,7 @@ from app.core.dependencies import init_orchestrator, cleanup_orchestrator
 from app.db.minio_init import ensure_bucket_exists
 from app.services.task_recovery_service import recover_interrupted_tasks_on_startup
 
+
 logger = structlog.get_logger()
 
 

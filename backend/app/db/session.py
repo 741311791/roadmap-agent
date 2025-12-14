@@ -13,7 +13,7 @@ logger = structlog.get_logger()
 # 创建异步引擎
 engine = create_async_engine(
     settings.DATABASE_URL,
-    echo=settings.DEBUG,
+    echo=False,  # 关闭 SQL 查询日志输出，避免终端信息过载
     pool_size=20,  # 增加连接池大小
     max_overflow=40,  # 增加溢出连接数
     pool_pre_ping=True,  # 连接前 ping 检查

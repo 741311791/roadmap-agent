@@ -24,8 +24,14 @@ class RedisClient:
                 settings.REDIS_URL,
                 encoding="utf-8",
                 decode_responses=True,
+                # 添加超时配置和连接池设置
+                socket_timeout=5,  # Socket 操作超时 5 秒
+                socket_connect_timeout=5,  # 连接超时 5 秒
+                socket_keepalive=True,  # 启用 TCP keepalive
+                max_connections=50,  # 连接池最大连接数
+                retry_on_timeout=True,  # 超时时自动重试
             )
-            logger.info("redis_client_initialized")
+            logger.info("redis_client_initialized", redis_url=settings.REDIS_URL)
     
     async def close(self):
         """关闭连接"""

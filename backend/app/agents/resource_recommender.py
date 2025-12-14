@@ -501,6 +501,7 @@ class ResourceRecommenderAgent(BaseAgent):
         # 调用 LLM（支持工具调用）
         max_iterations = 5
         iteration = 0
+        content = None  # 初始化 content 变量，避免 UnboundLocalError
         
         while iteration < max_iterations:
             logger.info(
@@ -553,9 +554,13 @@ class ResourceRecommenderAgent(BaseAgent):
             break
         
         if iteration >= max_iterations:
-            logger.warning(
+            logger.error(
                 "resource_recommender_max_iterations_reached",
                 concept_id=concept.concept_id,
+            )
+            raise ValueError(
+                f"资源推荐失败：工具调用循环达到最大次数（{max_iterations}）仍未获得最终内容。"
+                "可能原因：LLM 持续进行工具调用而未输出最终结果。"
             )
         
         # 解析输出

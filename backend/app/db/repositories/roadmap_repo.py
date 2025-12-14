@@ -12,6 +12,7 @@
 from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm.attributes import flag_modified
 from sqlmodel import SQLModel
 import structlog
 
@@ -330,6 +331,9 @@ class RoadmapRepository:
             existing.total_estimated_hours = framework.total_estimated_hours
             existing.recommended_completion_weeks = framework.recommended_completion_weeks
             existing.framework_data = framework.model_dump()
+            # 关键修复：显式标记 JSON 字段已修改
+            # SQLAlchemy 默认无法检测 JSON 列的变更，需要手动标记
+            flag_modified(existing, "framework_data")
             await self.session.commit()
             await self.session.refresh(existing)
             logger.info("roadmap_metadata_updated", roadmap_id=roadmap_id, user_id=user_id)

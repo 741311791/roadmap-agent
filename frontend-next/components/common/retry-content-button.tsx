@@ -127,6 +127,25 @@ export function RetryContentButton({
           
           // 创建 WebSocket 连接
           const ws = new TaskWebSocket(taskId, {
+            onStatus: (event) => {
+              console.log(`[RetryContentButton] 收到 current_status 事件:`, event);
+              // 处理任务当前状态（用于获取历史状态的场景）
+              if (event.status === 'completed') {
+                // 任务已完成，更新状态
+                updateConceptStatus(conceptId, { [statusKey]: 'completed' });
+                onSuccess?.(response);
+                ws.disconnect();
+                setIsRetrying(false);
+              } else if (event.status === 'failed') {
+                // 任务失败
+                updateConceptStatus(conceptId, { [statusKey]: 'failed' });
+                onError?.(new Error('内容生成失败'));
+                ws.disconnect();
+                setIsRetrying(false);
+              }
+              // 其他状态（processing等）继续等待后续事件
+            },
+            
             onConceptStart: (event) => {
               console.log(`[RetryContentButton] 收到 concept_start 事件:`, event);
               // 状态已通过乐观更新设置，这里可以更新UI显示额外信息
@@ -167,7 +186,9 @@ export function RetryContentButton({
           });
           
           // 连接 WebSocket
-          ws.connect(false); // 不需要历史事件
+          // 注意：对于重试任务，由于后端执行很快，可能在前端建立连接前就已经完成
+          // 因此需要获取历史事件，避免错过 concept_complete 事件
+          ws.connect(true); // 包括历史事件
           wsRef.current = ws;
           
           // 注意：不在这里设置 isRetrying = false

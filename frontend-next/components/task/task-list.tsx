@@ -68,6 +68,12 @@ export function TaskList({ tasks, isLoading, onRetry, onDelete }: TaskListProps)
         icon: CheckCircle2,
         className: 'border-green-300 text-green-600 bg-green-50'
       },
+      partial_failure: { 
+        variant: 'default' as const, 
+        label: 'Completed',  // ✅ 简化：显示为 Completed
+        icon: CheckCircle2,  // ✅ 使用绿色对勾图标
+        className: 'border-green-300 text-green-600 bg-green-50'  // ✅ 使用绿色样式
+      },
       failed: { 
         variant: 'destructive' as const, 
         label: 'Failed', 
@@ -130,7 +136,12 @@ export function TaskList({ tasks, isLoading, onRetry, onDelete }: TaskListProps)
                   {/* Task Title */}
                   <TableCell className="font-medium">
                     <div className="flex flex-col gap-1">
-                      <span className="truncate max-w-[280px]">{task.title}</span>
+                      <Link
+                        href={`/tasks/${task.task_id}`}
+                        className="truncate max-w-[280px] hover:text-sage-600 hover:underline transition-colors"
+                      >
+                        {task.title}
+                      </Link>
                       <span className="text-xs text-muted-foreground font-mono">
                         ID: {task.task_id.substring(0, 8)}...
                       </span>
@@ -176,8 +187,8 @@ export function TaskList({ tasks, isLoading, onRetry, onDelete }: TaskListProps)
                   {/* Actions */}
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-1">
-                      {/* View Logs Button - 仅在失败时显示 */}
-                      {task.status === 'failed' && task.error_message && (
+                      {/* View Logs Button - 失败和部分失败时显示 */}
+                      {(task.status === 'failed' || task.status === 'partial_failure') && task.error_message && (
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Button
@@ -198,7 +209,7 @@ export function TaskList({ tasks, isLoading, onRetry, onDelete }: TaskListProps)
                         </Tooltip>
                       )}
 
-                      {/* Retry Button */}
+                      {/* Retry Button - 仅完全失败时显示 */}
                       {task.status === 'failed' && (
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -237,8 +248,8 @@ export function TaskList({ tasks, isLoading, onRetry, onDelete }: TaskListProps)
                         </Tooltip>
                       )}
                       
-                      {/* View Roadmap Button - 完成后显示 */}
-                      {task.status === 'completed' && task.roadmap_id && (
+                      {/* View Roadmap Button - 完成后显示（包括部分失败） */}
+                      {(task.status === 'completed' || task.status === 'partial_failure') && task.roadmap_id && (
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Link href={`/roadmap/${task.roadmap_id}`}>
@@ -252,7 +263,7 @@ export function TaskList({ tasks, isLoading, onRetry, onDelete }: TaskListProps)
                             </Link>
                           </TooltipTrigger>
                           <TooltipContent>
-                            <p>View roadmap</p>
+                            <p>{task.status === 'partial_failure' ? 'View roadmap & retry failed concepts' : 'View roadmap'}</p>
                           </TooltipContent>
                         </Tooltip>
                       )}

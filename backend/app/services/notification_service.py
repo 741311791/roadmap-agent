@@ -191,6 +191,36 @@ class NotificationService:
             event["failed_count"] = failed_count
         
         await self._publish(task_id, event)
+        
+        # 记录任务完成的详细日志（新增 - 用于前端展示）
+        from app.services.execution_logger import execution_logger, LogCategory
+        
+        # 注意：这里无法获取完整的framework信息，所以只记录基本统计
+        # 前端可以通过roadmap_id获取完整信息
+        await execution_logger.info(
+            task_id=task_id,
+            category=LogCategory.WORKFLOW,
+            step="completed",
+            roadmap_id=roadmap_id,
+            message="🎉 Roadmap generation completed successfully!",
+            details={
+                "log_type": "task_completed",
+                "roadmap_id": roadmap_id,
+                "roadmap_url": f"/roadmap/{roadmap_id}",
+                "statistics": {
+                    "tutorials_generated": tutorials_count if tutorials_count else 0,
+                    "failed_concepts": failed_count if failed_count else 0,
+                },
+                "next_actions": [
+                    {
+                        "action": "view_roadmap",
+                        "label": "View Roadmap",
+                        "url": f"/roadmap/{roadmap_id}",
+                        "primary": True,
+                    },
+                ],
+            },
+        )
     
     async def publish_failed(
         self,
@@ -437,6 +467,9 @@ class NotificationService:
         """
         发布事件到 Redis 频道
         
+        如果 Redis 连接失败或超时，会记录错误但不会抛出异常，
+        确保工作流不会因为通知失败而中断。
+        
         Args:
             task_id: 任务 ID
             event: 事件数据
@@ -446,13 +479,24 @@ class NotificationService:
         
         try:
             message = json.dumps(event, ensure_ascii=False)
-            await redis_client._client.publish(channel, message)
+            # 添加超时保护：5秒超时
+            await asyncio.wait_for(
+                redis_client._client.publish(channel, message),
+                timeout=5.0
+            )
             
             logger.debug(
                 "notification_published",
                 task_id=task_id,
                 event_type=event.get("type"),
                 channel=channel,
+            )
+        except asyncio.TimeoutError:
+            logger.error(
+                "notification_publish_timeout",
+                task_id=task_id,
+                event_type=event.get("type"),
+                timeout_seconds=5,
             )
         except Exception as e:
             logger.error(

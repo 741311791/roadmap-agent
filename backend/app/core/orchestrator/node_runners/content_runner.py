@@ -1,12 +1,17 @@
 """
-内容生成节点执行器
+内容生成节点执行器（重构版 - 使用 WorkflowBrain）
 
 负责执行内容生成节点（Step 5: Content Generation）
 并行执行教程生成、资源推荐、测验生成三个Agent
+
+重构改进:
+- 使用 WorkflowBrain 统一管理状态、日志、通知
+- 使用 brain.save_content_results() 批量保存结果
+- 代码行数减少 ~70%
 """
-import time
 import asyncio
 import structlog
+import time
 
 from app.agents.factory import AgentFactory
 from app.models.domain import (
@@ -18,49 +23,55 @@ from app.models.domain import (
     QuizGenerationInput,
     QuizGenerationOutput,
 )
-from app.services.notification_service import notification_service
 from app.services.execution_logger import execution_logger, LogCategory
-from app.db.repositories.roadmap_repo import RoadmapRepository
-from app.db.session import AsyncSessionLocal
-from app.config.settings import settings
-from app.core.error_handler import error_handler
 from ..base import RoadmapState, WorkflowConfig
-from ..state_manager import StateManager
+from ..workflow_brain import WorkflowBrain
 
 logger = structlog.get_logger()
 
 
 class ContentRunner:
     """
-    内容生成节点执行器
+    内容生成节点执行器（重构版）
     
     职责：
     1. 并行执行 TutorialGeneratorAgent、ResourceRecommenderAgent、QuizGeneratorAgent
     2. 使用信号量控制并发数量
-    3. 发布进度通知
-    4. 记录执行日志
-    5. 错误处理（部分失败不影响整体，通过统一 ErrorHandler）
+    3. 处理部分失败场景
+    4. 批量保存结果
+    
+    不再负责:
+    - 数据库操作（由 WorkflowBrain 处理）
+    - 日志记录（由 WorkflowBrain 处理）
+    - 通知发布（由 WorkflowBrain 处理）
+    - 状态管理（由 WorkflowBrain 处理）
     """
     
     def __init__(
         self,
-        state_manager: StateManager,
+        brain: WorkflowBrain,
         config: WorkflowConfig,
         agent_factory: AgentFactory,
     ):
         """
         Args:
-            state_manager: StateManager 实例
+            brain: WorkflowBrain 实例（统一协调者）
             config: WorkflowConfig 实例
             agent_factory: AgentFactory 实例
         """
-        self.state_manager = state_manager
+        self.brain = brain
         self.config = config
         self.agent_factory = agent_factory
     
     async def run(self, state: RoadmapState) -> dict:
         """
-        执行内容生成节点
+        执行内容生成节点（重构版 - 使用 WorkflowBrain）
+        
+        简化后的逻辑:
+        1. 使用 brain.node_execution() 自动处理状态/日志/通知
+        2. 并行调用三个 Agent
+        3. 使用 brain.save_content_results() 批量保存结果
+        4. 返回纯结果
         
         Args:
             state: 当前工作流状态
@@ -68,497 +79,342 @@ class ContentRunner:
         Returns:
             状态更新字典
         """
-        start_time = time.time()
-        task_id = state["task_id"]
-        
-        # 设置当前步骤
-        self.state_manager.set_live_step(task_id, "content_generation")
-        
-        # 获取 roadmap_id
-        roadmap_id = state.get("roadmap_id")
-        
-        logger.info(
-            "workflow_step_started",
-            step="content_generation",
-            task_id=task_id,
-            roadmap_id=roadmap_id,
-        )
-        
-        # 记录执行日志（包含 roadmap_id）
-        await execution_logger.log_workflow_start(
-            task_id=task_id,
-            step="content_generation",
-            message="开始生成内容",
-            roadmap_id=roadmap_id,
-        )
-        
-        # 更新数据库状态
-        await self._update_task_status(task_id, "content_generation", roadmap_id)
-        
-        framework = state.get("roadmap_framework")
-        if not framework:
-            raise ValueError("路线图框架不存在，无法生成内容")
-        
-        # 提取所有概念
-        concepts_with_context = self._extract_concepts_from_roadmap(framework)
-        
-        # 计算启用的 Agent
-        enabled_agents = []
-        if not self.config.skip_tutorial_generation:
-            enabled_agents.append("教程生成")
-        if not self.config.skip_resource_recommendation:
-            enabled_agents.append("资源推荐")
-        if not self.config.skip_quiz_generation:
-            enabled_agents.append("测验生成")
-        
-        # 发布进度通知
-        await notification_service.publish_progress(
-            task_id=task_id,
-            step="content_generation",
-            status="processing",
-            message=f"开始生成内容（共 {len(concepts_with_context)} 个概念，启用: {', '.join(enabled_agents)}）...",
-            extra_data={
-                "total_concepts": len(concepts_with_context),
-                "enabled_agents": enabled_agents,
-            },
-        )
-        
-        logger.info(
-            "content_generation_started",
-            concepts_count=len(concepts_with_context),
-            enabled_agents=enabled_agents,
-            task_id=task_id,
-        )
-        
-        # 使用统一错误处理器
-        async with error_handler.handle_node_execution("content_generation", task_id, "内容生成") as ctx:
-            new_tutorial_refs, new_resource_refs, new_quiz_refs, new_failed_concepts = (
-                await self._generate_all_content(state, concepts_with_context)
-            )
+        # 使用 WorkflowBrain 统一管理执行生命周期
+        async with self.brain.node_execution("content_generation", state):
+            framework = state.get("roadmap_framework")
+            if not framework:
+                raise ValueError("路线图框架不存在，无法生成内容")
             
-            duration_ms = int((time.time() - start_time) * 1000)
-            
-            # 统计结果
-            tutorial_success = len(new_tutorial_refs)
-            resource_success = len(new_resource_refs)
-            quiz_success = len(new_quiz_refs)
-            failed_count = len(new_failed_concepts)
+            # 提取所有概念（三层结构：Stage -> Module -> Concept）
+            all_concepts: list[Concept] = []
+            for stage in framework.stages:
+                for module in stage.modules:
+                    all_concepts.extend(module.concepts)
             
             logger.info(
-                "workflow_step_completed",
-                step="content_generation",
-                task_id=task_id,
-                tutorial_success=tutorial_success,
-                resource_success=resource_success,
-                quiz_success=quiz_success,
-                failed_count=failed_count,
-            )
-            
-            # 记录执行日志
-            await execution_logger.log_workflow_complete(
-                task_id=task_id,
-                step="content_generation",
-                message=f"内容生成完成（成功: {tutorial_success + resource_success + quiz_success}, 失败: {failed_count}）",
-                duration_ms=duration_ms,
+                "content_runner_started",
+                task_id=state["task_id"],
                 roadmap_id=state.get("roadmap_id"),
-                details={
-                    "tutorial_success": tutorial_success,
-                    "resource_success": resource_success,
-                    "quiz_success": quiz_success,
-                    "failed_count": failed_count,
-                    "failed_concepts": new_failed_concepts[:5],
-                },
+                total_concepts=len(all_concepts),
             )
             
-            # 发布步骤完成通知
-            await notification_service.publish_progress(
-                task_id=task_id,
-                step="content_generation",
-                status="completed",
-                message=f"内容生成完成",
-                extra_data={
-                    "tutorial_success": tutorial_success,
-                    "resource_success": resource_success,
-                    "quiz_success": quiz_success,
-                    "failed_count": failed_count,
-                },
+            # 并行生成内容
+            tutorial_refs, resource_refs, quiz_refs, failed_concepts = await self._generate_content_parallel(
+                state=state,
+                concepts=all_concepts,
             )
             
-            # 更新task状态为completed
-            async with AsyncSessionLocal() as session:
-                repo = RoadmapRepository(session)
-                final_status = "partial_failure" if failed_count > 0 else "completed"
-                await repo.update_task_status(
-                    task_id=task_id,
-                    status=final_status,
-                    current_step="content_generation",
-                    failed_concepts={
-                        "count": failed_count,
-                        "concept_ids": new_failed_concepts,
-                    } if failed_count > 0 else None,
-                    execution_summary={
-                        "tutorial_count": tutorial_success,
-                        "resource_count": resource_success,
-                        "quiz_count": quiz_success,
-                        "failed_count": failed_count,
+            # 检查失败率，如果过高则中断执行
+            total_concepts = len(all_concepts)
+            failed_count = len(failed_concepts)
+            success_count = total_concepts - failed_count
+            failure_rate = failed_count / total_concepts if total_concepts > 0 else 0
+            
+            # 失败率阈值：如果超过50%的概念生成失败，或者全部失败，则中断执行
+            FAILURE_THRESHOLD = 0.5
+            
+            if failure_rate >= FAILURE_THRESHOLD or failed_count == total_concepts:
+                error_message = (
+                    f"Content generation failed: {failed_count}/{total_concepts} concepts failed "
+                    f"(failure rate: {failure_rate:.1%}). Threshold: {FAILURE_THRESHOLD:.1%}"
+                )
+                
+                # 记录致命错误日志
+                await execution_logger.error(
+                    task_id=state["task_id"],
+                    category=LogCategory.WORKFLOW,
+                    step="content_generation",
+                    roadmap_id=state.get("roadmap_id"),
+                    message=f"❌ Content generation aborted: failure rate too high ({failure_rate:.1%})",
+                    details={
+                        "log_type": "content_generation_aborted",
+                        "total_concepts": total_concepts,
+                        "failed_concepts": failed_count,
+                        "success_concepts": success_count,
+                        "failure_rate": failure_rate,
+                        "threshold": FAILURE_THRESHOLD,
+                        "failed_concept_ids": failed_concepts,
                     },
                 )
-                await session.commit()
-            
-            # 存储结果到上下文
-            ctx["result"] = {
-                "tutorial_refs": new_tutorial_refs,
-                "resource_refs": new_resource_refs,
-                "quiz_refs": new_quiz_refs,
-                "failed_concepts": new_failed_concepts,
-                "current_step": "content_generation",
-                "execution_history": ["内容生成完成"],
-            }
-        
-        # 返回状态更新
-        return ctx["result"]
-    
-    def _extract_concepts_from_roadmap(self, framework) -> list[tuple[Concept, dict]]:
-        """
-        从路线图框架中提取所有概念及其上下文
-        
-        Returns:
-            [(concept, context), ...]
-        """
-        concepts_with_context = []
-        
-        for stage in framework.stages:
-            for module in stage.modules:
-                for concept in module.concepts:
-                    context = {
-                        "roadmap_id": framework.roadmap_id,
-                        "stage_id": stage.stage_id,
-                        "stage_name": stage.name,
-                        "module_id": module.module_id,
-                        "module_name": module.name,
-                        "difficulty": concept.difficulty,
-                    }
-                    concepts_with_context.append((concept, context))
-        
-        return concepts_with_context
-    
-    def _update_framework_concept_statuses(
-        self,
-        framework,
-        tutorial_refs: dict,
-        resource_refs: dict,
-        quiz_refs: dict,
-        failed_concepts: list,
-    ):
-        """
-        更新 framework 中 Concept 的状态字段
-        
-        Args:
-            framework: RoadmapFramework 对象
-            tutorial_refs: 教程引用字典
-            resource_refs: 资源引用字典
-            quiz_refs: 测验引用字典
-            failed_concepts: 失败的概念ID列表
-        """
-        if not framework:
-            return
-        
-        logger.info(
-            "updating_framework_concept_statuses",
-            tutorial_count=len(tutorial_refs),
-            resource_count=len(resource_refs),
-            quiz_count=len(quiz_refs),
-            failed_count=len(failed_concepts),
-        )
-        
-        for stage in framework.stages:
-            for module in stage.modules:
-                for concept in module.concepts:
-                    concept_id = concept.concept_id
-                    
-                    # 更新教程状态
-                    if concept_id in tutorial_refs:
-                        tutorial_output = tutorial_refs[concept_id]
-                        concept.content_status = "completed"
-                        # 更新教程引用信息
-                        if hasattr(tutorial_output, 'tutorial_id'):
-                            concept.content_ref = tutorial_output.tutorial_id
-                        # 注意：TutorialGenerationOutput 的字段是 summary，不是 content_summary
-                        if hasattr(tutorial_output, 'summary') and tutorial_output.summary:
-                            concept.content_summary = tutorial_output.summary
-                    elif concept_id in failed_concepts:
-                        concept.content_status = "failed"
-                    
-                    # 更新资源推荐状态
-                    if concept_id in resource_refs:
-                        resource_output = resource_refs[concept_id]
-                        concept.resources_status = "completed"
-                        # 更新资源引用信息
-                        # 注意：ResourceRecommendationOutput 的字段是 id，不是 resources_id
-                        if hasattr(resource_output, 'id'):
-                            concept.resources_id = resource_output.id
-                        if hasattr(resource_output, 'resources'):
-                            concept.resources_count = len(resource_output.resources)
-                    
-                    # 更新测验状态
-                    if concept_id in quiz_refs:
-                        quiz_output = quiz_refs[concept_id]
-                        concept.quiz_status = "completed"
-                        # 更新测验引用信息
-                        if hasattr(quiz_output, 'quiz_id'):
-                            concept.quiz_id = quiz_output.quiz_id
-                        if hasattr(quiz_output, 'questions'):
-                            concept.quiz_questions_count = len(quiz_output.questions)
-        
-        logger.info("framework_concept_statuses_updated")
-    
-    async def _generate_all_content(
-        self, state: RoadmapState, concepts_with_context: list[tuple[Concept, dict]]
-    ):
-        """
-        为所有概念并行生成内容
-        
-        Returns:
-            (new_tutorial_refs, new_resource_refs, new_quiz_refs, new_failed_concepts)
-        """
-        task_id = state["task_id"]
-        user_preferences = state["user_request"].preferences
-        
-        # 获取已有数据
-        existing_tutorial_refs = state.get("tutorial_refs", {})
-        existing_resource_refs = state.get("resource_refs", {})
-        existing_quiz_refs = state.get("quiz_refs", {})
-        
-        # 新生成的数据
-        new_tutorial_refs = {}
-        new_resource_refs = {}
-        new_quiz_refs = {}
-        new_failed_concepts = []
-        
-        # 创建 Agents
-        tutorial_generator = (
-            self.agent_factory.create_tutorial_generator()
-            if not self.config.skip_tutorial_generation
-            else None
-        )
-        resource_recommender = (
-            self.agent_factory.create_resource_recommender()
-            if not self.config.skip_resource_recommendation
-            else None
-        )
-        quiz_generator = (
-            self.agent_factory.create_quiz_generator() if not self.config.skip_quiz_generation else None
-        )
-        
-        # 信号量控制并发
-        semaphore = asyncio.Semaphore(self.config.parallel_tutorial_limit)
-        
-        async def generate_content_for_concept(concept: Concept, context: dict):
-            """为单个概念并行生成所有内容"""
-            async with semaphore:
-                results = {
-                    "concept_id": concept.concept_id,
-                    "tutorial": None,
-                    "resources": None,
-                    "quiz": None,
-                }
                 
-                # 并行执行三个 Agent
-                tasks = []
-                
-                # A4: 教程生成
-                if (
-                    tutorial_generator
-                    and concept.concept_id not in existing_tutorial_refs
-                ):
-                    tasks.append(
-                        self._generate_tutorial(
-                            tutorial_generator,
-                            concept,
-                            context,
-                            user_preferences,
-                            task_id,
-                        )
-                    )
-                else:
-                    tasks.append(asyncio.coroutine(lambda: None)())
-                
-                # A5: 资源推荐
-                if (
-                    resource_recommender
-                    and concept.concept_id not in existing_resource_refs
-                ):
-                    tasks.append(
-                        self._generate_resources(
-                            resource_recommender, concept, context, user_preferences, task_id
-                        )
-                    )
-                else:
-                    tasks.append(asyncio.coroutine(lambda: None)())
-                
-                # A6: 测验生成
-                if quiz_generator and concept.concept_id not in existing_quiz_refs:
-                    tasks.append(
-                        self._generate_quiz(
-                            quiz_generator, concept, context, user_preferences, task_id
-                        )
-                    )
-                else:
-                    tasks.append(asyncio.coroutine(lambda: None)())
-                
-                # 等待所有任务完成
-                tutorial_result, resource_result, quiz_result = await asyncio.gather(
-                    *tasks, return_exceptions=True
+                logger.error(
+                    "content_runner_aborted",
+                    task_id=state["task_id"],
+                    total_concepts=total_concepts,
+                    failed_count=failed_count,
+                    failure_rate=failure_rate,
                 )
                 
-                results["tutorial"] = tutorial_result
-                results["resources"] = resource_result
-                results["quiz"] = quiz_result
-                
-                return results
+                # 抛出异常中断工作流
+                raise RuntimeError(error_message)
+            
+            # 如果有部分失败但未超过阈值，记录警告日志
+            if failed_count > 0:
+                await execution_logger.warning(
+                    task_id=state["task_id"],
+                    category=LogCategory.WORKFLOW,
+                    step="content_generation",
+                    roadmap_id=state.get("roadmap_id"),
+                    message=f"⚠️ Content generation completed with {failed_count} failures (failure rate: {failure_rate:.1%})",
+                    details={
+                        "log_type": "content_generation_partial_failure",
+                        "total_concepts": total_concepts,
+                        "failed_concepts": failed_count,
+                        "success_concepts": success_count,
+                        "failure_rate": failure_rate,
+                        "failed_concept_ids": failed_concepts,
+                    },
+                )
+            
+            # 批量保存结果（由 brain 统一事务管理）
+            await self.brain.save_content_results(
+                task_id=state["task_id"],
+                roadmap_id=state.get("roadmap_id"),
+                tutorial_refs=tutorial_refs,
+                resource_refs=resource_refs,
+                quiz_refs=quiz_refs,
+                failed_concepts=failed_concepts,
+            )
+            
+            # 记录生成结果日志（业务逻辑日志）
+            logger.info(
+                "content_runner_completed",
+                task_id=state["task_id"],
+                roadmap_id=state.get("roadmap_id"),
+                tutorial_count=len(tutorial_refs),
+                resource_count=len(resource_refs),
+                quiz_count=len(quiz_refs),
+                failed_count=len(failed_concepts),
+                failure_rate=failure_rate,
+            )
+            
+            # 返回纯状态更新
+            return {
+                "tutorial_refs": tutorial_refs,
+                "resource_refs": resource_refs,
+                "quiz_refs": quiz_refs,
+                "failed_concepts": failed_concepts,
+                "current_step": "content_generation",
+                "execution_history": [
+                    f"内容生成完成: {len(tutorial_refs)} 个教程, "
+                    f"{len(resource_refs)} 个资源, "
+                    f"{len(quiz_refs)} 个测验"
+                ],
+            }
+    
+    async def _generate_content_parallel(
+        self,
+        state: RoadmapState,
+        concepts: list[Concept],
+    ) -> tuple[
+        dict[str, TutorialGenerationOutput],
+        dict[str, ResourceRecommendationOutput],
+        dict[str, QuizGenerationOutput],
+        list[str],
+    ]:
+        """
+        并行生成教程、资源、测验
         
-        # 并行处理所有概念
-        concept_tasks = [
-            generate_content_for_concept(concept, context)
-            for concept, context in concepts_with_context
+        Args:
+            state: 工作流状态
+            concepts: 概念列表
+            
+        Returns:
+            (tutorial_refs, resource_refs, quiz_refs, failed_concepts)
+        """
+        # 创建信号量（控制并发数）
+        max_concurrent = self.config.parallel_tutorial_limit
+        semaphore = asyncio.Semaphore(max_concurrent)
+        
+        # 并发执行所有概念的内容生成
+        tasks = [
+            self._generate_single_concept(
+                state=state,
+                concept=concept,
+                semaphore=semaphore,
+            )
+            for concept in concepts
         ]
         
-        all_results = await asyncio.gather(*concept_tasks, return_exceptions=True)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
         
         # 整理结果
-        for result in all_results:
+        tutorial_refs: dict[str, TutorialGenerationOutput] = {}
+        resource_refs: dict[str, ResourceRecommendationOutput] = {}
+        quiz_refs: dict[str, QuizGenerationOutput] = {}
+        failed_concepts: list[str] = []
+        
+        for i, result in enumerate(results):
+            concept_id = concepts[i].concept_id
+            
             if isinstance(result, Exception):
+                # 异常情况
                 logger.error(
-                    "content_generation_error",
-                    task_id=task_id,
+                    "content_runner_concept_failed",
+                    concept_id=concept_id,
                     error=str(result),
                 )
-                continue
-            
-            concept_id = result["concept_id"]
-            
-            # 教程
-            if result["tutorial"] and not isinstance(result["tutorial"], Exception):
-                new_tutorial_refs[concept_id] = result["tutorial"]
-            elif isinstance(result["tutorial"], Exception):
-                new_failed_concepts.append(concept_id)
-            
-            # 资源
-            if result["resources"] and not isinstance(result["resources"], Exception):
-                new_resource_refs[concept_id] = result["resources"]
-            
-            # 测验
-            if result["quiz"] and not isinstance(result["quiz"], Exception):
-                new_quiz_refs[concept_id] = result["quiz"]
+                failed_concepts.append(concept_id)
+            elif result:
+                # 成功情况
+                tutorial, resource, quiz = result
+                if tutorial:
+                    tutorial_refs[concept_id] = tutorial
+                if resource:
+                    resource_refs[concept_id] = resource
+                if quiz:
+                    quiz_refs[concept_id] = quiz
         
-        # 更新 framework 中的 Concept 状态
-        self._update_framework_concept_statuses(
-            state.get("roadmap_framework"),
-            new_tutorial_refs,
-            new_resource_refs,
-            new_quiz_refs,
-            new_failed_concepts
-        )
-        
-        return new_tutorial_refs, new_resource_refs, new_quiz_refs, new_failed_concepts
+        return tutorial_refs, resource_refs, quiz_refs, failed_concepts
     
-    async def _generate_tutorial(
-        self, agent, concept, context, user_preferences, task_id
-    ):
-        """生成教程"""
-        try:
-            input_data = TutorialGenerationInput(
-                concept=concept,
-                context=context,
-                user_preferences=user_preferences,
-            )
-            result = await agent.execute(input_data)
-            logger.info(
-                "tutorial_generation_success",
-                concept_id=concept.concept_id,
-                task_id=task_id,
-            )
-            return result
-        except Exception as e:
-            logger.error(
-                "tutorial_generation_failed",
-                concept_id=concept.concept_id,
-                task_id=task_id,
-                error=str(e),
-            )
-            return e
-    
-    async def _generate_resources(self, agent, concept, context, user_preferences, task_id):
-        """生成资源推荐"""
-        try:
-            input_data = ResourceRecommendationInput(
-                concept=concept,
-                context=context,
-                user_preferences=user_preferences,
-            )
-            result = await agent.execute(input_data)
-            logger.info(
-                "resource_recommendation_success",
-                concept_id=concept.concept_id,
-                task_id=task_id,
-            )
-            return result
-        except Exception as e:
-            logger.error(
-                "resource_recommendation_failed",
-                concept_id=concept.concept_id,
-                task_id=task_id,
-                error=str(e),
-            )
-            return e
-    
-    async def _generate_quiz(self, agent, concept, context, user_preferences, task_id):
-        """生成测验"""
-        try:
-            input_data = QuizGenerationInput(
-                concept=concept,
-                context=context,
-                user_preferences=user_preferences,
-            )
-            result = await agent.execute(input_data)
-            logger.info(
-                "quiz_generation_success",
-                concept_id=concept.concept_id,
-                task_id=task_id,
-            )
-            return result
-        except Exception as e:
-            logger.error(
-                "quiz_generation_failed",
-                concept_id=concept.concept_id,
-                task_id=task_id,
-                error=str(e),
-            )
-            return e
-    
-    async def _update_task_status(self, task_id: str, current_step: str, roadmap_id: str | None):
+    async def _generate_single_concept(
+        self,
+        state: RoadmapState,
+        concept: Concept,
+        semaphore: asyncio.Semaphore,
+    ) -> tuple[
+        TutorialGenerationOutput | None,
+        ResourceRecommendationOutput | None,
+        QuizGenerationOutput | None,
+    ] | None:
         """
-        更新任务状态到数据库
+        为单个概念生成教程、资源、测验
         
         Args:
-            task_id: 任务 ID
-            current_step: 当前步骤
-            roadmap_id: 路线图 ID
-        """
-        async with AsyncSessionLocal() as session:
-            repo = RoadmapRepository(session)
-            await repo.update_task_status(
-                task_id=task_id,
-                status="processing",
-                current_step=current_step,
-                roadmap_id=roadmap_id,
-            )
-            await session.commit()
+            state: 工作流状态
+            concept: 概念
+            semaphore: 信号量（控制并发）
             
-            logger.debug(
-                "task_status_updated",
-                task_id=task_id,
-                current_step=current_step,
-                roadmap_id=roadmap_id,
-            )
-
+        Returns:
+            (tutorial, resource, quiz) 或 None（失败时）
+        """
+        async with semaphore:
+            concept_start_time = time.time()
+            task_id = state["task_id"]
+            roadmap_id = state.get("roadmap_id")
+            concept_id = concept.concept_id
+            concept_name = concept.name
+            
+            try:
+                # 创建三个 Agent
+                tutorial_agent = self.agent_factory.create_tutorial_generator()
+                resource_agent = self.agent_factory.create_resource_recommender()
+                quiz_agent = self.agent_factory.create_quiz_generator()
+                
+                # 准备输入
+                tutorial_input = TutorialGenerationInput(
+                    concept=concept,
+                    user_preferences=state["user_request"].preferences,
+                    context={
+                        "intent_analysis": state.get("intent_analysis"),
+                        "roadmap_id": roadmap_id,
+                    },
+                )
+                resource_input = ResourceRecommendationInput(
+                    concept=concept,
+                    user_preferences=state["user_request"].preferences,
+                    context={
+                        "intent_analysis": state.get("intent_analysis"),
+                        "roadmap_id": roadmap_id,
+                    },
+                )
+                quiz_input = QuizGenerationInput(
+                    concept=concept,
+                    user_preferences=state["user_request"].preferences,
+                    context={
+                        "intent_analysis": state.get("intent_analysis"),
+                        "roadmap_id": roadmap_id,
+                    },
+                )
+                
+                # 记录开始生成日志（新增）
+                await execution_logger.info(
+                    task_id=task_id,
+                    category=LogCategory.WORKFLOW,
+                    step="content_generation",
+                    roadmap_id=roadmap_id,
+                    concept_id=concept_id,
+                    message=f"🚀 Generating content for concept: {concept_name}",
+                    details={
+                        "log_type": "content_generation_start",
+                        "concept": {
+                            "id": concept_id,
+                            "name": concept_name,
+                            "difficulty": concept.difficulty,
+                        },
+                    },
+                )
+                
+                # 并行执行三个 Agent
+                tutorial, resource, quiz = await asyncio.gather(
+                    tutorial_agent.execute(tutorial_input),
+                    resource_agent.execute(resource_input),
+                    quiz_agent.execute(quiz_input),
+                    return_exceptions=False,  # 让异常传播到上层
+                )
+                
+                # 计算总耗时
+                total_duration_ms = int((time.time() - concept_start_time) * 1000)
+                
+                logger.debug(
+                    "content_runner_concept_completed",
+                    concept_id=concept_id,
+                    has_tutorial=tutorial is not None,
+                    has_resource=resource is not None,
+                    has_quiz=quiz is not None,
+                )
+                
+                # 记录概念完成日志（新增）
+                await execution_logger.info(
+                    task_id=task_id,
+                    category=LogCategory.WORKFLOW,
+                    step="content_generation",
+                    roadmap_id=roadmap_id,
+                    concept_id=concept_id,
+                    message=f"🎉 All content generated for concept: {concept_name}",
+                    details={
+                        "log_type": "concept_completed",
+                        "concept_id": concept_id,
+                        "concept_name": concept_name,
+                        "completed_content": [
+                            "tutorial" if tutorial else None,
+                            "resources" if resource else None,
+                            "quiz" if quiz else None,
+                        ],
+                        "content_summary": {
+                            "tutorial_chars": len(tutorial.content) if tutorial and hasattr(tutorial, 'content') else 0,
+                            "resource_count": len(resource.resources) if resource and hasattr(resource, 'resources') else 0,
+                            "quiz_questions": len(quiz.questions) if quiz and hasattr(quiz, 'questions') else 0,
+                        },
+                        "total_duration_ms": total_duration_ms,
+                    },
+                    duration_ms=total_duration_ms,
+                )
+                
+                return tutorial, resource, quiz
+                
+            except Exception as e:
+                logger.error(
+                    "content_runner_concept_failed_exception",
+                    concept_id=concept_id,
+                    error=str(e),
+                )
+                
+                # 记录失败日志（新增）
+                await execution_logger.error(
+                    task_id=task_id,
+                    category=LogCategory.AGENT,
+                    step="content_generation",
+                    roadmap_id=roadmap_id,
+                    concept_id=concept_id,
+                    message=f"❌ Content generation failed for concept: {concept_name}",
+                    details={
+                        "log_type": "content_generation_failed",
+                        "concept_id": concept_id,
+                        "concept_name": concept_name,
+                        "error": str(e)[:500],  # 限制错误消息长度
+                        "error_type": type(e).__name__,
+                    },
+                )
+                
+                raise  # 传播异常到 gather

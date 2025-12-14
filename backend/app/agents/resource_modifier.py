@@ -232,6 +232,7 @@ class ResourceModifierAgent(BaseAgent):
         # 调用 LLM（支持工具调用）
         max_iterations = 5
         iteration = 0
+        content = None  # 初始化 content 变量，避免 UnboundLocalError
         
         while iteration < max_iterations:
             logger.info(
@@ -280,6 +281,18 @@ class ResourceModifierAgent(BaseAgent):
             
             content = message.content
             break
+        
+        # 检查是否因达到最大迭代次数而退出
+        if iteration >= max_iterations:
+            logger.error(
+                "resource_modifier_max_iterations_reached",
+                agent="resource_modifier",
+                concept_id=concept.concept_id,
+            )
+            raise ValueError(
+                f"资源修改失败：工具调用循环达到最大次数（{max_iterations}）仍未获得最终内容。"
+                "可能原因：LLM 持续进行工具调用而未输出最终结果。"
+            )
         
         # 解析输出
         if not content:

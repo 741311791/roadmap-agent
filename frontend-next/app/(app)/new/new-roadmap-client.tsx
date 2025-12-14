@@ -20,7 +20,6 @@ import {
 import { getUserProfile, getRoadmapStatus, type UserProfileData } from '@/lib/api/endpoints';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import { useRoadmapGeneration } from '@/lib/hooks/api/use-roadmap-generation';
-import { useRoadmapGenerationWS } from '@/lib/hooks/websocket/use-roadmap-generation-ws';
 import { useAuthStore } from '@/lib/store/auth-store';
 import type { UserRequest } from '@/types/generated/models';
 import Link from 'next/link';
@@ -93,17 +92,6 @@ export default function NewRoadmapClient() {
   
   // 从 URL 参数恢复任务（用于继续未完成的路线图生成）
   const resumeTaskId = searchParams.get('task_id');
-  
-  // WebSocket Hook (only starts when taskId is available)
-  const { connectionType, isConnected } = useRoadmapGenerationWS(taskId, {
-    onComplete: (roadmapId) => {
-      console.log('[Generation] Complete, navigating to:', roadmapId);
-    },
-    onError: (error) => {
-      console.error('[Generation] Error:', error);
-    },
-    autoNavigate: true,
-  });
 
   // AbortController for request cancellation
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -127,17 +115,10 @@ export default function NewRoadmapClient() {
             return;
           }
           
-          // 如果任务还在进行中，恢复到生成页面
+          // 如果任务还在进行中，直接跳转到任务详情页
           if (taskStatus === 'processing' || taskStatus === 'pending' || taskStatus === 'human_review_pending') {
-            setTaskId(resumeTaskId);
-            setStep('generating');
-            // 更新进度状态
-            if (status.current_step) {
-              const stepInfo = stepProgress[status.current_step];
-              if (stepInfo) {
-                updateProgress(status.current_step, stepInfo.progress);
-              }
-            }
+            console.log('[NewRoadmap] Task in progress, navigating to task detail:', resumeTaskId);
+            router.push(`/tasks/${resumeTaskId}`);
             return;
           }
           
@@ -229,7 +210,7 @@ export default function NewRoadmapClient() {
   };
 
   const handleGenerate = () => {
-    setStep('generating');
+    // 不再切换到generating步骤，因为会立即跳转
 
     const userId = getUserId();
     if (!userId) {
@@ -269,6 +250,9 @@ export default function NewRoadmapClient() {
       onSuccess: (response) => {
         console.log('[Generate] Task created:', response.task_id);
         setTaskId(response.task_id); // Setting task_id will automatically start WebSocket
+        
+        // 立即跳转到任务详情页
+        router.push(`/tasks/${response.task_id}`);
       },
       onError: (error) => {
         console.error('[Generate] Error:', error);
@@ -285,10 +269,6 @@ export default function NewRoadmapClient() {
     }));
   };
 
-  // Calculate current progress and status
-  const currentProgress = currentStep ? stepProgress[currentStep]?.progress || generationProgress : generationProgress;
-  const currentStatus = currentStep ? stepProgress[currentStep]?.status || 'Processing...' : 'Initializing...';
-  const hasError = !!storeError;
 
   return (
     <div className="max-w-3xl mx-auto py-12 px-6">
@@ -334,8 +314,7 @@ export default function NewRoadmapClient() {
       )}
 
       {/* Step Progress */}
-      {step !== 'generating' && (
-        <div className="flex items-center justify-center gap-2 mb-8">
+      <div className="flex items-center justify-center gap-2 mb-8">
           {['goal', 'preferences'].map((s, i) => (
             <div key={s} className="flex items-center">
               <div
@@ -352,8 +331,7 @@ export default function NewRoadmapClient() {
               {i < 1 && <div className="w-12 h-0.5 bg-muted mx-2" />}
             </div>
           ))}
-        </div>
-      )}
+      </div>
 
       {/* Step Content */}
       {step === 'goal' && (
@@ -534,68 +512,6 @@ export default function NewRoadmapClient() {
                 )}
               </Button>
             </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {step === 'generating' && (
-        <Card>
-          <CardContent className="py-16 text-center">
-            {hasError ? (
-              <>
-                <div className="w-20 h-20 bg-red-100 rounded-full mx-auto flex items-center justify-center mb-6">
-                  <AlertCircle className="w-10 h-10 text-red-600" />
-                </div>
-                <h2 className="text-2xl font-serif font-bold text-foreground mb-2">
-                  Generation Failed
-                </h2>
-                <p className="text-red-600 mb-8">
-                  {storeError}
-                </p>
-                <Button
-                  onClick={() => {
-                    setStep('preferences');
-                  }}
-                  variant="outline"
-                  className="gap-2"
-                >
-                  <ArrowLeft size={16} /> Go Back
-                </Button>
-              </>
-            ) : currentProgress >= 100 ? (
-              <>
-                <div className="w-20 h-20 bg-green-100 rounded-full mx-auto flex items-center justify-center mb-6">
-                  <CheckCircle2 className="w-10 h-10 text-green-600" />
-                </div>
-                <h2 className="text-2xl font-serif font-bold text-foreground mb-2">
-                  Roadmap Generated!
-                </h2>
-                <p className="text-muted-foreground mb-8">
-                  Redirecting to your learning roadmap...
-                </p>
-              </>
-            ) : (
-              <>
-            <div className="w-20 h-20 bg-sage-100 rounded-full mx-auto flex items-center justify-center mb-6">
-              <Loader2 className="w-10 h-10 text-sage-600 animate-spin" />
-            </div>
-            <h2 className="text-2xl font-serif font-bold text-foreground mb-2">
-                  Generating Your Learning Roadmap
-            </h2>
-            <p className="text-muted-foreground mb-8">
-                  AI agents are collaborating to craft your personalized curriculum...
-            </p>
-            <div className="max-w-md mx-auto">
-              <Progress value={Math.min(currentProgress, 100)} className="h-2" />
-              <p className="text-sm text-muted-foreground mt-2">
-                    {currentStatus}
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Connection: {connectionType === 'ws' ? 'WebSocket' : 'Polling'} {isConnected ? '✓' : '○'}
-              </p>
-            </div>
-              </>
-            )}
           </CardContent>
         </Card>
       )}

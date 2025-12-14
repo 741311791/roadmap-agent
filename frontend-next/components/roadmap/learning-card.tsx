@@ -298,28 +298,17 @@ function MyRoadmapCard(props: Omit<MyRoadmapCardProps, 'type'>) {
 
             {/* Bottom Section - revealed on hover */}
             <div className="absolute -bottom-20 left-0 w-full p-4 sm:p-5 opacity-0 transition-all duration-500 ease-in-out group-hover:opacity-100 group-hover:bottom-0">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-1.5 sm:gap-2 min-w-0 flex-1">
-                  <Badge
-                    variant={isCompleted ? 'success' : isFailed ? 'destructive' : 'secondary'}
-                    className="text-[10px] sm:text-xs font-medium whitespace-nowrap"
-                  >
-                    {isCompleted ? '✓ Done' : isFailed ? 'Failed' : isGenerating ? 'Generating' : '→ Learning'}
-                  </Badge>
-                  <span className="flex items-center gap-1 text-[10px] sm:text-xs text-white/70 truncate">
-                    <Clock size={10} className="sm:size-3 flex-shrink-0" />
-                    <span className="truncate">{formatRelativeTime(lastAccessedAt)}</span>
-                  </span>
-                </div>
-                <Button 
-                  size="sm" 
-                  className="bg-white text-black hover:bg-white/90 text-xs px-2 sm:px-3 h-7 sm:h-8 flex-shrink-0"
-                  onClick={(e) => e.preventDefault()}
+              <div className="flex items-center gap-2">
+                <Badge
+                  variant={isCompleted ? 'success' : isFailed ? 'destructive' : 'secondary'}
+                  className="text-[10px] sm:text-xs font-medium whitespace-nowrap"
                 >
-                  <span className="hidden sm:inline">Continue</span>
-                  <span className="sm:hidden">Go</span>
-                  <ArrowRight className="ml-1 h-3 w-3" />
-                </Button>
+                  {isCompleted ? '✓ Done' : isFailed ? 'Failed' : isGenerating ? 'Generating' : '→ Learning'}
+                </Badge>
+                <span className="flex items-center gap-1 text-[10px] sm:text-xs text-white/70 truncate">
+                  <Clock size={10} className="sm:size-3 flex-shrink-0" />
+                  <span className="truncate">{formatRelativeTime(lastAccessedAt)}</span>
+                </span>
               </div>
             </div>
           </div>

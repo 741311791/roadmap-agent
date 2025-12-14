@@ -248,22 +248,46 @@ class TutorialRepository(BaseRepository[TutorialMetadata]):
             concept_id=tutorial_output.concept_id,
         )
         
-        # 创建新教程元数据
-        metadata = TutorialMetadata(
-            tutorial_id=tutorial_output.tutorial_id,
-            concept_id=tutorial_output.concept_id,
-            roadmap_id=roadmap_id,
-            title=tutorial_output.title,
-            summary=tutorial_output.summary,
-            content_url=tutorial_output.content_url,
-            content_status=tutorial_output.content_status,
-            content_version=tutorial_output.content_version,
-            is_latest=True,  # 新版本默认为最新
-            estimated_completion_time=tutorial_output.estimated_completion_time,
-            generated_at=tutorial_output.generated_at,
-        )
+        # 检查是否已存在相同 tutorial_id 的记录（处理重试/重新生成场景）
+        existing = await self.get_by_id(tutorial_output.tutorial_id)
         
-        await self.create(metadata, flush=True)
+        if existing:
+            # 如果已存在，更新现有记录
+            existing.title = tutorial_output.title
+            existing.summary = tutorial_output.summary
+            existing.content_url = tutorial_output.content_url
+            existing.content_status = tutorial_output.content_status
+            existing.content_version = tutorial_output.content_version
+            existing.is_latest = True
+            existing.estimated_completion_time = tutorial_output.estimated_completion_time
+            existing.generated_at = tutorial_output.generated_at
+            
+            await self.session.flush()
+            metadata = existing
+            
+            logger.info(
+                "tutorial_metadata_updated",
+                tutorial_id=tutorial_output.tutorial_id,
+                concept_id=tutorial_output.concept_id,
+                roadmap_id=roadmap_id,
+            )
+        else:
+            # 创建新教程元数据
+            metadata = TutorialMetadata(
+                tutorial_id=tutorial_output.tutorial_id,
+                concept_id=tutorial_output.concept_id,
+                roadmap_id=roadmap_id,
+                title=tutorial_output.title,
+                summary=tutorial_output.summary,
+                content_url=tutorial_output.content_url,
+                content_status=tutorial_output.content_status,
+                content_version=tutorial_output.content_version,
+                is_latest=True,  # 新版本默认为最新
+                estimated_completion_time=tutorial_output.estimated_completion_time,
+                generated_at=tutorial_output.generated_at,
+            )
+            
+            await self.create(metadata, flush=True)
         
         logger.info(
             "tutorial_metadata_saved",

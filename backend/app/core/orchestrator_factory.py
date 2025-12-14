@@ -10,8 +10,11 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from app.config.settings import settings
 from app.agents.factory import AgentFactory
+from app.services.notification_service import notification_service
+from app.services.execution_logger import execution_logger
 from .orchestrator.base import WorkflowConfig
 from .orchestrator.state_manager import StateManager
+from .orchestrator.workflow_brain import WorkflowBrain
 from .orchestrator.routers import WorkflowRouter
 from .orchestrator.builder import WorkflowBuilder
 from .orchestrator.executor import WorkflowExecutor
@@ -168,16 +171,32 @@ class OrchestratorFactory:
         # 创建 Router
         router = WorkflowRouter(config)
         
-        # 创建所有 Runners
+        # 获取共享组件
         state_manager = cls._state_manager
         agent_factory = cls._agent_factory
         
-        intent_runner = IntentAnalysisRunner(state_manager, agent_factory)
-        curriculum_runner = CurriculumDesignRunner(state_manager, agent_factory)
-        validation_runner = ValidationRunner(state_manager, agent_factory)
-        editor_runner = EditorRunner(state_manager, agent_factory)
-        review_runner = ReviewRunner(state_manager)
-        content_runner = ContentRunner(state_manager, config, agent_factory)
+        # 创建 WorkflowBrain（统一协调者）
+        brain = WorkflowBrain(
+            state_manager=state_manager,
+            notification_service=notification_service,
+            execution_logger=execution_logger,
+        )
+        
+        # 创建所有 Runners
+        # Phase 2 迁移完成: 所有 6 个 Runner 已迁移到使用 WorkflowBrain ✅
+        # ✅ ValidationRunner - 已迁移
+        # ✅ EditorRunner - 已迁移
+        # ✅ ReviewRunner - 已迁移
+        # ✅ IntentAnalysisRunner - 已迁移
+        # ✅ CurriculumDesignRunner - 已迁移
+        # ✅ ContentRunner - 已迁移
+        
+        intent_runner = IntentAnalysisRunner(brain, agent_factory)  # ← 已迁移
+        curriculum_runner = CurriculumDesignRunner(brain, agent_factory)  # ← 已迁移
+        validation_runner = ValidationRunner(brain, agent_factory)  # ← 已迁移
+        editor_runner = EditorRunner(brain, agent_factory)  # ← 已迁移
+        review_runner = ReviewRunner(brain)  # ← 已迁移
+        content_runner = ContentRunner(brain, config, agent_factory)  # ← 已迁移
         
         # 创建 Builder
         builder = WorkflowBuilder(
@@ -196,6 +215,12 @@ class OrchestratorFactory:
             builder=builder,
             state_manager=state_manager,
             checkpointer=cls._checkpointer,
+        )
+        
+        logger.info(
+            "workflow_executor_created",
+            brain_created=True,
+            runners_count=6,
         )
         
         return executor

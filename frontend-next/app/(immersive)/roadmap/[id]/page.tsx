@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import { 
   ResizablePanelGroup, 
   ResizablePanel, 
@@ -26,6 +26,7 @@ import { Loader2, AlertCircle, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
+import { isConceptIdValid, findConceptById, calculateRoadmapProgress } from '@/lib/utils/roadmap-helpers';
 
 /**
  * RoadmapDetailPage - 沉浸式路线图详情页
@@ -37,6 +38,8 @@ import { cn } from '@/lib/utils';
  */
 export default function RoadmapDetailPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
+  const router = useRouter();
   const roadmapId = params.id as string;
 
   // Auth Store
@@ -79,6 +82,42 @@ export default function RoadmapDetailPage() {
       setRoadmap(roadmapData as RoadmapFramework);
     }
   }, [roadmapData, setRoadmap]);
+
+  // 1.5. URL → State 单向同步：从 URL 参数中读取 conceptId 并自动选中
+  // 这是唯一的同步方向，避免循环
+  useEffect(() => {
+    if (!roadmapData) return;
+    
+    const conceptIdFromUrl = searchParams.get('concept');
+    
+    // 只在 URL 参数与当前 state 不一致时才更新
+    if (conceptIdFromUrl !== selectedConceptId) {
+      if (conceptIdFromUrl) {
+        // URL 中有 concept 参数，验证并选中
+        if (isConceptIdValid(roadmapData as RoadmapFramework, conceptIdFromUrl)) {
+          console.log('[RoadmapDetail] Syncing concept from URL:', conceptIdFromUrl);
+          selectConcept(conceptIdFromUrl);
+        } else {
+          console.warn('[RoadmapDetail] Invalid concept ID in URL:', conceptIdFromUrl);
+        }
+      } else {
+        // URL 中没有 concept 参数，清空选中状态
+        console.log('[RoadmapDetail] Clearing concept selection (no URL param)');
+        selectConcept(null);
+      }
+    }
+  }, [roadmapData, searchParams, selectedConceptId, selectConcept]);
+
+  // 1.6. Concept 选择处理器：直接更新 URL（而不是直接更新 state）
+  // URL 变化会通过上面的 effect 自动同步到 state，避免循环
+  const handleConceptSelect = useCallback((conceptId: string | null) => {
+    const newUrl = conceptId
+      ? `/roadmap/${roadmapId}?concept=${encodeURIComponent(conceptId)}`
+      : `/roadmap/${roadmapId}`;
+    
+    console.log('[RoadmapDetail] Navigating to concept:', conceptId);
+    router.push(newUrl, { scroll: false });
+  }, [roadmapId, router]);
 
   // 2. Load User Preferences for Retry Functionality
   useEffect(() => {
@@ -303,62 +342,39 @@ export default function RoadmapDetailPage() {
   }, [activeTask?.taskId, updateConceptStatus, refetchRoadmap]);
 
   // 5. Fetch Tutorial Content when Concept Selected
+  // 提取为独立函数，以便在重试成功后手动触发
+  const loadTutorialContent = useCallback(async (conceptId: string) => {
+    setTutorialContent(undefined); // 先清空显示加载状态
+    try {
+      const meta = await getLatestTutorial(roadmapId, conceptId);
+      if (meta?.content_url) {
+        const text = await downloadTutorialContent(meta.content_url);
+        setTutorialContent(text);
+      } else {
+        setTutorialContent('# No content available yet\n\nThis concept is still being generated or is pending.');
+      }
+    } catch (err) {
+      console.error('Failed to load tutorial content:', err);
+      setTutorialContent('# Error loading content\n\nPlease try again later.');
+    }
+  }, [roadmapId]);
+
   useEffect(() => {
     if (!selectedConceptId) {
       setTutorialContent(undefined);
       return;
     }
 
-    const loadContent = async () => {
-      setTutorialContent(undefined);
-      try {
-        const meta = await getLatestTutorial(roadmapId, selectedConceptId);
-        if (meta?.content_url) {
-          const text = await downloadTutorialContent(meta.content_url);
-          setTutorialContent(text);
-        } else {
-          setTutorialContent('# No content available yet\n\nThis concept is still being generated or is pending.');
-        }
-      } catch (err) {
-        console.error('Failed to load tutorial content:', err);
-        setTutorialContent('# Error loading content\n\nPlease try again later.');
-      }
-    };
-
-    loadContent();
-  }, [selectedConceptId, roadmapId]);
+    loadTutorialContent(selectedConceptId);
+  }, [selectedConceptId, loadTutorialContent]);
 
   // Helper: Find concept object by ID
   const getActiveConcept = useCallback((): Concept | null => {
-    if (!currentRoadmap || !selectedConceptId || !currentRoadmap.stages) return null;
-    
-    for (const stage of currentRoadmap.stages) {
-      if (!stage.modules) continue;
-      for (const module of stage.modules) {
-        if (!module.concepts) continue;
-        const concept = module.concepts.find(c => c.concept_id === selectedConceptId);
-        if (concept) return concept;
-      }
-    }
-    return null;
+    return findConceptById(currentRoadmap, selectedConceptId || '');
   }, [currentRoadmap, selectedConceptId]);
 
   // Helper: Calculate overall progress
-  const calculateProgress = useCallback(() => {
-    if (!currentRoadmap || !currentRoadmap.stages) return 0;
-    
-    const allConcepts = currentRoadmap.stages.flatMap(
-      (s: Stage) => s.modules?.flatMap((m: Module) => m.concepts || []) || []
-    );
-    
-    if (allConcepts.length === 0) return 0;
-    
-    const completed = allConcepts.filter(
-      (c: Concept) => c.content_status === 'completed'
-    ).length;
-    
-    return (completed / allConcepts.length) * 100;
-  }, [currentRoadmap]);
+  const overallProgress = calculateRoadmapProgress(currentRoadmap);
 
   // Loading State
   if (roadmapLoading) {
@@ -460,8 +476,8 @@ export default function RoadmapDetailPage() {
             <KnowledgeRail
               roadmap={currentRoadmap}
               activeConceptId={selectedConceptId}
-              onSelectConcept={selectConcept}
-              generationProgress={calculateProgress()}
+              onSelectConcept={handleConceptSelect}
+              generationProgress={overallProgress}
             />
           </ResizablePanel>
 
@@ -481,11 +497,13 @@ export default function RoadmapDetailPage() {
               tutorialContent={tutorialContent}
               roadmapId={roadmapId}
               userPreferences={userPreferences}
-              onRetrySuccess={() => {
+              onRetrySuccess={async () => {
                 // 重试成功后，重新加载路线图数据和教程内容
-                refetchRoadmap();
+                // 注意：需要等待路线图数据更新完成后再加载教程内容
+                await refetchRoadmap();
                 if (selectedConceptId) {
-                  setTutorialContent(undefined); // 清空内容，触发重新加载
+                  // 手动触发教程内容重新加载
+                  loadTutorialContent(selectedConceptId);
                 }
               }}
             />

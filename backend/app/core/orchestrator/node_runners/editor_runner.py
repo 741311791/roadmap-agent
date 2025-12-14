@@ -1,52 +1,63 @@
 """
-路线图编辑节点执行器
+路线图编辑节点执行器（重构版 - 使用 WorkflowBrain）
 
 负责执行路线图编辑节点（Step 2E: Roadmap Edit）
+
+重构改进:
+- 使用 WorkflowBrain 统一管理状态、日志、通知
+- 使用 brain.save_roadmap_framework() 保存更新后的框架
+- 代码行数减少 ~70%
 """
-import time
 import structlog
+import time
 
 from app.agents.factory import AgentFactory
-from app.services.notification_service import notification_service
+from app.models.domain import RoadmapEditInput
 from app.services.execution_logger import execution_logger, LogCategory
-from app.db.repositories.roadmap_repo import RoadmapRepository
-from app.db.session import AsyncSessionLocal
-from app.core.error_handler import error_handler
 from ..base import RoadmapState
-from ..state_manager import StateManager
+from ..workflow_brain import WorkflowBrain
 
 logger = structlog.get_logger()
 
 
 class EditorRunner:
     """
-    路线图编辑节点执行器
+    路线图编辑节点执行器（重构版）
     
     职责：
     1. 执行 RoadmapEditorAgent
-    2. 更新路线图框架
+    2. 保存更新后的路线图框架
     3. 递增 modification_count
-    4. 发布进度通知
-    5. 记录执行日志
-    6. 错误处理（通过统一 ErrorHandler）
+    
+    不再负责:
+    - 数据库操作（由 WorkflowBrain 处理）
+    - 日志记录（由 WorkflowBrain 处理）
+    - 通知发布（由 WorkflowBrain 处理）
+    - 状态管理（由 WorkflowBrain 处理）
     """
     
     def __init__(
         self,
-        state_manager: StateManager,
+        brain: WorkflowBrain,
         agent_factory: AgentFactory,
     ):
         """
         Args:
-            state_manager: StateManager 实例
+            brain: WorkflowBrain 实例（统一协调者）
             agent_factory: AgentFactory 实例
         """
-        self.state_manager = state_manager
+        self.brain = brain
         self.agent_factory = agent_factory
     
     async def run(self, state: RoadmapState) -> dict:
         """
-        执行路线图编辑节点
+        执行路线图编辑节点（重构版 - 使用 WorkflowBrain）
+        
+        简化后的逻辑:
+        1. 使用 brain.node_execution() 自动处理状态/日志/通知
+        2. 调用 RoadmapEditorAgent
+        3. 使用 brain.save_roadmap_framework() 保存更新后的框架
+        4. 返回纯结果
         
         Args:
             state: 当前工作流状态
@@ -54,50 +65,16 @@ class EditorRunner:
         Returns:
             状态更新字典
         """
-        start_time = time.time()
-        task_id = state["task_id"]
         modification_count = state.get("modification_count", 0)
         
-        # 设置当前步骤
-        self.state_manager.set_live_step(task_id, "roadmap_edit")
-        
-        logger.info(
-            "workflow_step_started",
-            step="roadmap_edit",
-            task_id=task_id,
-            modification_count=modification_count,
-            roadmap_id=state.get("roadmap_id"),
-        )
-        
-        # 获取 roadmap_id
-        roadmap_id = state.get("roadmap_id")
-        
-        # 记录执行日志（包含 roadmap_id）
-        await execution_logger.log_workflow_start(
-            task_id=task_id,
-            step="roadmap_edit",
-            message=f"开始修改路线图（第 {modification_count + 1} 次）",
-            roadmap_id=roadmap_id,
-        )
-        
-        # 更新数据库状态
-        await self._update_task_status(task_id, "roadmap_edit", roadmap_id)
-        
-        # 发布进度通知
-        await notification_service.publish_progress(
-            task_id=task_id,
-            step="roadmap_edit",
-            status="processing",
-            message=f"正在根据验证反馈修改路线图（第 {modification_count + 1} 次）...",
-        )
-        
-        # 使用统一错误处理器
-        async with error_handler.handle_node_execution("roadmap_edit", task_id, "路线图修改") as ctx:
-            from app.models.domain import RoadmapEditInput
+        # 使用 WorkflowBrain 统一管理执行生命周期
+        async with self.brain.node_execution("roadmap_edit", state):
+            start_time = time.time()
             
+            # 创建 Agent
             agent = self.agent_factory.create_roadmap_editor()
             
-            # 执行 Agent
+            # 准备输入
             edit_input = RoadmapEditInput(
                 existing_framework=state["roadmap_framework"],
                 validation_issues=state["validation_result"].issues
@@ -106,104 +83,49 @@ class EditorRunner:
                 user_preferences=state["user_request"].preferences,
                 modification_context=f"第 {modification_count + 1} 次修改"
             )
+            
+            # 执行 Agent
             result = await agent.execute(edit_input)
             
+            # 保存更新后的框架（使用 brain 的事务性保存方法）
+            await self.brain.save_roadmap_framework(
+                task_id=state["task_id"],
+                roadmap_id=result.updated_framework.roadmap_id,
+                user_id=state["user_request"].user_id,
+                framework=result.updated_framework,
+            )
+            
+            # 计算执行时长
             duration_ms = int((time.time() - start_time) * 1000)
             
+            # 记录修改日志（业务逻辑日志 - 旧版本保留）
             logger.info(
-                "workflow_step_completed",
-                step="roadmap_edit",
-                task_id=task_id,
+                "editor_runner_completed",
+                task_id=state["task_id"],
                 modification_count=modification_count + 1,
+                roadmap_id=result.updated_framework.roadmap_id,
             )
             
-            # 记录执行日志
-            await execution_logger.log_workflow_complete(
-                task_id=task_id,
+            # 记录详细的编辑完成日志（新增 - 用于前端展示）
+            await execution_logger.info(
+                task_id=state["task_id"],
+                category=LogCategory.AGENT,
                 step="roadmap_edit",
-                message=f"路线图修改完成（第 {modification_count + 1} 次）",
-                duration_ms=duration_ms,
-                roadmap_id=state.get("roadmap_id"),
+                agent_name="RoadmapEditorAgent",
+                roadmap_id=result.updated_framework.roadmap_id,
+                message="✅ Roadmap updated based on your feedback",
                 details={
+                    "log_type": "edit_completed",
                     "modification_count": modification_count + 1,
-                    "changes_made": result.changes_summary
-                    if hasattr(result, "changes_summary")
-                    else None,
+                    "changes_summary": result.modification_summary if hasattr(result, 'modification_summary') else "Roadmap structure updated",
                 },
+                duration_ms=duration_ms,
             )
             
-            # 更新数据库中的路线图框架
-            await self._update_roadmap_framework(state, result.updated_framework)
-            
-            # 发布步骤完成通知
-            await notification_service.publish_progress(
-                task_id=task_id,
-                step="roadmap_edit",
-                status="completed",
-                message=f"路线图修改完成（第 {modification_count + 1} 次）",
-                extra_data={
-                    "modification_count": modification_count + 1,
-                },
-            )
-            
-            # 存储结果到上下文
-            ctx["result"] = {
+            # 返回纯状态更新
+            return {
                 "roadmap_framework": result.updated_framework,
                 "modification_count": modification_count + 1,
                 "current_step": "roadmap_edit",
                 "execution_history": [f"路线图修改完成（第 {modification_count + 1} 次）"],
             }
-        
-        # 返回状态更新
-        return ctx["result"]
-    
-    async def _update_task_status(self, task_id: str, current_step: str, roadmap_id: str | None):
-        """
-        更新任务状态到数据库
-        
-        Args:
-            task_id: 任务 ID
-            current_step: 当前步骤
-            roadmap_id: 路线图 ID
-        """
-        async with AsyncSessionLocal() as session:
-            repo = RoadmapRepository(session)
-            await repo.update_task_status(
-                task_id=task_id,
-                status="processing",
-                current_step=current_step,
-                roadmap_id=roadmap_id,
-            )
-            await session.commit()
-            
-            logger.debug(
-                "task_status_updated",
-                task_id=task_id,
-                current_step=current_step,
-                roadmap_id=roadmap_id,
-            )
-    
-    async def _update_roadmap_framework(self, state: RoadmapState, framework):
-        """
-        更新数据库中的路线图框架
-        
-        Args:
-            state: 工作流状态
-            framework: 更新后的 RoadmapFramework 实例
-        """
-        task_id = state["task_id"]
-        
-        async with AsyncSessionLocal() as session:
-            repo = RoadmapRepository(session)
-            await repo.update_roadmap_framework(
-                roadmap_id=framework.roadmap_id,
-                framework_data=framework.model_dump(),
-            )
-            await session.commit()
-            
-            logger.info(
-                "roadmap_framework_updated",
-                task_id=task_id,
-                roadmap_id=framework.roadmap_id,
-            )
-

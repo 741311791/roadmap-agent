@@ -26,6 +26,16 @@ def setup_logging():
         level=logging.INFO if not settings.DEBUG else logging.DEBUG,
     )
     
+    # 禁用 SQLAlchemy 引擎日志（防止输出大量 SQL 语句）
+    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+    logging.getLogger("sqlalchemy.pool").setLevel(logging.WARNING)
+    logging.getLogger("sqlalchemy.dialects").setLevel(logging.WARNING)
+    logging.getLogger("sqlalchemy.orm").setLevel(logging.WARNING)
+    
+    # 禁用 httpx 和 httpcore 的调试日志（防止 HTTP 请求日志过多）
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    
     # 配置 structlog
     structlog.configure(
         processors=[

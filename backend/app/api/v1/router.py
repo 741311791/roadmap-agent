@@ -15,7 +15,7 @@ from .endpoints import (
     modification,
     retry,
 )
-from .roadmap import users_router, router as roadmap_router
+from .roadmap import users_router, router as roadmap_router, trace_router
 
 # 创建v1主路由
 router = APIRouter(prefix="/api/v1")
@@ -50,3 +50,6 @@ router.include_router(roadmap_router)
 
 # 用户相关（画像等）
 router.include_router(users_router)
+
+# 执行追踪相关（日志、摘要）
+router.include_router(trace_router)

@@ -222,20 +222,18 @@ class RoadmapService:
                     "message": "工作流已暂停，等待人工审核",
                 }
             
-            # 工作流正常完成，保存所有元数据
+            # ============================================================
+            # 工作流正常完成
+            # ============================================================
+            # 注意：内容元数据（tutorial/resource/quiz）已由 ContentRunner 
+            # 通过 brain.save_content_results() 保存，此处只保存非内容类元数据
+            # ============================================================
             async with self.repo_factory.create_session() as session:
                 if final_state.get("roadmap_framework"):
                     framework: RoadmapFramework = final_state["roadmap_framework"]
                     
-                    # 保存路线图元数据
-                    roadmap_repo = self.repo_factory.create_roadmap_meta_repo(session)
-                    await roadmap_repo.save_roadmap(
-                        roadmap_id=framework.roadmap_id,
-                        user_id=enriched_request.user_id,
-                        framework=framework,
-                    )
-                    
                     # 保存需求分析元数据（A1: 需求分析师产出）
+                    # 注意：这个不在 ContentRunner 中处理，需要在此保存
                     intent_analysis = final_state.get("intent_analysis")
                     if intent_analysis:
                         intent_repo = self.repo_factory.create_intent_analysis_repo(session)
@@ -248,120 +246,21 @@ class RoadmapService:
                             task_id=task_id,
                         )
                     
-                    # 保存教程元数据（A4: 教程生成器产出）
+                    # 从 final_state 获取内容生成结果（用于日志和通知）
                     tutorial_refs = final_state.get("tutorial_refs", {})
-                    if tutorial_refs:
-                        logger.info(
-                            "saving_tutorial_metadata",
-                            task_id=task_id,
-                            count=len(tutorial_refs),
-                            concept_ids=list(tutorial_refs.keys()),
-                        )
-                        tutorial_repo = self.repo_factory.create_tutorial_repo(session)
-                        await tutorial_repo.save_tutorials_batch(
-                            tutorial_refs=tutorial_refs,
-                            roadmap_id=framework.roadmap_id,
-                        )
-                    
-                    # 保存资源推荐元数据（A5: 资源推荐师产出）
-                    resource_refs = final_state.get("resource_refs", {})
-                    if resource_refs:
-                        logger.info(
-                            "saving_resource_metadata",
-                            task_id=task_id,
-                            count=len(resource_refs),
-                            concept_ids=list(resource_refs.keys()),
-                        )
-                        resource_repo = self.repo_factory.create_resource_repo(session)
-                        await resource_repo.save_resources_batch(
-                            resource_refs=resource_refs,
-                            roadmap_id=framework.roadmap_id,
-                        )
-                    
-                    # 保存测验元数据（A6: 测验生成器产出）
-                    quiz_refs = final_state.get("quiz_refs", {})
-                    if quiz_refs:
-                        logger.info(
-                            "saving_quiz_metadata",
-                            task_id=task_id,
-                            count=len(quiz_refs),
-                            concept_ids=list(quiz_refs.keys()),
-                        )
-                        quiz_repo = self.repo_factory.create_quiz_repo(session)
-                        await quiz_repo.save_quizzes_batch(
-                            quiz_refs=quiz_refs,
-                            roadmap_id=framework.roadmap_id,
-                        )
-                    else:
-                        logger.warning(
-                            "no_quiz_refs_to_save",
-                            task_id=task_id,
-                            message="quiz_refs is empty, no quizzes will be saved",
-                        )
-                    
-                    # 获取失败概念列表
                     failed_concept_ids = final_state.get("failed_concepts", [])
-                    
-                    # 计算所有概念总数
-                    all_concepts = []
-                    for stage in framework.stages:
-                        for module in stage.modules:
-                            all_concepts.extend(module.concepts)
-                    total_concepts = len(all_concepts)
-                    
-                    # 根据失败情况决定任务状态
-                    if failed_concept_ids:
-                        # 部分失败
-                        task_status = "partial_failure"
-                        
-                        # 构建失败概念详情
-                        failed_concepts_detail = {}
-                        for concept_id in failed_concept_ids:
-                            failed_concepts_detail[concept_id] = {
-                                "timestamp": self._get_current_timestamp(),
-                                "reason": "Content generation failed",
-                            }
-                        
-                        error_summary = f"{len(failed_concept_ids)}/{total_concepts} concepts failed to generate"
-                    else:
-                        task_status = "completed"
-                        failed_concepts_detail = None
-                        error_summary = None
-                    
-                    # 构建执行摘要
-                    execution_summary = {
-                        "total_concepts": total_concepts,
-                        "completed": total_concepts - len(failed_concept_ids),
-                        "failed": len(failed_concept_ids),
-                        "tutorials_generated": len(tutorial_refs),
-                        "resources_generated": len(resource_refs),
-                        "quizzes_generated": len(quiz_refs),
-                    }
-                    
-                    # 更新任务状态
-                    task_repo = self.repo_factory.create_task_repo(session)
-                    await task_repo.update_task_status(
-                        task_id=task_id,
-                        status=task_status,
-                        current_step="completed",
-                        roadmap_id=framework.roadmap_id,
-                        error_message=error_summary,
-                        failed_concepts=failed_concepts_detail,
-                        execution_summary=execution_summary,
-                    )
                     
                     await session.commit()
                     
                     logger.info(
-                        "roadmap_generation_status_updated",
+                        "roadmap_service_metadata_saved",
                         task_id=task_id,
-                        status=task_status,
-                        total_concepts=total_concepts,
-                        failed_count=len(failed_concept_ids),
-                        execution_summary=execution_summary,
+                        roadmap_id=framework.roadmap_id,
+                        intent_analysis_saved=intent_analysis is not None,
                     )
                     
-                    # 发布完成通知（无论是否有教程生成，都需要发送完成通知以触发前端跳转）
+                    # 发布完成通知（触发前端跳转）
+                    # 注意：任务状态已由 brain.save_content_results() 更新
                     await notification_service.publish_completed(
                         task_id=task_id,
                         roadmap_id=framework.roadmap_id,
@@ -562,18 +461,17 @@ class RoadmapService:
                 feedback=feedback,
             )
             
+            # ============================================================
+            # 人工审核后处理
+            # ============================================================
+            # 注意：内容元数据（tutorial/resource/quiz）已由 ContentRunner
+            # 通过 brain.save_content_results() 保存，此处只保存非内容类元数据
+            # ============================================================
             async with self.repo_factory.create_session() as session:
                 if approved:
-                    # 用户批准，保存路线图元数据
+                    # 用户批准，保存需求分析元数据（不在 ContentRunner 中处理）
                     if final_state.get("roadmap_framework"):
                         framework: RoadmapFramework = final_state["roadmap_framework"]
-                        
-                        roadmap_repo = self.repo_factory.create_roadmap_meta_repo(session)
-                        await roadmap_repo.save_roadmap(
-                            roadmap_id=framework.roadmap_id,
-                            user_id=task.user_id,
-                            framework=framework,
-                        )
                         
                         # 保存需求分析元数据
                         intent_analysis = final_state.get("intent_analysis")
@@ -584,41 +482,16 @@ class RoadmapService:
                                 intent_analysis=intent_analysis,
                             )
                         
-                        # 保存教程元数据
-                        tutorial_refs = final_state.get("tutorial_refs", {})
-                        if tutorial_refs:
-                            tutorial_repo = self.repo_factory.create_tutorial_repo(session)
-                            await tutorial_repo.save_tutorials_batch(
-                                tutorial_refs=tutorial_refs,
+                        # 注意：任务状态已由 brain.save_content_results() 更新
+                        # 如果工作流未到达 ContentRunner（例如跳过内容生成），则需要在此更新
+                        if not final_state.get("tutorial_refs"):
+                            task_repo = self.repo_factory.create_task_repo(session)
+                            await task_repo.update_task_status(
+                                task_id=task_id,
+                                status="completed",
+                                current_step="completed",
                                 roadmap_id=framework.roadmap_id,
                             )
-                        
-                        # 保存资源推荐元数据
-                        resource_refs = final_state.get("resource_refs", {})
-                        if resource_refs:
-                            resource_repo = self.repo_factory.create_resource_repo(session)
-                            await resource_repo.save_resources_batch(
-                                resource_refs=resource_refs,
-                                roadmap_id=framework.roadmap_id,
-                            )
-                        
-                        # 保存测验元数据
-                        quiz_refs = final_state.get("quiz_refs", {})
-                        if quiz_refs:
-                            quiz_repo = self.repo_factory.create_quiz_repo(session)
-                            await quiz_repo.save_quizzes_batch(
-                                quiz_refs=quiz_refs,
-                                roadmap_id=framework.roadmap_id,
-                            )
-                        
-                        # 更新任务状态为完成
-                        task_repo = self.repo_factory.create_task_repo(session)
-                        await task_repo.update_task_status(
-                            task_id=task_id,
-                            status="completed",
-                            current_step="completed",
-                            roadmap_id=framework.roadmap_id,
-                        )
                     else:
                         # 如果没有生成框架，标记为失败
                         task_repo = self.repo_factory.create_task_repo(session)

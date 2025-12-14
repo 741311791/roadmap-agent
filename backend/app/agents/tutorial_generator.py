@@ -250,6 +250,7 @@ class TutorialGeneratorAgent(BaseAgent):
         # 调用 LLM（支持工具调用）
         max_iterations = 5  # 最多允许5轮工具调用
         iteration = 0
+        content = None  # 初始化 content 变量，避免 UnboundLocalError
         
         while iteration < max_iterations:
             logger.info(
@@ -298,9 +299,13 @@ class TutorialGeneratorAgent(BaseAgent):
             break
         
         if iteration >= max_iterations:
-            logger.warning(
+            logger.error(
                 "tutorial_generation_max_iterations_reached",
                 concept_id=concept.concept_id,
+            )
+            raise ValueError(
+                f"教程生成失败：工具调用循环达到最大次数（{max_iterations}）仍未获得最终内容。"
+                "可能原因：LLM 持续进行工具调用而未输出最终结果。"
             )
         
         # 解析输出
@@ -522,6 +527,7 @@ class TutorialGeneratorAgent(BaseAgent):
             )
             
             # 工具调用阶段（非流式）
+            tool_calls_completed = False
             while iteration < max_iterations:
                 response = await self._call_llm(messages, tools=tools)
                 message = response.choices[0].message
@@ -575,7 +581,21 @@ class TutorialGeneratorAgent(BaseAgent):
                     continue
                 
                 # 没有工具调用，准备流式生成最终内容
+                tool_calls_completed = True
                 break
+            
+            # 检查是否因达到最大迭代次数而退出
+            if not tool_calls_completed and iteration >= max_iterations:
+                logger.error(
+                    "tutorial_generation_stream_max_iterations_reached",
+                    concept_id=concept.concept_id,
+                )
+                yield {
+                    "type": "tutorial_error",
+                    "concept_id": concept.concept_id,
+                    "error": f"工具调用循环达到最大次数（{max_iterations}）仍未完成，无法生成教程内容"
+                }
+                return
             
             # 流式生成最终内容
             logger.info(
