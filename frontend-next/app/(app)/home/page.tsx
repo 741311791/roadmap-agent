@@ -352,7 +352,7 @@ export default function HomePage() {
             >
               <SectionHeader
                 icon={TrendingUp}
-                title="Popular on Muset"
+                title="Trending Roadmaps"
                 subtitle="Discover roadmaps loved by the community"
                 action={{ label: 'Explore all', href: '/app/explore' }}
               />

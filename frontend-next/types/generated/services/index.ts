@@ -30,10 +30,11 @@ export interface ResourcesResponse {
 
 /**
  * Quiz question from backend
+ * 题目类型仅支持：单选、多选、判断（已移除填空题）
  */
 export interface QuizQuestionItem {
   question_id: string;
-  question_type: 'single_choice' | 'multiple_choice' | 'true_false' | 'fill_blank';
+  question_type: 'single_choice' | 'multiple_choice' | 'true_false';
   question: string;
   options: string[];
   correct_answer: number[];

@@ -106,15 +106,15 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
       <div className="h-14 flex items-center justify-between px-4 border-b border-border/5">
         {!isCollapsed ? (
           <Link href="/" className="flex items-center gap-2">
-            <div className="w-6 h-6 bg-primary rounded-full flex items-center justify-center text-primary-foreground font-serif font-bold text-xs">
-              M
+            <div className="w-6 h-6 bg-sage-600 rounded-lg flex items-center justify-center text-white font-serif font-bold text-[10px]">
+              FL
             </div>
-            <span className="font-serif font-bold text-lg tracking-tight">Muset</span>
+            <span className="font-serif font-bold text-lg tracking-tight">Fast Learning</span>
           </Link>
         ) : (
           <Link href="/" className="mx-auto">
-            <div className="w-6 h-6 bg-primary rounded-full flex items-center justify-center text-primary-foreground font-serif font-bold text-xs">
-              M
+            <div className="w-6 h-6 bg-sage-600 rounded-lg flex items-center justify-center text-white font-serif font-bold text-[10px]">
+              FL
             </div>
           </Link>
         )}

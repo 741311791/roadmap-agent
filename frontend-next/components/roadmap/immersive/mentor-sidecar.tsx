@@ -3,13 +3,19 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { cn } from '@/lib/utils';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Bot, FileText, Send, Sparkles, BrainCircuit, ChevronRight, Copy, Check, Lightbulb, Loader2, StopCircle, AlertCircle } from 'lucide-react';
+import { Bot, FileText, Send, Sparkles, BrainCircuit, ChevronRight, Copy, Check, Lightbulb, Loader2, StopCircle, AlertCircle, Lock, Wrench } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { useMentorChat, type LearningNote } from '@/lib/hooks/api/use-mentor-chat';
 import { useAuthStore } from '@/lib/store/auth-store';
+
+/**
+ * 功能开发中标志
+ * 设置为 true 时，AI Mentor 功能将被禁用并显示开发中提示
+ */
+const IS_FEATURE_IN_DEVELOPMENT = true;
 
 /**
  * MentorSidecarProps - AI 导师侧边栏组件属性
@@ -135,6 +141,83 @@ export function MentorSidecar({
         >
           <ChevronRight className="w-4 h-4 rotate-180" />
         </Button>
+      </div>
+    );
+  }
+
+  // 功能开发中 - 显示占位界面
+  if (IS_FEATURE_IN_DEVELOPMENT) {
+    return (
+      <div className={cn(
+        "h-full flex flex-col",
+        "bg-card/80 border-l border-border",
+        className
+      )}>
+        {/* Header */}
+        <div className="p-2 border-b border-border flex items-center gap-2">
+          <div className="flex-1 bg-muted/50 border border-border rounded-lg p-1 flex">
+            <div className="flex-1 flex items-center justify-center gap-2 px-3 py-1.5 bg-sage-100 text-sage-700 rounded-md text-sm font-medium">
+              <Bot className="w-4 h-4" />
+              AI Mentor
+            </div>
+            <div className="flex-1 flex items-center justify-center gap-2 px-3 py-1.5 text-muted-foreground text-sm">
+              <FileText className="w-4 h-4" />
+              Smart Notes
+            </div>
+          </div>
+          
+          {/* Collapse Button */}
+          {onToggleCollapse && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onToggleCollapse}
+              className="h-8 w-8 shrink-0 hover:bg-sage-50 hover:text-sage-700 transition-colors"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+          )}
+        </div>
+
+        {/* 开发中提示内容 */}
+        <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+          <div className="w-20 h-20 rounded-full bg-sage-50 border-2 border-sage-200 flex items-center justify-center mb-6">
+            <Wrench className="w-10 h-10 text-sage-400" />
+          </div>
+          <h3 className="font-serif text-lg font-semibold text-foreground mb-2">
+            Coming Soon
+          </h3>
+          <p className="text-sm text-muted-foreground max-w-[200px] mb-4 leading-relaxed">
+            Our AI Mentor feature is being polished to deliver you the best learning experience.
+          </p>
+          <div className="flex items-center gap-2 text-xs text-sage-600 bg-sage-50 px-3 py-1.5 rounded-full">
+            <Lock className="w-3 h-3" />
+            <span>Under Development</span>
+          </div>
+        </div>
+
+        {/* 禁用的输入区域 */}
+        <div className="p-4 border-t border-border bg-background/50">
+          <div className="relative">
+            <Input
+              value=""
+              placeholder="AI Mentor coming soon..."
+              disabled
+              className="bg-muted/50 border-border pr-10 opacity-50 cursor-not-allowed"
+            />
+            <Button
+              size="icon"
+              variant="ghost"
+              className="absolute right-1 top-1 h-8 w-8 opacity-50 cursor-not-allowed"
+              disabled
+            >
+              <Send className="w-4 h-4" />
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground mt-2 text-center">
+            Stay tuned for updates!
+          </p>
+        </div>
       </div>
     );
   }

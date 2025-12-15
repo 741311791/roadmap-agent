@@ -24,9 +24,9 @@ const playfair = Playfair_Display({
 // 不再需要从 Google Fonts 导入
 
 export const metadata: Metadata = {
-  title: 'Muset - AI-Powered Learning Roadmap',
-  description: 'Generate personalized learning roadmaps with AI agents',
-  keywords: ['learning', 'roadmap', 'AI', 'education', 'personalized learning'],
+  title: 'Fast Learning - Master Any Skill with AI',
+  description: 'Master any skill in record time with AI-powered personalized learning roadmaps',
+  keywords: ['fast learning', 'roadmap', 'AI', 'education', 'personalized learning', 'skill mastery'],
 };
 
 export default function RootLayout({

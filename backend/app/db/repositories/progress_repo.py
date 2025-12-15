@@ -125,3 +125,6 @@ class ProgressRepository:
         result = await self.session.execute(statement)
         return list(result.scalars().all())
 
+
+
+

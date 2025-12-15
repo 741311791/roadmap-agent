@@ -440,8 +440,8 @@ class ResourceRecommendationOutput(BaseModel):
 class QuizQuestion(BaseModel):
     """单个测验题目"""
     question_id: str = Field(..., description="题目唯一标识")
-    question_type: Literal["single_choice", "multiple_choice", "true_false", "fill_blank"] = Field(
-        ..., description="题目类型"
+    question_type: Literal["single_choice", "multiple_choice", "true_false"] = Field(
+        ..., description="题目类型：单选题、多选题、判断题"
     )
     question: str = Field(..., description="题目内容")
     options: List[str] = Field(default=[], description="选项列表（选择题适用）")

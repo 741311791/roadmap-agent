@@ -194,8 +194,9 @@ export interface ResourceRecommendations {
 
 /**
  * 测验题目类型
+ * 仅支持：单选、多选、判断三种类型
  */
-export type QuizQuestionType = 'multiple_choice' | 'true_false' | 'code_completion' | 'short_answer';
+export type QuizQuestionType = 'single_choice' | 'multiple_choice' | 'true_false';
 
 /**
  * 测验选项

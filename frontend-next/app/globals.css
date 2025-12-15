@@ -8,66 +8,69 @@
 
 @layer base {
   :root {
-    /* ===== COLOR PALETTE (HSL) ===== */
-    /* Warm Editorial Background */
-    --background: 40 20% 99%;
-    /* #FFFCF9 - Canvas */
-    --foreground: 24 10% 10%;
-    /* #1C1917 - Text Base */
+    /* ===== COLOR PALETTE (HSL) - Creamy Magazine Style ===== */
+    /* Warm Creamy Background - 更柔和的奶油色 */
+    --background: 35 25% 95%;
+    /* Soft warm cream - 降低亮度，增加温暖感 */
+    --foreground: 25 15% 15%;
+    /* Deep warm brown - 温暖的深棕色 */
 
-    /* Primary Action (Same as Foreground - Charcoal) */
-    --primary: 24 10% 10%;
-    --primary-foreground: 0 0% 100%;
-    /* White */
+    /* Primary Action */
+    --primary: 25 15% 15%;
+    --primary-foreground: 35 25% 95%;
+    /* Cream white */
 
-    /* Accent: Sage Green */
-    --sage: 140 15% 55%;
-    /* Custom Sage Variable */
+    /* Accent: Muted Sage Green - 更柔和的 sage */
+    --sage: 140 18% 48%;
+    /* Slightly muted sage for vintage feel */
 
-    /* Muted/Secondary */
-    --muted: 40 10% 94%;
-    /* Darker cream */
-    --muted-foreground: 24 5% 45%;
-    /* Medium warm gray */
+    /* Muted/Secondary - 更接近背景的柔和色 */
+    --muted: 35 20% 90%;
+    /* Soft warm beige */
+    --muted-foreground: 25 10% 40%;
+    /* Warm medium gray */
 
     /* Card (Slightly elevated from background) */
-    --card: 40 15% 97%;
-    --card-foreground: 24 10% 10%;
+    --card: 35 30% 97%;
+    /* Lighter cream for cards */
+    --card-foreground: 25 15% 15%;
 
     /* Popover */
-    --popover: 40 20% 99%;
-    --popover-foreground: 24 10% 10%;
+    --popover: 35 30% 97%;
+    --popover-foreground: 25 15% 15%;
 
     /* Secondary (Softer than primary) */
-    --secondary: 40 10% 92%;
-    --secondary-foreground: 24 10% 10%;
+    --secondary: 35 20% 88%;
+    /* Warm beige */
+    --secondary-foreground: 25 15% 15%;
 
-    /* Accent (Using Sage for highlights) */
-    --accent: 140 15% 55%;
-    --accent-foreground: 0 0% 100%;
+    /* Accent (Using Muted Sage for highlights) */
+    --accent: 140 18% 48%;
+    --accent-foreground: 35 25% 95%;
 
-    /* Destructive (Warm Red for errors) */
-    --destructive: 0 60% 50%;
-    --destructive-foreground: 0 0% 100%;
+    /* Destructive (Warm terracotta for errors) */
+    --destructive: 10 55% 55%;
+    /* Softer terracotta red */
+    --destructive-foreground: 35 25% 95%;
 
-    /* Borders & Input */
-    --border: 24 5% 90%;
-    /* Soft contrast */
-    --input: 24 5% 85%;
-    --ring: 24 10% 10%;
-    /* Focus ring matches primary */
+    /* Borders & Input - 更柔和的边框 */
+    --border: 30 15% 85%;
+    /* Soft warm border */
+    --input: 30 15% 82%;
+    --ring: 140 18% 48%;
+    /* Sage focus ring */
 
-    /* Chart Colors (Muted Editorial Palette) */
-    --chart-1: 140 15% 55%;
-    /* Sage */
-    --chart-2: 24 10% 10%;
-    /* Charcoal */
-    --chart-3: 40 10% 75%;
-    /* Warm gray */
-    --chart-4: 140 10% 40%;
+    /* Chart Colors (Warm Editorial Palette) */
+    --chart-1: 140 18% 48%;
+    /* Muted Sage */
+    --chart-2: 25 15% 15%;
+    /* Deep Brown */
+    --chart-3: 35 15% 70%;
+    /* Warm tan */
+    --chart-4: 140 15% 38%;
     /* Deep sage */
-    --chart-5: 24 5% 60%;
-    /* Light charcoal */
+    --chart-5: 25 10% 55%;
+    /* Medium brown */
 
     /* Shape Design Tokens */
     --radius: 0.5rem;

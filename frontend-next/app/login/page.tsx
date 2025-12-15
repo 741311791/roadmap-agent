@@ -85,7 +85,7 @@ export default function LoginPage() {
         <CardHeader className="text-center space-y-4">
           <div className="text-5xl mb-2">🎓</div>
           <CardTitle className="text-3xl font-serif font-bold text-charcoal">
-            Welcome to Muset
+            Welcome to Fast Learning
           </CardTitle>
           <CardDescription className="text-base">
             Select a test account to continue<br />

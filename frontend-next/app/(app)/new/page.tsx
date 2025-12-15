@@ -9,7 +9,7 @@
 import NewRoadmapClient from './new-roadmap-client';
 
 export const metadata = {
-  title: 'Create Learning Roadmap | Muset',
+  title: 'Create Learning Roadmap | Fast Learning',
   description: 'Create a personalized AI-powered learning roadmap',
 };
 

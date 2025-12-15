@@ -19,12 +19,11 @@
 [3. Constraints & Rules]
 工作规范：
 1. 为给定的 Concept 生成 5-8 道测验题目
-2. 题目类型应多样化：单选题、多选题、判断题、填空题
+2. 题目类型仅限：单选题（single_choice）、多选题（multiple_choice）、判断题（true_false）
 3. 题目难度应与概念难度（{{ concept.difficulty }}）和用户水平（{{ user_preferences.current_level }}）匹配
 4. 每道题必须包含详细的答案解析
 5. 题目应覆盖概念的核心知识点
 6. 选项设计应避免明显错误，干扰项应具有一定迷惑性
-7. 填空题的答案应简洁明确
 
 [4. Output Format]
 **重要：请直接返回纯 JSON 对象，不要使用 markdown 代码块包裹（不要使用 ```json 或 ```）**
@@ -38,7 +37,7 @@
   "questions": [
     {
       "question_id": "q1",
-      "question_type": "single_choice|multiple_choice|true_false|fill_blank",
+      "question_type": "single_choice|multiple_choice|true_false",
       "question": "题目内容",
       "options": ["选项A", "选项B", "选项C", "选项D"],
       "correct_answer": [0],
@@ -50,11 +49,10 @@
 }
 ```
 
-**题目类型说明**:
+**题目类型说明（仅支持以下三种）**:
 - `single_choice`: 单选题（correct_answer 为单元素数组，如 [0]）
 - `multiple_choice`: 多选题（correct_answer 为多元素数组，如 [0, 2]）
 - `true_false`: 判断题（options 固定为 ["正确", "错误"]，correct_answer 为 [0] 或 [1]）
-- `fill_blank`: 填空题（options 为空数组，correct_answer 存储答案文本的索引，答案在 explanation 中说明）
 
 [5. Question Design Guidelines]
 题目设计原则：
@@ -72,11 +70,6 @@
 **判断题设计**：
 - 陈述应明确，非模糊表述
 - 避免"总是"、"从不"等极端表述
-
-**填空题设计**：
-- 空格用 `______` 表示
-- 答案应简洁（1-3 个词）
-- 上下文应提供足够的提示
 
 [6. Difficulty Distribution]
 根据概念难度（{{ concept.difficulty }}）和用户水平（{{ user_preferences.current_level }}）建议的题目难度分布：
@@ -137,11 +130,11 @@
     },
     {
       "question_id": "q4",
-      "question_type": "fill_blank",
-      "question": "React 中用于在组件之间共享状态而无需显式传递 props 的 Hook 是 ______。",
-      "options": [],
-      "correct_answer": [0],
-      "explanation": "答案是 useContext。useContext Hook 允许组件订阅 React 上下文，从而在组件树中共享状态，而无需通过 props 层层传递。",
+      "question_type": "single_choice",
+      "question": "React 中用于在组件之间共享状态而无需显式传递 props 的 Hook 是？",
+      "options": ["useState", "useReducer", "useContext", "useMemo"],
+      "correct_answer": [2],
+      "explanation": "useContext Hook 允许组件订阅 React 上下文，从而在组件树中共享状态，而无需通过 props 层层传递。useState 和 useReducer 用于组件内部状态管理，useMemo 用于性能优化。",
       "difficulty": "medium"
     },
     {
@@ -169,4 +162,4 @@
 3. correct_answer 的索引从 0 开始
 4. total_questions 必须与 questions 数组长度一致
 5. 每道题必须有详细的 explanation
-
+6. 仅使用 single_choice、multiple_choice、true_false 三种题型

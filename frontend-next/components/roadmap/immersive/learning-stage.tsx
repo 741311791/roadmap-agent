@@ -498,6 +498,7 @@ function ResourceList({
 
 /**
  * QuizQuestionCard - 测验问题卡片
+ * 高端杂志风格设计：统一 sage 色系，细腻的阴影和过渡效果
  */
 function QuizQuestionCard({ 
   question, 
@@ -513,55 +514,67 @@ function QuizQuestionCard({
   onAnswerSelect: (optionIndex: number) => void;
 }) {
   const isMultipleChoice = question.question_type === 'multiple_choice';
+  const isTrueFalse = question.question_type === 'true_false';
   const isCorrect = isAnswered && 
     selectedAnswers.length === question.correct_answer.length &&
     selectedAnswers.every(a => question.correct_answer.includes(a));
 
-  const getDifficultyColor = (difficulty: string) => {
+  // 高端杂志风格的难度颜色配色 - 使用 sage 主色系
+  const getDifficultyStyle = (difficulty: string) => {
     switch (difficulty) {
       case 'easy':
-        return 'bg-green-50 text-green-600 border-green-200';
+        return 'bg-sage-50 text-sage-700 border-sage-200';
       case 'medium':
-        return 'bg-amber-50 text-amber-600 border-amber-200';
+        return 'bg-stone-100 text-stone-700 border-stone-200';
       case 'hard':
-        return 'bg-red-50 text-red-600 border-red-200';
+        return 'bg-stone-800 text-white border-stone-700';
       default:
         return 'bg-stone-50 text-stone-600 border-stone-200';
     }
   };
 
+  // 获取题型显示文本
+  const getQuestionTypeLabel = () => {
+    if (isTrueFalse) return 'True / False';
+    if (isMultipleChoice) return 'Select All';
+    return 'Choose One';
+  };
+
   return (
-    <div className="p-5 rounded-xl border border-sage-200 bg-white">
+    <div className="p-6 rounded-2xl border border-sage-100 bg-gradient-to-br from-white to-sage-50/30 shadow-sm hover:shadow-md transition-shadow duration-300">
       {/* Question Header */}
-      <div className="flex items-start gap-3 mb-4">
-        <div className="flex-shrink-0 w-8 h-8 rounded-full bg-sage-600 flex items-center justify-center text-xs font-medium text-white">
+      <div className="flex items-start gap-4 mb-5">
+        <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-sage-600 flex items-center justify-center text-sm font-serif font-bold text-white shadow-sm">
           {index + 1}
         </div>
-        <div className="flex-1">
-          <div className="flex items-center gap-2 mb-2">
+        <div className="flex-1 pt-0.5">
+          <div className="flex items-center gap-2 mb-3">
             <span className={cn(
-              "inline-flex px-2 py-0.5 rounded text-[10px] font-medium border uppercase tracking-wide",
-              getDifficultyColor(question.difficulty)
+              "inline-flex px-2.5 py-1 rounded-md text-[10px] font-semibold border uppercase tracking-wider",
+              getDifficultyStyle(question.difficulty)
             )}>
               {question.difficulty}
             </span>
-            <span className="text-[10px] text-muted-foreground uppercase tracking-wide">
-              {isMultipleChoice ? 'Multiple Choice' : 'Single Choice'}
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">
+              {getQuestionTypeLabel()}
             </span>
           </div>
-          <p className="text-sm font-medium text-foreground leading-relaxed">
+          <p className="text-base font-medium text-foreground leading-relaxed font-serif">
             {question.question}
           </p>
         </div>
       </div>
 
       {/* Options */}
-      <div className="space-y-2 mb-4">
+      <div className="space-y-3 mb-5 pl-14">
         {question.options.map((option, optionIndex) => {
           const isSelected = selectedAnswers.includes(optionIndex);
           const isCorrectOption = question.correct_answer.includes(optionIndex);
           const showCorrect = isAnswered && isCorrectOption;
           const showWrong = isAnswered && isSelected && !isCorrectOption;
+
+          // 选项字母标识
+          const optionLetter = String.fromCharCode(65 + optionIndex);
 
           return (
             <button
@@ -569,32 +582,36 @@ function QuizQuestionCard({
               onClick={() => !isAnswered && onAnswerSelect(optionIndex)}
               disabled={isAnswered}
               className={cn(
-                "w-full text-left px-4 py-3 rounded-lg border-2 transition-all text-sm",
-                !isAnswered && "hover:border-sage-300 hover:bg-sage-50/50 cursor-pointer",
+                "group w-full text-left px-4 py-3.5 rounded-xl border transition-all duration-200 text-sm",
+                !isAnswered && "hover:border-sage-400 hover:bg-sage-50 hover:shadow-sm cursor-pointer",
                 isAnswered && "cursor-default",
-                isSelected && !isAnswered && "border-sage-400 bg-sage-50",
-                !isSelected && !isAnswered && "border-sage-200 bg-white",
-                showCorrect && "border-green-400 bg-green-50",
-                showWrong && "border-red-400 bg-red-50",
-                isAnswered && !isSelected && !isCorrectOption && "opacity-50"
+                isSelected && !isAnswered && "border-sage-500 bg-sage-100 shadow-sm",
+                !isSelected && !isAnswered && "border-sage-200/80 bg-white/80",
+                showCorrect && "border-sage-500 bg-sage-100",
+                showWrong && "border-stone-400 bg-stone-50",
+                isAnswered && !isSelected && !isCorrectOption && "opacity-40"
               )}
             >
               <div className="flex items-center gap-3">
                 <div className={cn(
-                  "flex-shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all",
-                  showCorrect && "border-green-500 bg-green-500",
-                  showWrong && "border-red-500 bg-red-500",
-                  isSelected && !isAnswered && "border-sage-500 bg-sage-500",
-                  !isSelected && !isAnswered && "border-stone-300"
+                  "flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center transition-all duration-200 text-xs font-semibold",
+                  showCorrect && "bg-sage-600 text-white",
+                  showWrong && "bg-stone-500 text-white",
+                  isSelected && !isAnswered && "bg-sage-600 text-white",
+                  !isSelected && !isAnswered && "bg-sage-100 text-sage-600 group-hover:bg-sage-200"
                 )}>
-                  {showCorrect && <CheckCircle2 className="w-3 h-3 text-white" />}
-                  {showWrong && <Circle className="w-3 h-3 text-white" />}
-                  {isSelected && !isAnswered && <Circle className="w-3 h-3 text-white fill-current" />}
+                  {showCorrect ? (
+                    <CheckCircle2 className="w-4 h-4" />
+                  ) : showWrong ? (
+                    <Circle className="w-4 h-4" />
+                  ) : (
+                    optionLetter
+                  )}
                 </div>
                 <span className={cn(
-                  "flex-1",
-                  showCorrect && "text-green-700 font-medium",
-                  showWrong && "text-red-700",
+                  "flex-1 leading-relaxed",
+                  showCorrect && "text-sage-800 font-medium",
+                  showWrong && "text-stone-600",
                   !isAnswered && "text-foreground"
                 )}>
                   {option}
@@ -608,24 +625,24 @@ function QuizQuestionCard({
       {/* Explanation (shown after answering) */}
       {isAnswered && (
         <div className={cn(
-          "p-4 rounded-lg border-l-4",
+          "ml-14 p-4 rounded-xl border-l-4 transition-all duration-300",
           isCorrect 
-            ? "bg-green-50 border-green-400" 
-            : "bg-amber-50 border-amber-400"
+            ? "bg-sage-50 border-sage-500" 
+            : "bg-stone-50 border-stone-400"
         )}>
-          <div className="flex items-start gap-2">
+          <div className="flex items-start gap-3">
             <Award className={cn(
-              "w-4 h-4 flex-shrink-0 mt-0.5",
-              isCorrect ? "text-green-600" : "text-amber-600"
+              "w-5 h-5 flex-shrink-0 mt-0.5",
+              isCorrect ? "text-sage-600" : "text-stone-500"
             )} />
             <div className="flex-1">
               <p className={cn(
-                "text-xs font-medium mb-1",
-                isCorrect ? "text-green-700" : "text-amber-700"
+                "text-sm font-semibold mb-1.5",
+                isCorrect ? "text-sage-800" : "text-stone-700"
               )}>
-                {isCorrect ? "Correct!" : "Not quite right"}
+                {isCorrect ? "Excellent!" : "Keep Learning"}
               </p>
-              <p className="text-xs text-stone-600 leading-relaxed">
+              <p className="text-sm text-stone-600 leading-relaxed">
                 {question.explanation}
               </p>
             </div>
@@ -789,44 +806,62 @@ function QuizList({
   }
 
   const score = getScore();
+  const scorePercentage = score.total > 0 ? Math.round((score.correct / score.total) * 100) : 0;
 
   return (
-    <div className="space-y-4">
-      {/* Quiz Header */}
-      <div className="mb-6">
-        <h2 className="text-xl font-serif font-bold text-foreground mb-2">
-          Knowledge Check
-        </h2>
-        <p className="text-sm text-muted-foreground mb-4">
-          Test your understanding with {quiz.total_questions} questions
-        </p>
+    <div className="space-y-5">
+      {/* Quiz Header - 高端杂志风格 */}
+      <div className="mb-8 pb-6 border-b border-sage-100">
+        <div className="flex items-center gap-3 mb-3">
+          <div className="w-10 h-10 rounded-xl bg-sage-600 flex items-center justify-center">
+            <Sparkles className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <h2 className="text-2xl font-serif font-bold text-foreground">
+              Knowledge Check
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              {quiz.total_questions} questions to test your understanding
+            </p>
+          </div>
+        </div>
         
-        {/* Progress Bar */}
-        {submittedQuestions.size > 0 && (
-          <div className="flex items-center gap-3">
-            <div className="flex-1 h-2 bg-stone-100 rounded-full overflow-hidden">
+        {/* Progress Bar - 优雅的进度显示 */}
+        {submittedQuestions.size > 0 && !allAnswered && (
+          <div className="mt-4 flex items-center gap-4">
+            <div className="flex-1 h-1.5 bg-sage-100 rounded-full overflow-hidden">
               <div 
-                className="h-full bg-sage-500 transition-all duration-500"
+                className="h-full bg-gradient-to-r from-sage-500 to-sage-600 transition-all duration-700 ease-out"
                 style={{ width: `${(submittedQuestions.size / quiz.total_questions) * 100}%` }}
               />
             </div>
-            <span className="text-sm font-medium text-sage-700 tabular-nums">
+            <span className="text-sm font-medium text-sage-700 tabular-nums min-w-[3rem] text-right">
               {submittedQuestions.size}/{quiz.total_questions}
             </span>
           </div>
         )}
 
-        {/* Score Display */}
+        {/* Score Display - 完成后的优雅展示 */}
         {allAnswered && (
-          <div className="mt-4 p-4 rounded-xl bg-gradient-to-br from-sage-50 to-green-50 border border-sage-200">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-full bg-sage-600 flex items-center justify-center">
-                <Award className="w-6 h-6 text-white" />
+          <div className="mt-6 p-6 rounded-2xl bg-gradient-to-br from-sage-50 via-white to-sage-50/50 border border-sage-200 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="w-14 h-14 rounded-xl bg-sage-600 flex items-center justify-center shadow-sm">
+                  <Award className="w-7 h-7 text-white" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground mb-0.5">Quiz Complete</p>
+                  <p className="text-3xl font-serif font-bold text-sage-800">
+                    {score.correct}<span className="text-lg text-muted-foreground font-normal">/{score.total}</span>
+                  </p>
+                </div>
               </div>
-              <div>
-                <p className="text-sm font-medium text-foreground">Quiz Complete!</p>
-                <p className="text-2xl font-bold text-sage-700">
-                  {score.correct}/{score.total} <span className="text-base font-normal text-muted-foreground">correct</span>
+              <div className="text-right">
+                <p className="text-4xl font-serif font-bold text-sage-700">
+                  {scorePercentage}%
+                </p>
+                <p className="text-xs text-muted-foreground mt-1 uppercase tracking-wider">
+                  {scorePercentage >= 80 ? 'Excellent' : scorePercentage >= 60 ? 'Good Job' : 'Keep Learning'}
                 </p>
               </div>
             </div>
@@ -856,11 +891,11 @@ function QuizList({
               }
             />
             {!isAnswered && hasSelection && (
-              <div className="mt-2 flex justify-end">
+              <div className="mt-3 flex justify-end">
                 <Button
                   onClick={() => handleSubmitAnswer(question.question_id)}
                   size="sm"
-                  className="bg-sage-600 hover:bg-sage-700 text-white"
+                  className="bg-sage-600 hover:bg-sage-700 text-white shadow-sm hover:shadow transition-all px-5"
                 >
                   Submit Answer
                 </Button>

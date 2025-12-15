@@ -2,11 +2,13 @@
  * 用户菜单组件
  * 
  * 显示当前登录用户信息，提供登出功能
+ * 支持标准模式和紧凑模式（用于侧边栏）
  */
 'use client';
 
 import { useAuthStore } from '@/lib/store/auth-store';
 import { Button } from '@/components/ui/button';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,10 +17,18 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { LogOut, User, Settings, Shield } from 'lucide-react';
+import { LogOut, User, Settings, Shield, ChevronUp } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { cn } from '@/lib/utils';
 
-export function UserMenu() {
+interface UserMenuProps {
+  /** 紧凑模式 - 用于侧边栏等空间有限的场景 */
+  compact?: boolean;
+  /** 自定义样式类名 */
+  className?: string;
+}
+
+export function UserMenu({ compact = false, className }: UserMenuProps) {
   const router = useRouter();
   const { user, logout, isAdmin } = useAuthStore();
   
@@ -30,25 +40,67 @@ export function UserMenu() {
     logout();
     router.push('/login');
   };
+
+  // 获取用户名首字母
+  const initials = user.username.slice(0, 2).toUpperCase();
   
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button 
-          variant="ghost" 
-          className="gap-2 hover:bg-sage-50"
-        >
-          <span className="text-2xl">{user.avatar}</span>
-          <span className="hidden md:inline font-medium">{user.username}</span>
-        </Button>
+        {compact ? (
+          // 紧凑模式 - 用于侧边栏
+          <button 
+            className={cn(
+              "w-full flex items-center gap-3 p-2 rounded-lg",
+              "hover:bg-sage-50 transition-colors group",
+              className
+            )}
+          >
+            <Avatar className="w-8 h-8 shrink-0">
+              <AvatarFallback className="bg-sage-100 text-sage-700 text-xs font-medium">
+                {initials}
+              </AvatarFallback>
+            </Avatar>
+            <div className="flex-1 min-w-0 text-left">
+              <p className="text-xs font-medium text-foreground truncate">
+                {user.username}
+              </p>
+              <p className="text-[10px] text-muted-foreground truncate">
+                {user.email}
+              </p>
+            </div>
+            <ChevronUp className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors shrink-0" />
+          </button>
+        ) : (
+          // 标准模式 - 用于顶部导航栏
+          <Button 
+            variant="ghost" 
+            className={cn("gap-2 hover:bg-sage-50", className)}
+          >
+            <Avatar className="w-7 h-7">
+              <AvatarFallback className="bg-sage-100 text-sage-700 text-xs font-medium">
+                {initials}
+              </AvatarFallback>
+            </Avatar>
+            <span className="hidden md:inline font-medium text-sm">{user.username}</span>
+          </Button>
+        )}
       </DropdownMenuTrigger>
       
-      <DropdownMenuContent align="end" className="w-64">
+      <DropdownMenuContent 
+        align={compact ? "start" : "end"} 
+        side={compact ? "top" : "bottom"}
+        className="w-64"
+      >
         {/* User Info */}
         <DropdownMenuLabel>
           <div className="flex flex-col space-y-2">
-            <div className="flex items-center gap-2">
-              <span className="text-2xl">{user.avatar}</span>
+            <div className="flex items-center gap-3">
+              <Avatar className="w-10 h-10 shrink-0">
+                <AvatarFallback className="bg-sage-100 text-sage-700 text-sm font-semibold">
+                  {initials}
+                </AvatarFallback>
+              </Avatar>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold truncate">{user.username}</p>
                 <p className="text-xs text-muted-foreground truncate">{user.email}</p>
@@ -98,16 +150,3 @@ export function UserMenu() {
     </DropdownMenu>
   );
 }
-
-
-
-
-
-
-
-
-
-
-
-
-

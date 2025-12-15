@@ -3,13 +3,12 @@
 import React, { useEffect, useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import type { Stage, Module, Concept } from '@/types/generated/models';
-import { CheckCircle2, Circle, ChevronRight, ChevronDown, ChevronLeft, Sparkles, BookOpen } from 'lucide-react';
+import { CheckCircle2, Circle, ChevronRight, ChevronDown, ChevronLeft, Sparkles } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { useAuthStore } from '@/lib/store/auth-store';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
+import { UserMenu } from '@/components/user-menu';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 
@@ -88,9 +87,6 @@ export function KnowledgeRail({
     });
   };
 
-  // 获取当前用户信息
-  const { user } = useAuthStore();
-
   if (!roadmap) {
     return (
       <div className={cn("h-full flex items-center justify-center text-muted-foreground", className)}>
@@ -123,16 +119,16 @@ export function KnowledgeRail({
           {/* Brand Logo */}
           <div className="flex items-center gap-3">
             {/* Logo */}
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-sage-500 to-sage-600 flex items-center justify-center shrink-0 shadow-sm">
-              <BookOpen className="w-5 h-5 text-white" />
+            <div className="w-10 h-10 rounded-lg bg-sage-600 flex items-center justify-center shrink-0 shadow-sm">
+              <span className="text-white font-serif font-bold text-sm">FL</span>
             </div>
             {/* Product Name */}
             <div className="flex-1 min-w-0">
-              <h1 className="text-sm font-semibold text-foreground">
-                Roadmap Agent
+              <h1 className="text-sm font-serif font-semibold text-foreground">
+                Fast Learning
               </h1>
               <p className="text-xs text-muted-foreground truncate">
-                Learning Path
+                Your Learning Path
               </p>
             </div>
           </div>
@@ -190,26 +186,10 @@ export function KnowledgeRail({
           </div>
         </ScrollArea>
 
-        {/* User Avatar Footer - 底部用户区域 */}
-        {user && (
-          <div className="p-3 border-t border-border bg-background/50">
-            <div className="flex items-center gap-3">
-              <Avatar className="w-8 h-8 shrink-0">
-                <AvatarFallback className="bg-sage-100 text-sage-700 text-xs font-medium">
-                  {user.username.slice(0, 2).toUpperCase()}
-                </AvatarFallback>
-              </Avatar>
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-medium text-foreground truncate">
-                  {user.username}
-                </p>
-                <p className="text-xs text-muted-foreground truncate">
-                  {user.email}
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
+        {/* User Menu Footer - 底部用户菜单（使用统一组件） */}
+        <div className="p-2 border-t border-border bg-background/50">
+          <UserMenu compact />
+        </div>
       </div>
     </TooltipProvider>
   );
