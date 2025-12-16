@@ -37,6 +37,11 @@ dependencies = [
     "openai>=2.8.1",
     "ddgs>=9.9.3",
     "tavily-python>=0.5.0",
+    # FastAPI Users 认证相关
+    "fastapi-users[sqlalchemy]>=13.0.0",
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+    "resend>=2.0.0",
 ]
 
 [project.optional-dependencies]

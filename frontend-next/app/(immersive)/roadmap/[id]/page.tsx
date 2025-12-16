@@ -11,9 +11,8 @@ import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { KnowledgeRail } from '@/components/roadmap/immersive/knowledge-rail';
 import { LearningStage } from '@/components/roadmap/immersive/learning-stage';
 import { MentorSidecar } from '@/components/roadmap/immersive/mentor-sidecar';
-import { GenerationProgressStepper, GenerationLog } from '@/components/roadmap/generation-progress-stepper';
 import { useRoadmap } from '@/lib/hooks/api/use-roadmap';
-import { useRoadmapStore, GenerationPhase } from '@/lib/store/roadmap-store';
+import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import { useAuthStore } from '@/lib/store/auth-store';
 import { 
   getRoadmapActiveTask, 
@@ -22,7 +21,6 @@ import {
   getUserProfile,
   getRoadmapProgress
 } from '@/lib/api/endpoints';
-import { TaskWebSocket } from '@/lib/api/websocket';
 import type { RoadmapFramework, Concept, Stage, Module, LearningPreferences } from '@/types/generated/models';
 import { Loader2, AlertCircle, ArrowLeft, Menu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -69,19 +67,10 @@ export default function RoadmapDetailPage() {
   const [tutorialContent, setTutorialContent] = useState<string | undefined>(undefined);
   const [activeTask, setActiveTask] = useState<{ taskId: string; status: string } | null>(null);
   const [userPreferences, setUserPreferences] = useState<LearningPreferences | undefined>(undefined);
-  
-  // Generation progress state
-  const [generationPhase, setGenerationPhase] = useState<GenerationPhase>('idle');
-  const [generationProgress, setGenerationProgress] = useState(0);
-  const [currentGenerationStep, setCurrentGenerationStep] = useState<string | null>(null);
-  const [generationLogs, setGenerationLogs] = useState<GenerationLog[]>([]);
 
   // UI State - 折叠状态和抽屉状态
   const [isMentorCollapsed, setIsMentorCollapsed] = useState(false);
   const [isKnowledgeRailOpen, setIsKnowledgeRailOpen] = useState(false);
-
-  // WebSocket ref
-  const wsRef = useRef<TaskWebSocket | null>(null);
 
   // 1. Sync Roadmap Data to Store
   useEffect(() => {
@@ -195,178 +184,6 @@ export default function RoadmapDetailPage() {
     checkActiveTask();
   }, [roadmapId, roadmapData]);
 
-  // 4. Setup WebSocket for Real-time Updates
-  useEffect(() => {
-    if (!activeTask?.taskId) return;
-
-    const addLog = (phase: string, message: string, level: 'info' | 'success' | 'warning' | 'error' = 'info') => {
-      setGenerationLogs(prev => [
-        ...prev,
-        {
-          timestamp: new Date().toISOString(),
-          phase,
-          message,
-          level,
-        },
-      ]);
-    };
-
-    const ws = new TaskWebSocket(activeTask.taskId, {
-      onStatus: (event) => {
-        console.log('[WS] Status:', event);
-        // 更新当前步骤
-        if (event.current_step) {
-          setCurrentGenerationStep(event.current_step);
-        }
-      },
-      onProgress: (event) => {
-        console.log('[WS] Progress:', event);
-        // 更新阶段
-        const step = event.step;
-        if (step === 'intent_analysis') {
-          setGenerationPhase('intent_analysis');
-          setGenerationProgress(10);
-        } else if (step === 'curriculum_design') {
-          setGenerationPhase('curriculum_design');
-          setGenerationProgress(30);
-        } else if (step === 'structure_validation') {
-          setGenerationPhase('structure_validation');
-          setGenerationProgress(50);
-        } else if (step === 'human_review') {
-          setGenerationPhase('human_review');
-          setGenerationProgress(60);
-        } else if (step === 'content_generation') {
-          setGenerationPhase('content_generation');
-          setGenerationProgress(70);
-        }
-        
-        // 添加日志
-        if (event.message) {
-          addLog(step, event.message, 'info');
-        }
-        
-        // 更新当前步骤描述
-        if (event.message) {
-          setCurrentGenerationStep(event.message);
-        }
-      },
-      onConceptStart: (event) => {
-        console.log('[WS] Concept start:', event);
-        addLog(
-          'content_generation',
-          `Generating ${event.content_type} for "${event.concept_name}"`,
-          'info'
-        );
-        
-        if (event.concept_id) {
-          const contentType = event.content_type;
-          const statusKey = contentType === 'resources' 
-            ? 'resources_status' 
-            : contentType === 'quiz' 
-              ? 'quiz_status' 
-              : 'content_status';
-          updateConceptStatus(event.concept_id, { [statusKey]: 'generating' });
-        }
-        
-        // 更新进度百分比
-        if (event.progress) {
-          const progress = 70 + (event.progress.percentage * 0.3); // 70-100%
-          setGenerationProgress(progress);
-        }
-      },
-      onConceptComplete: (event) => {
-        console.log('[WS] Concept complete:', event);
-        addLog(
-          'content_generation',
-          `Completed ${event.content_type} for "${event.concept_name}"`,
-          'success'
-        );
-        
-        if (event.concept_id) {
-          const contentType = event.content_type;
-          const statusKey = contentType === 'resources' 
-            ? 'resources_status' 
-            : contentType === 'quiz' 
-              ? 'quiz_status' 
-              : 'content_status';
-          updateConceptStatus(event.concept_id, { [statusKey]: 'completed' });
-          refetchRoadmap();
-        }
-      },
-      onConceptFailed: (event) => {
-        console.log('[WS] Concept failed:', event);
-        addLog(
-          'content_generation',
-          `Failed to generate ${event.content_type} for "${event.concept_name}": ${event.error}`,
-          'error'
-        );
-        
-        if (event.concept_id) {
-          const contentType = event.content_type;
-          const statusKey = contentType === 'resources' 
-            ? 'resources_status' 
-            : contentType === 'quiz' 
-              ? 'quiz_status' 
-              : 'content_status';
-          updateConceptStatus(event.concept_id, { [statusKey]: 'failed' });
-        }
-      },
-      onBatchStart: (event) => {
-        console.log('[WS] Batch start:', event);
-        addLog(
-          'content_generation',
-          `Starting batch ${event.batch_index + 1}/${event.total_batches} (${event.batch_size} concepts)`,
-          'info'
-        );
-      },
-      onBatchComplete: (event) => {
-        console.log('[WS] Batch complete:', event);
-        addLog(
-          'content_generation',
-          `Batch ${event.batch_index + 1}/${event.total_batches} completed (${event.progress.completed}/${event.progress.total})`,
-          'success'
-        );
-        refetchRoadmap();
-      },
-      onHumanReview: (event) => {
-        console.log('[WS] Human review required:', event);
-        setGenerationPhase('human_review');
-        addLog(
-          'human_review',
-          `Roadmap "${event.roadmap_title}" is ready for review`,
-          'info'
-        );
-      },
-      onCompleted: (event) => {
-        console.log('[WS] Task completed:', event);
-        setGenerationPhase('completed');
-        setGenerationProgress(100);
-        addLog(
-          'completed',
-          `Generation completed successfully!`,
-          'success'
-        );
-        refetchRoadmap();
-        setActiveTask(null);
-      },
-      onFailed: (event) => {
-        console.log('[WS] Task failed:', event);
-        setGenerationPhase('failed');
-        addLog(
-          'failed',
-          `Generation failed: ${event.error || event.error_message || 'Unknown error'}`,
-          'error'
-        );
-      }
-    });
-
-    wsRef.current = ws;
-    ws.connect(true); // 包含历史消息
-
-    return () => {
-      ws.disconnect();
-    };
-  }, [activeTask?.taskId, updateConceptStatus, refetchRoadmap]);
 
   // 5. Fetch Tutorial Content when Concept Selected
   // 提取为独立函数，以便在重试成功后手动触发
@@ -423,49 +240,17 @@ export default function RoadmapDetailPage() {
     );
   }
 
-  // 如果有活跃任务且任务状态不是 completed 或 partial_failure，显示生成进度页面
+  // 如果有活跃任务且任务状态不是 completed 或 partial_failure，重定向到任务详情页
   const isGenerating = activeTask && 
     activeTask.status !== 'completed' && 
     activeTask.status !== 'partial_failure';
 
-  if (isGenerating) {
-    return (
-      <div className="min-h-screen w-full bg-background text-foreground">
-        {/* 导航栏 */}
-        <div className="border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-          <div className="max-w-4xl mx-auto px-6 py-4">
-            <div className="flex items-center gap-4">
-              <Link href="/home">
-                <Button variant="ghost" size="sm" className="gap-2">
-                  <ArrowLeft className="w-4 h-4" />
-                  Back to Home
-                </Button>
-              </Link>
-              <div className="h-4 w-px bg-border" />
-              <div>
-                <h1 className="text-lg font-serif font-semibold">
-                  {currentRoadmap?.title || 'Generating Roadmap'}
-                </h1>
-                <p className="text-sm text-muted-foreground">
-                  Your personalized learning roadmap is being generated
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* 生成进度内容 */}
-        <div className="max-w-4xl mx-auto px-6 py-8">
-          <GenerationProgressStepper
-            phase={generationPhase}
-            progress={generationProgress}
-            currentStep={currentGenerationStep}
-            logs={generationLogs}
-          />
-        </div>
-      </div>
-    );
-  }
+  useEffect(() => {
+    if (isGenerating && activeTask?.taskId) {
+      console.log('[RoadmapDetail] Task is still generating, redirecting to task detail page');
+      router.push(`/tasks/${activeTask.taskId}`);
+    }
+  }, [isGenerating, activeTask, router]);
 
   // 如果路线图还没加载完成
   if (!currentRoadmap) {

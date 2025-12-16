@@ -3539,10 +3539,17 @@ async def get_user_roadmaps(
         
     Returns:
         用户的路线图列表（从 roadmap_metadata 表查询）
+        
+    Note:
+        学习进度从 concept_progress 表获取，而不是 content_status 字段。
+        content_status 表示内容生成状态，concept_progress 表示用户学习进度。
     """
+    from app.db.repositories.progress_repo import ProgressRepository
+    
     logger.info("get_user_roadmaps_requested", user_id=user_id, limit=limit, offset=offset)
     
     repo = RoadmapRepository(db)
+    progress_repo = ProgressRepository(db)
     
     # 获取已保存的路线图
     roadmaps = await repo.get_roadmaps_by_user(user_id, limit=limit, offset=offset)
@@ -3556,17 +3563,17 @@ async def get_user_roadmaps(
         stages = framework_data.get("stages", [])
         
         total_concepts = 0
-        completed_concepts = 0
         
+        # 统计总概念数
         for stage in stages:
             modules = stage.get("modules", [])
             for module in modules:
                 concepts = module.get("concepts", [])
                 total_concepts += len(concepts)
-                # 统计已完成的概念
-                for concept in concepts:
-                    if concept.get("content_status") == "completed":
-                        completed_concepts += 1
+        
+        # 从 concept_progress 表获取用户完成的概念数
+        user_progress = await progress_repo.get_roadmap_progress(user_id, roadmap.roadmap_id)
+        completed_concepts = len([p for p in user_progress if p.is_completed])
         
         # 从 user_request 中提取 topic
         task = await repo.get_task_by_roadmap_id(roadmap.roadmap_id)
@@ -3615,9 +3622,12 @@ async def get_deleted_roadmaps(
     Returns:
         回收站中的路线图列表，按删除时间降序排列
     """
+    from app.db.repositories.progress_repo import ProgressRepository
+    
     logger.info("get_deleted_roadmaps_requested", user_id=user_id, limit=limit, offset=offset)
     
     repo = RoadmapRepository(db)
+    progress_repo = ProgressRepository(db)
     
     # 获取已删除的路线图
     deleted_roadmaps = await repo.get_deleted_roadmaps(user_id, limit=limit, offset=offset)
@@ -3631,17 +3641,17 @@ async def get_deleted_roadmaps(
         stages = framework_data.get("stages", [])
         
         total_concepts = 0
-        completed_concepts = 0
         
+        # 统计总概念数
         for stage in stages:
             modules = stage.get("modules", [])
             for module in modules:
                 concepts = module.get("concepts", [])
                 total_concepts += len(concepts)
-                # 统计已完成的概念
-                for concept in concepts:
-                    if concept.get("content_status") == "completed":
-                        completed_concepts += 1
+        
+        # 从 concept_progress 表获取用户完成的概念数
+        user_progress = await progress_repo.get_roadmap_progress(user_id, roadmap.roadmap_id)
+        completed_concepts = len([p for p in user_progress if p.is_completed])
         
         # 从 user_request 中提取 topic
         task = await repo.get_task_by_roadmap_id(roadmap.roadmap_id)

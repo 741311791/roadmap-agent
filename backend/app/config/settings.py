@@ -253,6 +253,33 @@ class Settings(BaseSettings):
         5.0,
         description="任务恢复之间的延迟（秒），避免瞬间压力"
     )
+    
+    # ==================== JWT 认证配置 ====================
+    JWT_SECRET_KEY: str = Field(
+        "your-super-secret-jwt-key-change-in-production",
+        description="JWT 签名密钥（生产环境必须修改）"
+    )
+    JWT_ALGORITHM: str = Field("HS256", description="JWT 加密算法")
+    JWT_LIFETIME_SECONDS: int = Field(
+        86400,  # 24 小时
+        description="JWT 令牌有效期（秒）"
+    )
+    
+    # ==================== 邮件服务配置（Resend）====================
+    RESEND_API_KEY: str | None = Field(
+        None,
+        description="Resend API 密钥（用于发送邀请邮件）"
+    )
+    RESEND_FROM_EMAIL: str = Field(
+        "noreply@fastlearning.dev",
+        description="发件人邮箱地址"
+    )
+    
+    # 前端 URL（用于邮件中的链接）
+    FRONTEND_URL: str = Field(
+        "http://localhost:3000",
+        description="前端应用 URL"
+    )
 
 
 settings = Settings()

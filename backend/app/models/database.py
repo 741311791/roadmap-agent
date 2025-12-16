@@ -9,8 +9,15 @@
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from sqlmodel import SQLModel, Field, Column, JSON
-from sqlalchemy import Text, DateTime, UniqueConstraint
+from sqlalchemy import Text, DateTime, UniqueConstraint, String, Boolean, text
+from sqlalchemy.orm import Mapped, mapped_column, DeclarativeBase
+from fastapi_users.db import SQLAlchemyBaseUserTable
 import uuid
+
+
+# SQLAlchemy Base 用于 User 表（FastAPI Users 要求）
+class Base(DeclarativeBase):
+    pass
 
 # 北京时区 (UTC+8)
 BEIJING_TZ = timezone(timedelta(hours=8))
@@ -29,19 +36,46 @@ def beijing_now() -> datetime:
     return beijing_time.replace(tzinfo=None)
 
 
-class User(SQLModel, table=True):
-    """用户表"""
+class User(SQLAlchemyBaseUserTable[str], Base):
+    """
+    用户表
+    
+    继承 FastAPI Users 的 SQLAlchemyBaseUserTable，提供：
+    - id: str (主键，UUID 字符串)
+    - email: str (唯一索引)
+    - hashed_password: str (密码哈希)
+    - is_active: bool (是否激活)
+    - is_superuser: bool (是否超级管理员)
+    - is_verified: bool (是否已验证邮箱)
+    
+    自定义字段：
+    - username: str (用户名)
+    - password_expires_at: Optional[datetime] (临时密码过期时间)
+    - created_at: datetime (创建时间)
+    """
     __tablename__ = "users"
     
-    id: str = Field(
-        default_factory=lambda: str(uuid.uuid4()),
+    # 重写 id 字段，使用 str 类型的 UUID
+    id: Mapped[str] = mapped_column(
+        String(36),
         primary_key=True,
+        default=lambda: str(uuid.uuid4()),
     )
-    email: str = Field(unique=True, index=True)
-    username: str
-    created_at: datetime = Field(
-        default_factory=beijing_now,
-        sa_column=Column(DateTime(timezone=False))  # 无时区，直接存储北京时间
+    
+    # 自定义字段
+    username: Mapped[str] = mapped_column(String(100), nullable=False, default="", server_default="")
+    
+    # 临时密码过期时间（用于内测邀请）
+    password_expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=False),
+        nullable=True,
+        default=None,
+    )
+    
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False),
+        default=beijing_now,
+        server_default=text("CURRENT_TIMESTAMP"),
     )
 
 
@@ -534,5 +568,41 @@ class LearningNote(SQLModel, table=True):
     updated_at: datetime = Field(
         default_factory=beijing_now,
         sa_column=Column(DateTime(timezone=False))
+    )
+
+
+# ============================================================
+# Waitlist 相关表
+# ============================================================
+
+class WaitlistEmail(SQLModel, table=True):
+    """
+    候补名单邮箱表
+    
+    存储 Join Waitlist 用户的邮箱，用于内测邀请。
+    """
+    __tablename__ = "waitlist_emails"
+    
+    email: str = Field(
+        primary_key=True,
+        description="用户邮箱（主键）"
+    )
+    source: str = Field(
+        default="landing_page",
+        description="来源标记：landing_page, referral 等"
+    )
+    invited: bool = Field(
+        default=False,
+        description="是否已发送邀请"
+    )
+    invited_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=False), nullable=True),
+        description="邀请发送时间"
+    )
+    created_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False)),
+        description="加入候补名单时间"
     )
 

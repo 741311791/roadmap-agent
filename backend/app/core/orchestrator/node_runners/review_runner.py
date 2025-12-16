@@ -82,12 +82,14 @@ class ReviewRunner:
             # 记录等待审核日志（新增 - 用于前端展示）
             framework = state.get("roadmap_framework")
             total_concepts = 0
+            total_stages = 0
             if framework:
                 total_concepts = sum(
                     len(module.concepts)
                     for stage in framework.stages
                     for module in stage.modules
                 )
+                total_stages = len(framework.stages)
             
             await execution_logger.info(
                 task_id=state["task_id"],
@@ -97,9 +99,11 @@ class ReviewRunner:
                 message="⏸️ Roadmap ready for review, awaiting your confirmation",
                 details={
                     "log_type": "review_waiting",
+                    "roadmap_title": framework.title if framework else "Untitled Roadmap",
                     "roadmap_url": f"/roadmap/{state.get('roadmap_id')}",
                     "summary": {
                         "total_concepts": total_concepts,
+                        "total_stages": total_stages,
                         "total_hours": framework.total_estimated_hours if framework else 0,
                         "estimated_weeks": framework.recommended_completion_weeks if framework else 0,
                     },

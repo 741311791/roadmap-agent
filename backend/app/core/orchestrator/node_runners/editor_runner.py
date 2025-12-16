@@ -90,9 +90,9 @@ class EditorRunner:
             # 保存更新后的框架（使用 brain 的事务性保存方法）
             await self.brain.save_roadmap_framework(
                 task_id=state["task_id"],
-                roadmap_id=result.updated_framework.roadmap_id,
+                roadmap_id=result.framework.roadmap_id,
                 user_id=state["user_request"].user_id,
-                framework=result.updated_framework,
+                framework=result.framework,
             )
             
             # 计算执行时长
@@ -103,7 +103,7 @@ class EditorRunner:
                 "editor_runner_completed",
                 task_id=state["task_id"],
                 modification_count=modification_count + 1,
-                roadmap_id=result.updated_framework.roadmap_id,
+                roadmap_id=result.framework.roadmap_id,
             )
             
             # 记录详细的编辑完成日志（新增 - 用于前端展示）
@@ -112,7 +112,7 @@ class EditorRunner:
                 category=LogCategory.AGENT,
                 step="roadmap_edit",
                 agent_name="RoadmapEditorAgent",
-                roadmap_id=result.updated_framework.roadmap_id,
+                roadmap_id=result.framework.roadmap_id,
                 message="✅ Roadmap updated based on your feedback",
                 details={
                     "log_type": "edit_completed",
@@ -124,7 +124,7 @@ class EditorRunner:
             
             # 返回纯状态更新
             return {
-                "roadmap_framework": result.updated_framework,
+                "roadmap_framework": result.framework,
                 "modification_count": modification_count + 1,
                 "current_step": "roadmap_edit",
                 "execution_history": [f"路线图修改完成（第 {modification_count + 1} 次）"],

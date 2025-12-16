@@ -2,6 +2,7 @@
 Roadmap Editor Agent（路线图编辑师）
 """
 import json
+import yaml
 from app.agents.base import BaseAgent
 from app.models.domain import (
     RoadmapFramework,
@@ -14,6 +15,142 @@ from app.config.settings import settings
 import structlog
 
 logger = structlog.get_logger()
+
+
+def _try_extract_yaml(content: str) -> str | None:
+    """
+    尝试从内容中提取 YAML
+    
+    支持：
+    1. 直接的 YAML 内容
+    2. 被 ```yaml ... ``` 包裹的 YAML
+    3. 被 ``` ... ``` 包裹的 YAML
+    
+    Returns:
+        提取的 YAML 字符串，如果没找到则返回 None
+    """
+    content = content.strip()
+    
+    # 情况1: 被 ```yaml 包裹
+    if "```yaml" in content or "```yml" in content:
+        start_marker = "```yaml" if "```yaml" in content else "```yml"
+        start = content.find(start_marker)
+        if start != -1:
+            start += len(start_marker)
+            end = content.find("```", start)
+            if end != -1:
+                yaml_content = content[start:end].strip()
+                logger.debug("yaml_extracted_from_code_block", format="yaml")
+                return yaml_content
+    
+    # 情况2: 被 ``` 包裹（尝试解析为YAML）
+    if content.startswith("```") and content.count("```") >= 2:
+        start = content.find("```")
+        # 跳过第一行的 ``` 标记
+        start = content.find("\n", start) + 1
+        end = content.find("```", start)
+        if end != -1:
+            yaml_content = content[start:end].strip()
+            # 简单检查是否像YAML（包含冒号和换行）
+            if ":" in yaml_content and "\n" in yaml_content:
+                logger.debug("yaml_extracted_from_generic_code_block")
+                return yaml_content
+    
+    # 情况3: 直接的YAML内容（启发式检测）
+    # YAML通常以键值对开始，检查是否有顶层字段
+    lines = content.split("\n")
+    if lines and any(line.strip().startswith(key + ":") for line in lines[:10] 
+                     for key in ["roadmap_id", "title", "stages", "modification_summary"]):
+        logger.debug("yaml_detected_as_plain_text")
+        return content
+    
+    return None
+
+
+def _parse_yaml_roadmap(yaml_content: str) -> dict:
+    """
+    解析 YAML 格式的路线图编辑输出
+    
+    Args:
+        yaml_content: YAML 字符串
+        
+    Returns:
+        包含 framework, modification_summary, preserved_elements 的字典
+        
+    Raises:
+        ValueError: YAML 解析失败
+    """
+    try:
+        data = yaml.safe_load(yaml_content)
+        
+        if not isinstance(data, dict):
+            raise ValueError(f"YAML 解析结果不是字典: {type(data)}")
+        
+        # 提取编辑相关字段
+        modification_summary = data.pop("modification_summary", "")
+        preserved_elements = data.pop("preserved_elements", [])
+        
+        # 确保必填字段存在
+        required_fields = ["roadmap_id", "title", "stages"]
+        missing_fields = [f for f in required_fields if f not in data]
+        if missing_fields:
+            raise ValueError(f"YAML 缺少必填字段: {missing_fields}")
+        
+        # 确保 stages 是列表
+        if not isinstance(data.get("stages"), list):
+            raise ValueError(f"stages 字段必须是数组，实际类型: {type(data.get('stages'))}")
+        
+        # 补全可选字段
+        if "total_estimated_hours" not in data:
+            # 计算总时长
+            total_hours = 0.0
+            for stage in data.get("stages", []):
+                for module in stage.get("modules", []):
+                    for concept in module.get("concepts", []):
+                        total_hours += concept.get("estimated_hours", 0.0)
+            data["total_estimated_hours"] = total_hours
+        
+        if "recommended_completion_weeks" not in data:
+            # 假设每周学习10小时
+            data["recommended_completion_weeks"] = max(1, int(data.get("total_estimated_hours", 0) / 10))
+        
+        # 补全 stage.order（如果缺失）
+        for idx, stage in enumerate(data.get("stages", []), start=1):
+            if "order" not in stage:
+                stage["order"] = idx
+        
+        # 补全 concept 的默认字段（如果LLM遗漏）
+        for stage in data.get("stages", []):
+            for module in stage.get("modules", []):
+                for concept in module.get("concepts", []):
+                    # 补全 content_status 等字段
+                    if "content_status" not in concept:
+                        concept["content_status"] = "pending"
+                    if "content_ref" not in concept:
+                        concept["content_ref"] = None
+                    if "content_version" not in concept:
+                        concept["content_version"] = "v1"
+                    if "content_summary" not in concept:
+                        concept["content_summary"] = None
+        
+        logger.info(
+            "yaml_roadmap_edit_parsed",
+            stages_count=len(data.get("stages", [])),
+            roadmap_id=data.get("roadmap_id"),
+        )
+        
+        return {
+            "framework": data,
+            "modification_summary": modification_summary,
+            "preserved_elements": preserved_elements
+        }
+        
+    except yaml.YAMLError as e:
+        logger.error("yaml_parse_error", error=str(e), yaml_content_preview=yaml_content[:500])
+        raise ValueError(f"YAML 解析失败: {e}")
+    except Exception as e:
+        logger.error("yaml_roadmap_processing_error", error=str(e))
+        raise
 
 
 class RoadmapEditorAgent(BaseAgent):
@@ -42,7 +179,7 @@ class RoadmapEditorAgent(BaseAgent):
             base_url=base_url or settings.EDITOR_BASE_URL,
             api_key=api_key or settings.EDITOR_API_KEY,
             temperature=0.4,  # 较低温度，确保修改的严谨性
-            max_tokens=8192,
+            max_tokens=16384,
         )
     
     async def edit(
@@ -132,21 +269,21 @@ class RoadmapEditorAgent(BaseAgent):
         content = response.choices[0].message.content
         
         try:
-            # 提取 JSON（可能包含 markdown 代码块）
-            if "```json" in content:
-                json_start = content.find("```json") + 7
-                json_end = content.find("```", json_start)
-                content = content[json_start:json_end].strip()
-            elif "```" in content:
-                json_start = content.find("```") + 3
-                json_end = content.find("```", json_start)
-                content = content[json_start:json_end].strip()
+            # 尝试提取 YAML
+            yaml_content = _try_extract_yaml(content)
             
-            # 解析 JSON
-            result_dict = json.loads(content)
+            if not yaml_content:
+                logger.error(
+                    "roadmap_edit_yaml_not_found",
+                    content_preview=content[:500]
+                )
+                raise ValueError("LLM 输出中未找到有效的 YAML 格式内容")
+            
+            # 解析 YAML
+            result_dict = _parse_yaml_roadmap(yaml_content)
             
             # 验证并构建输出
-            framework = RoadmapFramework.model_validate(result_dict.get("framework", result_dict))
+            framework = RoadmapFramework.model_validate(result_dict["framework"])
             modification_summary = result_dict.get("modification_summary", "")
             preserved_elements = result_dict.get("preserved_elements", [])
             
@@ -165,9 +302,9 @@ class RoadmapEditorAgent(BaseAgent):
             )
             return result
             
-        except json.JSONDecodeError as e:
-            logger.error("roadmap_edit_json_parse_error", error=str(e), content=content[:500])
-            raise ValueError(f"LLM 输出不是有效的 JSON 格式: {e}")
+        except yaml.YAMLError as e:
+            logger.error("roadmap_edit_yaml_parse_error", error=str(e), content=content[:500])
+            raise ValueError(f"LLM 输出不是有效的 YAML 格式: {e}")
         except Exception as e:
             logger.error("roadmap_edit_output_invalid", error=str(e), content=content[:500])
             raise ValueError(f"LLM 输出格式不符合 Schema: {e}")

@@ -3,7 +3,7 @@
 
 提供 Concept 完成状态标记和 Quiz 答题记录功能。
 """
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 from app.db.session import get_db
@@ -14,15 +14,9 @@ from app.models.domain import (
     QuizAttemptCreate,
     QuizAttemptResponse
 )
+from .deps import get_current_user_id_flexible
 
 router = APIRouter(prefix="/progress", tags=["Progress"])
-
-
-def get_user_id_from_header(x_user_id: str = Header(...)) -> str:
-    """从请求头获取用户ID"""
-    if not x_user_id:
-        raise HTTPException(status_code=401, detail="Missing user ID")
-    return x_user_id
 
 
 @router.put(
@@ -33,7 +27,7 @@ async def update_concept_progress(
     roadmap_id: str,
     concept_id: str,
     payload: ConceptProgressUpdate,
-    user_id: str = Depends(get_user_id_from_header),
+    user_id: str = Depends(get_current_user_id_flexible),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -63,7 +57,7 @@ async def update_concept_progress(
 )
 async def get_roadmap_progress(
     roadmap_id: str,
-    user_id: str = Depends(get_user_id_from_header),
+    user_id: str = Depends(get_current_user_id_flexible),
     db: AsyncSession = Depends(get_db)
 ):
     """获取某个路线图的所有Concept进度"""
@@ -88,7 +82,7 @@ async def submit_quiz_attempt(
     roadmap_id: str,
     concept_id: str,
     payload: QuizAttemptCreate,
-    user_id: str = Depends(get_user_id_from_header),
+    user_id: str = Depends(get_current_user_id_flexible),
     db: AsyncSession = Depends(get_db)
 ):
     """提交Quiz答题记录"""
@@ -114,6 +108,9 @@ async def submit_quiz_attempt(
         incorrect_question_indices=attempt.incorrect_question_indices,
         attempted_at=attempt.attempted_at
     )
+
+
+
 
 
 

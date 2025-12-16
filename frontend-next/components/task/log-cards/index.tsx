@@ -9,6 +9,7 @@ import { ValidationResultCard } from './validation-result-card';
 import { ReviewStatusCard } from './review-status-card';
 import { ContentProgressCard } from './content-progress-card';
 import { TaskCompletedCard } from './task-completed-card';
+import { HumanReviewCard } from '../human-review-card';
 
 interface ExecutionLog {
   id: string;
@@ -59,7 +60,21 @@ export function LogCardRouter({ log }: LogCardRouterProps) {
     return <ValidationResultCard logType={logType} details={log.details} />;
   }
 
-  // Review 状态
+  // Review 状态 - 如果是 review_waiting 且有足够的交互数据，显示可交互的 HumanReviewCard
+  if (logType === 'review_waiting' && log.task_id && log.roadmap_id) {
+    const summary = log.details?.summary || {};
+    return (
+      <HumanReviewCard
+        taskId={log.task_id}
+        roadmapId={log.roadmap_id}
+        roadmapTitle={log.details?.roadmap_title || 'Untitled Roadmap'}
+        stagesCount={summary.total_stages || 0}
+        isActive={true}
+      />
+    );
+  }
+  
+  // 其他审核状态使用只读卡片
   if (
     logType === 'review_waiting' ||
     logType === 'review_approved' ||
@@ -95,5 +110,6 @@ export { ValidationResultCard } from './validation-result-card';
 export { ReviewStatusCard } from './review-status-card';
 export { ContentProgressCard } from './content-progress-card';
 export { TaskCompletedCard } from './task-completed-card';
+export { HumanReviewCard } from '../human-review-card';
 export { StatBadge } from './stat-badge';
 

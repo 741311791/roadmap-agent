@@ -40,49 +40,65 @@
 {% endif %}
 
 [5. Output Format]
-**重要：请直接返回纯 JSON 对象，不要使用 markdown 代码块包裹（不要使用 ```json 或 ```）**
+**重要：输出 YAML 格式**
+为了提高解析可靠性和可读性，请使用 YAML 格式输出修改后的路线图。
 
-输出必须严格遵循以下 JSON Schema：
-{
-  "framework": {
-    "roadmap_id": "string - 路线图ID（保持与现有路线图相同）",
-    "title": "string - 路线图标题",
-    "stages": [
-      {
-        "stage_id": "string",
-        "name": "string",
-        "description": "string",
-        "order": "integer",
-        "modules": [
-          {
-            "module_id": "string",
-            "name": "string",
-            "description": "string",
-            "concepts": [
-              {
-                "concept_id": "string",
-                "name": "string",
-                "description": "string",
-                "estimated_hours": "float",
-                "prerequisites": ["string"],
-                "difficulty": "easy|medium|hard",
-                "keywords": ["string"],
-                "content_status": "pending",
-                "content_ref": null,
-                "content_version": "v1",
-                "content_summary": null
-              }
-            ]
-          }
-        ]
-      }
-    ],
-    "total_estimated_hours": "float",
-    "recommended_completion_weeks": "integer"
-  },
-  "modification_summary": "string - 修改说明：解决了哪些问题，做了哪些调整",
-  "preserved_elements": ["string - 保留的原有元素列表，如 '保留了Stage 1的完整结构'"]
-}
+**输出示例**：
+```yaml
+roadmap_id: ai-agent-development-k8s7m6n5
+title: AI Agent原理与开发实战路线图
+total_estimated_hours: 120
+recommended_completion_weeks: 8
+modification_summary: 移除了循环依赖，调整了时间分配，确保路线图符合用户的学习目标
+preserved_elements:
+  - 保留了Stage 1的完整结构
+  - 保留了所有核心概念
+
+stages:
+  - stage_id: stage-1
+    name: 基础原理与认知奠基
+    description: 理解AI Agent的基石
+    order: 1
+    modules:
+      - module_id: mod-1-1
+        name: 大型语言模型（LLM）核心原理
+        description: 深入理解驱动AI Agent的引擎
+        concepts:
+          - concept_id: c-1-1-1
+            name: Transformer架构基础
+            description: 理解注意力机制和模型结构
+            estimated_hours: 3
+            difficulty: medium
+            keywords: [Transformer, 注意力机制, 神经网络]
+            prerequisites: []
+          - concept_id: c-1-1-2
+            name: 预训练与微调
+            description: 掌握模型训练范式
+            estimated_hours: 4
+            difficulty: medium
+            keywords: [预训练, 微调, 迁移学习]
+            prerequisites: [c-1-1-1]
+```
+
+**YAML 格式规范**：
+1. 使用标准 YAML 语法（缩进为 2 个空格）
+2. 顶层字段：
+   - `roadmap_id`: 路线图ID（保持与现有路线图相同）
+   - `title`: 路线图标题
+   - `total_estimated_hours`: 总学习时长（数字）
+   - `recommended_completion_weeks`: 推荐完成周数（数字）
+   - `modification_summary`: 修改说明（字符串）
+   - `preserved_elements`: 保留元素列表（数组）
+   - `stages`: 阶段列表（数组）
+
+3. Stage 对象必填字段：
+   - `stage_id`, `name`, `description`, `order`, `modules`
+
+4. Module 对象必填字段：
+   - `module_id`, `name`, `description`, `concepts`
+
+5. Concept 对象必填字段：
+   - `concept_id`, `name`, `description`, `estimated_hours`, `difficulty`, `keywords`, `prerequisites`
 
 [6. Examples (Few-shot)]
 
@@ -94,15 +110,49 @@
 - 移除 Concept C 对 Concept A 的前置依赖
 - 将 Concept C 调整为 Concept B 的后续概念
 
-输出：
-{
-  "framework": { /* 修改后的路线图 */ },
-  "modification_summary": "移除了 Concept C 对 Concept A 的前置依赖，解决了循环依赖问题。将 Concept C 调整为 Concept B 的直接后续概念。",
-  "preserved_elements": [
-    "保留了 Stage 1 的完整结构",
-    "保留了 Concept A 和 Concept B 的位置和内容"
-  ]
-}
+输出（YAML）：
+```yaml
+roadmap_id: example-roadmap
+title: 示例路线图
+total_estimated_hours: 100
+recommended_completion_weeks: 10
+modification_summary: 移除了 Concept C 对 Concept A 的前置依赖，解决了循环依赖问题。将 Concept C 调整为 Concept B 的直接后续概念。
+preserved_elements:
+  - 保留了 Stage 1 的完整结构
+  - 保留了 Concept A 和 Concept B 的位置和内容
+
+stages:
+  - stage_id: stage-1
+    name: 基础阶段
+    description: 学习基础知识
+    order: 1
+    modules:
+      - module_id: mod-1-1
+        name: 核心模块
+        description: 掌握核心概念
+        concepts:
+          - concept_id: concept-a
+            name: 概念 A
+            description: 基础概念
+            estimated_hours: 3
+            difficulty: easy
+            keywords: [基础, 入门]
+            prerequisites: []
+          - concept_id: concept-b
+            name: 概念 B
+            description: 进阶概念
+            estimated_hours: 4
+            difficulty: medium
+            keywords: [进阶, 应用]
+            prerequisites: [concept-a]
+          - concept_id: concept-c
+            name: 概念 C
+            description: 高级概念
+            estimated_hours: 5
+            difficulty: hard
+            keywords: [高级, 综合]
+            prerequisites: [concept-b]
+```
 
 示例 2：修复时间分配不合理
 问题：总学习时长 500 小时，超过用户期望的 240 小时
@@ -112,37 +162,27 @@
 - 精简部分非核心概念的详细内容
 - 调整部分概念的预估时长，使其更合理
 
-输出：
-{
-  "framework": { /* 修改后的路线图 */ },
-  "modification_summary": "通过精简非核心概念和调整预估时长，将总学习时长从 500 小时降至 230 小时，符合用户的时间约束。",
-  "preserved_elements": [
-    "保留了所有核心概念和重要模块",
-    "保留了 Stage 1 和 Stage 2 的完整结构"
-  ]
-}
+输出（YAML）：
+```yaml
+roadmap_id: example-roadmap
+title: 优化后的路线图
+total_estimated_hours: 230
+recommended_completion_weeks: 15
+modification_summary: 通过精简非核心概念和调整预估时长，将总学习时长从 500 小时降至 230 小时，符合用户的时间约束。
+preserved_elements:
+  - 保留了所有核心概念和重要模块
+  - 保留了 Stage 1 和 Stage 2 的完整结构
 
-示例 3：修复无效前置关系
-问题：Concept X 的前置包含不存在的 concept_invalid_id
-
-修改策略：
-- 保留 Concept X 的其他有效前置关系
-- 移除无效的前置关系
-- 如果 Concept X 需要该前置知识，可以添加相应的概念或调整顺序
-
-输出：
-{
-  "framework": { /* 修改后的路线图 */ },
-  "modification_summary": "移除了 Concept X 的无效前置关系 'concept_invalid_id'，并调整了 Concept X 的位置以确保知识递进的合理性。",
-  "preserved_elements": [
-    "保留了 Concept X 的其他有效前置关系",
-    "保留了其他所有概念的结构和关系"
-  ]
-}
+stages:
+  # ... 修改后的 stages
+```
 
 [7. 重要提示]
 1. 修改时请保持路线图的 roadmap_id 不变
 2. 尽量保留现有概念和模块的 ID，除非必须删除或重组
 3. 修改说明要具体，说明解决了哪些问题
 4. 保留元素列表要明确，帮助用户理解哪些部分没有改动
+5. 输出格式必须是标准的 YAML，缩进为 2 个空格
+6. 确保 YAML 格式正确，所有字段都有值（不为空）
+7. 每个 Concept 必须包含所有必填字段（concept_id, name, description, estimated_hours, difficulty, keywords, prerequisites）
 

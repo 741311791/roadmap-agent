@@ -4,9 +4,17 @@ import Link from 'next/link';
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { ArrowRight, Sparkles, BookOpen, Brain, Zap, Target, Clock, Users } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { ArrowRight, Sparkles, BookOpen, Brain, Zap, Target, Clock, Users, CheckCircle2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
+import { joinWaitlist } from '@/lib/api/endpoints';
 
 /**
  * Fast Learning 首页
@@ -299,6 +307,8 @@ function KnowledgeSphere() {
 export default function LandingPage() {
   const [email, setEmail] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showThankYouDialog, setShowThankYouDialog] = useState(false);
+  const [isNewUser, setIsNewUser] = useState(true);
 
   const handleJoinWaitlist = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -311,16 +321,64 @@ export default function LandingPage() {
     
     setIsSubmitting(true);
     
-    // 模拟提交延迟
-    await new Promise(resolve => setTimeout(resolve, 800));
-    
-    toast.success('Thank you for joining! We\'ll be in touch soon.');
-    setEmail('');
-    setIsSubmitting(false);
+    try {
+      const response = await joinWaitlist({
+        email: email.toLowerCase().trim(),
+        source: 'landing_page',
+      });
+      
+      setIsNewUser(response.is_new);
+      setShowThankYouDialog(true);
+      setEmail('');
+    } catch (error) {
+      console.error('Failed to join waitlist:', error);
+      toast.error('Something went wrong. Please try again later.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
     <div className="min-h-screen bg-background">
+      {/* 感谢加入候补名单弹窗 */}
+      <Dialog open={showThankYouDialog} onOpenChange={setShowThankYouDialog}>
+        <DialogContent className="sm:max-w-md bg-card border-border">
+          <DialogHeader className="text-center sm:text-center">
+            <motion.div
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              transition={{ type: "spring", stiffness: 200, damping: 15 }}
+              className="mx-auto mb-4 w-16 h-16 bg-sage-100 rounded-full flex items-center justify-center"
+            >
+              <CheckCircle2 className="w-8 h-8 text-sage-600" />
+            </motion.div>
+            <DialogTitle className="text-2xl font-serif font-bold text-foreground">
+              {isNewUser ? "You're on the List!" : "Welcome Back!"}
+            </DialogTitle>
+            <DialogDescription className="text-base text-muted-foreground mt-2">
+              {isNewUser 
+                ? "Thank you for your interest in Fast Learning. We'll notify you as soon as access becomes available."
+                : "You're already on our waitlist. We'll be in touch soon!"
+              }
+            </DialogDescription>
+          </DialogHeader>
+          <div className="mt-6 flex flex-col gap-4">
+            <div className="p-4 bg-sage-50/50 rounded-xl border border-sage-200/50">
+              <p className="text-sm text-muted-foreground text-center">
+                In the meantime, follow us for updates and learning tips.
+              </p>
+            </div>
+            <Button
+              onClick={() => setShowThankYouDialog(false)}
+              variant="sage"
+              className="w-full h-11 font-semibold"
+            >
+              Got it, Thanks!
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* 动态背景 - 奶油杂志风格 */}
       <div className="fixed inset-0 bg-gradient-to-br from-[#f5f0e8] via-background to-[#f8f4ed] -z-10" />
       <div className="fixed inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-sage-100/15 via-transparent to-transparent -z-10" />
@@ -345,6 +403,11 @@ export default function LandingPage() {
             </Link>
             <Link href="/about" className="text-sm text-muted-foreground hover:text-foreground transition-colors font-medium">
               About
+            </Link>
+            <Link href="/login">
+              <Button variant="outline" size="sm" className="font-medium border-sage-300 hover:border-sage-400 hover:bg-sage-50">
+                Login
+              </Button>
             </Link>
           </div>
         </div>
@@ -605,10 +668,10 @@ export default function LandingPage() {
           transition={{ duration: 0.5 }}
           className="max-w-4xl mx-auto text-center"
         >
-          <h2 className="text-4xl md:text-5xl font-serif font-bold text-white mb-6">
+          <h2 className="text-4xl md:text-5xl font-serif font-bold text-sage-600 mb-6">
             Ready to Learn Faster?
           </h2>
-          <p className="text-xl text-white/95 mb-10 max-w-2xl mx-auto">
+          <p className="text-xl text-sage-600/95 mb-10 max-w-2xl mx-auto">
             Join the waitlist and be among the first to experience 
             AI-powered learning that actually works.
           </p>

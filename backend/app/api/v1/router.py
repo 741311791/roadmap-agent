@@ -16,8 +16,12 @@ from .endpoints import (
     retry,
     progress,
     mentor,
+    waitlist,
+    admin,
 )
 from .roadmap import users_router, router as roadmap_router, trace_router
+from app.core.auth import fastapi_users, auth_backend
+from app.core.auth.schemas import UserRead, UserCreate, UserUpdate
 
 # 创建v1主路由
 router = APIRouter(prefix="/api/v1")
@@ -46,6 +50,7 @@ router.include_router(modification.router)
 
 # 失败重试相关
 router.include_router(retry.router)
+router.include_router(retry.tasks_router)
 
 # 学习进度相关
 router.include_router(progress.router)
@@ -61,3 +66,24 @@ router.include_router(users_router)
 
 # 执行追踪相关（日志、摘要）
 router.include_router(trace_router)
+
+# 候补名单相关
+router.include_router(waitlist.router)
+
+# ==================== FastAPI Users 认证路由 ====================
+# JWT 认证路由（登录、登出）
+router.include_router(
+    fastapi_users.get_auth_router(auth_backend),
+    prefix="/auth/jwt",
+    tags=["auth"],
+)
+
+# 用户管理路由（获取/更新当前用户信息）
+router.include_router(
+    fastapi_users.get_users_router(UserRead, UserUpdate),
+    prefix="/users",
+    tags=["users"],
+)
+
+# 管理员路由
+router.include_router(admin.router)

@@ -4,14 +4,6 @@ export { StageCard } from './stage-card';
 export { ModuleCard } from './module-card';
 export { ConceptCard, ConceptCardCompact } from './concept-card';
 
-// Generation progress components
-export { GenerationProgress, CompactGenerationProgress } from './generation-progress';
-export { GenerationProgressStepper } from './generation-progress-stepper';
-export type { GenerationLog } from './generation-progress-stepper';
-export { PhaseProgress, PhaseProgressCompact } from './phase-progress';
-export { PhaseIndicator } from './phase-indicator';
-export { CompactPhaseIndicator } from './compact-phase-indicator';
-
 // Skeleton components
 export { 
   ConceptSkeletonCard, 
