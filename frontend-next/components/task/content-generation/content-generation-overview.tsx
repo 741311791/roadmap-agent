@@ -55,8 +55,14 @@ export function ContentGenerationOverview({
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
-      const logsData = await getTaskLogs(taskId);
-      setLogs(logsData.logs || []);
+      const logsData = await getTaskLogs(taskId, undefined, undefined, 2000);
+      const allLogs = logsData.logs || [];
+      
+      // 按 step 分组，每个 step 最多 100 条
+      const { limitLogsByStep } = await import('@/lib/utils/log-grouping');
+      const limitedLogs = limitLogsByStep(allLogs, 100);
+      
+      setLogs(limitedLogs);
       setLastUpdated(new Date());
     } catch (error) {
       console.error('Failed to refresh logs:', error);

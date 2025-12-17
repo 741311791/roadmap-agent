@@ -11,7 +11,7 @@
 """
 from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm.attributes import flag_modified
 from sqlmodel import SQLModel
 import structlog
@@ -1216,6 +1216,33 @@ class RoadmapRepository:
     # Execution Logs (执行日志)
     # ============================================================
     
+    async def count_execution_logs_by_trace(
+        self,
+        task_id: str,
+        level: Optional[str] = None,
+        category: Optional[str] = None,
+    ) -> int:
+        """
+        统计指定 task_id 的执行日志总数
+        
+        Args:
+            task_id: 追踪 ID（对应 task_id）
+            level: 过滤日志级别（可选）
+            category: 过滤日志分类（可选）
+            
+        Returns:
+            满足条件的日志总数
+        """
+        query = select(func.count(ExecutionLog.id)).where(ExecutionLog.task_id == task_id)
+        
+        if level:
+            query = query.where(ExecutionLog.level == level)
+        if category:
+            query = query.where(ExecutionLog.category == category)
+        
+        result = await self.session.execute(query)
+        return result.scalar_one()
+    
     async def get_execution_logs_by_trace(
         self,
         task_id: str,
@@ -1262,8 +1289,6 @@ class RoadmapRepository:
         Returns:
             包含统计信息的字典
         """
-        from sqlalchemy import func
-        
         # 统计各级别日志数量
         level_counts = await self.session.execute(
             select(

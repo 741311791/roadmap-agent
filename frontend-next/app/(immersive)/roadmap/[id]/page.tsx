@@ -212,6 +212,19 @@ export default function RoadmapDetailPage() {
     loadTutorialContent(selectedConceptId);
   }, [selectedConceptId, loadTutorialContent]);
 
+  // 6. 重定向逻辑：如果有活跃任务且任务状态不是 completed 或 partial_failure，重定向到任务详情页
+  // 必须放在所有 early return 之前，遵守 Hooks 规则
+  useEffect(() => {
+    const isGenerating = activeTask && 
+      activeTask.status !== 'completed' && 
+      activeTask.status !== 'partial_failure';
+
+    if (isGenerating && activeTask?.taskId) {
+      console.log('[RoadmapDetail] Task is still generating, redirecting to task detail page');
+      router.push(`/tasks/${activeTask.taskId}`);
+    }
+  }, [activeTask, router]);
+
   // Helper: Find concept object by ID
   const getActiveConcept = useCallback((): Concept | null => {
     return findConceptById(currentRoadmap, selectedConceptId || '');
@@ -239,18 +252,6 @@ export default function RoadmapDetailPage() {
       </div>
     );
   }
-
-  // 如果有活跃任务且任务状态不是 completed 或 partial_failure，重定向到任务详情页
-  const isGenerating = activeTask && 
-    activeTask.status !== 'completed' && 
-    activeTask.status !== 'partial_failure';
-
-  useEffect(() => {
-    if (isGenerating && activeTask?.taskId) {
-      console.log('[RoadmapDetail] Task is still generating, redirecting to task detail page');
-      router.push(`/tasks/${activeTask.taskId}`);
-    }
-  }, [isGenerating, activeTask, router]);
 
   // 如果路线图还没加载完成
   if (!currentRoadmap) {

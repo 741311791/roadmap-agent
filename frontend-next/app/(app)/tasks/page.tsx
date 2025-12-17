@@ -6,13 +6,11 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { ChevronLeft, ListTodo, RefreshCw, Loader2 } from 'lucide-react';
-import { getUserTasks, retryTask, deleteTask, TaskItem, RetryTaskResponse } from '@/lib/api/endpoints';
+import { ChevronLeft, ListTodo, RefreshCw } from 'lucide-react';
+import { getUserTasks, retryTask, deleteTask, TaskItem } from '@/lib/api/endpoints';
 import { TaskList } from '@/components/task';
 import { useAuthStore } from '@/lib/store/auth-store';
-import { useRoadmapGenerationWS } from '@/lib/hooks/websocket/use-roadmap-generation-ws';
 import { cn } from '@/lib/utils';
-import { toast } from 'sonner';
 
 type TaskStatus = 'all' | 'pending' | 'processing' | 'completed' | 'failed';
 
@@ -34,10 +32,6 @@ export default function TasksPage() {
   });
   const [activeFilter, setActiveFilter] = useState<TaskStatus>('all');
   const [isLoading, setIsLoading] = useState(true);
-  const [isRetrying, setIsRetrying] = useState<string | null>(null);
-  const [retryingTaskId, setRetryingTaskId] = useState<string | null>(null);
-  const [retryRoadmapId, setRetryRoadmapId] = useState<string | null>(null);
-  const [retryType, setRetryType] = useState<'checkpoint' | 'content_retry' | null>(null);
   const { getUserId } = useAuthStore();
 
   const fetchTasks = async (status?: string) => {
@@ -71,97 +65,52 @@ export default function TasksPage() {
     fetchTasks(activeFilter);
   }, [activeFilter]);
 
-  // 订阅重试任务的进度
-  const { connectionType, isConnected } = useRoadmapGenerationWS(
-    retryingTaskId,
-    {
-      autoNavigate: false, // 不自动导航，让用户选择
-      onComplete: (roadmapId) => {
-        toast.success('Task retry completed!', {
-          action: {
-            label: 'View Details',
-            onClick: () => retryingTaskId && router.push(`/tasks/${retryingTaskId}`),
-          },
-        });
-        setRetryingTaskId(null);
-        setRetryRoadmapId(null);
-        setRetryType(null);
-        fetchTasks(activeFilter); // 刷新任务列表
-      },
-      onError: (error) => {
-        toast.error(`Retry failed: ${error}`);
-        setRetryingTaskId(null);
-        setRetryRoadmapId(null);
-        setRetryType(null);
-      },
-    }
-  );
-
   const handleRetry = async (taskId: string) => {
     const userId = getUserId();
     if (!userId) return;
     
     try {
-      setIsRetrying(taskId);
+      // 乐观更新：立即将任务状态更新为 processing
+      setTasks(prevTasks => 
+        prevTasks.map(task => 
+          task.task_id === taskId 
+            ? { ...task, status: 'processing', current_step: 'Retrying...' }
+            : task
+        )
+      );
+      
+      // 更新统计数据
+      setStats(prevStats => ({
+        ...prevStats,
+        failed: Math.max(0, prevStats.failed - 1),
+        processing: prevStats.processing + 1,
+      }));
       
       // 调用智能重试 API
-      const result: RetryTaskResponse = await retryTask(taskId, userId);
+      await retryTask(taskId, userId);
       
-      // 根据恢复类型显示不同的提示
-      if (result.recovery_type === 'checkpoint') {
-        // Checkpoint 恢复
-        const taskIdForCheckpoint = result.task_id || taskId;
-        
-        toast.info(
-          `Recovering from ${result.checkpoint_step || 'last checkpoint'}...`,
-          {
-            description: 'The workflow will continue from where it left off.',
-            duration: 5000,
-            action: {
-              label: 'View Progress',
-              onClick: () => router.push(`/tasks/${taskIdForCheckpoint}`),
-            },
-          }
-        );
-        
-        // 使用原 task_id 订阅进度
-        setRetryingTaskId(taskIdForCheckpoint);
-        setRetryRoadmapId(result.roadmap_id);
-        setRetryType('checkpoint');
-        
-      } else if (result.recovery_type === 'content_retry') {
-        // 内容重试
-        const newTaskId = result.new_task_id;
-        
-        toast.info(
-          `Retrying ${result.total_items || 0} failed items...`,
-          {
-            description: 'Only failed content will be regenerated.',
-            duration: 5000,
-            action: {
-              label: 'View Progress',
-              onClick: () => newTaskId && router.push(`/tasks/${newTaskId}`),
-            },
-          }
-        );
-        
-        // 使用新 task_id 订阅进度
-        setRetryingTaskId(newTaskId || null);
-        setRetryRoadmapId(result.roadmap_id);
-        setRetryType('content_retry');
-      }
+      // 成功后刷新任务列表以获取最新状态
+      setTimeout(() => {
+        fetchTasks(activeFilter);
+      }, 1000);
       
     } catch (error: any) {
       console.error('Failed to retry task:', error);
       
-      // 显示详细的错误信息
-      const errorMessage = error.response?.data?.detail || 'Failed to retry task. Please try again later.';
-      toast.error('Retry Failed', {
-        description: errorMessage,
-        duration: 7000,
-      });
-    } finally {
-      setIsRetrying(null);
+      // 重试失败，恢复原状态
+      setTasks(prevTasks => 
+        prevTasks.map(task => 
+          task.task_id === taskId 
+            ? { ...task, status: 'failed', current_step: 'Failed' }
+            : task
+        )
+      );
+      
+      setStats(prevStats => ({
+        ...prevStats,
+        failed: prevStats.failed + 1,
+        processing: Math.max(0, prevStats.processing - 1),
+      }));
     }
   };
 
@@ -197,35 +146,6 @@ export default function TasksPage() {
         >
           <ChevronLeft className="w-4 h-4" /> Back to Home
         </Link>
-
-        {/* Retry Progress Banner */}
-        {retryingTaskId && retryRoadmapId && (
-          <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
-                <div>
-                  <p className="font-medium text-blue-900">
-                    {retryType === 'checkpoint' 
-                      ? 'Recovering from checkpoint...' 
-                      : 'Retrying failed content...'}
-                  </p>
-                  <p className="text-sm text-blue-600">
-                    Connection: {connectionType === 'ws' ? 'WebSocket' : 'Polling'} 
-                    {isConnected && ' • Connected'}
-                  </p>
-                </div>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => retryingTaskId && router.push(`/tasks/${retryingTaskId}`)}
-              >
-                View Details
-              </Button>
-            </div>
-          </div>
-        )}
 
         {/* Header */}
         <div className="flex items-center justify-between mb-8">

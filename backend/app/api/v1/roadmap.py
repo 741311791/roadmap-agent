@@ -4,7 +4,7 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import AsyncIterator
+from typing import AsyncIterator, Optional
 import structlog
 import uuid
 import traceback
@@ -3780,10 +3780,76 @@ async def get_user_tasks(
 
 
 # ============================================================
-# Trace / 执行日志 API
+# Intent Analysis Metadata API
 # ============================================================
 
-from typing import Optional
+intent_router = APIRouter(prefix="/intent-analysis", tags=["intent-analysis"])
+
+
+class IntentAnalysisResponse(BaseModel):
+    """需求分析响应"""
+    id: str
+    task_id: str
+    roadmap_id: Optional[str] = None
+    parsed_goal: str
+    key_technologies: list[str]
+    difficulty_profile: str
+    time_constraint: str
+    recommended_focus: list[str]
+    user_profile_summary: Optional[str] = None
+    skill_gap_analysis: list[str]
+    personalized_suggestions: list[str]
+    estimated_learning_path_type: Optional[str] = None
+    content_format_weights: Optional[dict] = None
+    language_preferences: Optional[dict] = None
+    created_at: Optional[str] = None
+
+
+@intent_router.get("/{task_id}", response_model=IntentAnalysisResponse)
+async def get_intent_analysis(
+    task_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    获取指定 task_id 的需求分析元数据
+    
+    Args:
+        task_id: 任务 ID
+        
+    Returns:
+        需求分析元数据
+        
+    Raises:
+        HTTPException: 404 - 需求分析元数据不存在
+    """
+    repo = RoadmapRepository(db)
+    metadata = await repo.get_intent_analysis_metadata(task_id)
+    
+    if not metadata:
+        raise HTTPException(status_code=404, detail="需求分析元数据不存在")
+    
+    return IntentAnalysisResponse(
+        id=metadata.id,
+        task_id=metadata.task_id,
+        roadmap_id=metadata.roadmap_id,
+        parsed_goal=metadata.parsed_goal,
+        key_technologies=metadata.key_technologies,
+        difficulty_profile=metadata.difficulty_profile,
+        time_constraint=metadata.time_constraint,
+        recommended_focus=metadata.recommended_focus,
+        user_profile_summary=metadata.user_profile_summary,
+        skill_gap_analysis=metadata.skill_gap_analysis,
+        personalized_suggestions=metadata.personalized_suggestions,
+        estimated_learning_path_type=metadata.estimated_learning_path_type,
+        content_format_weights=metadata.content_format_weights,
+        language_preferences=metadata.language_preferences,
+        created_at=metadata.created_at.isoformat() if metadata.created_at else None,
+    )
+
+
+# ============================================================
+# Trace / 执行日志 API
+# ============================================================
 
 trace_router = APIRouter(prefix="/trace", tags=["trace"])
 
@@ -3839,16 +3905,24 @@ async def get_trace_logs(
         task_id: 追踪 ID（通常等于 task_id）
         level: 过滤日志级别（debug, info, warning, error）
         category: 过滤日志分类（workflow, agent, tool, database）
-        limit: 返回数量限制（默认 100，最大 500）
+        limit: 返回数量限制（默认 100，最大 2000）
         offset: 分页偏移
         
     Returns:
         执行日志列表
     """
-    # 限制最大返回数量
-    limit = min(limit, 500)
+    # 限制最大返回数量（提高到 2000 以支持前端按 step 分组）
+    limit = min(limit, 2000)
     
     repo = RoadmapRepository(db)
+    
+    # 获取总数和日志列表（并行执行）
+    total = await repo.count_execution_logs_by_trace(
+        task_id=task_id,
+        level=level,
+        category=category,
+    )
+    
     logs = await repo.get_execution_logs_by_trace(
         task_id=task_id,
         level=level,
@@ -3875,7 +3949,7 @@ async def get_trace_logs(
             )
             for log in logs
         ],
-        total=len(logs),  # 简化版本，不查询总数
+        total=total,  # 使用实际的总记录数
         offset=offset,
         limit=limit,
     )
@@ -4009,9 +4083,25 @@ async def soft_delete_roadmap(
                     detail="Unauthorized to delete this task"
                 )
             
-            # 删除任务记录（直接从数据库删除）
-            stmt = delete(RoadmapTask).where(RoadmapTask.task_id == actual_task_id)
-            await session.execute(stmt)
+            # 删除关联的元数据（按依赖顺序删除，避免外键约束冲突）
+            from app.models.database import IntentAnalysisMetadata, ExecutionLog
+            
+            # 1. 删除 intent_analysis_metadata（有外键引用 roadmap_tasks.task_id）
+            stmt_intent = delete(IntentAnalysisMetadata).where(
+                IntentAnalysisMetadata.task_id == actual_task_id
+            )
+            await session.execute(stmt_intent)
+            
+            # 2. 删除 execution_logs（无外键约束，但为了数据一致性也删除）
+            stmt_logs = delete(ExecutionLog).where(
+                ExecutionLog.task_id == actual_task_id
+            )
+            await session.execute(stmt_logs)
+            
+            # 3. 最后删除任务记录
+            stmt_task = delete(RoadmapTask).where(RoadmapTask.task_id == actual_task_id)
+            await session.execute(stmt_task)
+            
             await session.commit()
             
             logger.info(

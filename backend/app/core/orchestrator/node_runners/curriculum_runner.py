@@ -80,6 +80,18 @@ class CurriculumDesignRunner:
             # 执行 Agent
             result = await agent.execute(curriculum_input)
             
+            # ✅ 确保 framework 使用 state 中的 roadmap_id（防止 LLM 生成不一致的 ID）
+            state_roadmap_id = state.get("roadmap_id")
+            if state_roadmap_id and result.framework.roadmap_id != state_roadmap_id:
+                logger.warning(
+                    "curriculum_design_roadmap_id_mismatch",
+                    task_id=state["task_id"],
+                    state_roadmap_id=state_roadmap_id,
+                    framework_roadmap_id=result.framework.roadmap_id,
+                    message="强制使用 state 中的 roadmap_id，覆盖 LLM 返回的值",
+                )
+                result.framework.roadmap_id = state_roadmap_id
+            
             # 保存路线图框架（由 brain 统一事务管理）
             await self.brain.save_roadmap_framework(
                 task_id=state["task_id"],

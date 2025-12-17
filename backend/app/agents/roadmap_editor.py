@@ -21,17 +21,17 @@ def _try_extract_yaml(content: str) -> str | None:
     """
     尝试从内容中提取 YAML
     
-    支持：
-    1. 直接的 YAML 内容
-    2. 被 ```yaml ... ``` 包裹的 YAML
-    3. 被 ``` ... ``` 包裹的 YAML
+    检测优先级：
+    1. 被 ```yaml ... ``` 包裹的 YAML（最高优先级）
+    2. 被 ``` ... ``` 包裹的 YAML
+    3. 直接的 YAML 内容（启发式检测，最低优先级）
     
     Returns:
         提取的 YAML 字符串，如果没找到则返回 None
     """
     content = content.strip()
     
-    # 情况1: 被 ```yaml 包裹
+    # 【优先级1】情况1: 被 ```yaml 或 ```yml 包裹
     if "```yaml" in content or "```yml" in content:
         start_marker = "```yaml" if "```yaml" in content else "```yml"
         start = content.find(start_marker)
@@ -40,10 +40,10 @@ def _try_extract_yaml(content: str) -> str | None:
             end = content.find("```", start)
             if end != -1:
                 yaml_content = content[start:end].strip()
-                logger.debug("yaml_extracted_from_code_block", format="yaml")
+                logger.debug("yaml_extracted_from_code_block", format="yaml", length=len(yaml_content))
                 return yaml_content
     
-    # 情况2: 被 ``` 包裹（尝试解析为YAML）
+    # 【优先级2】情况2: 被 ``` 包裹（无语言标记，尝试解析为YAML）
     if content.startswith("```") and content.count("```") >= 2:
         start = content.find("```")
         # 跳过第一行的 ``` 标记
@@ -53,17 +53,26 @@ def _try_extract_yaml(content: str) -> str | None:
             yaml_content = content[start:end].strip()
             # 简单检查是否像YAML（包含冒号和换行）
             if ":" in yaml_content and "\n" in yaml_content:
-                logger.debug("yaml_extracted_from_generic_code_block")
+                logger.debug("yaml_extracted_from_generic_code_block", length=len(yaml_content))
                 return yaml_content
     
-    # 情况3: 直接的YAML内容（启发式检测）
-    # YAML通常以键值对开始，检查是否有顶层字段
-    lines = content.split("\n")
-    if lines and any(line.strip().startswith(key + ":") for line in lines[:10] 
-                     for key in ["roadmap_id", "title", "stages", "modification_summary"]):
-        logger.debug("yaml_detected_as_plain_text")
-        return content
+    # 【优先级3】情况3: 直接的YAML内容（启发式检测）
+    # ⚠️ 注意：只有当内容不包含代码块标记时才使用此检测
+    if "```" not in content:
+        # YAML通常以键值对开始，检查是否有顶层字段
+        lines = content.split("\n")
+        if lines and any(line.strip().startswith(key + ":") for line in lines[:10] 
+                         for key in ["roadmap_id", "title", "stages", "modification_summary"]):
+            logger.debug("yaml_detected_as_plain_text", length=len(content))
+            return content
     
+    # 所有检测失败
+    logger.warning(
+        "yaml_extraction_failed",
+        content_preview=content[:200],
+        has_yaml_marker="```yaml" in content,
+        has_generic_marker="```" in content,
+    )
     return None
 
 

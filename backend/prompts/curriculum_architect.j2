@@ -25,6 +25,13 @@
 [3. Constraints & Rules]
 工作规范：
 
+**🔴 [CRITICAL] Roadmap ID 约束：**
+你**必须**使用以下 roadmap_id（不要修改或生成新的）：
+```
+roadmap_id: {{ intent_analysis.roadmap_id }}
+```
+这是在需求分析阶段生成的唯一标识符，必须保持一致。
+
 **结构要求：**
 1. Stage（阶段）数量：严格控制在 3-5 个之间
    - 3 个：适用于聚焦单一技能栈的短期目标（如：单独学习某个框架）

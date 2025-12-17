@@ -130,13 +130,29 @@ class WorkflowBrain:
                 return {"intent_analysis": result}
             ```
         """
+        from langgraph.errors import GraphInterrupt
+        
         ctx = await self._before_node(node_name, state)
         try:
             yield ctx
             await self._after_node(ctx, state)
-        except Exception as e:
-            await self._on_error(ctx, state, e)
-            raise
+        except (GraphInterrupt, Exception) as e:
+            # 检查是否是 GraphInterrupt（LangGraph 暂停机制）
+            if isinstance(e, GraphInterrupt) or type(e).__name__ == "Interrupt":
+                # GraphInterrupt/Interrupt 是 LangGraph 的正常暂停机制（用于 human_review），不是错误
+                # 不调用 _on_error，直接重新抛出让 LangGraph 处理
+                logger.info(
+                    "workflow_brain_graph_interrupt",
+                    node_name=ctx.node_name,
+                    task_id=ctx.task_id,
+                    message="工作流暂停等待人工审核（正常流程）",
+                )
+                self._current_context = None
+                raise
+            else:
+                # 真正的错误
+                await self._on_error(ctx, state, e)
+                raise
     
     async def _before_node(self, node_name: str, state: RoadmapState) -> NodeContext:
         """

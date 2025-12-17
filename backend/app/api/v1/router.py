@@ -19,7 +19,7 @@ from .endpoints import (
     waitlist,
     admin,
 )
-from .roadmap import users_router, router as roadmap_router, trace_router
+from .roadmap import users_router, router as roadmap_router, trace_router, intent_router
 from app.core.auth import fastapi_users, auth_backend
 from app.core.auth.schemas import UserRead, UserCreate, UserUpdate
 
@@ -63,6 +63,9 @@ router.include_router(roadmap_router)
 
 # 用户相关（画像等）
 router.include_router(users_router)
+
+# 需求分析相关
+router.include_router(intent_router)
 
 # 执行追踪相关（日志、摘要）
 router.include_router(trace_router)
