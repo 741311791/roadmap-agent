@@ -34,6 +34,7 @@ import {
 import { cn } from '@/lib/utils';
 import { getUserProfile, saveUserProfile } from '@/lib/api/endpoints';
 import { useAuthStore } from '@/lib/store/auth-store';
+import { TechAssessmentDialog } from '@/components/profile';
 
 // Types
 interface TechStackItem {
@@ -165,6 +166,13 @@ export default function ProfilePage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  
+  // Assessment dialog state
+  const [assessmentDialogOpen, setAssessmentDialogOpen] = useState(false);
+  const [selectedTechForAssessment, setSelectedTechForAssessment] = useState<{
+    technology: string;
+    proficiency: string;
+  } | null>(null);
 
   const { handleSubmit, setValue } = useForm<ProfileFormData>({
     defaultValues: {
@@ -244,6 +252,11 @@ export default function ProfilePage() {
         item.id === id ? { ...item, [field]: value } : item
       )
     );
+  };
+
+  const handleAssess = (technology: string, proficiency: string) => {
+    setSelectedTechForAssessment({ technology, proficiency });
+    setAssessmentDialogOpen(true);
   };
 
   const toggleLearningStyle = (style: LearningStyleType) => {
@@ -424,8 +437,10 @@ export default function ProfilePage() {
                 <TechStackRow
                   key={item.id}
                   item={item}
+                  allTechStack={techStack}
                   onUpdate={updateTechnology}
                   onRemove={removeTechnology}
+                  onAssess={handleAssess}
                 />
               ))}
             </div>
@@ -573,6 +588,16 @@ export default function ProfilePage() {
           </div>
         </form>
       </div>
+
+      {/* Tech Assessment Dialog */}
+      {selectedTechForAssessment && (
+        <TechAssessmentDialog
+          open={assessmentDialogOpen}
+          onOpenChange={setAssessmentDialogOpen}
+          technology={selectedTechForAssessment.technology}
+          proficiency={selectedTechForAssessment.proficiency}
+        />
+      )}
     </div>
   );
 }
@@ -580,12 +605,16 @@ export default function ProfilePage() {
 // Tech Stack Row Component
 function TechStackRow({
   item,
+  allTechStack,
   onUpdate,
   onRemove,
+  onAssess,
 }: {
   item: TechStackItem;
+  allTechStack: TechStackItem[];
   onUpdate: (id: string, field: keyof TechStackItem, value: string) => void;
   onRemove: (id: string) => void;
+  onAssess: (technology: string, proficiency: string) => void;
 }) {
   return (
     <Card className="border shadow-sm bg-white">
@@ -601,11 +630,24 @@ function TechStackRow({
                 <SelectValue placeholder="Select tech" />
               </SelectTrigger>
               <SelectContent>
-                {TECHNOLOGIES.map((tech) => (
-                  <SelectItem key={tech.value} value={tech.value}>
-                    {tech.label}
-                  </SelectItem>
-                ))}
+                {TECHNOLOGIES.map((tech) => {
+                  // 检查该技术是否已被其他行选择
+                  const isSelected = allTechStack.some(
+                    (stackItem) => stackItem.technology === tech.value && stackItem.id !== item.id
+                  );
+                  
+                  return (
+                    <SelectItem 
+                      key={tech.value} 
+                      value={tech.value}
+                      disabled={isSelected}
+                      className={cn(isSelected && 'opacity-50 cursor-not-allowed')}
+                    >
+                      {tech.label}
+                      {isSelected && ' (已选择)'}
+                    </SelectItem>
+                  );
+                })}
               </SelectContent>
             </Select>
           </div>
@@ -624,6 +666,8 @@ function TechStackRow({
             variant="outline"
             size="sm"
             className="gap-1.5 text-sage-600 border-sage-300 hover:bg-sage-50"
+            onClick={() => onAssess(item.technology, item.proficiency)}
+            disabled={!item.technology || !item.proficiency}
           >
             <Sparkles className="w-3.5 h-3.5" />
             Assess

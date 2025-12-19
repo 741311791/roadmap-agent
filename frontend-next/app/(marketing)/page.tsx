@@ -15,294 +15,26 @@ import { ArrowRight, Sparkles, BookOpen, Brain, Zap, Target, Clock, Users, Check
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 import { joinWaitlist } from '@/lib/api/endpoints';
+import AnimatedShaderHero from '@/components/ui/animated-shader-hero';
+import { WaitlistForm } from '@/components/ui/waitlist-form';
+import { TextAnimate } from '@/components/ui/text-animate';
+import { LearningPathDemo } from '@/components/ui/learning-path-demo';
+import { BlurFade } from '@/components/ui/blur-fade';
+import { BentoGrid, BentoCard } from '@/components/ui/bento-grid';
+import { BorderBeam } from '@/components/ui/border-beam';
+import { Particles } from '@/components/ui/particles';
+import { ScrollProgress } from '@/components/ui/scroll-progress';
 
 /**
  * Fast Learning 首页
  * 
  * 特点:
+ * - 动态 WebGL Shader Hero
  * - 高端杂志风格设计
  * - Motion 动画效果
  * - Join Waitlist 功能
  * - 突出 Fast Learning 理念
  */
-
-/**
- * 知识粒子球组件 - 奶油杂志风格
- */
-function KnowledgeSphere() {
-  const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
-  const [isHovering, setIsHovering] = useState(false);
-
-  // 生成粒子位置（球面分布算法）
-  const particles = React.useMemo(() => {
-    const particleCount = 50; // 减少粒子数以更精致
-    const particles = [];
-    
-    for (let i = 0; i < particleCount; i++) {
-      // 使用 Fibonacci Sphere 算法实现均匀分布
-      const phi = Math.acos(-1 + (2 * i) / particleCount);
-      const theta = Math.sqrt(particleCount * Math.PI) * phi;
-      
-      // 不同半径创建多层
-      const layer = Math.floor(i / 17);
-      const radius = 32 + layer * 9; // 调整半径分布
-      
-      const x = 50 + radius * Math.cos(theta) * Math.sin(phi);
-      const y = 50 + radius * Math.sin(theta) * Math.sin(phi);
-      const z = Math.cos(phi); // -1 to 1 (用于深度感)
-      
-      particles.push({
-        id: i,
-        x,
-        y,
-        z,
-        layer,
-        size: z > 0 ? 10 : 7, // 前景粒子更大
-        brightness: (z + 1) / 2, // 0 到 1
-      });
-    }
-    return particles;
-  }, []);
-
-  // 生成连接线（距离近的粒子连接）
-  const connections = React.useMemo(() => {
-    const connections = [];
-    const maxDistance = 28; // 连接阈值
-    
-    for (let i = 0; i < particles.length; i++) {
-      for (let j = i + 1; j < particles.length; j++) {
-        const dx = particles[i].x - particles[j].x;
-        const dy = particles[i].y - particles[j].y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        
-        if (distance < maxDistance) {
-          connections.push({
-            from: particles[i],
-            to: particles[j],
-            opacity: (1 - distance / maxDistance) * 0.25,
-          });
-        }
-      }
-    }
-    return connections;
-  }, [particles]);
-
-  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    setMousePosition({
-      x: ((e.clientX - rect.left) / rect.width) * 100,
-      y: ((e.clientY - rect.top) / rect.height) * 100,
-    });
-  };
-
-  return (
-    <div 
-      className="relative h-[400px] md:h-[500px] flex items-center justify-center"
-      onMouseMove={handleMouseMove}
-      onMouseEnter={() => setIsHovering(true)}
-      onMouseLeave={() => setIsHovering(false)}
-    >
-      {/* 中央核心光晕 */}
-      <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2">
-        <motion.div
-          className="w-20 h-20 md:w-28 md:h-28 rounded-full bg-sage-400/20 blur-3xl"
-          animate={{
-            scale: isHovering ? [1, 1.2, 1] : [1, 1.08, 1],
-            opacity: [0.2, 0.35, 0.2],
-          }}
-          transition={{
-            duration: 6,
-            repeat: Infinity,
-            ease: "easeInOut",
-          }}
-        />
-      </div>
-
-      <motion.div 
-        animate={{ rotate: 360 }}
-        transition={{ duration: 150, repeat: Infinity, ease: "linear" }}
-        className="relative w-full h-full max-w-[400px] max-h-[400px] md:max-w-[480px] md:max-h-[480px]"
-      >
-        {/* SVG 容器 - 用于绘制连接线 */}
-        <svg className="absolute inset-0 w-full h-full pointer-events-none overflow-visible">
-          <defs>
-            {/* 发光效果滤镜 */}
-            <filter id="sphereGlow">
-              <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
-              <feMerge>
-                <feMergeNode in="coloredBlur"/>
-                <feMergeNode in="SourceGraphic"/>
-              </feMerge>
-            </filter>
-          </defs>
-
-          {/* 绘制连接线 */}
-          {connections.map((conn, i) => (
-            <motion.line
-              key={i}
-              x1={`${conn.from.x}%`}
-              y1={`${conn.from.y}%`}
-              x2={`${conn.to.x}%`}
-              y2={`${conn.to.y}%`}
-              stroke="hsl(var(--sage))"
-              strokeWidth="1"
-              strokeOpacity={conn.opacity}
-              initial={{ pathLength: 0 }}
-              animate={{ 
-                pathLength: 1,
-                strokeOpacity: isHovering ? conn.opacity * 1.6 : conn.opacity,
-              }}
-              transition={{ 
-                pathLength: { duration: 3.5, delay: i * 0.012, ease: "easeInOut" },
-                strokeOpacity: { duration: 0.8, ease: "easeInOut" }
-              }}
-            />
-          ))}
-
-          {/* 轨道圈 */}
-          {[28, 38, 48].map((r, i) => (
-            <circle
-              key={i}
-              cx="50%"
-              cy="50%"
-              r={`${r}%`}
-              stroke="hsl(var(--sage))"
-              strokeWidth="0.5"
-              fill="none"
-              opacity={0.04 + i * 0.02}
-              strokeDasharray="5 10"
-            >
-              <animateTransform
-                attributeName="transform"
-                type="rotate"
-                from={`0 250 250`}
-                to={`${360 * (i % 2 === 0 ? 1 : -1)} 250 250`}
-                dur={`${60 + i * 20}s`}
-                repeatCount="indefinite"
-              />
-            </circle>
-          ))}
-        </svg>
-
-        {/* 粒子节点 */}
-        {particles.map((particle) => {
-          const distanceToMouse = isHovering
-            ? Math.sqrt(
-                Math.pow(particle.x - mousePosition.x, 2) +
-                Math.pow(particle.y - mousePosition.y, 2)
-              )
-            : 100;
-          const isNearMouse = distanceToMouse < 18;
-
-          return (
-            <motion.div
-              key={particle.id}
-              className="absolute rounded-full"
-              style={{
-                top: `${particle.y}%`,
-                left: `${particle.x}%`,
-                width: `${particle.size}px`,
-                height: `${particle.size}px`,
-                transform: 'translate(-50%, -50%)',
-                zIndex: Math.floor(particle.brightness * 10),
-              }}
-              animate={{
-                scale: isNearMouse ? [1, 1.6, 1.4] : [1, 1.1, 1],
-                opacity: particle.brightness * 0.45 + 0.35,
-              }}
-              transition={{
-                scale: {
-                  duration: isNearMouse ? 0.6 : 4.5 + Math.random() * 2.5,
-                  repeat: Infinity,
-                  ease: "easeInOut",
-                },
-                opacity: {
-                  duration: 5.5 + Math.random() * 2,
-                  repeat: Infinity,
-                  repeatType: "reverse",
-                  ease: "easeInOut",
-                },
-              }}
-            >
-              {/* 粒子核心 */}
-              <div 
-                className="absolute inset-0 rounded-full"
-                style={{
-                  backgroundColor: 'hsl(var(--sage))',
-                  boxShadow: `0 0 ${isNearMouse ? '16px' : '8px'} hsla(var(--sage), ${particle.brightness * 0.6})`,
-                }}
-              />
-              
-              {/* 粒子光晕 */}
-              <motion.div
-                className="absolute inset-0 rounded-full blur-sm"
-                style={{
-                  backgroundColor: 'hsl(var(--sage))',
-                }}
-                animate={{
-                  scale: [1, 1.4, 1],
-                  opacity: [0.25, 0.12, 0.25],
-                }}
-                transition={{
-                  duration: 4.5,
-                  repeat: Infinity,
-                  delay: particle.id * 0.04,
-                  ease: "easeInOut",
-                }}
-              />
-
-              {/* 脉冲波纹（前景粒子特效）*/}
-              {particle.z > 0.5 && (
-                <motion.div
-                  className="absolute inset-0 rounded-full border"
-                  style={{
-                    borderColor: 'hsl(var(--sage))',
-                  }}
-                  initial={{ scale: 1, opacity: 0.35 }}
-                  animate={{
-                    scale: [1, 2.4],
-                    opacity: [0.35, 0],
-                  }}
-                  transition={{
-                    duration: 4,
-                    repeat: Infinity,
-                    delay: particle.id * 0.08,
-                    ease: "easeOut",
-                  }}
-                />
-              )}
-            </motion.div>
-          );
-        })}
-
-        {/* 能量流动路径（随机出现的流光）*/}
-        {[...Array(3)].map((_, i) => (
-          <motion.div
-            key={`flow-${i}`}
-            className="absolute w-1 h-1 rounded-full blur-sm"
-            style={{
-              top: `${50 + 35 * Math.sin(i * 2.1)}%`,
-              left: `${50 + 35 * Math.cos(i * 2.1)}%`,
-              backgroundColor: 'hsl(var(--sage))',
-            }}
-            animate={{
-              x: [0, Math.random() * 70 - 35, 0],
-              y: [0, Math.random() * 70 - 35, 0],
-              opacity: [0, 0.5, 0],
-              scale: [0, 1.3, 0],
-            }}
-            transition={{
-              duration: 7 + Math.random() * 3,
-              repeat: Infinity,
-              delay: i * 2.5,
-              ease: "easeInOut",
-            }}
-          />
-        ))}
-      </motion.div>
-    </div>
-  );
-}
 
 export default function LandingPage() {
   const [email, setEmail] = useState('');
@@ -310,29 +42,27 @@ export default function LandingPage() {
   const [showThankYouDialog, setShowThankYouDialog] = useState(false);
   const [isNewUser, setIsNewUser] = useState(true);
 
-  const handleJoinWaitlist = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
+  const handleJoinWaitlist = async (emailAddress: string) => {
     // 简单的邮箱格式验证
-    if (!email || !email.includes('@')) {
+    if (!emailAddress || !emailAddress.includes('@')) {
       toast.error('Please enter a valid email address');
-      return;
+      throw new Error('Invalid email');
     }
     
     setIsSubmitting(true);
     
     try {
       const response = await joinWaitlist({
-        email: email.toLowerCase().trim(),
+        email: emailAddress.toLowerCase().trim(),
         source: 'landing_page',
       });
       
       setIsNewUser(response.is_new);
-      setShowThankYouDialog(true);
       setEmail('');
     } catch (error) {
       console.error('Failed to join waitlist:', error);
       toast.error('Something went wrong. Please try again later.');
+      throw error;
     } finally {
       setIsSubmitting(false);
     }
@@ -340,6 +70,9 @@ export default function LandingPage() {
 
   return (
     <div className="min-h-screen bg-background">
+      {/* 全局滚动进度指示器 */}
+      <ScrollProgress />
+      
       {/* 感谢加入候补名单弹窗 */}
       <Dialog open={showThankYouDialog} onOpenChange={setShowThankYouDialog}>
         <DialogContent className="sm:max-w-md bg-card border-border">
@@ -379,9 +112,8 @@ export default function LandingPage() {
         </DialogContent>
       </Dialog>
 
-      {/* 动态背景 - 奶油杂志风格 */}
-      <div className="fixed inset-0 bg-gradient-to-br from-[#f5f0e8] via-background to-[#f8f4ed] -z-10" />
-      <div className="fixed inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-sage-100/15 via-transparent to-transparent -z-10" />
+      {/* 背景 - 简洁统一 */}
+      <div className="fixed inset-0 bg-background -z-10" />
       {/* 纸质纹理效果 */}
       <div className="fixed inset-0 opacity-[0.015] bg-noise -z-10" />
       
@@ -413,287 +145,374 @@ export default function LandingPage() {
         </div>
       </nav>
 
-      {/* Hero Section */}
-      <section className="pt-32 pb-16 md:pb-24 px-6 relative overflow-hidden">
-        {/* 背景光晕效果 - 柔和的奶油色调 */}
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-sage-200/20 rounded-full blur-[128px] animate-pulse" />
-        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-[#e8dcc8]/30 rounded-full blur-[128px] animate-pulse delay-1000" />
-        
-        <div className="max-w-7xl mx-auto relative z-10">
-          <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
-            {/* 左侧：文本内容 */}
-            <motion.div 
-              initial={{ opacity: 0, x: -30 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.8, ease: "easeOut" }}
-              className="space-y-8 text-center lg:text-left"
-            >
-              {/* Animated Badge */}
+      {/* Hero Section with Animated Shader */}
+      <section className="relative w-full h-screen overflow-hidden bg-gradient-to-b from-background via-sage-50/30 to-background">
+        {/* Shader Background - Fixed to viewport */}
+        <AnimatedShaderHero className="h-screen">
+          <div className="relative w-full h-full flex flex-col items-center justify-center pt-16 pb-8 px-6">
+            <div className="text-center space-y-6 max-w-5xl mx-auto">
+              {/* Animated Headline */}
+              <div className="space-y-4">
+                <TextAnimate
+                  animation="blurInUp"
+                  by="word"
+                  delay={0.2}
+                  duration={0.8}
+                  className="text-5xl md:text-7xl font-serif font-bold text-sage-900 leading-tight"
+                >
+                  Master Any Skill
+                </TextAnimate>
+                <TextAnimate
+                  animation="blurInUp"
+                  by="word"
+                  delay={0.5}
+                  duration={0.8}
+                  className="text-5xl md:text-7xl font-serif font-bold text-sage-800 leading-tight"
+                >
+                  Faster Than Ever
+                </TextAnimate>
+              </div>
+
+              {/* Subtitle */}
+              <TextAnimate
+                animation="fadeIn"
+                by="word"
+                delay={1}
+                duration={0.6}
+                className="text-xl md:text-2xl text-sage-700 max-w-3xl mx-auto font-light"
+              >
+                Systematic Structure. Personalized Path. Real-time Evolution.
+              </TextAnimate>
+
+              {/* Enhanced Waitlist Form */}
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5 }}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-sage-50/80 border border-sage-300/50 rounded-full text-sage-700 text-sm font-medium shadow-sm"
+                transition={{ delay: 1.5, duration: 0.5 }}
+                className="mt-10"
               >
-                <Sparkles className="w-4 h-4" />
-                AI-Powered Rapid Skill Acquisition
-              </motion.div>
-
-              {/* Main Heading */}
-              <h1 className="text-5xl md:text-6xl lg:text-7xl font-serif font-bold text-foreground leading-[1.1]">
-                Master Any Skill{' '}
-                <span className="text-sage-600 relative inline-block">
-                  Faster
-                  <svg className="absolute -bottom-2 left-0 w-full" viewBox="0 0 200 12" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M2 8 Q 50 2, 100 6 Q 150 10, 198 4" stroke="currentColor" strokeWidth="3" fill="none" strokeLinecap="round" className="text-sage-300"/>
-                  </svg>
-                </span>
-              </h1>
-
-              {/* Subtitle */}
-              <p className="text-xl text-muted-foreground leading-relaxed max-w-xl lg:max-w-none">
-                Learn through practice, not theory. Our AI creates personalized roadmaps 
-                that get you building real projects from day one.
-              </p>
-
-              {/* Join Waitlist Form */}
-              <form
-                onSubmit={handleJoinWaitlist}
-                className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 max-w-md mx-auto lg:mx-0"
-              >
-                <Input
-                  type="email"
-                  placeholder="Enter your email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="h-12 px-5 text-base bg-card border-border focus:border-sage-400 focus:ring-sage-400/20 rounded-xl flex-1 shadow-sm"
-                  disabled={isSubmitting}
+                <WaitlistForm 
+                  onSubmit={handleJoinWaitlist}
+                  isSubmitting={isSubmitting}
                 />
-                <Button
-                  type="submit"
-                  variant="sage"
-                  size="lg"
-                  className="h-12 px-6 rounded-xl font-semibold gap-2 shadow-sm hover:shadow-md transition-all whitespace-nowrap"
-                  disabled={isSubmitting}
-                >
-                  {isSubmitting ? 'Joining...' : 'Join Waitlist'}
-                  <ArrowRight className="w-4 h-4" />
-                </Button>
-              </form>
-
-              <p className="text-xs text-muted-foreground">
-                Be the first to experience the future of learning. No spam, ever.
-              </p>
-            </motion.div>
-
-            {/* 右侧：知识粒子球（桌面端）*/}
-            <motion.div
-              initial={{ opacity: 0, x: 30 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.8, delay: 0.2, ease: "easeOut" }}
-              className="hidden lg:block"
-            >
-              <KnowledgeSphere />
-            </motion.div>
+              </motion.div>
+            </div>
           </div>
-
-          {/* 移动端：粒子球展示 */}
-          <motion.div
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.8, delay: 0.3, ease: "easeOut" }}
-            className="lg:hidden mt-12"
-          >
-            <KnowledgeSphere />
-          </motion.div>
-        </div>
+        </AnimatedShaderHero>
       </section>
 
-      {/* Key Benefits Section */}
+      {/* Learning Path Demo Section - Below Hero */}
+      <section className="relative z-20 bg-gradient-to-b from-background via-background to-background py-24 px-6">
+        <LearningPathDemo />
+      </section>
+
+      {/* Key Benefits Section - Bento Grid */}
       <section className="py-24 px-6 bg-gradient-to-b from-background to-sage-50/20">
-        <div className="max-w-6xl mx-auto">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.5 }}
-            className="text-center mb-16"
-          >
-            <h2 className="text-4xl font-serif font-bold text-foreground mb-4">
-              Why Fast Learning Works
-            </h2>
-            <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-              Traditional learning is slow and passive. We flip the script with AI-powered 
-              active learning that adapts to you.
-            </p>
-          </motion.div>
+        <div className="max-w-7xl mx-auto">
+          <BlurFade delay={0.1} inView>
+            <div className="text-center mb-16">
+              <h2 className="text-4xl md:text-5xl font-serif font-bold text-foreground mb-4">
+                Why Fast Learning Works
+              </h2>
+              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+                Traditional learning is slow and passive. We flip the script with AI-powered 
+                active learning that adapts to you.
+              </p>
+            </div>
+          </BlurFade>
 
-          <div className="grid md:grid-cols-3 gap-8">
-            <BenefitCard
-              icon={Target}
-              title="Precision Learning"
-              description="AI identifies your knowledge gaps and creates targeted strategies to fill them efficiently."
-              delay={0}
-            />
-            <BenefitCard
-              icon={Brain}
-              title="Learn by Doing"
-              description="Start building from day one. Our AI guides you through real projects, not endless tutorials."
-              delay={0.1}
-            />
-            <BenefitCard
-              icon={Clock}
-              title="Accelerated Mastery"
-              description="Structured roadmaps with clear milestones help you achieve competence in record time."
-              delay={0.2}
-            />
+          <BentoGrid className="auto-rows-[20rem] md:grid-cols-3">
+            <BlurFade delay={0.2} inView>
+              <BentoCard
+                name="Precision Learning"
+                className="col-span-3 md:col-span-2 relative overflow-hidden group"
+                background={
+                  <div className="absolute inset-0 bg-gradient-to-br from-sage-100 via-sage-50 to-transparent opacity-60" />
+                }
+                Icon={Target}
+                description="AI identifies your knowledge gaps and creates targeted strategies to fill them efficiently. No more wasted time on what you already know."
+              />
+            </BlurFade>
+            
+            <BlurFade delay={0.3} inView>
+              <BentoCard
+                name="Learn by Doing"
+                className="col-span-3 md:col-span-1 relative overflow-hidden group"
+                background={
+                  <div className="absolute inset-0 bg-gradient-to-br from-sage-50 to-transparent opacity-40" />
+                }
+                Icon={Brain}
+                description="Start building from day one. Our AI guides you through real projects, not endless tutorials."
+              />
+            </BlurFade>
+
+            <BlurFade delay={0.4} inView>
+              <BentoCard
+                name="Accelerated Mastery"
+                className="col-span-3 md:col-span-1 relative overflow-hidden group"
+                background={
+                  <div className="absolute inset-0 bg-gradient-to-br from-sage-50 to-transparent opacity-40" />
+                }
+                Icon={Clock}
+                description="Structured roadmaps with clear milestones help you achieve competence in record time."
+              />
+            </BlurFade>
+
+            <BlurFade delay={0.5} inView>
+              <BentoCard
+                name="AI-Powered Adaptation"
+                className="col-span-3 md:col-span-2 relative overflow-hidden group"
+                background={
+                  <div className="absolute inset-0 bg-gradient-to-br from-sage-100 via-sage-50 to-transparent opacity-60" />
+                }
+                Icon={Zap}
+                description="Your learning path evolves as you progress. The AI continuously optimizes your journey based on your performance and feedback."
+              />
+            </BlurFade>
+          </BentoGrid>
+        </div>
+      </section>
+
+      {/* How It Works Section - 3D Scroll Animation */}
+      <section className="py-24 px-6 relative">
+        <div className="max-w-6xl mx-auto">
+          <BlurFade delay={0.1} inView>
+            <div className="text-center mb-20">
+              <h2 className="text-4xl md:text-5xl font-serif font-bold text-foreground mb-4">
+                Your Learning Journey
+              </h2>
+              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+                From goal to mastery in four simple steps
+              </p>
+            </div>
+          </BlurFade>
+
+          <div className="relative">
+            {/* Connecting Line */}
+            <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-gradient-to-b from-sage-200 via-sage-300 to-sage-200 hidden md:block" />
+            
+            <div className="space-y-24">
+              <BlurFade delay={0.2} inView>
+                <motion.div
+                  initial={{ opacity: 0, x: -50, rotateY: -15 }}
+                  whileInView={{ opacity: 1, x: 0, rotateY: 0 }}
+                  viewport={{ once: true, margin: "-100px" }}
+                  transition={{ duration: 0.6, ease: "easeOut" }}
+                  className="relative"
+                  style={{ transformStyle: "preserve-3d" }}
+                >
+                  <StepCard3D
+                    number={1}
+                    title="Set Your Goal"
+                    description="Tell us what you want to learn and your current experience level. Our AI analyzes your background to create the perfect starting point."
+                    align="left"
+                  />
+                </motion.div>
+              </BlurFade>
+
+              <BlurFade delay={0.3} inView>
+                <motion.div
+                  initial={{ opacity: 0, x: 50, rotateY: 15 }}
+                  whileInView={{ opacity: 1, x: 0, rotateY: 0 }}
+                  viewport={{ once: true, margin: "-100px" }}
+                  transition={{ duration: 0.6, ease: "easeOut" }}
+                  className="relative"
+                  style={{ transformStyle: "preserve-3d" }}
+                >
+                  <StepCard3D
+                    number={2}
+                    title="Get Your Roadmap"
+                    description="AI creates a personalized curriculum with stages, modules, and concepts. Each step builds on the last for optimal learning."
+                    align="right"
+                  />
+                </motion.div>
+              </BlurFade>
+
+              <BlurFade delay={0.4} inView>
+                <motion.div
+                  initial={{ opacity: 0, x: -50, rotateY: -15 }}
+                  whileInView={{ opacity: 1, x: 0, rotateY: 0 }}
+                  viewport={{ once: true, margin: "-100px" }}
+                  transition={{ duration: 0.6, ease: "easeOut" }}
+                  className="relative"
+                  style={{ transformStyle: "preserve-3d" }}
+                >
+                  <StepCard3D
+                    number={3}
+                    title="Learn & Build"
+                    description="Work through tutorials, quizzes, and hands-on projects at your pace. Practice makes perfect with real-world applications."
+                    align="left"
+                  />
+                </motion.div>
+              </BlurFade>
+
+              <BlurFade delay={0.5} inView>
+                <motion.div
+                  initial={{ opacity: 0, x: 50, rotateY: 15 }}
+                  whileInView={{ opacity: 1, x: 0, rotateY: 0 }}
+                  viewport={{ once: true, margin: "-100px" }}
+                  transition={{ duration: 0.6, ease: "easeOut" }}
+                  className="relative"
+                  style={{ transformStyle: "preserve-3d" }}
+                >
+                  <StepCard3D
+                    number={4}
+                    title="Achieve Mastery"
+                    description="Track progress, get AI assistance, and reach your learning goals. Celebrate milestones as you become an expert."
+                    align="right"
+                  />
+                </motion.div>
+              </BlurFade>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* How It Works Section */}
-      <section className="py-24 px-6">
-        <div className="max-w-6xl mx-auto">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.5 }}
-            className="text-center mb-16"
-          >
-            <h2 className="text-4xl font-serif font-bold text-foreground mb-4">
-              Your Learning Journey
-            </h2>
-            <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-              From goal to mastery in four simple steps
-            </p>
-          </motion.div>
-
-          <div className="grid md:grid-cols-4 gap-6">
-            <StepCard
-              number={1}
-              title="Set Your Goal"
-              description="Tell us what you want to learn and your current experience level."
-              delay={0}
-            />
-            <StepCard
-              number={2}
-              title="Get Your Roadmap"
-              description="AI creates a personalized curriculum with stages, modules, and concepts."
-              delay={0.1}
-            />
-            <StepCard
-              number={3}
-              title="Learn & Build"
-              description="Work through tutorials, quizzes, and hands-on projects at your pace."
-              delay={0.2}
-            />
-            <StepCard
-              number={4}
-              title="Achieve Mastery"
-              description="Track progress, get AI assistance, and reach your learning goals."
-              delay={0.3}
-            />
-          </div>
-        </div>
-      </section>
-
-      {/* Features Grid */}
-      <section className="py-24 px-6 bg-card">
-        <div className="max-w-6xl mx-auto">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.5 }}
-            className="text-center mb-16"
-          >
-            <h2 className="text-4xl font-serif font-bold text-foreground mb-4">
-              Everything You Need to Learn Fast
-            </h2>
-          </motion.div>
+      {/* Features Grid - Enhanced */}
+      <section className="py-24 px-6 bg-sage-50/30 relative overflow-hidden">
+        {/* Subtle particle background */}
+        <Particles
+          className="absolute inset-0"
+          quantity={30}
+          ease={80}
+          color="#7d8f7d"
+          refresh={false}
+        />
+        
+        <div className="max-w-6xl mx-auto relative z-10">
+          <BlurFade delay={0.1} inView>
+            <div className="text-center mb-16">
+              <h2 className="text-4xl md:text-5xl font-serif font-bold text-foreground mb-4">
+                Everything You Need to Learn Fast
+              </h2>
+              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+                Comprehensive tools and AI-powered features to accelerate your learning journey
+              </p>
+            </div>
+          </BlurFade>
 
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <FeatureCard
-              icon={BookOpen}
-              title="AI-Generated Tutorials"
-              description="In-depth content tailored to your level with real-world examples."
-              delay={0}
-            />
-            <FeatureCard
-              icon={Sparkles}
-              title="Adaptive Quizzes"
-              description="Test your understanding with questions that adapt to your progress."
-              delay={0.1}
-            />
-            <FeatureCard
-              icon={Zap}
-              title="Curated Resources"
-              description="The best articles, videos, and tools handpicked by AI for each topic."
-              delay={0.2}
-            />
-            <FeatureCard
-              icon={Brain}
-              title="Knowledge Graphs"
-              description="Visualize connections between concepts and track your understanding."
-              delay={0.3}
-            />
-            <FeatureCard
-              icon={Users}
-              title="AI Mentor"
-              description="Get explanations using everyday analogies. Ask anything, anytime."
-              delay={0.4}
-            />
-            <FeatureCard
-              icon={Target}
-              title="Progress Tracking"
-              description="Clear milestones and completion tracking to keep you motivated."
-              delay={0.5}
-            />
+            <BlurFade delay={0.2} inView>
+              <FeatureCardEnhanced
+                icon={BookOpen}
+                title="AI-Generated Tutorials"
+                description="In-depth content tailored to your level with real-world examples."
+              />
+            </BlurFade>
+            <BlurFade delay={0.3} inView>
+              <FeatureCardEnhanced
+                icon={Sparkles}
+                title="Adaptive Quizzes"
+                description="Test your understanding with questions that adapt to your progress."
+              />
+            </BlurFade>
+            <BlurFade delay={0.4} inView>
+              <FeatureCardEnhanced
+                icon={Zap}
+                title="Curated Resources"
+                description="The best articles, videos, and tools handpicked by AI for each topic."
+              />
+            </BlurFade>
+            <BlurFade delay={0.5} inView>
+              <FeatureCardEnhanced
+                icon={Brain}
+                title="Knowledge Graphs"
+                description="Visualize connections between concepts and track your understanding."
+              />
+            </BlurFade>
+            <BlurFade delay={0.6} inView>
+              <FeatureCardEnhanced
+                icon={Users}
+                title="AI Mentor"
+                description="Get explanations using everyday analogies. Ask anything, anytime."
+              />
+            </BlurFade>
+            <BlurFade delay={0.7} inView>
+              <FeatureCardEnhanced
+                icon={Target}
+                title="Progress Tracking"
+                description="Clear milestones and completion tracking to keep you motivated."
+              />
+            </BlurFade>
           </div>
         </div>
       </section>
 
-      {/* CTA Section - 奶油杂志风格 */}
+      {/* CTA Section - 奶油杂志风格 with 粒子效果 */}
       <section className="py-24 px-6 relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-br from-sage-500 to-sage-600 -z-10" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_var(--tw-gradient-stops))] from-sage-400/30 via-transparent to-transparent -z-10" />
         {/* 纸质纹理 */}
         <div className="absolute inset-0 opacity-[0.03] bg-noise -z-10" />
+        {/* 粒子背景效果 - sage 色调 */}
+        <Particles
+          className="absolute inset-0"
+          quantity={80}
+          ease={50}
+          color="#ffffff"
+          refresh={false}
+        />
         
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
           transition={{ duration: 0.5 }}
-          className="max-w-4xl mx-auto text-center"
+          className="max-w-4xl mx-auto text-center relative z-10"
         >
-          <h2 className="text-4xl md:text-5xl font-serif font-bold text-sage-600 mb-6">
-            Ready to Learn Faster?
-          </h2>
-          <p className="text-xl text-sage-600/95 mb-10 max-w-2xl mx-auto">
-            Join the waitlist and be among the first to experience 
-            AI-powered learning that actually works.
-          </p>
-          <form onSubmit={handleJoinWaitlist} className="flex flex-col sm:flex-row items-center justify-center gap-3 max-w-md mx-auto">
-            <Input
-              type="email"
-              placeholder="Enter your email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="h-12 px-5 text-base bg-white/98 border-0 rounded-xl w-full sm:w-80 shadow-sm"
-              disabled={isSubmitting}
-            />
-            <Button
-              type="submit"
-              size="lg"
-              className="h-12 px-6 rounded-xl font-semibold gap-2 bg-white text-sage-600 hover:bg-white/90 hover:text-sage-700 w-full sm:w-auto shadow-sm"
-              disabled={isSubmitting}
+          <BlurFade delay={0.1} inView>
+            <h2 className="text-4xl md:text-5xl font-serif font-bold text-white mb-6">
+              Ready to Learn Faster?
+            </h2>
+          </BlurFade>
+          <BlurFade delay={0.2} inView>
+            <p className="text-xl text-white/95 mb-10 max-w-2xl mx-auto">
+              Join the waitlist and be among the first to experience 
+              AI-powered learning that actually works.
+            </p>
+          </BlurFade>
+          <BlurFade delay={0.3} inView>
+            <form 
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (email) {
+                  try {
+                    await handleJoinWaitlist(email);
+                    setShowThankYouDialog(true);
+                  } catch (error) {
+                    // Error already handled in handleJoinWaitlist
+                  }
+                }
+              }} 
+              className="flex flex-col sm:flex-row items-center justify-center gap-3 max-w-md mx-auto"
             >
-              {isSubmitting ? 'Joining...' : 'Join Waitlist'}
-              <ArrowRight className="w-4 h-4" />
-            </Button>
-          </form>
+              <div className="relative w-full sm:w-80">
+                <Input
+                  type="email"
+                  placeholder="Enter your email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="h-12 px-5 text-base bg-white/98 border-0 rounded-xl w-full shadow-lg focus:shadow-xl transition-shadow"
+                  disabled={isSubmitting}
+                />
+              </div>
+              <div className="relative w-full sm:w-auto group">
+                <Button
+                  type="submit"
+                  size="lg"
+                  className="h-12 px-8 rounded-xl font-semibold gap-2 bg-white text-sage-600 hover:bg-white hover:text-sage-700 w-full sm:w-auto shadow-lg hover:shadow-xl transition-all hover:scale-105 relative overflow-hidden"
+                  disabled={isSubmitting}
+                >
+                  <span className="relative z-10">
+                    {isSubmitting ? 'Joining...' : 'Join Waitlist'}
+                  </span>
+                  <ArrowRight className="w-4 h-4 relative z-10" />
+                  {/* 光晕效果 */}
+                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-sage-100/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 group-hover:animate-shimmer" />
+                </Button>
+              </div>
+            </form>
+          </BlurFade>
         </motion.div>
       </section>
 
@@ -794,6 +613,43 @@ function StepCard({
   );
 }
 
+function StepCard3D({
+  number,
+  title,
+  description,
+  align = "left",
+}: {
+  number: number;
+  title: string;
+  description: string;
+  align?: "left" | "right";
+}) {
+  return (
+    <div className={`flex items-center gap-8 ${align === "right" ? "md:flex-row-reverse" : ""}`}>
+      <div className={`flex-1 ${align === "right" ? "md:text-right" : ""}`}>
+        <div className="relative p-8 rounded-2xl bg-card border border-border shadow-lg hover:shadow-xl transition-all group">
+          <BorderBeam size={100} duration={12} delay={number * 2} />
+          <div className="flex items-start gap-4">
+            <div className="flex-shrink-0 w-14 h-14 rounded-full bg-gradient-to-br from-sage-500 to-sage-600 text-white flex items-center justify-center font-serif font-bold text-xl shadow-md">
+              {number}
+            </div>
+            <div className="flex-1">
+              <h3 className="text-2xl font-serif font-bold text-foreground mb-3 group-hover:text-sage-700 transition-colors">
+                {title}
+              </h3>
+              <p className="text-base text-muted-foreground leading-relaxed">
+                {description}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="hidden md:block w-8 h-8 rounded-full bg-sage-500 border-4 border-background shadow-md relative z-10" />
+      <div className="flex-1 hidden md:block" />
+    </div>
+  );
+}
+
 /**
  * FeatureCard - 功能特性卡片
  */
@@ -823,6 +679,53 @@ function FeatureCard({
         {title}
       </h3>
       <p className="text-sm text-muted-foreground leading-relaxed">{description}</p>
+    </motion.div>
+  );
+}
+
+/**
+ * FeatureCardEnhanced - 增强版功能卡片，带有 BorderBeam 效果
+ */
+function FeatureCardEnhanced({
+  icon: Icon,
+  title,
+  description,
+}: {
+  icon: React.ElementType;
+  title: string;
+  description: string;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, margin: "-50px" }}
+      transition={{ duration: 0.5 }}
+      className="relative p-8 rounded-2xl border border-border bg-card/80 backdrop-blur-sm hover:shadow-xl transition-all hover:-translate-y-1 group overflow-hidden"
+    >
+      {/* BorderBeam 效果 */}
+      <BorderBeam 
+        size={120} 
+        duration={15} 
+        borderWidth={1.5}
+        colorFrom="#7d8f7d"
+        colorTo="#a8b8a8"
+      />
+      
+      {/* 悬停时的背景渐变效果 */}
+      <div className="absolute inset-0 bg-gradient-to-br from-sage-50/0 via-sage-50/0 to-sage-100/0 group-hover:from-sage-50/40 group-hover:via-sage-50/20 group-hover:to-sage-100/40 transition-all duration-500 rounded-2xl -z-10" />
+      
+      <div className="relative z-10">
+        <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-sage-100 to-sage-50 group-hover:from-sage-200 group-hover:to-sage-100 flex items-center justify-center mb-5 transition-all duration-300 shadow-sm group-hover:shadow-md group-hover:scale-110">
+          <Icon className="w-7 h-7 text-sage-600 group-hover:text-sage-700 transition-colors" />
+        </div>
+        <h3 className="text-xl font-serif font-bold text-foreground mb-3 group-hover:text-sage-700 transition-colors">
+          {title}
+        </h3>
+        <p className="text-base text-muted-foreground leading-relaxed">
+          {description}
+        </p>
+      </div>
     </motion.div>
   );
 }

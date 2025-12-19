@@ -3716,31 +3716,33 @@ class TaskListResponse(BaseModel):
 async def get_user_tasks(
     user_id: str,
     status: OptionalType[str] = None,  # 筛选：pending, processing, completed, failed
+    task_type: OptionalType[str] = None,  # 筛选：creation, retry_tutorial, retry_resources, retry_quiz, retry_batch
     limit: int = 50,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
 ):
     """
-    获取用户的任务列表，支持按状态筛选
+    获取用户的任务列表，支持按状态和任务类型筛选
     
     Args:
         user_id: 用户 ID
         status: 任务状态筛选（可选）
+        task_type: 任务类型筛选（可选）：creation, retry_tutorial, retry_resources, retry_quiz, retry_batch
         limit: 返回数量限制（默认50）
         offset: 分页偏移（默认0）
         
     Returns:
         任务列表及各状态统计
     """
-    logger.info("get_user_tasks_requested", user_id=user_id, status=status, limit=limit, offset=offset)
+    logger.info("get_user_tasks_requested", user_id=user_id, status=status, task_type=task_type, limit=limit, offset=offset)
     
     repo = RoadmapRepository(db)
     
-    # 查询任务
-    tasks = await repo.get_tasks_by_user(user_id, status=status, limit=limit, offset=offset)
+    # 查询任务（应用task_type过滤）
+    tasks = await repo.get_tasks_by_user(user_id, status=status, task_type=task_type, limit=limit, offset=offset)
     
-    # 统计各状态数量（查询全部任务）
-    all_tasks = await repo.get_tasks_by_user(user_id)
+    # 统计各状态数量（查询全部任务，同样应用task_type过滤）
+    all_tasks = await repo.get_tasks_by_user(user_id, task_type=task_type)
     stats = {
         "pending": sum(1 for t in all_tasks if t.status == "pending"),
         "processing": sum(1 for t in all_tasks if t.status == "processing"),

@@ -285,6 +285,31 @@ class QuizMetadata(SQLModel, table=True):
     )
 
 
+class TechStackAssessment(SQLModel, table=True):
+    """技术栈能力测试表"""
+    __tablename__ = "tech_stack_assessments"
+    
+    assessment_id: str = Field(primary_key=True)
+    technology: str = Field(index=True, description="技术栈名称 (python, react等)")
+    proficiency_level: str = Field(index=True, description="能力级别 (beginner, intermediate, expert)")
+    
+    # 题目列表（每个题目不再包含difficulty字段）
+    questions: list = Field(sa_column=Column(JSON), description="题目列表")
+    total_questions: int = Field(default=20, description="题目总数")
+    
+    # 考察内容规划（用于审计和调试）
+    examination_plan: Optional[dict] = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+        description="考察内容规划（topics）"
+    )
+    
+    generated_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False))
+    )
+
+
 class UserProfile(SQLModel, table=True):
     """
     用户画像表
@@ -299,7 +324,9 @@ class UserProfile(SQLModel, table=True):
     industry: Optional[str] = Field(default=None, description="所属行业")
     current_role: Optional[str] = Field(default=None, description="当前职位")
     
-    # 技术栈 (JSON: [{technology: str, proficiency: str}])
+    # 技术栈 (JSON: [{technology: str, proficiency: str, capability_analysis: dict}])
+    # capability_analysis 包含：overall_assessment, strengths, weaknesses, 
+    # knowledge_gaps, learning_suggestions, proficiency_verification, score_breakdown
     tech_stack: list = Field(default=[], sa_column=Column(JSON))
     
     # 语言偏好

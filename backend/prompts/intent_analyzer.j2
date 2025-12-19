@@ -18,6 +18,17 @@
 - 已掌握技术栈：
 {% for tech in user_profile.tech_stack %}
   - {{ tech.technology }}（{{ tech.proficiency }}）
+  {% if tech.capability_analysis %}
+    * 能力验证：实际水平为 {{ tech.capability_analysis.proficiency_verification.verified_level }}（置信度：{{ tech.capability_analysis.proficiency_verification.confidence }}）
+    * 优势领域：{{ tech.capability_analysis.strengths | join('、') }}
+    * 薄弱环节：{{ tech.capability_analysis.weaknesses | join('、') }}
+    {% if tech.capability_analysis.knowledge_gaps and tech.capability_analysis.knowledge_gaps | length > 0 %}
+    * 知识缺口：
+    {% for gap in tech.capability_analysis.knowledge_gaps %}
+      - {{ gap.topic }}（优先级：{{ gap.priority }}）
+    {% endfor %}
+    {% endif %}
+  {% endif %}
 {% endfor %}
 {% endif %}
 {% endif %}
@@ -43,14 +54,22 @@
 1. 仔细分析用户的学习需求，提取关键信息
 2. 结合用户画像信息（行业、职位、已有技能）进行个性化分析
 3. 识别用户需要学习的技术栈，并考虑其已掌握的技能基础
-4. 评估技能差距，提供针对性的学习建议
-5. 根据用户的内容偏好推荐合适的学习方式权重
-6. 考虑时间约束和学习动机，规划合理的学习路径
-7. **语言偏好处理**：
+4. **重点关注技术栈能力分析**：
+   - 如果用户的tech_stack中包含capability_analysis（能力分析结果），务必仔细考虑
+   - 能力分析包含：实际验证的能力级别、优势领域、薄弱环节、知识缺口
+   - 在设计学习路径时，应该：
+     * 避免重复用户已经掌握的优势领域
+     * 重点补强用户的薄弱环节和知识缺口
+     * 根据实际验证的能力级别（而非声称的级别）来设定难度
+     * 优先解决高优先级（high）的知识缺口
+5. 评估技能差距，提供针对性的学习建议
+6. 根据用户的内容偏好推荐合适的学习方式权重
+7. 考虑时间约束和学习动机，规划合理的学习路径
+8. **语言偏好处理**：
    - 根据用户的主要语言生成路线图标题和教程内容
    - 如果用户设置了不同的次要语言，资源推荐需按 60%/40% 比例分配
    - 主要语言用于教程生成，次要语言仅用于资源推荐的补充
-8. 输出必须严格遵循 JSON Schema 格式
+9. 输出必须严格遵循 JSON Schema 格式
 
 [4. Output Format]
 **重要：请直接返回纯 JSON 对象，不要使用 markdown 代码块包裹（不要使用 ```json 或 ```）**

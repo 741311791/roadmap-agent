@@ -219,15 +219,17 @@ class RoadmapRepository:
         self,
         user_id: str,
         status: Optional[str] = None,
+        task_type: Optional[str] = None,
         limit: int = 50,
         offset: int = 0,
     ) -> List[RoadmapTask]:
         """
-        获取用户的所有任务，可按状态筛选
+        获取用户的所有任务，可按状态和任务类型筛选
         
         Args:
             user_id: 用户 ID
             status: 任务状态筛选（可选）：pending, processing, completed, failed
+            task_type: 任务类型筛选（可选）：creation, retry_tutorial, retry_resources, retry_quiz, retry_batch
             limit: 返回数量限制
             offset: 分页偏移
             
@@ -238,6 +240,9 @@ class RoadmapRepository:
         
         if status:
             query = query.where(RoadmapTask.status == status)
+        
+        if task_type:
+            query = query.where(RoadmapTask.task_type == task_type)
         
         query = query.order_by(RoadmapTask.created_at.desc()).offset(offset).limit(limit)
         

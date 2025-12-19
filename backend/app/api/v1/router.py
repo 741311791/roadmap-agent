@@ -18,6 +18,7 @@ from .endpoints import (
     mentor,
     waitlist,
     admin,
+    tech_assessment,
 )
 from .roadmap import users_router, router as roadmap_router, trace_router, intent_router
 from app.core.auth import fastapi_users, auth_backend
@@ -57,6 +58,9 @@ router.include_router(progress.router)
 
 # 伴学Agent相关（聊天、笔记）
 router.include_router(mentor.router)
+
+# 技术栈能力测试相关
+router.include_router(tech_assessment.router)
 
 # 路线图管理相关（删除、恢复等）
 router.include_router(roadmap_router)

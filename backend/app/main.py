@@ -46,6 +46,26 @@ async def lifespan(app: FastAPI):
             error_type=type(e).__name__,
         )
     
+    # 初始化技术栈测验数据（如果缺失则生成）
+    try:
+        from app.services.tech_assessment_initializer import initialize_tech_assessments
+        init_result = await initialize_tech_assessments()
+        if init_result.get("generated", 0) > 0:
+            logger.info(
+                "tech_assessments_initialized",
+                total_expected=init_result.get("total_expected"),
+                existing=init_result.get("existing"),
+                generated=init_result.get("generated"),
+                failed=init_result.get("failed"),
+            )
+    except Exception as e:
+        # 初始化失败不应阻止服务启动
+        logger.error(
+            "tech_assessments_init_failed",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+    
     yield
     
     logger.info("application_shutdown")
