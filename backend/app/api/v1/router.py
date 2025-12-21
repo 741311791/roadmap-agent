@@ -28,6 +28,7 @@ from .endpoints import (
     users,
     intent,
     trace,
+    cover_image,
 )
 from app.core.auth import fastapi_users, auth_backend
 from app.core.auth.schemas import UserRead, UserCreate, UserUpdate
@@ -99,6 +100,9 @@ router.include_router(trace.router)
 
 # 候补名单相关
 router.include_router(waitlist.router)
+
+# 封面图相关
+router.include_router(cover_image.router, tags=["cover-image"])
 
 # ==================== FastAPI Users 认证路由 ====================
 # JWT 认证路由（登录、登出）

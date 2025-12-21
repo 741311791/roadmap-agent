@@ -51,7 +51,18 @@ const nextConfig = {
         hostname: 'images.unsplash.com',
         pathname: '/**',
       },
+      {
+        protocol: 'https',
+        hostname: 'pub-443fbce7c4544cb2905ed48fe58e66e8.r2.dev',
+        pathname: '/**',
+      },
     ],
+    // 禁用某些域名的图片优化以避免连接问题
+    unoptimized: false,
+    // 增加超时时间
+    minimumCacheTTL: 60,
+    // 允许的图片格式
+    formats: ['image/avif', 'image/webp'],
   },
   
   // 开发环境 API 代理

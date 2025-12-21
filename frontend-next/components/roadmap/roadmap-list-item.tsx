@@ -25,7 +25,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { MyRoadmap } from './roadmap-card';
-import { getCoverImage, getGradientFallback, getTopicInitial } from '@/lib/cover-image';
+import { getCoverImage, getGradientFallback, getTopicInitial, fetchCoverImageFromAPI } from '@/lib/cover-image';
 
 // 生成步骤中文映射
 const STEP_LABELS: Record<string, string> = {
@@ -63,9 +63,18 @@ interface RoadmapListItemProps {
 
 export function RoadmapListItem({ roadmap, onDelete }: RoadmapListItemProps) {
   const [imageError, setImageError] = useState(false);
-  const imageUrl = getCoverImage(roadmap.topic);
+  const [imageUrl, setImageUrl] = useState(getCoverImage(roadmap.topic));
   const gradient = getGradientFallback(roadmap.title);
   const initial = getTopicInitial(roadmap.title);
+  
+  // 尝试从 API 获取封面图
+  React.useEffect(() => {
+    fetchCoverImageFromAPI(roadmap.id).then((apiUrl) => {
+      if (apiUrl) {
+        setImageUrl(apiUrl);
+      }
+    });
+  }, [roadmap.id]);
   
   const progress = roadmap.totalConcepts > 0 
     ? (roadmap.completedConcepts / roadmap.totalConcepts) * 100 

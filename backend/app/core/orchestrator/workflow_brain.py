@@ -466,6 +466,7 @@ class WorkflowBrain:
         在同一事务中执行:
         1. 保存 RoadmapMetadata
         2. 更新 task 状态
+        3. 触发封面图生成（异步，不阻塞主流程）
         
         Args:
             task_id: 任务 ID
@@ -497,6 +498,26 @@ class WorkflowBrain:
                 "workflow_brain_roadmap_framework_saved",
                 task_id=task_id,
                 roadmap_id=roadmap_id,
+            )
+        
+        # 异步触发封面图生成（不阻塞主流程）
+        try:
+            from app.services.cover_image_service import CoverImageService
+            async with AsyncSessionLocal() as session:
+                cover_service = CoverImageService(session)
+                # 使用路线图标题作为提示词
+                prompt = framework.title if framework else None
+                await cover_service.generate_cover_image(
+                    roadmap_id=roadmap_id,
+                    prompt=prompt
+                )
+        except Exception as e:
+            # 封面图生成失败不影响主流程
+            logger.warning(
+                "workflow_brain_cover_image_generation_failed",
+                task_id=task_id,
+                roadmap_id=roadmap_id,
+                error=str(e),
             )
     
     async def save_validation_result(

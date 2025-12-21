@@ -781,3 +781,49 @@ class WaitlistEmail(SQLModel, table=True):
         description="加入候补名单时间"
     )
 
+
+# ============================================================
+# 路线图封面图表
+# ============================================================
+
+class RoadmapCoverImage(SQLModel, table=True):
+    """
+    路线图封面图表
+    
+    存储路线图的封面图片URL，由外部图片生成服务生成。
+    每个路线图对应一个封面图记录。
+    """
+    __tablename__ = "roadmap_cover_images"
+    
+    roadmap_id: str = Field(
+        primary_key=True,
+        description="路线图ID（主键，关联 roadmap_metadata.roadmap_id）"
+    )
+    cover_image_url: Optional[str] = Field(
+        default=None,
+        description="封面图URL"
+    )
+    generation_status: str = Field(
+        default="pending",
+        description="生成状态：pending, generating, success, failed"
+    )
+    error_message: Optional[str] = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
+        description="生成失败时的错误信息"
+    )
+    retry_count: int = Field(
+        default=0,
+        description="重试次数"
+    )
+    created_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False)),
+        description="创建时间"
+    )
+    updated_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False)),
+        description="更新时间"
+    )
+

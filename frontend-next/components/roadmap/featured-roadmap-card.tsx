@@ -1,35 +1,20 @@
 /**
  * FeaturedRoadmapCard - 精选路线图卡片组件
  * 
- * 专为 Featured Roadmaps 模块设计，突出社区传播属性
- * 
- * 特点：
- * - 强调创作者信息和社区互动
- * - 显示 likes、views、bookmarks 等社交指标
- * - Featured 徽章标识
- * - 更具视觉冲击力的设计
+ * 使用 FlippingCard 实现的简洁设计
+ * - 正面：显示封面图片、标题和基本信息
+ * - 背面：显示详细描述和操作按钮
  */
 'use client';
 
-import { useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { Card, CardContent } from '@/components/ui/card';
+import { useState, useEffect } from 'react';
 import { Badge } from '@/components/ui/badge';
-import { MagicCard } from '@/components/ui/magic-card';
-import { ShineBorder } from '@/components/ui/shine-border';
-import { 
-  Heart, 
-  Eye, 
-  BookmarkPlus,
-  Star,
-  TrendingUp,
-  Clock,
-  Users,
-  Sparkles,
-} from 'lucide-react';
-import { CoverImage } from './cover-image';
+import { FlippingCard } from '@/components/ui/flipping-card';
+import { getCoverImage, fetchCoverImageFromAPI } from '@/lib/cover-image';
 import { cn } from '@/lib/utils';
+import { Star, Clock, BookOpen, ChevronRight } from 'lucide-react';
 
 export interface FeaturedRoadmap {
   id: string;
@@ -39,7 +24,7 @@ export interface FeaturedRoadmap {
     name: string;
     avatar?: string;
   };
-  stats: {
+  stats?: {
     likes?: number;
     views?: number;
     bookmarks?: number;
@@ -51,6 +36,11 @@ export interface FeaturedRoadmap {
   difficulty?: 'beginner' | 'intermediate' | 'advanced';
   isTrending?: boolean;
   createdAt?: string;
+  stages?: Array<{
+    name: string;
+    description?: string;
+    order: number;
+  }>;
 }
 
 interface FeaturedRoadmapCardProps {
@@ -63,29 +53,20 @@ const DIFFICULTY_CONFIG = {
   beginner: {
     label: 'Beginner',
     color: 'text-green-600 bg-green-50 border-green-200',
-    icon: '●',
   },
   intermediate: {
     label: 'Intermediate',
     color: 'text-amber-600 bg-amber-50 border-amber-200',
-    icon: '●●',
   },
   advanced: {
     label: 'Advanced',
     color: 'text-red-600 bg-red-50 border-red-200',
-    icon: '●●●',
   },
 };
 
-// 格式化数字（1.2k, 10k 等）
-function formatNumber(num: number): string {
-  if (num >= 1000) {
-    return `${(num / 1000).toFixed(1)}k`;
-  }
-  return num.toString();
-}
-
-// 格式化相对时间
+/**
+ * 格式化相对时间
+ */
 function formatRelativeTime(dateString?: string): string {
   if (!dateString) return 'Recently';
   
@@ -101,198 +82,222 @@ function formatRelativeTime(dateString?: string): string {
   return `${Math.floor(diffDays / 30)}mo ago`;
 }
 
-export function FeaturedRoadmapCard({ roadmap, className }: FeaturedRoadmapCardProps) {
-  const [avatarError, setAvatarError] = useState(false);
-  
+/**
+ * 卡片正面内容
+ */
+function CardFront({ roadmap }: { roadmap: FeaturedRoadmap }) {
+  const [imageUrl, setImageUrl] = useState(getCoverImage(roadmap.topic, 400, 300));
+  const [imageLoading, setImageLoading] = useState(true);
   const difficulty = roadmap.difficulty || 'intermediate';
   const difficultyConfig = DIFFICULTY_CONFIG[difficulty];
   
-  const {
-    likes = 0,
-    views = 0,
-    bookmarks = 0,
-    learners = 0,
-  } = roadmap.stats;
+  // 检测是否为 R2.dev 图片
+  const isR2Image = imageUrl.includes('r2.dev');
+  
+  // 尝试从 API 获取封面图
+  useEffect(() => {
+    if (roadmap.id) {
+      fetchCoverImageFromAPI(roadmap.id).then((apiUrl) => {
+        if (apiUrl) {
+          setImageUrl(apiUrl);
+        }
+      });
+    }
+  }, [roadmap.id]);
 
   return (
-    <div className={cn('group relative flex-shrink-0 w-full', className)}>
-      <Link href={`/roadmap/${roadmap.id}`} className="block">
-        <MagicCard
-          className="overflow-hidden h-full rounded-xl"
-          gradientSize={350}
-          gradientColor="rgba(96, 117, 96, 0.15)"
-          gradientFrom="#607560"
-          gradientTo="#a3b1a3"
-        >
-          <Card className="overflow-hidden border-0 shadow-none bg-transparent h-full hover:shadow-2xl transition-shadow duration-300">
-            {/* Shine Border 效果 */}
-            <ShineBorder
-              borderWidth={2}
-              duration={10}
-              shineColor={["#607560", "#7d8f7d", "#a3b1a3"]}
-              className="opacity-0 group-hover:opacity-100 transition-opacity duration-500"
-            />
-            
-            {/* Featured Badge - 左上角 */}
-            <div className="absolute top-3 left-3 z-10">
-              <Badge 
-                className="bg-gradient-to-r from-amber-400 to-amber-500 text-white border-0 shadow-lg text-[10px] px-2 py-1 font-bold flex items-center gap-1"
-              >
-                <Star className="w-3 h-3 fill-white" />
-                FEATURED
-              </Badge>
-            </div>
-            
-            {/* Trending Badge - 右上角（如果是趋势路线图） */}
-            {roadmap.isTrending && (
-              <div className="absolute top-3 right-3 z-10">
-                <Badge 
-                  className="bg-gradient-to-r from-rose-400 to-pink-500 text-white border-0 shadow-lg text-[10px] px-2 py-1 font-bold flex items-center gap-1 animate-pulse"
-                >
-                  <TrendingUp className="w-3 h-3" />
-                  HOT
-                </Badge>
-              </div>
+    <div className="flex flex-col h-full w-full">
+      {/* 封面图片 */}
+      <div className="relative w-full h-40 overflow-hidden rounded-t-xl bg-sage-100">
+        {/* 加载骨架屏 */}
+        {imageLoading && (
+          <div className="absolute inset-0 bg-gradient-to-br from-sage-200 to-sage-100 animate-pulse" />
+        )}
+        
+        {/* R2.dev 图片使用普通 img 标签 */}
+        {isR2Image ? (
+          <img
+            src={imageUrl}
+            alt={roadmap.title}
+            className={cn(
+              "absolute inset-0 w-full h-full object-cover transition-opacity duration-300",
+              imageLoading ? "opacity-0" : "opacity-100"
             )}
-            
-            {/* Cover Image */}
-            <CoverImage
-              topic={roadmap.topic}
-              title={roadmap.title}
-              className="rounded-t-xl aspect-[16/9]"
-            />
-            
-            <CardContent className="p-4 bg-white/98 backdrop-blur-sm">
-              {/* Title */}
-              <div className="flex items-start gap-2 mb-3">
-                <Sparkles className="w-3.5 h-3.5 text-amber-500 mt-0.5 flex-shrink-0 group-hover:animate-pulse" />
-                <h3 className="font-serif font-semibold text-sm text-foreground line-clamp-2 group-hover:text-sage-700 transition-colors min-h-[40px] flex-1">
-                  {roadmap.title}
-                </h3>
-              </div>
+            onLoad={() => setImageLoading(false)}
+            loading="lazy"
+          />
+        ) : (
+          <Image
+            src={imageUrl}
+            alt={roadmap.title}
+            fill
+            className={cn(
+              "object-cover transition-opacity duration-300",
+              imageLoading ? "opacity-0" : "opacity-100"
+            )}
+            sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 25vw"
+            onLoad={() => setImageLoading(false)}
+            priority={false}
+          />
+        )}
+        
+        {/* 渐变遮罩 */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
+        
+        {/* Featured Badge */}
+        <div className="absolute top-3 left-3 z-10">
+          <Badge 
+            className="bg-gradient-to-r from-amber-400 to-amber-500 text-white border-0 shadow-lg text-[10px] px-2 py-1 font-bold flex items-center gap-1"
+          >
+            <Star className="w-3 h-3 fill-white" />
+            FEATURED
+          </Badge>
+        </div>
+      </div>
 
-              {/* Author Info */}
-              {roadmap.author && (
-                <div className="flex items-center gap-2 mb-3 px-2 py-1.5 bg-gradient-to-r from-sage-50 to-transparent rounded-lg">
-                  <div className="w-6 h-6 rounded-full overflow-hidden bg-sage-100 flex-shrink-0 ring-2 ring-white shadow-sm">
-                    {roadmap.author.avatar && !avatarError ? (
-                      <Image
-                        src={roadmap.author.avatar}
-                        alt={roadmap.author.name}
-                        width={24}
-                        height={24}
-                        className="object-cover"
-                        onError={() => setAvatarError(true)}
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-[10px] font-bold text-sage-600 bg-gradient-to-br from-sage-100 to-sage-200">
-                        {roadmap.author.name.charAt(0).toUpperCase()}
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <span className="text-[10px] text-muted-foreground">Created by</span>
-                    <p className="text-[11px] text-foreground font-semibold truncate">
-                      {roadmap.author.name}
-                    </p>
-                  </div>
-                </div>
-              )}
+      {/* 内容区域 */}
+      <div className="flex flex-col flex-1 p-4">
+        {/* 标题 */}
+        <h3 className="font-serif font-semibold text-base text-foreground line-clamp-2 mb-3 min-h-[48px]">
+          {roadmap.title}
+        </h3>
 
-              {/* Tags & Difficulty */}
-              <div className="flex items-center gap-1.5 mb-3 flex-wrap">
-                {/* Difficulty Badge */}
-                <Badge
-                  variant="outline"
-                  className={cn('text-[9px] px-2 py-0.5 font-bold', difficultyConfig.color)}
-                >
-                  {difficultyConfig.icon} {difficultyConfig.label}
-                </Badge>
-                
-                {/* Tags */}
-                {roadmap.tags && roadmap.tags.slice(0, 2).map((tag) => (
-                  <Badge
-                    key={tag}
-                    variant="secondary"
-                    className="text-[9px] px-2 py-0.5 font-medium bg-sage-100 text-sage-700 border-0"
-                  >
-                    {tag}
-                  </Badge>
-                ))}
-              </div>
+        {/* 标签和难度 */}
+        <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+          <Badge
+            variant="outline"
+            className={cn('text-[9px] px-2 py-0.5 font-bold', difficultyConfig.color)}
+          >
+            {difficultyConfig.label}
+          </Badge>
+          
+          {roadmap.tags && roadmap.tags.slice(0, 2).map((tag) => (
+            <Badge
+              key={tag}
+              variant="secondary"
+              className="text-[9px] px-2 py-0.5 font-medium bg-sage-100 text-sage-700 border-0"
+            >
+              {tag}
+            </Badge>
+          ))}
+        </div>
 
-              {/* Meta Info */}
-              <div className="grid grid-cols-2 gap-2 mb-3 text-[10px]">
-                {roadmap.totalConcepts && roadmap.totalConcepts > 0 && (
-                  <div className="flex items-center gap-1.5 text-muted-foreground">
-                    <div className="w-1.5 h-1.5 rounded-full bg-sage-400" />
-                    <span className="font-medium">{roadmap.totalConcepts} concepts</span>
-                  </div>
-                )}
-                {roadmap.totalHours && roadmap.totalHours > 0 && (
-                  <div className="flex items-center gap-1.5 text-muted-foreground">
-                    <Clock className="w-3 h-3 text-sage-500" />
-                    <span className="font-medium">{roadmap.totalHours}h</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Social Stats */}
-              <div className="flex items-center justify-between pt-3 border-t border-sage-100">
-                <div className="flex items-center gap-3 text-[10px]">
-                  {/* Likes */}
-                  {likes > 0 && (
-                    <div className="flex items-center gap-1 text-rose-500 hover:text-rose-600 transition-colors cursor-pointer">
-                      <Heart className="w-3.5 h-3.5 fill-rose-100" />
-                      <span className="font-bold">{formatNumber(likes)}</span>
-                    </div>
-                  )}
-                  
-                  {/* Views */}
-                  {views > 0 && (
-                    <div className="flex items-center gap-1 text-sage-600">
-                      <Eye className="w-3.5 h-3.5" />
-                      <span className="font-semibold">{formatNumber(views)}</span>
-                    </div>
-                  )}
-                  
-                  {/* Learners */}
-                  {learners > 0 && (
-                    <div className="flex items-center gap-1 text-blue-600">
-                      <Users className="w-3.5 h-3.5" />
-                      <span className="font-semibold">{formatNumber(learners)}</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Time */}
-                <div className="text-[9px] text-muted-foreground font-medium">
-                  {formatRelativeTime(roadmap.createdAt)}
-                </div>
-              </div>
-
-              {/* Bookmark Hover Effect */}
-              <div className="absolute bottom-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button 
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    // TODO: Implement bookmark functionality
-                  }}
-                  className="w-8 h-8 rounded-full bg-white shadow-lg border border-sage-200 flex items-center justify-center hover:bg-sage-50 hover:border-sage-300 transition-all"
-                >
-                  <BookmarkPlus className="w-4 h-4 text-sage-600" />
-                </button>
-              </div>
-            </CardContent>
-          </Card>
-        </MagicCard>
-      </Link>
+        {/* 元信息 */}
+        <div className="flex items-center gap-3 text-xs text-muted-foreground mt-auto">
+          {roadmap.totalConcepts && roadmap.totalConcepts > 0 && (
+            <div className="flex items-center gap-1">
+              <BookOpen className="w-3.5 h-3.5" />
+              <span>{roadmap.totalConcepts} concepts</span>
+            </div>
+          )}
+          {roadmap.totalHours && roadmap.totalHours > 0 && (
+            <div className="flex items-center gap-1">
+              <Clock className="w-3.5 h-3.5" />
+              <span>{roadmap.totalHours}h</span>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
+/**
+ * 卡片背面内容 - 显示路线图的各个 Stage 信息
+ */
+function CardBack({ roadmap }: { roadmap: FeaturedRoadmap }) {
+  const stages = roadmap.stages || [];
+  const hasStages = stages.length > 0;
 
+  return (
+    <div className="flex flex-col h-full w-full p-4">
+      {/* 标题 */}
+      <h3 className="font-serif font-semibold text-base text-foreground mb-3 line-clamp-2">
+        {roadmap.title}
+      </h3>
 
+      {/* Stages 列表 */}
+      {hasStages ? (
+        <div className="flex-1 overflow-y-auto space-y-2 mb-3">
+          {stages.slice(0, 5).map((stage, index) => (
+            <div
+              key={index}
+              className="flex items-start gap-2 p-2 rounded-lg bg-sage-50/50 hover:bg-sage-100/50 transition-colors"
+            >
+              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-sage-200 flex items-center justify-center text-[10px] font-bold text-sage-700 mt-0.5">
+                {stage.order}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-foreground line-clamp-1">
+                  {stage.name}
+                </div>
+                {stage.description && (
+                  <div className="text-xs text-muted-foreground line-clamp-2 mt-0.5">
+                    {stage.description}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+          {stages.length > 5 && (
+            <div className="text-xs text-muted-foreground text-center py-1">
+              +{stages.length - 5} more stages
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="flex-1 flex items-center justify-center">
+          <p className="text-sm text-muted-foreground text-center">
+            {roadmap.tags && roadmap.tags.length > 0 
+              ? `Explore ${roadmap.tags.join(', ')} concepts and build your skills step by step.`
+              : `A comprehensive learning path to master ${roadmap.topic}.`
+            }
+          </p>
+        </div>
+      )}
 
+      {/* 底部操作区域 */}
+      <div className="flex items-center justify-between pt-3 border-t border-sage-100">
+        {/* 统计信息 */}
+        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+          {roadmap.totalConcepts && roadmap.totalConcepts > 0 && (
+            <div className="flex items-center gap-1">
+              <BookOpen className="w-3.5 h-3.5" />
+              <span>{roadmap.totalConcepts}</span>
+            </div>
+          )}
+          {roadmap.totalHours && roadmap.totalHours > 0 && (
+            <div className="flex items-center gap-1">
+              <Clock className="w-3.5 h-3.5" />
+              <span>{roadmap.totalHours}h</span>
+            </div>
+          )}
+        </div>
 
+        {/* 查看按钮 */}
+        <Link
+          href={`/roadmap/${roadmap.id}`}
+          className="flex items-center gap-1 text-xs font-medium text-sage-600 hover:text-sage-700 transition-colors"
+          onClick={(e) => e.stopPropagation()}
+        >
+          View
+          <ChevronRight className="w-3 h-3" />
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+export function FeaturedRoadmapCard({ roadmap, className }: FeaturedRoadmapCardProps) {
+  return (
+    <Link href={`/roadmap/${roadmap.id}`} className={cn('block', className)}>
+      <FlippingCard
+        width={280}
+        height={350}
+        frontContent={<CardFront roadmap={roadmap} />}
+        backContent={<CardBack roadmap={roadmap} />}
+        className="w-full"
+      />
+    </Link>
+  );
+}

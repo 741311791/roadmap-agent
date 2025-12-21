@@ -37,3 +37,4 @@ export { RadioGroup, RadioGroupItem } from './radio-group';
 export { Skeleton } from './skeleton';
 export { Input, type InputProps } from './input';
 export { Textarea, type TextareaProps } from './textarea';
+export { FlippingCard } from './flipping-card';

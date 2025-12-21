@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { EmptyState } from '@/components/common/empty-state';
-import { RoadmapCard, MyRoadmap } from '@/components/roadmap';
+import { FeaturedRoadmapCard, type FeaturedRoadmap } from '@/components/roadmap';
 import { ChevronLeft, TrendingUp, LayoutGrid, List } from 'lucide-react';
 import { getFeaturedRoadmaps } from '@/lib/api/endpoints';
 import { cn } from '@/lib/utils';
@@ -21,7 +21,7 @@ export default function ExplorePage() {
   const [isLoading, setIsLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [currentPage, setCurrentPage] = useState(1);
-  const [featuredRoadmaps, setFeaturedRoadmaps] = useState<MyRoadmap[]>([]);
+  const [featuredRoadmaps, setFeaturedRoadmaps] = useState<FeaturedRoadmap[]>([]);
   
   const itemsPerPage = viewMode === 'grid' ? 12 : 20;
   
@@ -31,17 +31,21 @@ export default function ExplorePage() {
       try {
         setIsLoading(true);
         const response = await getFeaturedRoadmaps(100, 0); // 获取所有精选路线图
-        const featuredData: MyRoadmap[] = response.roadmaps
+        const featuredData: FeaturedRoadmap[] = response.roadmaps
           .filter(item => item.status === 'completed') // 只显示已完成的路线图
           .map((item) => ({
             id: item.roadmap_id,
             title: item.title,
-            status: item.status || 'completed',
-            totalConcepts: item.total_concepts || 0,
-            completedConcepts: item.completed_concepts || 0,
-            totalHours: 0,
-            lastAccessedAt: item.created_at || new Date().toISOString(),
             topic: item.topic || item.title.toLowerCase(),
+            totalConcepts: item.total_concepts || 0,
+            totalHours: Math.ceil((item.total_concepts || 0) * 0.5), // 估算小时数：每个概念约0.5小时
+            difficulty: 'intermediate' as const,
+            createdAt: item.created_at,
+            stages: item.stages?.map(stage => ({
+              name: stage.name,
+              description: stage.description || undefined,
+              order: stage.order,
+            })),
           }));
         setFeaturedRoadmaps(featuredData);
       } catch (error) {
@@ -141,13 +145,11 @@ export default function ExplorePage() {
           <>
             {/* Grid View */}
             {viewMode === 'grid' && (
-              <div className="grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4 mb-8">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-8">
                 {displayedRoadmaps.map((roadmap) => (
-                  <RoadmapCard
+                  <FeaturedRoadmapCard
                     key={roadmap.id}
                     roadmap={roadmap}
-                    type="my"
-                    showActions={false}
                   />
                 ))}
               </div>

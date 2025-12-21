@@ -223,6 +223,7 @@ function MyRoadmapCard(props: Omit<MyRoadmapCardProps, 'type'>) {
           {/* 背景图片 */}
           <div className="absolute inset-0 h-full w-full">
             <CoverImage
+              roadmapId={id}
               topic={topic}
               title={title}
               className="w-full h-full object-cover transition-transform duration-500 ease-in-out group-hover:scale-110"
@@ -327,6 +328,7 @@ function CommunityRoadmapCard(props: Omit<CommunityRoadmapCardProps, 'type'>) {
           {/* 背景图片 */}
           <div className="absolute inset-0 h-full w-full">
             <CoverImage
+              roadmapId={id}
               topic={topic}
               title={title}
               className="w-full h-full object-cover transition-transform duration-500 ease-in-out group-hover:scale-110"

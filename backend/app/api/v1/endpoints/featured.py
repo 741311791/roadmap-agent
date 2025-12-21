@@ -19,6 +19,13 @@ router = APIRouter(prefix="/featured", tags=["featured"])
 logger = structlog.get_logger()
 
 
+class StageSummary(BaseModel):
+    """阶段摘要信息"""
+    name: str
+    description: Optional[str] = None
+    order: int
+
+
 class FeaturedRoadmapItem(BaseModel):
     """精选路线图条目"""
     roadmap_id: str
@@ -28,6 +35,7 @@ class FeaturedRoadmapItem(BaseModel):
     completed_concepts: int = 0
     topic: Optional[str] = None
     status: str = "completed"
+    stages: Optional[List[StageSummary]] = None
 
 
 class FeaturedRoadmapsResponse(BaseModel):
@@ -141,6 +149,15 @@ async def get_featured_roadmaps(
             learning_goal = task.user_request.get("preferences", {}).get("learning_goal", "")
             topic = learning_goal.lower()[:50] if learning_goal else None
         
+        # 提取 stages 信息
+        stage_summaries = []
+        for stage in stages:
+            stage_summaries.append(StageSummary(
+                name=stage.get("name", ""),
+                description=stage.get("description"),
+                order=stage.get("order", len(stage_summaries) + 1),
+            ))
+        
         # Featured路线图默认为completed状态（因为是精选内容）
         roadmap_items.append(FeaturedRoadmapItem(
             roadmap_id=roadmap.roadmap_id,
@@ -150,6 +167,7 @@ async def get_featured_roadmaps(
             completed_concepts=0,  # Featured路线图不显示完成进度
             topic=topic,
             status="completed",
+            stages=stage_summaries if stage_summaries else None,
         ))
     
     logger.info("featured_roadmaps_retrieved", 

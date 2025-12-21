@@ -145,10 +145,15 @@ export default function HomePage() {
             },
             tags: item.topic ? [item.topic] : [],
             totalConcepts: item.total_concepts || 0,
-            totalHours: 0, // TODO: 从 API 获取
+            totalHours: Math.ceil((item.total_concepts || 0) * 0.5), // 估算小时数：每个概念约0.5小时
             difficulty: 'intermediate' as const,
             isTrending: Math.random() > 0.7, // 随机标记为趋势
             createdAt: item.created_at || new Date().toISOString(),
+            stages: item.stages?.map(stage => ({
+              name: stage.name,
+              description: stage.description || undefined,
+              order: stage.order,
+            })),
           }));
         setFeaturedRoadmaps(featuredData);
       } catch (error) {

@@ -180,6 +180,7 @@ export function RoadmapCard({
             />
             
             <CoverImage
+              roadmapId={roadmap.id}
               topic={roadmap.topic}
               title={roadmap.title}
               className="rounded-t-xl"
