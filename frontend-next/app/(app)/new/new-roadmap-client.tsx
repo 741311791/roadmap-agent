@@ -16,6 +16,10 @@ import {
   CheckCircle2,
   AlertCircle,
   User,
+  Eye,
+  FileText,
+  Headphones,
+  Wrench,
 } from 'lucide-react';
 import { getUserProfile, getRoadmapStatus, type UserProfileData } from '@/lib/api/endpoints';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
@@ -36,10 +40,10 @@ interface FormData {
 }
 
 const contentOptions = [
-  { id: 'visual', label: 'Visual', icon: '🎬', desc: 'Videos, diagrams, demonstrations' },
-  { id: 'text', label: 'Text', icon: '📚', desc: 'Documentation, articles, books' },
-  { id: 'audio', label: 'Audio', icon: '🎧', desc: 'Podcasts, audio content' },
-  { id: 'hands_on', label: 'Hands-on', icon: '🛠️', desc: 'Interactive exercises, projects' },
+  { id: 'visual', label: 'Visual', icon: Eye, desc: 'Videos, diagrams, demonstrations' },
+  { id: 'text', label: 'Text', icon: FileText, desc: 'Documentation, articles, books' },
+  { id: 'audio', label: 'Audio', icon: Headphones, desc: 'Podcasts, audio content' },
+  { id: 'hands_on', label: 'Hands-on', icon: Wrench, desc: 'Interactive exercises, projects' },
 ];
 
 const levelOptions = [
@@ -456,23 +460,26 @@ export default function NewRoadmapClient() {
                 </button>
               </div>
               <div className="grid grid-cols-2 gap-3">
-                {contentOptions.map((option) => (
-                  <button
-                    key={option.id}
-                    onClick={() => toggleContentPreference(option.id)}
-                    className={`p-4 rounded-lg border text-left transition-colors ${
-                      formData.contentPreferences.includes(option.id)
-                        ? 'border-sage-600 bg-sage-50'
-                        : 'border-border hover:border-sage-300'
-                    }`}
-                  >
-                    <div className="flex items-center mb-1">
-                    <span className="text-xl mr-2">{option.icon}</span>
-                      <span className="font-medium">{option.label}</span>
-                    </div>
-                    <div className="text-xs text-muted-foreground">{option.desc}</div>
-                  </button>
-                ))}
+                {contentOptions.map((option) => {
+                  const Icon = option.icon;
+                  return (
+                    <button
+                      key={option.id}
+                      onClick={() => toggleContentPreference(option.id)}
+                      className={`p-4 rounded-lg border text-left transition-colors ${
+                        formData.contentPreferences.includes(option.id)
+                          ? 'border-sage-600 bg-sage-50'
+                          : 'border-border hover:border-sage-300'
+                      }`}
+                    >
+                      <div className="flex items-center mb-1">
+                        <Icon className="w-5 h-5 mr-2" />
+                        <span className="font-medium">{option.label}</span>
+                      </div>
+                      <div className="text-xs text-muted-foreground">{option.desc}</div>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 

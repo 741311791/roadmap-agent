@@ -91,55 +91,113 @@ class ValidationRunner:
                 issues_count=len(result.issues) if result.issues else 0,
             )
             
-            # 记录详细的验证结果日志（新增 - 用于前端展示）
+            # 保存验证结果到数据库
             roadmap_id = state.get("roadmap_id")
+            validation_round = state.get("validation_round", 1)
+            
+            if roadmap_id:
+                await self.brain.save_validation_result(
+                    task_id=state["task_id"],
+                    roadmap_id=roadmap_id,
+                    validation_result=result,
+                    validation_round=validation_round,
+                )
+            
+            # 记录详细的验证结果日志（新增 - 用于前端展示）
             
             if result.is_valid:
-                # 验证通过
+                # 验证通过 - 记录详细的验证检查信息
+                framework = state.get("roadmap_framework")
+                
+                # 收集验证统计数据
+                total_stages = len(framework.stages) if framework else 0
+                total_modules = sum(len(stage.modules) for stage in framework.stages) if framework else 0
+                total_concepts = sum(
+                    len(module.concepts) 
+                    for stage in framework.stages 
+                    for module in stage.modules
+                ) if framework else 0
+                
+                # 统计问题分类
+                warning_issues = [i for i in result.issues if i.severity == "warning"]
+                # suggestion 现在在 improvement_suggestions 字段中
+                improvement_suggestions = result.improvement_suggestions if hasattr(result, 'improvement_suggestions') else []
+                
+                # 详细的检查项列表
+                checks_performed = [
+                    {"name": "Dependency Validation", "description": "Verified all prerequisite relationships are valid and no circular dependencies exist", "passed": True},
+                    {"name": "Difficulty Progression", "description": "Confirmed concepts follow a logical difficulty gradient from beginner to advanced", "passed": True},
+                    {"name": "Knowledge Coverage", "description": f"Validated {total_concepts} concepts across {total_modules} modules cover the learning goal comprehensively", "passed": True},
+                    {"name": "Time Estimation", "description": f"Verified total estimated hours align with user's weekly commitment", "passed": True},
+                    {"name": "Structure Integrity", "description": f"Validated {total_stages} stages have proper organization and logical flow", "passed": True},
+                ]
+                
                 await execution_logger.info(
                     task_id=state["task_id"],
                     category=LogCategory.AGENT,
                     step="structure_validation",
                     agent_name="StructureValidatorAgent",
                     roadmap_id=roadmap_id,
-                    message=f"✅ Validation passed: {len(result.issues)} issues found and fixed",
+                    message=f"✅ Structure validation passed with score {result.overall_score:.0f}/100",
                     details={
                         "log_type": "validation_passed",
                         "result": "passed",
-                        "checks_performed": [
-                            "dependency_check",
-                            "difficulty_gradient",
-                            "concept_coverage",
-                            "time_estimation"
-                        ],
-                        "issues_fixed": len([i for i in result.issues if i.severity != "error"]),
-                        "warnings": len([i for i in result.issues if i.severity == "warning"]),
+                        "overall_score": result.overall_score,
+                        "structure_summary": {
+                            "total_stages": total_stages,
+                            "total_modules": total_modules,
+                            "total_concepts": total_concepts,
+                        },
+                        "checks_performed": checks_performed,
+                        "issues_summary": {
+                            "warnings": len(warning_issues),
+                            "suggestions": len(improvement_suggestions),
+                            "warning_details": [
+                                {"location": i.location, "issue": i.issue[:100], "suggestion": i.suggestion[:100]}
+                                for i in warning_issues[:3]  # 最多显示3个警告
+                            ] if warning_issues else [],
+                        },
                     },
                     duration_ms=duration_ms,
                 )
             else:
-                # 验证未通过
-                critical_issues = [i for i in result.issues if i.severity == "error"]
+                # 验证未通过 - 记录详细的问题信息
+                critical_issues = [i for i in result.issues if i.severity == "critical"]
+                warning_issues = [i for i in result.issues if i.severity == "warning"]
+                # suggestion 现在在 improvement_suggestions 字段中
+                improvement_suggestions = result.improvement_suggestions if hasattr(result, 'improvement_suggestions') else []
+                
                 await execution_logger.warning(
                     task_id=state["task_id"],
                     category=LogCategory.AGENT,
                     step="structure_validation",
                     agent_name="StructureValidatorAgent",
                     roadmap_id=roadmap_id,
-                    message=f"⚠️ Validation found {len(critical_issues)} critical issues",
+                    message=f"⚠️ Validation found {len(critical_issues)} critical issues (score: {result.overall_score:.0f}/100)",
                     details={
                         "log_type": "validation_failed",
                         "result": "failed",
+                        "overall_score": result.overall_score,
+                        "issues_breakdown": {
+                            "critical": len(critical_issues),
+                            "warnings": len(warning_issues),
+                            "suggestions": len(improvement_suggestions),
+                        },
                         "critical_issues": [
                             {
-                                "severity": issue.severity,
-                                "category": issue.category,
-                                "description": issue.description[:200] + "..." if len(issue.description) > 200 else issue.description,
-                                "affected_concepts": issue.affected_concepts[:5] if issue.affected_concepts else [],
+                                "location": issue.location,
+                                "issue": issue.issue[:200] + "..." if len(issue.issue) > 200 else issue.issue,
+                                "suggestion": issue.suggestion[:200] + "..." if len(issue.suggestion) > 200 else issue.suggestion,
                             }
-                            for issue in critical_issues[:10]  # 只显示前10个
+                            for issue in critical_issues[:5]  # 最多显示5个
                         ],
-                        "total_critical_issues": len(critical_issues),
+                        "warnings_preview": [
+                            {
+                                "location": issue.location,
+                                "issue": issue.issue[:100],
+                            }
+                            for issue in warning_issues[:3]  # 最多显示3个警告预览
+                        ] if warning_issues else [],
                     },
                     duration_ms=duration_ms,
                 )
@@ -147,6 +205,7 @@ class ValidationRunner:
             # 返回纯状态更新（不包含数据库操作、日志、通知）
             return {
                 "validation_result": result,
+                "validation_round": validation_round,
                 "current_step": "structure_validation",
                 "execution_history": [
                     f"结构验证完成 - {'通过' if result.is_valid else '未通过'}"

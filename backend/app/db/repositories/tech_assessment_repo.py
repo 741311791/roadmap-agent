@@ -92,7 +92,11 @@ class TechAssessmentRepository(BaseRepository[TechStackAssessment]):
         total_questions: int,
     ) -> TechStackAssessment:
         """
-        创建新的测验记录
+        创建新的测验记录（如果已存在则更新）
+        
+        使用 upsert 逻辑避免唯一约束冲突：
+        - 如果 (technology, proficiency_level) 已存在，更新题目
+        - 如果不存在，创建新记录
         
         Args:
             assessment_id: 测验ID (UUID)
@@ -102,29 +106,52 @@ class TechAssessmentRepository(BaseRepository[TechStackAssessment]):
             total_questions: 题目总数
             
         Returns:
-            创建的测验记录
+            创建或更新的测验记录
         """
-        assessment = TechStackAssessment(
-            assessment_id=assessment_id,
-            technology=technology,
-            proficiency_level=proficiency_level,
-            questions=questions,
-            total_questions=total_questions,
-        )
+        # 先检查是否已存在
+        existing = await self.get_assessment(technology, proficiency_level)
         
-        self.session.add(assessment)
-        await self.session.commit()
-        await self.session.refresh(assessment)
-        
-        logger.info(
-            "tech_assessment_created",
-            assessment_id=assessment_id,
-            technology=technology,
-            proficiency_level=proficiency_level,
-            total_questions=total_questions,
-        )
-        
-        return assessment
+        if existing:
+            # 已存在，更新题目
+            existing.questions = questions
+            existing.total_questions = total_questions
+            existing.assessment_id = assessment_id
+            
+            await self.session.commit()
+            await self.session.refresh(existing)
+            
+            logger.info(
+                "tech_assessment_updated",
+                assessment_id=assessment_id,
+                technology=technology,
+                proficiency_level=proficiency_level,
+                total_questions=total_questions,
+            )
+            
+            return existing
+        else:
+            # 不存在，创建新记录
+            assessment = TechStackAssessment(
+                assessment_id=assessment_id,
+                technology=technology,
+                proficiency_level=proficiency_level,
+                questions=questions,
+                total_questions=total_questions,
+            )
+            
+            self.session.add(assessment)
+            await self.session.commit()
+            await self.session.refresh(assessment)
+            
+            logger.info(
+                "tech_assessment_created",
+                assessment_id=assessment_id,
+                technology=technology,
+                proficiency_level=proficiency_level,
+                total_questions=total_questions,
+            )
+            
+            return assessment
     
     async def list_all_assessments(self) -> List[TechStackAssessment]:
         """
@@ -197,4 +224,29 @@ class TechAssessmentRepository(BaseRepository[TechStackAssessment]):
             ).limit(1)
         )
         return result.scalar_one_or_none() is not None
+
+    async def get_available_technologies(self) -> List[str]:
+        """
+        获取所有有测验题目的技术栈列表（去重）
+        
+        Returns:
+            技术栈名称列表（已排序）
+        """
+        from sqlalchemy import distinct
+        
+        result = await self.session.execute(
+            select(distinct(TechStackAssessment.technology)).order_by(
+                TechStackAssessment.technology
+            )
+        )
+        
+        technologies = [row[0] for row in result.all()]
+        
+        logger.debug(
+            "available_technologies_retrieved",
+            count=len(technologies),
+            technologies=technologies,
+        )
+        
+        return technologies
 

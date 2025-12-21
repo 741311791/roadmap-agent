@@ -61,6 +61,7 @@ class BaseAgent(ABC):
         self,
         messages: List[Dict[str, str]],
         tools: List[Dict] | None = None,
+        response_format: Dict | None = None,
     ) -> Any:
         """
         调用 LLM（通过 LiteLLM）
@@ -68,6 +69,7 @@ class BaseAgent(ABC):
         Args:
             messages: 对话消息列表
             tools: 工具定义（可选）
+            response_format: 响应格式（可选，如 {"type": "json_object"} 强制返回 JSON）
             
         Returns:
             LLM 响应对象
@@ -91,6 +93,8 @@ class BaseAgent(ABC):
                 call_params["api_key"] = self.api_key
             if tools:
                 call_params["tools"] = tools
+            if response_format:
+                call_params["response_format"] = response_format
             
             response = await litellm.acompletion(**call_params)
             

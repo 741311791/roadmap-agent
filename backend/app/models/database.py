@@ -207,7 +207,11 @@ class IntentAnalysisMetadata(SQLModel, table=True):
         default_factory=lambda: str(uuid.uuid4()),
         primary_key=True,
     )
-    task_id: str = Field(foreign_key="roadmap_tasks.task_id", index=True)
+    task_id: str = Field(
+        foreign_key="roadmap_tasks.task_id",
+        index=True,
+        unique=True,  # 确保每个任务只有一个需求分析记录
+    )
     
     # 路线图ID（在需求分析完成后生成）
     roadmap_id: Optional[str] = Field(default=None, index=True, description="路线图唯一标识")
@@ -458,6 +462,150 @@ class QuizAttempt(SQLModel, table=True):
         default_factory=beijing_now,
         sa_column=Column(DateTime(timezone=False)),
         description="答题时间（北京时间）"
+    )
+
+
+# ============================================================
+# 路线图验证和编辑记录表
+# ============================================================
+
+class StructureValidationRecord(SQLModel, table=True):
+    """
+    结构验证记录表
+    
+    存储每次 structure_validation 的验证结果，支持查看历史验证记录。
+    
+    新版本字段说明:
+    - dimension_scores: 5个维度的评分（知识完整性、知识进阶性、阶段连贯性、模块清晰度、用户匹配度）
+    - improvement_suggestions: 结构化的改进建议（包含 action, target_location, content, reason）
+    - validation_summary: 验证摘要（总体评价）
+    """
+    __tablename__ = "structure_validation_records"
+    
+    # 主键
+    id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        primary_key=True,
+        description="记录唯一标识"
+    )
+    
+    # 关联字段
+    task_id: str = Field(
+        foreign_key="roadmap_tasks.task_id",
+        index=True,
+        description="关联的任务 ID"
+    )
+    roadmap_id: str = Field(
+        index=True,
+        description="关联的路线图 ID"
+    )
+    
+    # 验证结果
+    is_valid: bool = Field(description="验证是否通过")
+    overall_score: float = Field(description="总体评分 0-100")
+    
+    # 问题详情（JSON）- 只包含 critical 和 warning
+    issues: dict = Field(
+        sa_column=Column(JSON),
+        description="验证问题列表（severity: critical/warning, category, location, issue, suggestion）"
+    )
+    
+    # 维度评分（JSON）
+    dimension_scores: dict = Field(
+        sa_column=Column(JSON),
+        description="5个维度的评分：knowledge_completeness, knowledge_progression, stage_coherence, module_clarity, user_alignment"
+    )
+    
+    # 改进建议（JSON）
+    improvement_suggestions: dict = Field(
+        sa_column=Column(JSON),
+        description="结构化改进建议列表（action, target_location, content, reason）"
+    )
+    
+    # 验证摘要
+    validation_summary: str = Field(
+        sa_column=Column(Text),
+        description="验证摘要：总体评价"
+    )
+    
+    # 验证轮次
+    validation_round: int = Field(
+        default=1,
+        description="第几轮验证（每次 edit 后重新验证时递增）"
+    )
+    
+    # 统计数据
+    critical_count: int = Field(default=0, description="严重问题数量")
+    warning_count: int = Field(default=0, description="警告问题数量")
+    suggestion_count: int = Field(default=0, description="改进建议数量（来自 improvement_suggestions）")
+    
+    # 时间戳
+    created_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False)),
+        description="创建时间（北京时间）"
+    )
+
+
+class RoadmapEditRecord(SQLModel, table=True):
+    """
+    路线图编辑记录表
+    
+    存储每次 roadmap_edit 的编辑前后数据，用于对比和节点差异标记。
+    """
+    __tablename__ = "roadmap_edit_records"
+    
+    # 主键
+    id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        primary_key=True,
+        description="记录唯一标识"
+    )
+    
+    # 关联字段
+    task_id: str = Field(
+        foreign_key="roadmap_tasks.task_id",
+        index=True,
+        description="关联的任务 ID"
+    )
+    roadmap_id: str = Field(
+        index=True,
+        description="关联的路线图 ID"
+    )
+    
+    # 编辑前后的框架数据
+    origin_framework_data: dict = Field(
+        sa_column=Column(JSON),
+        description="编辑前的完整框架数据"
+    )
+    modified_framework_data: dict = Field(
+        sa_column=Column(JSON),
+        description="编辑后的完整框架数据"
+    )
+    
+    # 差异摘要（由 Agent 或后端计算）
+    modification_summary: str = Field(
+        sa_column=Column(Text),
+        description="修改摘要描述"
+    )
+    
+    # 修改的节点 ID 列表
+    modified_node_ids: list = Field(
+        sa_column=Column(JSON),
+        description="修改过的 concept_id 列表（用于前端高亮）"
+    )
+    
+    # 编辑轮次
+    edit_round: int = Field(
+        default=1,
+        description="第几轮编辑"
+    )
+    
+    # 时间戳
+    created_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False)),
+        description="创建时间（北京时间）"
     )
 
 

@@ -1023,6 +1023,70 @@
         }
       }
     },
+    "/api/v1/tasks/{task_id}/retry": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Retry Task",
+        "description": "智能重试失败的任务\n\n两种重试策略：\n1. **Checkpoint 恢复**（粗粒度）：\n   - 适用于工作流早期阶段失败（intent_analysis, curriculum_design, roadmap_edit等）\n   - 从 LangGraph checkpoint 恢复，继续执行工作流\n   - 保留所有中间状态\n\n2. **内容重试**（细粒度）：\n   - 适用于内容生成阶段部分失败\n   - 扫描 framework_data，只重新生成失败的 Concept 内容\n   - 节省 API 调用成本\n\n自动判断逻辑：\n- 如果存在 checkpoint 且任务失败在内容生成之前 → Checkpoint 恢复\n- 如果有失败的 Concept 内容 → 内容重试\n- 如果 force_checkpoint=true → 强制使用 Checkpoint 恢复\n\nArgs:\n    task_id: 任务 ID\n    user_id: 用户 ID\n    force_checkpoint: 强制使用 checkpoint 恢复\n    background_tasks: FastAPI 后台任务\n    db: 数据库会话\n    \nReturns:\n    重试任务的信息\n    \nRaises:\n    HTTPException: 404 - 任务不存在\n    HTTPException: 400 - 无法重试（没有 checkpoint 也没有失败内容）",
+        "operationId": "retry_task_api_v1_tasks__task_id__retry_post",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "用户ID",
+              "title": "User Id"
+            },
+            "description": "用户ID"
+          },
+          {
+            "name": "force_checkpoint",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "强制使用 checkpoint 恢复",
+              "default": false,
+              "title": "Force Checkpoint"
+            },
+            "description": "强制使用 checkpoint 恢复"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/progress/roadmaps/{roadmap_id}/concepts/{concept_id}": {
       "put": {
         "tags": [
@@ -1053,9 +1117,16 @@
           {
             "name": "x-user-id",
             "in": "header",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": "string",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "X-User-Id"
             }
           }
@@ -1115,9 +1186,16 @@
           {
             "name": "x-user-id",
             "in": "header",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": "string",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "X-User-Id"
             }
           }
@@ -1180,9 +1258,16 @@
           {
             "name": "x-user-id",
             "in": "header",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": "string",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "X-User-Id"
             }
           }
@@ -1205,6 +1290,220 @@
                 "schema": {
                   "$ref": "#/components/schemas/QuizAttemptResponse"
                 }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tasks/{task_id}/validation/latest": {
+      "get": {
+        "tags": [
+          "validation"
+        ],
+        "summary": "Get Latest Validation",
+        "description": "获取任务的最新验证结果\n\nArgs:\n    task_id: 任务 ID\n    db: 数据库会话\n    \nReturns:\n    最新的验证记录，包含验证结果、问题列表等\n    \nRaises:\n    HTTPException: 404 - 验证记录不存在\n    \nExample:\n    ```json\n    {\n        \"id\": \"uuid\",\n        \"task_id\": \"task-123\",\n        \"roadmap_id\": \"roadmap-456\",\n        \"is_valid\": false,\n        \"overall_score\": 75.5,\n        \"issues\": {\n            \"issues\": [\n                {\n                    \"severity\": \"critical\",\n                    \"location\": \"Stage 2 > Module 1\",\n                    \"issue\": \"循环依赖检测到\",\n                    \"suggestion\": \"移除 Concept A -> B -> A 的依赖\"\n                }\n            ]\n        },\n        \"validation_round\": 1,\n        \"critical_count\": 2,\n        \"warning_count\": 5,\n        \"suggestion_count\": 3,\n        \"created_at\": \"2024-01-01T00:00:00\"\n    }\n    ```",
+        "operationId": "get_latest_validation_api_v1_tasks__task_id__validation_latest_get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tasks/{task_id}/validation/history": {
+      "get": {
+        "tags": [
+          "validation"
+        ],
+        "summary": "Get Validation History",
+        "description": "获取任务的所有验证历史记录\n\nArgs:\n    task_id: 任务 ID\n    db: 数据库会话\n    \nReturns:\n    验证记录列表（按轮次降序排列）\n    \nExample:\n    ```json\n    [\n        {\n            \"id\": \"uuid-1\",\n            \"task_id\": \"task-123\",\n            \"validation_round\": 2,\n            \"is_valid\": true,\n            \"overall_score\": 92.0,\n            \"created_at\": \"2024-01-01T01:00:00\"\n        },\n        {\n            \"id\": \"uuid-2\",\n            \"task_id\": \"task-123\",\n            \"validation_round\": 1,\n            \"is_valid\": false,\n            \"overall_score\": 75.5,\n            \"created_at\": \"2024-01-01T00:00:00\"\n        }\n    ]\n    ```",
+        "operationId": "get_validation_history_api_v1_tasks__task_id__validation_history_get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tasks/{task_id}/edit/latest": {
+      "get": {
+        "tags": [
+          "edit"
+        ],
+        "summary": "Get Latest Edit",
+        "description": "获取任务的最新编辑记录（包含 modified_node_ids）\n\nArgs:\n    task_id: 任务 ID\n    db: 数据库会话\n    \nReturns:\n    最新的编辑记录，包含修改的节点 ID 列表\n    \nRaises:\n    HTTPException: 404 - 编辑记录不存在\n    \nExample:\n    ```json\n    {\n        \"id\": \"uuid\",\n        \"task_id\": \"task-123\",\n        \"roadmap_id\": \"roadmap-456\",\n        \"modification_summary\": \"AI 根据第 1 轮验证结果优化了路线图结构\",\n        \"modified_node_ids\": [\"concept-1\", \"concept-5\", \"concept-12\"],\n        \"edit_round\": 1,\n        \"created_at\": \"2024-01-01T00:00:00\"\n    }\n    ```",
+        "operationId": "get_latest_edit_api_v1_tasks__task_id__edit_latest_get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tasks/{task_id}/edit/history": {
+      "get": {
+        "tags": [
+          "edit"
+        ],
+        "summary": "Get Edit History",
+        "description": "获取任务的所有编辑历史记录\n\nArgs:\n    task_id: 任务 ID\n    db: 数据库会话\n    \nReturns:\n    编辑记录列表（按轮次降序排列）\n    \nExample:\n    ```json\n    [\n        {\n            \"id\": \"uuid-1\",\n            \"task_id\": \"task-123\",\n            \"edit_round\": 2,\n            \"modification_summary\": \"AI 根据第 2 轮验证结果优化了路线图结构\",\n            \"modified_nodes_count\": 3,\n            \"created_at\": \"2024-01-01T01:00:00\"\n        },\n        {\n            \"id\": \"uuid-2\",\n            \"task_id\": \"task-123\",\n            \"edit_round\": 1,\n            \"modification_summary\": \"AI 根据第 1 轮验证结果优化了路线图结构\",\n            \"modified_nodes_count\": 5,\n            \"created_at\": \"2024-01-01T00:00:00\"\n        }\n    ]\n    ```",
+        "operationId": "get_edit_history_api_v1_tasks__task_id__edit_history_get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tasks/{task_id}/edit/{edit_round}/diff": {
+      "get": {
+        "tags": [
+          "edit"
+        ],
+        "summary": "Get Edit Diff",
+        "description": "获取特定编辑轮次的前后对比数据\n\n返回完整的 origin_framework_data 和 modified_framework_data，\n用于前端展示详细的变更对比。\n\nArgs:\n    task_id: 任务 ID\n    edit_round: 编辑轮次\n    db: 数据库会话\n    \nReturns:\n    包含原始框架和修改后框架的完整数据\n    \nRaises:\n    HTTPException: 404 - 编辑记录不存在",
+        "operationId": "get_edit_diff_api_v1_tasks__task_id__edit__edit_round__diff_get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "edit_round",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Edit Round"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },
@@ -1553,6 +1852,300 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Delete Note Api V1 Mentor Notes  Note Id  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tech-assessments/available-technologies": {
+      "get": {
+        "tags": [
+          "tech-assessments"
+        ],
+        "summary": "Get Available Technologies",
+        "description": "获取所有有测验题目的技术栈列表\n\nReturns:\n    所有可用技术栈的列表（去重并排序）\n    \nExample:\n    GET /api/v1/tech-assessments/available-technologies\n    Response: {\n        \"technologies\": [\"angular\", \"aws\", \"docker\", \"python\", \"react\", ...],\n        \"count\": 20\n    }",
+        "operationId": "get_available_technologies_api_v1_tech_assessments_available_technologies_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AvailableTechnologiesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tech-assessments/{technology}/{proficiency}": {
+      "get": {
+        "tags": [
+          "tech-assessments"
+        ],
+        "summary": "Get Tech Assessment",
+        "description": "获取技术栈能力测验题目（混合级别抽选20题）\n\n根据用户能力级别，从3个级别的题库中按不同比例随机抽选题目：\n- Beginner: 14道beginner, 4道intermediate, 2道expert（侧重基础）\n- Intermediate: 4道beginner, 12道intermediate, 4道expert（均衡分布）\n- Expert: 2道beginner, 6道intermediate, 12道expert（侧重进阶）\n\nArgs:\n    technology: 技术栈名称 (python, react, java等)\n    proficiency: 能力级别 (beginner, intermediate, expert)\n    \nReturns:\n    包含20道题目的测验数据（不包含答案和解析）\n    \nRaises:\n    HTTPException: 404 - 测验不存在\n    HTTPException: 400 - 题库题目不足\n    \nExample:\n    GET /api/v1/tech-assessments/python/intermediate",
+        "operationId": "get_tech_assessment_api_v1_tech_assessments__technology___proficiency__get",
+        "parameters": [
+          {
+            "name": "technology",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Technology"
+            }
+          },
+          {
+            "name": "proficiency",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Proficiency"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tech-assessments/{technology}/{proficiency}/evaluate": {
+      "post": {
+        "tags": [
+          "tech-assessments"
+        ],
+        "summary": "Evaluate Assessment",
+        "description": "评估测验结果（支持混合级别题目）\n\n从缓存中获取用户的测验题目（包含答案），进行评估。\n\n计算加权分数：\n- Beginner题: 1分\n- Intermediate题: 2分\n- Expert题: 3分\n\n判定逻辑：\n- ≥80%: confirmed - 确认当前级别\n- 60-79%: adjust - 建议保持当前级别\n- <60%: downgrade - 建议降低级别\n\nArgs:\n    technology: 技术栈名称\n    proficiency: 能力级别\n    request: 包含测验ID和用户答案的请求\n    \nReturns:\n    评估结果，包括得分、正确率和建议\n    \nRaises:\n    HTTPException: 404 - 测验会话不存在或已过期\n    HTTPException: 400 - 答案数量与题目数量不匹配\n    \nExample:\n    POST /api/v1/tech-assessments/python/intermediate/evaluate\n    {\n        \"assessment_id\": \"uuid\",\n        \"answers\": [\"选项A\", \"选项B\", ...]\n    }",
+        "operationId": "evaluate_assessment_api_v1_tech_assessments__technology___proficiency__evaluate_post",
+        "parameters": [
+          {
+            "name": "technology",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Technology"
+            }
+          },
+          {
+            "name": "proficiency",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Proficiency"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvaluateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvaluationResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tech-assessments/{technology}/{proficiency}/analyze": {
+      "post": {
+        "tags": [
+          "tech-assessments"
+        ],
+        "summary": "Analyze Capability",
+        "description": "分析用户的技术栈能力（支持混合级别题目）\n\n基于LLM深度分析用户的答题情况，重点关注错题，提供：\n- 整体能力评价\n- 优势和薄弱点分析\n- 知识缺口识别\n- 个性化学习建议\n- 能力级别验证\n\nArgs:\n    technology: 技术栈名称\n    proficiency: 能力级别\n    request: 包含测验ID、用户ID、答案列表和是否保存到画像的标志\n    \nReturns:\n    详细的能力分析结果\n    \nRaises:\n    HTTPException: 404 - 测验会话不存在或已过期\n    HTTPException: 400 - 答案数量不匹配\n    HTTPException: 500 - 分析失败\n    \nExample:\n    POST /api/v1/tech-assessments/python/intermediate/analyze\n    {\n        \"user_id\": \"user123\",\n        \"assessment_id\": \"uuid\",\n        \"answers\": [\"选项A\", \"选项B\", ...],\n        \"save_to_profile\": true\n    }",
+        "operationId": "analyze_capability_api_v1_tech_assessments__technology___proficiency__analyze_post",
+        "parameters": [
+          {
+            "name": "technology",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Technology"
+            }
+          },
+          {
+            "name": "proficiency",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Proficiency"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalyzeCapabilityRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapabilityAnalysisResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tech-assessments/custom": {
+      "post": {
+        "tags": [
+          "tech-assessments"
+        ],
+        "summary": "Get Custom Tech Assessment",
+        "description": "获取自定义技术栈测验\n\n- 检查数据库是否已存在该技术栈的所有级别题库\n- 如果不存在，后台生成题库（3个级别）\n- 如果已存在，直接返回题目\n\nArgs:\n    request: 包含技术栈名称和能力级别\n    background_tasks: FastAPI 后台任务\n    db: 数据库会话\n    \nReturns:\n    生成状态或测验题目\n    \nExample:\n    POST /api/v1/tech-assessments/custom\n    {\n        \"technology\": \"hive\",\n        \"proficiency\": \"intermediate\"\n    }",
+        "operationId": "get_custom_tech_assessment_api_v1_tech_assessments_custom_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomTechAssessmentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomAssessmentResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/featured/roadmaps": {
+      "get": {
+        "tags": [
+          "featured"
+        ],
+        "summary": "Get Featured Roadmaps",
+        "description": "获取精选路线图列表\n\n从配置的Featured User (admin@example.com) 获取已完成的路线图，\n用于首页Featured Roadmaps模块展示。\n\nArgs:\n    limit: 返回数量限制（默认50）\n    offset: 分页偏移（默认0）\n    db: 数据库会话\n    \nReturns:\n    精选路线图列表（只包含已完成且未删除的路线图）\n    \nRaises:\n    HTTPException: 404 - Featured用户不存在\n    \nExample:\n    ```json\n    {\n        \"roadmaps\": [\n            {\n                \"roadmap_id\": \"roadmap-001\",\n                \"title\": \"Python Web Development\",\n                \"created_at\": \"2024-01-01T00:00:00\",\n                \"total_concepts\": 28,\n                \"completed_concepts\": 0,\n                \"topic\": \"python web\",\n                \"status\": \"completed\"\n            }\n        ],\n        \"total\": 1,\n        \"featured_user_id\": \"user-001\",\n        \"featured_user_email\": \"admin@example.com\"\n    }\n    ```",
+        "operationId": "get_featured_roadmaps_api_v1_featured_roadmaps_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeaturedRoadmapsResponse"
                 }
               }
             }
@@ -2115,7 +2708,7 @@
           "users"
         ],
         "summary": "Get User Roadmaps",
-        "description": "获取用户的路线图列表（只包括已生成完成的路线图）\n\nArgs:\n    user_id: 用户 ID\n    limit: 返回数量限制（默认50）\n    offset: 分页偏移（默认0）\n    \nReturns:\n    用户的路线图列表（从 roadmap_metadata 表查询）",
+        "description": "获取用户的路线图列表（只包括已生成完成的路线图）\n\nArgs:\n    user_id: 用户 ID\n    limit: 返回数量限制（默认50）\n    offset: 分页偏移（默认0）\n    \nReturns:\n    用户的路线图列表（从 roadmap_metadata 表查询）\n    \nNote:\n    学习进度从 concept_progress 表获取，而不是 content_status 字段。\n    content_status 表示内容生成状态，concept_progress 表示用户学习进度。",
         "operationId": "get_user_roadmaps_api_v1_users__user_id__roadmaps_get",
         "parameters": [
           {
@@ -2241,7 +2834,7 @@
           "users"
         ],
         "summary": "Get User Tasks",
-        "description": "获取用户的任务列表，支持按状态筛选\n\nArgs:\n    user_id: 用户 ID\n    status: 任务状态筛选（可选）\n    limit: 返回数量限制（默认50）\n    offset: 分页偏移（默认0）\n    \nReturns:\n    任务列表及各状态统计",
+        "description": "获取用户的任务列表，支持按状态和任务类型筛选\n\nArgs:\n    user_id: 用户 ID\n    status: 任务状态筛选（可选）\n    task_type: 任务类型筛选（可选）：creation, retry_tutorial, retry_resources, retry_quiz, retry_batch\n    limit: 返回数量限制（默认50）\n    offset: 分页偏移（默认0）\n    \nReturns:\n    任务列表及各状态统计",
         "operationId": "get_user_tasks_api_v1_users__user_id__tasks_get",
         "parameters": [
           {
@@ -2267,6 +2860,22 @@
                 }
               ],
               "title": "Status"
+            }
+          },
+          {
+            "name": "task_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Task Type"
             }
           },
           {
@@ -2314,13 +2923,56 @@
         }
       }
     },
+    "/api/v1/intent-analysis/{task_id}": {
+      "get": {
+        "tags": [
+          "intent-analysis"
+        ],
+        "summary": "Get Intent Analysis",
+        "description": "获取指定 task_id 的需求分析元数据\n\nArgs:\n    task_id: 任务 ID\n    \nReturns:\n    需求分析元数据\n    \nRaises:\n    HTTPException: 404 - 需求分析元数据不存在",
+        "operationId": "get_intent_analysis_api_v1_intent_analysis__task_id__get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntentAnalysisResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/trace/{task_id}/logs": {
       "get": {
         "tags": [
           "trace"
         ],
         "summary": "Get Trace Logs",
-        "description": "获取指定 task_id 的执行日志\n\nArgs:\n    task_id: 追踪 ID（通常等于 task_id）\n    level: 过滤日志级别（debug, info, warning, error）\n    category: 过滤日志分类（workflow, agent, tool, database）\n    limit: 返回数量限制（默认 100，最大 500）\n    offset: 分页偏移\n    \nReturns:\n    执行日志列表",
+        "description": "获取指定 task_id 的执行日志\n\nArgs:\n    task_id: 追踪 ID（通常等于 task_id）\n    level: 过滤日志级别（debug, info, warning, error）\n    category: 过滤日志分类（workflow, agent, tool, database）\n    limit: 返回数量限制（默认 100，最大 2000）\n    offset: 分页偏移\n    \nReturns:\n    执行日志列表",
         "operationId": "get_trace_logs_api_v1_trace__task_id__logs_get",
         "parameters": [
           {
@@ -2505,6 +3157,628 @@
         }
       }
     },
+    "/api/v1/waitlist": {
+      "post": {
+        "tags": [
+          "waitlist"
+        ],
+        "summary": "Join Waitlist",
+        "description": "加入候补名单\n\n用户在首页提交邮箱后调用此接口，将邮箱存入候补名单。\n如果邮箱已存在，返回成功但标记为非新用户。\n\nArgs:\n    request: 包含邮箱和来源的请求体\n    db: 数据库会话\n    \nReturns:\n    加入结果，包含成功标志和是否为新用户",
+        "operationId": "join_waitlist_api_v1_waitlist_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WaitlistJoinRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WaitlistJoinResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/waitlist/count": {
+      "get": {
+        "tags": [
+          "waitlist"
+        ],
+        "summary": "Get Waitlist Count",
+        "description": "获取候补名单人数（仅供管理员查看）\n\nReturns:\n    候补名单统计信息",
+        "operationId": "get_waitlist_count_api_v1_waitlist_count_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/jwt/login": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Auth:Jwt.Login",
+        "operationId": "auth_jwt_login_api_v1_auth_jwt_login_post",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_auth_jwt_login_api_v1_auth_jwt_login_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BearerResponse"
+                },
+                "example": {
+                  "access_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoiOTIyMWZmYzktNjQwZi00MzcyLTg2ZDMtY2U2NDJjYmE1NjAzIiwiYXVkIjoiZmFzdGFwaS11c2VyczphdXRoIiwiZXhwIjoxNTcxNTA0MTkzfQ.M10bjOe45I5Ncu_uXvOmVV8QxnL-nZfcH96U90JaocI",
+                  "token_type": "bearer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                },
+                "examples": {
+                  "LOGIN_BAD_CREDENTIALS": {
+                    "summary": "Bad credentials or the user is inactive.",
+                    "value": {
+                      "detail": "LOGIN_BAD_CREDENTIALS"
+                    }
+                  },
+                  "LOGIN_USER_NOT_VERIFIED": {
+                    "summary": "The user is not verified.",
+                    "value": {
+                      "detail": "LOGIN_USER_NOT_VERIFIED"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/jwt/logout": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Auth:Jwt.Logout",
+        "operationId": "auth_jwt_logout_api_v1_auth_jwt_logout_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Missing token or inactive user."
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/users/me": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Users:Current User",
+        "operationId": "users_current_user_api_v1_users_me_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRead"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing token or inactive user."
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Users:Patch Current User",
+        "operationId": "users_patch_current_user_api_v1_users_me_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRead"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                },
+                "examples": {
+                  "UPDATE_USER_EMAIL_ALREADY_EXISTS": {
+                    "summary": "A user with this email already exists.",
+                    "value": {
+                      "detail": "UPDATE_USER_EMAIL_ALREADY_EXISTS"
+                    }
+                  },
+                  "UPDATE_USER_INVALID_PASSWORD": {
+                    "summary": "Password validation failed.",
+                    "value": {
+                      "detail": {
+                        "code": "UPDATE_USER_INVALID_PASSWORD",
+                        "reason": "Password should beat least 3 characters"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing token or inactive user."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/users/{id}": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Users:User",
+        "operationId": "users_user_api_v1_users__id__get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRead"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing token or inactive user."
+          },
+          "403": {
+            "description": "Not a superuser."
+          },
+          "404": {
+            "description": "The user does not exist."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Users:Patch User",
+        "operationId": "users_patch_user_api_v1_users__id__patch",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRead"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "UPDATE_USER_EMAIL_ALREADY_EXISTS": {
+                    "summary": "A user with this email already exists.",
+                    "value": {
+                      "detail": "UPDATE_USER_EMAIL_ALREADY_EXISTS"
+                    }
+                  },
+                  "UPDATE_USER_INVALID_PASSWORD": {
+                    "summary": "Password validation failed.",
+                    "value": {
+                      "detail": {
+                        "code": "UPDATE_USER_INVALID_PASSWORD",
+                        "reason": "Password should beat least 3 characters"
+                      }
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Missing token or inactive user."
+          },
+          "403": {
+            "description": "Not a superuser."
+          },
+          "404": {
+            "description": "The user does not exist."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Users:Delete User",
+        "operationId": "users_delete_user_api_v1_users__id__delete",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing token or inactive user."
+          },
+          "403": {
+            "description": "Not a superuser."
+          },
+          "404": {
+            "description": "The user does not exist."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/invite-user": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Invite User",
+        "description": "邀请 Waitlist 用户\n\n为指定邮箱创建用户账号，生成临时密码。\n只有超级管理员可以调用此接口。\n\n注意：\n- 临时密码仅返回一次，请妥善保存并发送给用户\n- 密码会在指定天数后过期\n- 如果用户已存在，会返回错误\n\nArgs:\n    request: 邀请请求，包含邮箱和密码有效期\n    \nReturns:\n    邀请结果，包含临时密码",
+        "operationId": "invite_user_api_v1_admin_invite_user_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InviteUserRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InviteUserResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/waitlist": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Waitlist",
+        "description": "获取 Waitlist 用户列表\n\n只有超级管理员可以查看。\n\nArgs:\n    limit: 每页数量\n    offset: 偏移量\n    pending_only: 是否只显示未邀请的用户\n    \nReturns:\n    Waitlist 用户列表和统计信息",
+        "operationId": "get_waitlist_api_v1_admin_waitlist_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "pending_only",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Pending Only"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WaitlistResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/create-superuser": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Create Initial Superuser",
+        "description": "创建初始超级管理员（仅在没有超级管理员时可用）\n\n这是一个初始化端点，只有当系统中没有超级管理员时才能调用。\n创建第一个超级管理员后，此端点将返回错误。\n\nArgs:\n    email: 管理员邮箱\n    password: 管理员密码\n    \nReturns:\n    创建结果",
+        "operationId": "create_initial_superuser_api_v1_admin_create_superuser_post",
+        "parameters": [
+          {
+            "name": "email",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "email",
+              "title": "Email"
+            }
+          },
+          {
+            "name": "password",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Password"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "summary": "Health Check",
@@ -2525,6 +3799,257 @@
   },
   "components": {
     "schemas": {
+      "AnalyzeCapabilityRequest": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "title": "User Id",
+            "description": "用户ID"
+          },
+          "assessment_id": {
+            "type": "string",
+            "title": "Assessment Id",
+            "description": "测验ID"
+          },
+          "answers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Answers",
+            "description": "用户的答案列表（按题目顺序）"
+          },
+          "save_to_profile": {
+            "type": "boolean",
+            "title": "Save To Profile",
+            "description": "是否保存到用户画像",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "assessment_id",
+          "answers"
+        ],
+        "title": "AnalyzeCapabilityRequest",
+        "description": "能力分析请求模型"
+      },
+      "AssessmentResponse": {
+        "properties": {
+          "assessment_id": {
+            "type": "string",
+            "title": "Assessment Id"
+          },
+          "technology": {
+            "type": "string",
+            "title": "Technology"
+          },
+          "proficiency_level": {
+            "type": "string",
+            "title": "Proficiency Level"
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/QuestionResponse"
+            },
+            "type": "array",
+            "title": "Questions"
+          },
+          "total_questions": {
+            "type": "integer",
+            "title": "Total Questions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "assessment_id",
+          "technology",
+          "proficiency_level",
+          "questions",
+          "total_questions"
+        ],
+        "title": "AssessmentResponse",
+        "description": "测验响应模型"
+      },
+      "AvailableTechnologiesResponse": {
+        "properties": {
+          "technologies": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Technologies",
+            "description": "技术栈名称列表"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count",
+            "description": "技术栈总数"
+          }
+        },
+        "type": "object",
+        "required": [
+          "technologies",
+          "count"
+        ],
+        "title": "AvailableTechnologiesResponse",
+        "description": "可用技术栈列表响应模型"
+      },
+      "BearerResponse": {
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "title": "Access Token"
+          },
+          "token_type": {
+            "type": "string",
+            "title": "Token Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "access_token",
+          "token_type"
+        ],
+        "title": "BearerResponse"
+      },
+      "Body_auth_jwt_login_api_v1_auth_jwt_login_post": {
+        "properties": {
+          "grant_type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^password$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grant Type"
+          },
+          "username": {
+            "type": "string",
+            "title": "Username"
+          },
+          "password": {
+            "type": "string",
+            "format": "password",
+            "title": "Password"
+          },
+          "scope": {
+            "type": "string",
+            "title": "Scope",
+            "default": ""
+          },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          },
+          "client_secret": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "format": "password",
+            "title": "Client Secret"
+          }
+        },
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "title": "Body_auth_jwt_login_api_v1_auth_jwt_login_post"
+      },
+      "CapabilityAnalysisResult": {
+        "properties": {
+          "technology": {
+            "type": "string",
+            "title": "Technology",
+            "description": "技术栈名称"
+          },
+          "proficiency_level": {
+            "type": "string",
+            "title": "Proficiency Level",
+            "description": "声称的能力级别"
+          },
+          "overall_assessment": {
+            "type": "string",
+            "title": "Overall Assessment",
+            "description": "整体评价"
+          },
+          "strengths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Strengths",
+            "description": "优势领域列表"
+          },
+          "weaknesses": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Weaknesses",
+            "description": "薄弱点列表"
+          },
+          "knowledge_gaps": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeGap"
+            },
+            "type": "array",
+            "title": "Knowledge Gaps",
+            "description": "知识缺口列表"
+          },
+          "learning_suggestions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Learning Suggestions",
+            "description": "学习建议列表"
+          },
+          "proficiency_verification": {
+            "$ref": "#/components/schemas/ProficiencyVerification",
+            "description": "能力级别验证"
+          },
+          "score_breakdown": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ScoreBreakdownItem"
+            },
+            "type": "object",
+            "title": "Score Breakdown",
+            "description": "各难度得分情况"
+          }
+        },
+        "type": "object",
+        "required": [
+          "technology",
+          "proficiency_level",
+          "overall_assessment",
+          "strengths",
+          "weaknesses",
+          "knowledge_gaps",
+          "learning_suggestions",
+          "proficiency_verification",
+          "score_breakdown"
+        ],
+        "title": "CapabilityAnalysisResult",
+        "description": "能力分析结果模型"
+      },
       "ChatMessageRequest": {
         "properties": {
           "user_id": {
@@ -2660,6 +4185,155 @@
         ],
         "title": "ConceptProgressUpdate",
         "description": "标记/取消 Concept 完成状态请求"
+      },
+      "CustomAssessmentResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "generation_started | ready"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "assessment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssessmentResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "message"
+        ],
+        "title": "CustomAssessmentResponse",
+        "description": "自定义测验响应模型"
+      },
+      "CustomTechAssessmentRequest": {
+        "properties": {
+          "technology": {
+            "type": "string",
+            "title": "Technology",
+            "description": "自定义技术栈名称"
+          },
+          "proficiency": {
+            "type": "string",
+            "title": "Proficiency",
+            "description": "能力级别"
+          }
+        },
+        "type": "object",
+        "required": [
+          "technology",
+          "proficiency"
+        ],
+        "title": "CustomTechAssessmentRequest",
+        "description": "自定义技能测验请求模型"
+      },
+      "ErrorModel": {
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              }
+            ],
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail"
+        ],
+        "title": "ErrorModel"
+      },
+      "EvaluateRequest": {
+        "properties": {
+          "assessment_id": {
+            "type": "string",
+            "title": "Assessment Id",
+            "description": "测验ID（前端获取题目时返回的ID）"
+          },
+          "answers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Answers",
+            "description": "用户的答案列表（按题目顺序）"
+          }
+        },
+        "type": "object",
+        "required": [
+          "assessment_id",
+          "answers"
+        ],
+        "title": "EvaluateRequest",
+        "description": "评估请求模型"
+      },
+      "EvaluationResult": {
+        "properties": {
+          "score": {
+            "type": "integer",
+            "title": "Score",
+            "description": "得分"
+          },
+          "max_score": {
+            "type": "integer",
+            "title": "Max Score",
+            "description": "总分"
+          },
+          "percentage": {
+            "type": "number",
+            "title": "Percentage",
+            "description": "正确率百分比"
+          },
+          "correct_count": {
+            "type": "integer",
+            "title": "Correct Count",
+            "description": "答对题数"
+          },
+          "total_questions": {
+            "type": "integer",
+            "title": "Total Questions",
+            "description": "题目总数"
+          },
+          "recommendation": {
+            "type": "string",
+            "title": "Recommendation",
+            "description": "建议: confirmed, adjust, downgrade"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "description": "建议说明"
+          }
+        },
+        "type": "object",
+        "required": [
+          "score",
+          "max_score",
+          "percentage",
+          "correct_count",
+          "total_questions",
+          "recommendation",
+          "message"
+        ],
+        "title": "EvaluationResult",
+        "description": "评估结果模型"
       },
       "ExecutionLogListResponse": {
         "properties": {
@@ -2799,6 +4473,88 @@
         "title": "ExecutionLogResponse",
         "description": "执行日志响应"
       },
+      "FeaturedRoadmapItem": {
+        "properties": {
+          "roadmap_id": {
+            "type": "string",
+            "title": "Roadmap Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "total_concepts": {
+            "type": "integer",
+            "title": "Total Concepts"
+          },
+          "completed_concepts": {
+            "type": "integer",
+            "title": "Completed Concepts",
+            "default": 0
+          },
+          "topic": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "completed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "roadmap_id",
+          "title",
+          "created_at",
+          "total_concepts"
+        ],
+        "title": "FeaturedRoadmapItem",
+        "description": "精选路线图条目"
+      },
+      "FeaturedRoadmapsResponse": {
+        "properties": {
+          "roadmaps": {
+            "items": {
+              "$ref": "#/components/schemas/FeaturedRoadmapItem"
+            },
+            "type": "array",
+            "title": "Roadmaps"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "featured_user_id": {
+            "type": "string",
+            "title": "Featured User Id"
+          },
+          "featured_user_email": {
+            "type": "string",
+            "title": "Featured User Email"
+          }
+        },
+        "type": "object",
+        "required": [
+          "roadmaps",
+          "total",
+          "featured_user_id",
+          "featured_user_email"
+        ],
+        "title": "FeaturedRoadmapsResponse",
+        "description": "精选路线图列表响应"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -2811,6 +4567,240 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "IntentAnalysisResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "task_id": {
+            "type": "string",
+            "title": "Task Id"
+          },
+          "roadmap_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Roadmap Id"
+          },
+          "parsed_goal": {
+            "type": "string",
+            "title": "Parsed Goal"
+          },
+          "key_technologies": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Key Technologies"
+          },
+          "difficulty_profile": {
+            "type": "string",
+            "title": "Difficulty Profile"
+          },
+          "time_constraint": {
+            "type": "string",
+            "title": "Time Constraint"
+          },
+          "recommended_focus": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Recommended Focus"
+          },
+          "user_profile_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Profile Summary"
+          },
+          "skill_gap_analysis": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Skill Gap Analysis"
+          },
+          "personalized_suggestions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Personalized Suggestions"
+          },
+          "estimated_learning_path_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimated Learning Path Type"
+          },
+          "content_format_weights": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Format Weights"
+          },
+          "language_preferences": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language Preferences"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "task_id",
+          "parsed_goal",
+          "key_technologies",
+          "difficulty_profile",
+          "time_constraint",
+          "recommended_focus",
+          "skill_gap_analysis",
+          "personalized_suggestions"
+        ],
+        "title": "IntentAnalysisResponse",
+        "description": "需求分析响应"
+      },
+      "InviteUserRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email"
+          },
+          "password_validity_days": {
+            "type": "integer",
+            "title": "Password Validity Days",
+            "default": 30
+          },
+          "send_email": {
+            "type": "boolean",
+            "title": "Send Email",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "title": "InviteUserRequest",
+        "description": "邀请用户请求\n\nArgs:\n    email: 要邀请的用户邮箱\n    password_validity_days: 临时密码有效期（天），默认 30 天\n    send_email: 是否发送邀请邮件，默认 True"
+      },
+      "InviteUserResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "username": {
+            "type": "string",
+            "title": "Username"
+          },
+          "temp_password": {
+            "type": "string",
+            "title": "Temp Password"
+          },
+          "expires_at": {
+            "type": "string",
+            "title": "Expires At"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success",
+          "email",
+          "username",
+          "temp_password",
+          "expires_at",
+          "message"
+        ],
+        "title": "InviteUserResponse",
+        "description": "邀请用户响应\n\nArgs:\n    success: 是否成功\n    email: 用户邮箱\n    username: 生成的用户名\n    temp_password: 临时密码（仅返回一次，请妥善保存）\n    expires_at: 密码过期时间\n    message: 提示消息"
+      },
+      "KnowledgeGap": {
+        "properties": {
+          "topic": {
+            "type": "string",
+            "title": "Topic",
+            "description": "主题名称"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "description": "详细说明"
+          },
+          "priority": {
+            "type": "string",
+            "title": "Priority",
+            "description": "优先级: high/medium/low"
+          },
+          "recommendations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Recommendations",
+            "description": "学习建议列表"
+          }
+        },
+        "type": "object",
+        "required": [
+          "topic",
+          "description",
+          "priority",
+          "recommendations"
+        ],
+        "title": "KnowledgeGap",
+        "description": "知识缺口模型"
       },
       "LearningPreferences": {
         "properties": {
@@ -2958,6 +4948,81 @@
         ],
         "title": "LearningPreferences",
         "description": "学习偏好配置"
+      },
+      "ProficiencyVerification": {
+        "properties": {
+          "claimed_level": {
+            "type": "string",
+            "title": "Claimed Level",
+            "description": "声称的能力级别"
+          },
+          "verified_level": {
+            "type": "string",
+            "title": "Verified Level",
+            "description": "验证的实际能力级别"
+          },
+          "confidence": {
+            "type": "string",
+            "title": "Confidence",
+            "description": "置信度: high/medium/low"
+          },
+          "reasoning": {
+            "type": "string",
+            "title": "Reasoning",
+            "description": "判定依据"
+          }
+        },
+        "type": "object",
+        "required": [
+          "claimed_level",
+          "verified_level",
+          "confidence",
+          "reasoning"
+        ],
+        "title": "ProficiencyVerification",
+        "description": "能力级别验证模型"
+      },
+      "QuestionResponse": {
+        "properties": {
+          "question": {
+            "type": "string",
+            "title": "Question",
+            "description": "题目内容"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type",
+            "description": "题目类型: single_choice, multiple_choice, true_false"
+          },
+          "options": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Options",
+            "description": "选项列表"
+          },
+          "proficiency_level": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proficiency Level",
+            "description": "题目来源级别: beginner, intermediate, expert"
+          }
+        },
+        "type": "object",
+        "required": [
+          "question",
+          "type",
+          "options"
+        ],
+        "title": "QuestionResponse",
+        "description": "题目响应模型"
       },
       "QuizAttemptCreate": {
         "properties": {
@@ -3293,6 +5358,33 @@
         "title": "RoadmapHistoryResponse",
         "description": "用户路线图历史响应"
       },
+      "ScoreBreakdownItem": {
+        "properties": {
+          "correct": {
+            "type": "integer",
+            "title": "Correct",
+            "description": "答对题数"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "总题数"
+          },
+          "percentage": {
+            "type": "number",
+            "title": "Percentage",
+            "description": "正确率百分比"
+          }
+        },
+        "type": "object",
+        "required": [
+          "correct",
+          "total",
+          "percentage"
+        ],
+        "title": "ScoreBreakdownItem",
+        "description": "分数细分项"
+      },
       "TaskListItem": {
         "properties": {
           "task_id": {
@@ -3418,6 +5510,19 @@
             "type": "string",
             "title": "Proficiency",
             "description": "熟练程度: beginner, intermediate, expert"
+          },
+          "capability_analysis": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capability Analysis",
+            "description": "能力分析结果（可选）"
           }
         },
         "type": "object",
@@ -3672,6 +5777,70 @@
         "title": "UserProfileResponse",
         "description": "用户画像响应体"
       },
+      "UserRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "default": true
+          },
+          "is_superuser": {
+            "type": "boolean",
+            "title": "Is Superuser",
+            "default": false
+          },
+          "is_verified": {
+            "type": "boolean",
+            "title": "Is Verified",
+            "default": false
+          },
+          "username": {
+            "type": "string",
+            "title": "Username"
+          },
+          "password_expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Password Expires At"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "username"
+        ],
+        "title": "UserRead",
+        "description": "用户读取模式\n\n包含所有可对外展示的用户信息。"
+      },
       "UserRequest": {
         "properties": {
           "user_id": {
@@ -3707,6 +5876,80 @@
         "title": "UserRequest",
         "description": "系统输入：用户请求"
       },
+      "UserUpdate": {
+        "properties": {
+          "password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Password"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "email"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
+          },
+          "is_superuser": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Superuser"
+          },
+          "is_verified": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Verified"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          }
+        },
+        "type": "object",
+        "title": "UserUpdate",
+        "description": "用户更新模式\n\n用户自行更新信息时的输入模式。"
+      },
       "ValidationError": {
         "properties": {
           "loc": {
@@ -3739,6 +5982,122 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "WaitlistJoinRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "default": "landing_page"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "title": "WaitlistJoinRequest",
+        "description": "加入候补名单请求\n\nArgs:\n    email: 用户邮箱地址\n    source: 来源标记（可选，默认为 landing_page）"
+      },
+      "WaitlistJoinResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "is_new": {
+            "type": "boolean",
+            "title": "Is New"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success",
+          "message",
+          "is_new"
+        ],
+        "title": "WaitlistJoinResponse",
+        "description": "加入候补名单响应\n\nArgs:\n    success: 是否成功\n    message: 提示消息\n    is_new: 是否为新用户（首次加入）"
+      },
+      "WaitlistResponse": {
+        "properties": {
+          "users": {
+            "items": {
+              "$ref": "#/components/schemas/WaitlistUserInfo"
+            },
+            "type": "array",
+            "title": "Users"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "pending": {
+            "type": "integer",
+            "title": "Pending"
+          },
+          "invited": {
+            "type": "integer",
+            "title": "Invited"
+          }
+        },
+        "type": "object",
+        "required": [
+          "users",
+          "total",
+          "pending",
+          "invited"
+        ],
+        "title": "WaitlistResponse",
+        "description": "Waitlist 列表响应\n\nArgs:\n    users: 用户列表\n    total: 总数\n    pending: 待邀请数\n    invited: 已邀请数"
+      },
+      "WaitlistUserInfo": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "invited": {
+            "type": "boolean",
+            "title": "Invited"
+          },
+          "invited_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invited At"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "source",
+          "invited",
+          "created_at"
+        ],
+        "title": "WaitlistUserInfo",
+        "description": "Waitlist 用户信息\n\nArgs:\n    email: 用户邮箱\n    source: 来源\n    invited: 是否已邀请\n    invited_at: 邀请时间\n    created_at: 加入时间"
       },
       "app__api__v1__endpoints__modification__ModifyContentRequest": {
         "properties": {
@@ -3875,6 +6234,17 @@
         ],
         "title": "RetryFailedRequest",
         "description": "断点续传请求"
+      }
+    },
+    "securitySchemes": {
+      "OAuth2PasswordBearer": {
+        "type": "oauth2",
+        "flows": {
+          "password": {
+            "scopes": {},
+            "tokenUrl": "api/v1/auth/jwt/login"
+          }
+        }
       }
     }
   }

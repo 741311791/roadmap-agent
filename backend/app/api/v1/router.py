@@ -19,8 +19,16 @@ from .endpoints import (
     waitlist,
     admin,
     tech_assessment,
+    featured,
+    validation,
+    edit,
+    status,
+    streaming,
+    management,
+    users,
+    intent,
+    trace,
 )
-from .roadmap import users_router, router as roadmap_router, trace_router, intent_router
 from app.core.auth import fastapi_users, auth_backend
 from app.core.auth.schemas import UserRead, UserCreate, UserUpdate
 
@@ -56,23 +64,38 @@ router.include_router(retry.tasks_router)
 # 学习进度相关
 router.include_router(progress.router)
 
+# 验证记录相关
+router.include_router(validation.router)
+
+# 编辑记录相关
+router.include_router(edit.router)
+
 # 伴学Agent相关（聊天、笔记）
 router.include_router(mentor.router)
 
 # 技术栈能力测试相关
 router.include_router(tech_assessment.router)
 
-# 路线图管理相关（删除、恢复等）
-router.include_router(roadmap_router)
+# 精选路线图相关
+router.include_router(featured.router)
+
+# 路线图状态查询
+router.include_router(status.router)
+
+# 流式生成
+router.include_router(streaming.router)
+
+# 路线图管理（删除、恢复等）
+router.include_router(management.router)
 
 # 用户相关（画像等）
-router.include_router(users_router)
+router.include_router(users.router)
 
 # 需求分析相关
-router.include_router(intent_router)
+router.include_router(intent.router)
 
 # 执行追踪相关（日志、摘要）
-router.include_router(trace_router)
+router.include_router(trace.router)
 
 # 候补名单相关
 router.include_router(waitlist.router)

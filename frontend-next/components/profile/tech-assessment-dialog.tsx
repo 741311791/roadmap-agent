@@ -9,7 +9,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Loader2, History, Sparkles } from 'lucide-react';
-import { getTechAssessment, evaluateTechAssessment, getUserProfile } from '@/lib/api/endpoints';
+import { getTechAssessment, evaluateTechAssessment, getUserProfile, getCustomTechAssessment } from '@/lib/api/endpoints';
 import { AssessmentQuestions } from './assessment-questions';
 import { AssessmentResult } from './assessment-result';
 import { CapabilityAnalysisReport } from './capability-analysis-report';
@@ -45,6 +45,8 @@ export function TechAssessmentDialog({
   const [result, setResult] = useState<AssessmentEvaluationResult | null>(null);
   const [analysisResult, setAnalysisResult] = useState<CapabilityAnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generationMessage, setGenerationMessage] = useState<string>('');
   
   // 历史报告相关状态
   const [historyDialogOpen, setHistoryDialogOpen] = useState(false);
@@ -63,15 +65,47 @@ export function TechAssessmentDialog({
     try {
       setIsLoading(true);
       setError(null);
-      const data = await getTechAssessment(technology, proficiency);
-      setAssessment(data);
-      setAnswers({});
-      setResult(null);
+      setIsGenerating(false);
+      setGenerationMessage('');
+      
+      // 首先尝试获取常规测验
+      try {
+        const data = await getTechAssessment(technology, proficiency);
+        setAssessment(data);
+        setAnswers({});
+        setResult(null);
+      } catch (err: any) {
+        // 如果是404错误，尝试自定义技术栈生成
+        if (err.response?.status === 404) {
+          console.log('Assessment not found, trying custom generation...');
+          setIsGenerating(true);
+          
+          const customResponse = await getCustomTechAssessment(technology, proficiency);
+          
+          if (customResponse.status === 'ready' && customResponse.assessment) {
+            // 题库已存在，直接使用
+            setAssessment(customResponse.assessment);
+            setAnswers({});
+            setResult(null);
+            setIsGenerating(false);
+          } else if (customResponse.status === 'generation_started') {
+            // 需要生成题库
+            setGenerationMessage(customResponse.message);
+            setError(null);
+          }
+        } else {
+          throw err;
+        }
+      }
     } catch (err: any) {
       console.error('Failed to fetch assessment:', err);
-      setError(err.message || 'Failed to load assessment');
+      if (!isGenerating) {
+        setError(err.message || 'Failed to load assessment');
+      }
     } finally {
-      setIsLoading(false);
+      if (!isGenerating) {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -152,6 +186,8 @@ export function TechAssessmentDialog({
     setResult(null);
     setAnalysisResult(null);
     setError(null);
+    setIsGenerating(false);
+    setGenerationMessage('');
     onOpenChange(false);
   };
 
@@ -184,6 +220,21 @@ export function TechAssessmentDialog({
           {isLoading ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="w-8 h-8 animate-spin text-sage-600" />
+            </div>
+          ) : isGenerating ? (
+            <div className="text-center py-12 space-y-4">
+              <Loader2 className="w-12 h-12 animate-spin text-sage-600 mx-auto" />
+              <div className="space-y-2">
+                <p className="text-lg font-medium text-charcoal">
+                  Generating Assessment Questions
+                </p>
+                <p className="text-sm text-muted-foreground max-w-md mx-auto">
+                  {generationMessage || `Creating custom ${technology} assessment for ${proficiency} level. This may take 1-2 minutes...`}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  You can close this dialog and come back later.
+                </p>
+              </div>
             </div>
           ) : error ? (
             <div className="text-center py-8">

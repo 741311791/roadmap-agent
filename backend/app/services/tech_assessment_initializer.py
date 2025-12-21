@@ -98,6 +98,9 @@ async def initialize_tech_assessments() -> Dict[str, Any]:
                             await asyncio.sleep(1)
                     
                     except Exception as e:
+                        # 回滚当前事务，避免影响后续操作
+                        await db.rollback()
+                        
                         logger.error(
                             "tech_assessment_generation_failed",
                             technology=tech,
@@ -107,6 +110,8 @@ async def initialize_tech_assessments() -> Dict[str, Any]:
                         )
                         failed_count += 1
                         failed_items.append(f"{tech}-{level}")
+                        # 继续处理下一个
+                        continue
             
             result = {
                 "total_expected": total_expected,

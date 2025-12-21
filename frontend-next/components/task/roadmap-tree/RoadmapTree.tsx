@@ -15,7 +15,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { Maximize2, Minimize2, Loader2, ChevronsRight, ChevronsDown, Filter } from 'lucide-react';
+import { Maximize2, Minimize2, Loader2, ChevronsRight, ChevronsDown, Filter, History } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -27,7 +27,8 @@ import {
   DropdownMenuCheckboxItem,
   DropdownMenuTrigger, 
   DropdownMenuSeparator,
-  DropdownMenuLabel
+  DropdownMenuLabel,
+  DropdownMenuItem
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 
@@ -40,18 +41,82 @@ import type {
   TreeNodeData,
   ExpansionState,
 } from './types';
+import { roadmapsApi, type EditHistoryVersion } from '@/lib/api/endpoints/roadmaps';
 
 /**
  * 编辑模式蒙版组件
  */
-function EditingOverlay() {
+function EditingOverlay({ taskId }: { taskId?: string }) {
+  const [editRecord, setEditRecord] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!taskId) {
+      setLoading(false);
+      return;
+    }
+
+    // 获取最新的编辑记录
+    const fetchEditRecord = async () => {
+      try {
+        const { roadmapsApi } = await import('@/lib/api/endpoints');
+        const data = await roadmapsApi.getLatestEdit(taskId);
+        setEditRecord(data);
+      } catch (error) {
+        console.error('Failed to fetch edit record:', error);
+        // 即使获取失败，也不影响显示
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchEditRecord();
+  }, [taskId]);
+
   return (
-    <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-40 flex items-center justify-center rounded-lg">
-      <div className="flex flex-col items-center gap-3">
-        <Loader2 className="w-8 h-8 text-sage-600 animate-spin" />
-        <p className="text-sm text-muted-foreground font-medium">
-          Updating roadmap structure...
-        </p>
+    <div className="absolute inset-0 bg-white/90 backdrop-blur-sm z-40 rounded-lg overflow-auto">
+      <div className="p-6 space-y-6">
+        {/* 顶部状态指示 */}
+        <div className="flex items-center gap-3">
+          <Loader2 className="w-6 h-6 text-sage-600 animate-spin flex-shrink-0" />
+          <div>
+            <h3 className="font-semibold text-lg">Updating Roadmap Structure</h3>
+            <p className="text-sm text-muted-foreground">
+              AI is refining the roadmap based on validation feedback...
+            </p>
+          </div>
+        </div>
+
+        {/* 编辑记录详情 */}
+        {!loading && editRecord && (
+          <div className="space-y-3">
+            <div className="rounded-lg border bg-white p-4">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-muted-foreground">Edit Round</span>
+                  <span className="text-sm font-semibold">#{editRecord.edit_round}</span>
+                </div>
+                <div className="text-sm">
+                  <span className="font-medium text-muted-foreground">Summary:</span>
+                  <p className="mt-1 text-foreground">{editRecord.modification_summary}</p>
+                </div>
+                <div className="flex items-center justify-between pt-2 border-t">
+                  <span className="text-sm text-muted-foreground">Modified Nodes</span>
+                  <span className="text-sm font-semibold text-sage-600">
+                    {editRecord.modified_node_ids?.length || 0}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 加载中 */}
+        {loading && (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="w-6 h-6 text-sage-500 animate-spin" />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -69,6 +134,7 @@ interface TreeViewContentProps {
   onNodeClick: (node: TreeNodeData) => void;
   onToggleExpand: (nodeId: string) => void;
   isEditing?: boolean;
+  taskId?: string;
 }
 
 function TreeViewContent({
@@ -80,6 +146,7 @@ function TreeViewContent({
   onNodeClick,
   onToggleExpand,
   isEditing,
+  taskId,
 }: TreeViewContentProps) {
   return (
     <div
@@ -109,7 +176,7 @@ function TreeViewContent({
       ))}
       
       {/* 编辑模式蒙版 */}
-      {isEditing && <EditingOverlay />}
+      {isEditing && <EditingOverlay taskId={taskId} />}
     </div>
   );
 }
@@ -118,6 +185,9 @@ export function RoadmapTree({
   stages,
   showStartNode = false,
   isEditing = false,
+  taskId,
+  roadmapId,
+  showHistoryButton = false,
   modifiedNodeIds = [],
   loadingConceptIds = [],
   failedConceptIds = [],
@@ -143,11 +213,72 @@ export function RoadmapTree({
   // 状态筛选
   const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set(['completed', 'loading', 'pending', 'failed', 'partial_failure', 'modified']));
   
+  // 历史版本相关状态
+  const [historyVersions, setHistoryVersions] = useState<EditHistoryVersion[]>([]);
+  const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
+  const [showHistoryDropdown, setShowHistoryDropdown] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  
+  // 获取历史版本列表
+  useEffect(() => {
+    if (!showHistoryButton || !taskId || !roadmapId) return;
+    
+    const fetchHistory = async () => {
+      setHistoryLoading(true);
+      try {
+        const history = await roadmapsApi.getFullEditHistory(taskId, roadmapId);
+        setHistoryVersions(history.versions);
+      } catch (error) {
+        console.error('Failed to fetch edit history:', error);
+      } finally {
+        setHistoryLoading(false);
+      }
+    };
+    
+    fetchHistory();
+  }, [taskId, roadmapId, showHistoryButton]);
+  
+  // 版本选择处理
+  const handleVersionSelect = useCallback((versionNumber: number) => {
+    setSelectedVersion(versionNumber);
+    setShowHistoryDropdown(false);
+  }, []);
+  
+  // 重置到当前版本
+  const handleResetToCurrentVersion = useCallback(() => {
+    setSelectedVersion(null);
+  }, []);
+  
+  // 根据选中的版本确定要显示的stages和modifiedNodeIds
+  const { displayStages, displayModifiedNodeIds } = useMemo(() => {
+    if (selectedVersion === null) {
+      // 显示当前版本
+      return {
+        displayStages: stages,
+        displayModifiedNodeIds: modifiedNodeIds
+      };
+    }
+    
+    // 显示历史版本
+    const version = historyVersions.find(v => v.version === selectedVersion);
+    if (!version) {
+      return {
+        displayStages: stages,
+        displayModifiedNodeIds: modifiedNodeIds
+      };
+    }
+    
+    return {
+      displayStages: version.framework_data.stages || [],
+      displayModifiedNodeIds: version.modified_node_ids
+    };
+  }, [selectedVersion, historyVersions, stages, modifiedNodeIds]);
+  
   // 计算布局
   const { nodes, connections, totalWidth, totalHeight } = useTreeLayout({
-    stages,
+    stages: displayStages,
     expansionState,
-    modifiedNodeIds,
+    modifiedNodeIds: displayModifiedNodeIds,
     loadingConceptIds,
     failedConceptIds,
     partialFailedConceptIds,
@@ -287,6 +418,31 @@ export function RoadmapTree({
       >
         {/* 整体进度条和统计 - 集成工具栏 */}
         <div className="px-4 pt-4 pb-2 border-b">
+          {/* 版本查看提示 Banner */}
+          {selectedVersion !== null && (
+            <div className="mb-3 px-3 py-2 bg-sage-50 border border-sage-200 rounded-lg flex items-center justify-between">
+              <div className="flex items-center gap-2 text-xs">
+                <History className="w-3.5 h-3.5 text-sage-600" />
+                <span className="text-sage-700 font-medium">
+                  Viewing Version {selectedVersion}
+                </span>
+                <span className="text-muted-foreground">
+                  {historyVersions.find(v => v.version === selectedVersion)?.created_at 
+                    ? `(${new Date(historyVersions.find(v => v.version === selectedVersion)!.created_at).toLocaleDateString()})`
+                    : ''}
+                </span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleResetToCurrentVersion}
+                className="h-6 text-xs gap-1"
+              >
+                Back to Current
+              </Button>
+            </div>
+          )}
+          
           {/* 标题栏 */}
           <div className="flex items-center justify-between mb-2">
             <span className="font-medium text-muted-foreground text-xs">Overall Progress</span>
@@ -414,6 +570,73 @@ export function RoadmapTree({
                   </DropdownMenuContent>
                 </DropdownMenu>
                 
+                {/* 历史版本按钮 */}
+                {showHistoryButton && taskId && roadmapId && (
+                  <DropdownMenu open={showHistoryDropdown} onOpenChange={setShowHistoryDropdown}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0"
+                            disabled={historyLoading}
+                          >
+                            {historyLoading ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <History className="w-3.5 h-3.5" />
+                            )}
+                          </Button>
+                        </DropdownMenuTrigger>
+                      </TooltipTrigger>
+                      <TooltipContent side="left" className="text-xs">
+                        View History
+                      </TooltipContent>
+                    </Tooltip>
+                    <DropdownMenuContent align="end" className="w-80 max-h-96 overflow-y-auto">
+                      <DropdownMenuLabel className="text-xs">Version History</DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      {historyVersions.length === 0 ? (
+                        <div className="px-2 py-4 text-center text-xs text-muted-foreground">
+                          {historyLoading ? 'Loading...' : 'No edit history available'}
+                        </div>
+                      ) : (
+                        historyVersions.map((version) => (
+                          <DropdownMenuItem
+                            key={version.version}
+                            onClick={() => handleVersionSelect(version.version)}
+                            className={cn(
+                              'cursor-pointer',
+                              selectedVersion === version.version && 'bg-sage-100'
+                            )}
+                          >
+                            <div className="flex flex-col gap-1 w-full">
+                              <div className="flex items-center justify-between">
+                                <span className="font-medium text-xs">
+                                  Version {version.version}
+                                  {version.version === historyVersions.length && ' (Current)'}
+                                </span>
+                                <span className="text-[10px] text-muted-foreground">
+                                  {new Date(version.created_at).toLocaleDateString()}
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-muted-foreground line-clamp-2">
+                                {version.modification_summary}
+                              </p>
+                              {version.modified_node_ids.length > 0 && (
+                                <span className="text-[10px] text-cyan-600">
+                                  {version.modified_node_ids.length} nodes modified
+                                </span>
+                              )}
+                            </div>
+                          </DropdownMenuItem>
+                        ))
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
+                
                 {/* 全部展开/折叠按钮 */}
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -458,18 +681,19 @@ export function RoadmapTree({
          
          {/* 内容区域 - 自适应高度，支持水平滚动 */}
          <div className="w-full overflow-x-auto">
-           <div className="p-4">
-             <TreeViewContent
-               nodes={filteredNodes}
-               connections={filteredConnections}
-               totalWidth={totalWidth}
-               totalHeight={totalHeight}
-               selectedNode={selectedNode}
-               onNodeClick={handleNodeClick}
-               onToggleExpand={handleToggleExpand}
-               isEditing={isEditing}
-             />
-           </div>
+         <div className="p-4">
+            <TreeViewContent
+              nodes={filteredNodes}
+              connections={filteredConnections}
+              totalWidth={totalWidth}
+              totalHeight={totalHeight}
+              selectedNode={selectedNode}
+              onNodeClick={handleNodeClick}
+              onToggleExpand={handleToggleExpand}
+              isEditing={isEditing}
+              taskId={taskId}
+            />
+          </div>
          </div>
         
         {/* 节点详情弹出层 */}
@@ -514,6 +738,7 @@ export function RoadmapTree({
                 onNodeClick={handleNodeClick}
                 onToggleExpand={handleToggleExpand}
                 isEditing={isEditing}
+                taskId={taskId}
               />
             </div>
           </div>

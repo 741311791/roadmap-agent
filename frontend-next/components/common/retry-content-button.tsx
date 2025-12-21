@@ -41,9 +41,9 @@ interface RetryContentButtonProps {
 }
 
 const CONTENT_TYPE_LABELS: Record<ContentType, string> = {
-  tutorial: '重新生成教程',
-  resources: '重新获取资源',
-  quiz: '重新生成测验',
+  tutorial: 'Regenerate Tutorial',
+  resources: 'Retry Fetch Resources',
+  quiz: 'Regenerate Quiz',
 };
 
 /**
@@ -92,8 +92,9 @@ export function RetryContentButton({
     setIsRetrying(true);
     
     // 乐观更新：立即将状态设置为 'generating'
+    // 注意：教程状态字段名是 content_status（匹配 Concept 类型定义）
     const statusKey = contentType === 'tutorial' 
-      ? 'tutorial_status' 
+      ? 'content_status' 
       : contentType === 'resources' 
         ? 'resources_status' 
         : 'quiz_status';
@@ -229,7 +230,7 @@ export function RetryContentButton({
         <RefreshCw className="w-4 h-4" />
       )}
       {showLabel && (
-        <span>{isRetrying ? '重试中...' : CONTENT_TYPE_LABELS[contentType]}</span>
+        <span>{isRetrying ? 'Retrying...' : CONTENT_TYPE_LABELS[contentType]}</span>
       )}
     </Button>
   );
@@ -250,9 +251,9 @@ export function GeneratingContentAlert({
   className?: string;
 }) {
   const defaultMessage = {
-    tutorial: '教程内容正在生成中',
-    resources: '学习资源正在获取中',
-    quiz: '测验题目正在生成中',
+    tutorial: 'Tutorial content is being generated',
+    resources: 'Learning resources are being fetched',
+    quiz: 'Quiz questions are being generated',
   };
 
   return (
@@ -269,7 +270,7 @@ export function GeneratingContentAlert({
           {message || defaultMessage[contentType]}
         </h3>
         <p className="text-sm text-sage-600 dark:text-sage-400">
-          这可能需要几分钟时间，请稍候...
+          This may take a few minutes. Please wait...
         </p>
       </div>
       {/* 可选：添加进度条或动画 */}
@@ -305,9 +306,9 @@ export function FailedContentAlert({
   className?: string;
 }) {
   const defaultMessage = {
-    tutorial: '教程内容生成失败',
-    resources: '学习资源获取失败',
-    quiz: '测验题目生成失败',
+    tutorial: 'Tutorial Generation Failed',
+    resources: 'Resources Fetch Failed',
+    quiz: 'Quiz Generation Failed',
   };
 
   return (
@@ -324,7 +325,7 @@ export function FailedContentAlert({
           {message || defaultMessage[contentType]}
         </h3>
         <p className="text-sm text-red-600 dark:text-red-400">
-          您可以尝试重新生成此内容
+          You can try to regenerate this content
         </p>
       </div>
       <RetryContentButton

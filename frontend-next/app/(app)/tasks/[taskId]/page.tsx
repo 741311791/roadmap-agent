@@ -457,11 +457,84 @@ export default function TaskDetailPage() {
 
     websocket.connect(true);
     setWs(websocket);
+    
+    // ========================================
+    // 轮询兜底机制：防止 WebSocket 通知丢失
+    // ========================================
+    // 在 content_generation 阶段，每 10 秒轮询一次任务状态
+    // 如果发现任务已完成但前端未收到通知，手动更新状态
+    let pollingInterval: NodeJS.Timeout | null = null;
+    
+    const startPollingIfNeeded = () => {
+      // 只在 content_generation 阶段启动轮询（这是最可能出现超时的阶段）
+      if (taskInfo?.current_step === 'content_generation') {
+        console.log('[TaskDetail] Starting fallback polling for content_generation');
+        pollingInterval = setInterval(async () => {
+          try {
+            const latestTask = await getTaskDetail(taskId);
+            if (latestTask.status === 'completed' || latestTask.status === 'partial_failure') {
+              console.log('[TaskDetail] Polling detected task completion:', latestTask.status);
+              setTaskInfo(latestTask);
+              
+              // 刷新日志
+              const logsData = await getTaskLogs(taskId, undefined, undefined, 2000);
+              const allLogs = logsData.logs || [];
+              const limitedLogs = limitLogsByStep(allLogs, 100);
+              setExecutionLogs(limitedLogs);
+              
+              // 停止轮询
+              if (pollingInterval) {
+                clearInterval(pollingInterval);
+                pollingInterval = null;
+              }
+            }
+          } catch (err) {
+            console.error('[TaskDetail] Polling error:', err);
+          }
+        }, 10000); // 每 10 秒轮询一次
+      }
+    };
+    
+    // 延迟启动轮询（给 WebSocket 一些时间建立连接）
+    const pollingStartTimer = setTimeout(startPollingIfNeeded, 5000);
 
     return () => {
       websocket.disconnect();
+      if (pollingInterval) {
+        clearInterval(pollingInterval);
+      }
+      clearTimeout(pollingStartTimer);
     };
-  }, [taskId, taskInfo?.status, taskInfo?.roadmap_id, loadIntentAnalysis, loadRoadmapFramework]);
+  }, [taskId, taskInfo?.status, taskInfo?.current_step, taskInfo?.roadmap_id, loadIntentAnalysis, loadRoadmapFramework]);
+
+  /**
+   * 获取编辑记录（modified_node_ids）
+   * 
+   * 当任务完成 roadmap_edit 阶段后，获取最新的编辑记录以高亮修改的节点
+   */
+  useEffect(() => {
+    const shouldFetchEditRecord = 
+      taskInfo?.current_step && 
+      ['structure_validation', 'human_review', 'human_review_pending', 'content_generation', 'completed', 'partial_failure'].includes(taskInfo.current_step) &&
+      taskInfo.roadmap_id;
+
+    if (shouldFetchEditRecord) {
+      const fetchEditRecord = async () => {
+        try {
+          const { getLatestEdit } = await import('@/lib/api/endpoints');
+          const editData = await getLatestEdit(taskId);
+          if (editData?.modified_node_ids) {
+            setModifiedNodeIds(editData.modified_node_ids);
+          }
+        } catch (err) {
+          // 如果没有编辑记录（例如首次验证就通过了），忽略错误
+          console.log('[TaskDetail] No edit record found:', err);
+        }
+      };
+
+      fetchEditRecord();
+    }
+  }, [taskId, taskInfo?.current_step, taskInfo?.roadmap_id]);
 
   /**
    * Human Review 完成回调
@@ -609,6 +682,7 @@ export default function TaskDetailPage() {
         <CoreDisplayArea
           currentStep={taskInfo.current_step}
           status={taskInfo.status}
+          taskId={taskId}
           roadmapId={taskInfo.roadmap_id}
           intentAnalysis={intentAnalysis}
           roadmapFramework={roadmapFramework}

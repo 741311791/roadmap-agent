@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from app.models.domain import (
         IntentAnalysisOutput,
         RoadmapFramework,
+        ValidationOutput,
     )
 
 logger = structlog.get_logger()
@@ -106,6 +107,7 @@ class WorkflowBrain:
         self,
         node_name: str,
         state: RoadmapState,
+        skip_before: bool = False,
     ):
         """
         节点执行上下文管理器
@@ -118,6 +120,7 @@ class WorkflowBrain:
         Args:
             node_name: 节点名称（如 "intent_analysis", "curriculum_design"）
             state: 当前工作流状态
+            skip_before: 是否跳过 _before_node 逻辑（用于从 interrupt 恢复时避免重复执行）
         
         Yields:
             NodeContext: 节点执行上下文
@@ -132,7 +135,27 @@ class WorkflowBrain:
         """
         from langgraph.errors import GraphInterrupt
         
-        ctx = await self._before_node(node_name, state)
+        # 根据 skip_before 参数决定是否执行 _before_node
+        if skip_before:
+            # 从 interrupt 恢复时，创建轻量级上下文，跳过状态更新和日志
+            import time
+            ctx = NodeContext(
+                node_name=node_name,
+                task_id=state["task_id"],
+                roadmap_id=state.get("roadmap_id"),
+                start_time=time.time(),
+                state_snapshot=dict(state),
+            )
+            self._current_context = ctx
+            logger.debug(
+                "workflow_brain_skip_before_node",
+                node_name=node_name,
+                task_id=state["task_id"],
+                message="跳过 _before_node（从 interrupt 恢复）",
+            )
+        else:
+            ctx = await self._before_node(node_name, state)
+        
         try:
             yield ctx
             await self._after_node(ctx, state)
@@ -475,6 +498,159 @@ class WorkflowBrain:
                 task_id=task_id,
                 roadmap_id=roadmap_id,
             )
+    
+    async def save_validation_result(
+        self,
+        task_id: str,
+        roadmap_id: str,
+        validation_result: "ValidationOutput",
+        validation_round: int,
+    ):
+        """
+        保存结构验证结果到数据库
+        
+        Args:
+            task_id: 任务 ID
+            roadmap_id: 路线图 ID
+            validation_result: 验证结果对象（包含新字段）
+            validation_round: 验证轮次
+        """
+        from app.models.domain import ValidationOutput
+        
+        logger.info(
+            "workflow_brain_save_validation_result",
+            task_id=task_id,
+            roadmap_id=roadmap_id,
+            validation_round=validation_round,
+            is_valid=validation_result.is_valid,
+        )
+        
+        async with AsyncSessionLocal() as session:
+            from app.db.repositories.validation_repo import ValidationRepository
+            
+            validation_repo = ValidationRepository(session)
+            
+            # 统计问题数量
+            critical_count = len([i for i in validation_result.issues if i.severity == "critical"])
+            warning_count = len([i for i in validation_result.issues if i.severity == "warning"])
+            suggestion_count = len(validation_result.improvement_suggestions)
+            
+            # 创建验证记录（传递所有新字段）
+            await validation_repo.create_validation_record(
+                task_id=task_id,
+                roadmap_id=roadmap_id,
+                is_valid=validation_result.is_valid,
+                overall_score=validation_result.overall_score,
+                issues=[i.model_dump() for i in validation_result.issues],
+                dimension_scores=[s.model_dump() for s in validation_result.dimension_scores],
+                improvement_suggestions=[s.model_dump() for s in validation_result.improvement_suggestions],
+                validation_summary=validation_result.validation_summary,
+                validation_round=validation_round,
+                critical_count=critical_count,
+                warning_count=warning_count,
+                suggestion_count=suggestion_count,
+            )
+            
+            await session.commit()
+            
+            logger.info(
+                "workflow_brain_validation_result_saved",
+                task_id=task_id,
+                roadmap_id=roadmap_id,
+                validation_round=validation_round,
+                suggestion_count=suggestion_count,
+            )
+    
+    async def save_edit_result(
+        self,
+        task_id: str,
+        roadmap_id: str,
+        origin_framework: "RoadmapFramework",
+        modified_framework: "RoadmapFramework",
+        edit_round: int,
+    ):
+        """
+        保存路线图编辑结果到数据库
+        
+        Args:
+            task_id: 任务 ID
+            roadmap_id: 路线图 ID
+            origin_framework: 编辑前的框架
+            modified_framework: 编辑后的框架
+            edit_round: 编辑轮次
+        """
+        logger.info(
+            "workflow_brain_save_edit_result",
+            task_id=task_id,
+            roadmap_id=roadmap_id,
+            edit_round=edit_round,
+        )
+        
+        # 计算修改的节点 ID
+        modified_node_ids = self._compute_modified_node_ids(
+            origin_framework,
+            modified_framework
+        )
+        
+        async with AsyncSessionLocal() as session:
+            from app.db.repositories.edit_repo import EditRepository
+            
+            edit_repo = EditRepository(session)
+            
+            # 创建编辑记录
+            await edit_repo.create_edit_record(
+                task_id=task_id,
+                roadmap_id=roadmap_id,
+                origin_framework_data=origin_framework.model_dump(),
+                modified_framework_data=modified_framework.model_dump(),
+                modification_summary=f"AI 根据第 {edit_round} 轮验证结果优化了路线图结构",
+                modified_node_ids=modified_node_ids,
+                edit_round=edit_round,
+            )
+            
+            await session.commit()
+            
+            logger.info(
+                "workflow_brain_edit_result_saved",
+                task_id=task_id,
+                roadmap_id=roadmap_id,
+                edit_round=edit_round,
+                modified_nodes_count=len(modified_node_ids),
+            )
+    
+    def _compute_modified_node_ids(
+        self,
+        origin_framework: "RoadmapFramework",
+        modified_framework: "RoadmapFramework"
+    ) -> list[str]:
+        """
+        计算修改过的节点 ID（concept_id）
+        
+        使用通用路线图比对服务进行完整的字段比对。
+        
+        Args:
+            origin_framework: 原始框架
+            modified_framework: 修改后的框架
+            
+        Returns:
+            修改过的 concept_id 列表（包括新增和修改的节点）
+        """
+        from app.services.roadmap_comparison_service import RoadmapComparisonService
+        
+        # 使用通用比对服务
+        comparison_service = RoadmapComparisonService()
+        modified_ids = comparison_service.get_modified_node_ids_simple(
+            origin_framework,
+            modified_framework
+        )
+        
+        logger.debug(
+            "compute_modified_node_ids",
+            changed_count=len(modified_ids),
+            method="roadmap_comparison_service",
+        )
+        
+        return modified_ids
     
     async def save_content_results(
         self,

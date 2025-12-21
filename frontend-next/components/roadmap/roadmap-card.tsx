@@ -131,7 +131,7 @@ export function RoadmapCard({
   };
 
   return (
-    <div className="group relative flex-shrink-0 w-[220px]">
+    <div className="group relative flex-shrink-0 w-full">
       {/* 操作菜单 - 只在 my 类型且显示 actions 时显示 */}
       {isMyRoadmap && showActions && onDelete && (
         <div className="absolute top-3 right-3 z-20 opacity-0 group-hover:opacity-100 transition-opacity">

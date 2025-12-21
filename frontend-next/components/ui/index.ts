@@ -6,6 +6,7 @@ export { Progress } from './progress';
 export { Separator } from './separator';
 export { ScrollArea, ScrollBar } from './scroll-area';
 export { Tabs, TabsList, TabsTrigger, TabsContent } from './tabs';
+export { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from './accordion';
 export {
   Dialog,
   DialogPortal,

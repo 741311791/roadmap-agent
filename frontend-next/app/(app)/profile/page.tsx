@@ -1,7 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useForm } from 'react-hook-form';
+import React, { useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
@@ -30,30 +29,21 @@ import {
   Check,
   Loader2,
   CheckCircle2,
+  Save,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { getUserProfile, saveUserProfile } from '@/lib/api/endpoints';
+import { getAvailableTechnologies } from '@/lib/api/endpoints';
 import { useAuthStore } from '@/lib/store/auth-store';
+import { useUserProfileStore } from '@/lib/store/user-profile-store';
+import { useAutoSave, useSaveStatus } from '@/lib/hooks/use-auto-save';
 import { TechAssessmentDialog } from '@/components/profile';
+import type { TechStackItem } from '@/lib/api/endpoints';
 
 // Types
-interface TechStackItem {
-  id: string;
-  technology: string;
-  proficiency: 'beginner' | 'intermediate' | 'expert';
-}
-
 type LearningStyleType = 'visual' | 'text' | 'audio' | 'hands_on';
 
-interface ProfileFormData {
-  aiPersonalization: boolean;
-  industry: string;
-  currentRole: string;
-  techStack: TechStackItem[];
-  primaryLanguage: string;
-  secondaryLanguage: string;
-  weeklyCommitment: number;
-  learningStyles: LearningStyleType[];  // 支持多选
+interface TechStackRowItem extends TechStackItem {
+  id: string;
 }
 
 // Constants
@@ -106,6 +96,18 @@ const TECHNOLOGIES = [
   { value: 'azure', label: 'Azure' },
 ];
 
+/**
+ * 用于将技术栈名称转换为显示标签的辅助函数
+ */
+function getTechLabel(value: string, availableTechs: string[]): string {
+  // 首先检查是否在预定义列表中
+  const predefined = TECHNOLOGIES.find(t => t.value === value);
+  if (predefined) return predefined.label;
+  
+  // 如果是自定义的，首字母大写
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
 const LANGUAGES = [
   { value: 'en', label: 'English' },
   { value: 'zh', label: '中文 (Chinese)' },
@@ -152,106 +154,102 @@ const LEARNING_STYLES: {
 export default function ProfilePage() {
   // Auth
   const { getUserId } = useAuthStore();
+  const userId = getUserId();
   
-  const [aiEnabled, setAiEnabled] = useState(true);
-  const [techStack, setTechStack] = useState<TechStackItem[]>([]);
-  const [weeklyHours, setWeeklyHours] = useState([10]);
-  const [learningStyles, setLearningStyles] = useState<LearningStyleType[]>([]);
-  const [industry, setIndustry] = useState<string>('');
-  const [currentRole, setCurrentRole] = useState<string>('');
-  const [primaryLanguage, setPrimaryLanguage] = useState<string>('zh');
-  const [secondaryLanguage, setSecondaryLanguage] = useState<string>('');
+  // Profile Store
+  const { profile, loadProfile, updateProfile, addTechStack, updateTechStack: updateTech, removeTechStack, toggleLearningStyle, setLearningStyles } = useUserProfileStore();
   
-  // Loading states
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
-  const [saveSuccess, setSaveSuccess] = useState(false);
+  // Auto-save
+  useAutoSave({
+    debounceMs: 2000,
+    enabled: true,
+  });
+  
+  // Save status
+  const { status: saveStatus, message: saveMessage } = useSaveStatus();
+  
+  // Available technologies from database
+  const [availableTechnologies, setAvailableTechnologies] = React.useState<string[]>([]);
   
   // Assessment dialog state
-  const [assessmentDialogOpen, setAssessmentDialogOpen] = useState(false);
-  const [selectedTechForAssessment, setSelectedTechForAssessment] = useState<{
+  const [assessmentDialogOpen, setAssessmentDialogOpen] = React.useState(false);
+  const [selectedTechForAssessment, setSelectedTechForAssessment] = React.useState<{
     technology: string;
     proficiency: string;
   } | null>(null);
 
-  const { handleSubmit, setValue } = useForm<ProfileFormData>({
-    defaultValues: {
-      aiPersonalization: true,
-      industry: '',
-      currentRole: '',
-      primaryLanguage: 'zh',
-      secondaryLanguage: '',
-      weeklyCommitment: 10,
-      learningStyles: [],
-    },
-  });
-
   // 加载用户画像
   useEffect(() => {
-    const loadProfile = async () => {
-      const userId = getUserId();
-      if (!userId) {
-        console.error('[Profile] No user ID');
-        setIsLoading(false);
-        return;
-      }
-      
+    if (!userId) {
+      console.error('[Profile] No user ID');
+      return;
+    }
+    
+    const loadData = async () => {
       try {
-        setIsLoading(true);
-        const profile = await getUserProfile(userId);
+        // 并行加载用户画像和可用技术栈列表
+        const [, techsResponse] = await Promise.all([
+          loadProfile(userId),
+          getAvailableTechnologies().catch(err => {
+            console.error('Failed to load available technologies:', err);
+            return { technologies: [], count: 0 };
+          })
+        ]);
         
-        // 填充表单数据
-        setAiEnabled(profile.ai_personalization);
-        setIndustry(profile.industry || '');
-        setCurrentRole(profile.current_role || '');
-        setPrimaryLanguage(profile.primary_language || 'zh');
-        setSecondaryLanguage(profile.secondary_language || '');
-        setWeeklyHours([profile.weekly_commitment_hours || 10]);
-        setLearningStyles((profile.learning_style || []) as LearningStyleType[]);
-        
-        // 转换技术栈数据
-        if (profile.tech_stack && profile.tech_stack.length > 0) {
-          setTechStack(
-            profile.tech_stack.map((item, index) => ({
-              id: `tech-${index}`,
-              technology: item.technology,
-              proficiency: item.proficiency as 'beginner' | 'intermediate' | 'expert',
-            }))
-          );
-        }
+        // 设置可用技术栈
+        setAvailableTechnologies(techsResponse.technologies);
       } catch (error) {
-        console.error('Failed to load profile:', error);
-      } finally {
-        setIsLoading(false);
+        console.error('Failed to load data:', error);
       }
     };
 
-    loadProfile();
-  }, [getUserId]);
+    loadData();
+  }, [userId, loadProfile]);
+  
+  // 将tech_stack转换为带id的格式（用于UI）
+  const techStackWithIds: TechStackRowItem[] = React.useMemo(() => {
+    if (!profile?.tech_stack) return [];
+    return profile.tech_stack.map((item, index) => ({
+      ...item,
+      id: `tech-${item.technology}-${index}`,
+    }));
+  }, [profile?.tech_stack]);
 
   const addTechnology = () => {
     const newItem: TechStackItem = {
-      id: `tech-${Date.now()}`,
       technology: '',
       proficiency: 'beginner',
     };
-    setTechStack([...techStack, newItem]);
+    addTechStack(newItem);
   };
 
-  const removeTechnology = (id: string) => {
-    setTechStack(techStack.filter((item) => item.id !== id));
+  const removeTechnology = (technology: string) => {
+    removeTechStack(technology);
   };
 
   const updateTechnology = (
-    id: string,
+    oldTechnology: string,
     field: keyof TechStackItem,
     value: string
   ) => {
-    setTechStack(
-      techStack.map((item) =>
-        item.id === id ? { ...item, [field]: value } : item
-      )
-    );
+    if (field === 'technology') {
+      // 如果改变了technology名称，需要特殊处理
+      if (oldTechnology === '') {
+        // 新添加的项，直接更新
+        addTechStack({ technology: value, proficiency: 'beginner' });
+      } else {
+        // 已存在的项，删除旧的，添加新的
+        removeTechStack(oldTechnology);
+        const oldItem = profile?.tech_stack.find(t => t.technology === oldTechnology);
+        addTechStack({ 
+          technology: value, 
+          proficiency: (oldItem?.proficiency || 'beginner') as 'beginner' | 'intermediate' | 'expert'
+        });
+      }
+    } else {
+      // 更新proficiency
+      updateTech(oldTechnology, { [field]: value as any });
+    }
   };
 
   const handleAssess = (technology: string, proficiency: string) => {
@@ -259,60 +257,15 @@ export default function ProfilePage() {
     setAssessmentDialogOpen(true);
   };
 
-  const toggleLearningStyle = (style: LearningStyleType) => {
-    setLearningStyles((prev) =>
-      prev.includes(style)
-        ? prev.filter((s) => s !== style)
-        : [...prev, style]
-    );
-  };
-
   const selectAllLearningStyles = () => {
-    if (learningStyles.length === LEARNING_STYLES.length) {
+    if (profile?.learning_style.length === LEARNING_STYLES.length) {
       setLearningStyles([]);
     } else {
       setLearningStyles(LEARNING_STYLES.map((s) => s.value));
     }
   };
 
-  const onSubmit = async () => {
-    const userId = getUserId();
-    if (!userId) {
-      alert('Please login first');
-      return;
-    }
-    
-    try {
-      setIsSaving(true);
-      setSaveSuccess(false);
-
-      await saveUserProfile(userId, {
-        industry: industry || null,
-        current_role: currentRole || null,
-        tech_stack: techStack
-          .filter((item) => item.technology)
-          .map((item) => ({
-            technology: item.technology,
-            proficiency: item.proficiency,
-          })),
-        primary_language: primaryLanguage,
-        secondary_language: secondaryLanguage || null,
-        weekly_commitment_hours: weeklyHours[0],
-        learning_style: learningStyles,
-        ai_personalization: aiEnabled,
-      });
-
-      setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 3000);
-    } catch (error) {
-      console.error('Failed to save profile:', error);
-      alert('Failed to save. Please try again later.');
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  if (isLoading) {
+  if (!profile) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center">
@@ -335,9 +288,32 @@ export default function ProfilePage() {
             Customize your learning experience. We use this to tailor your
             roadmap and recommendations.
           </p>
+          
+          {/* Auto-save indicator */}
+          {saveStatus !== 'idle' && (
+            <div className="flex items-center justify-center gap-2 text-sm">
+              {saveStatus === 'saving' && (
+                <>
+                  <Loader2 className="w-3 h-3 animate-spin text-sage-600" />
+                  <span className="text-muted-foreground">{saveMessage}</span>
+                </>
+              )}
+              {saveStatus === 'saved' && (
+                <>
+                  <CheckCircle2 className="w-3 h-3 text-sage-600" />
+                  <span className="text-sage-600">{saveMessage}</span>
+                </>
+              )}
+              {saveStatus === 'error' && (
+                <>
+                  <span className="text-destructive text-xs">{saveMessage}</span>
+                </>
+              )}
+            </div>
+          )}
         </div>
 
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-8">
+        <div className="space-y-8">
           {/* Section 1: AI Personalization */}
           <Card className="bg-sage-50 border-0 shadow-none">
             <CardContent className="p-6">
@@ -357,8 +333,8 @@ export default function ProfilePage() {
                   </div>
                 </div>
                 <Switch
-                  checked={aiEnabled}
-                  onCheckedChange={setAiEnabled}
+                  checked={profile.ai_personalization}
+                  onCheckedChange={(checked) => updateProfile({ ai_personalization: checked })}
                   aria-label="Toggle AI personalization"
                 />
               </div>
@@ -378,7 +354,10 @@ export default function ProfilePage() {
                 <Label className="text-xs uppercase tracking-wider text-muted-foreground">
                   Industry
                 </Label>
-                <Select value={industry} onValueChange={setIndustry}>
+                <Select 
+                  value={profile.industry || ''} 
+                  onValueChange={(value) => updateProfile({ industry: value })}
+                >
                   <SelectTrigger className="bg-white">
                     <SelectValue placeholder="Select option" />
                   </SelectTrigger>
@@ -395,7 +374,10 @@ export default function ProfilePage() {
                 <Label className="text-xs uppercase tracking-wider text-muted-foreground">
                   Current Role
                 </Label>
-                <Select value={currentRole} onValueChange={setCurrentRole}>
+                <Select 
+                  value={profile.current_role || ''} 
+                  onValueChange={(value) => updateProfile({ current_role: value })}
+                >
                   <SelectTrigger className="bg-white">
                     <SelectValue placeholder="Select option" />
                   </SelectTrigger>
@@ -433,11 +415,12 @@ export default function ProfilePage() {
             </div>
 
             <div className="space-y-3">
-              {techStack.map((item) => (
+              {techStackWithIds.map((item) => (
                 <TechStackRow
                   key={item.id}
                   item={item}
-                  allTechStack={techStack}
+                  allTechStack={techStackWithIds}
+                  availableTechnologies={availableTechnologies}
                   onUpdate={updateTechnology}
                   onRemove={removeTechnology}
                   onAssess={handleAssess}
@@ -462,8 +445,8 @@ export default function ProfilePage() {
                       Primary Language
                     </Label>
                     <Select
-                      value={primaryLanguage}
-                      onValueChange={setPrimaryLanguage}
+                      value={profile.primary_language}
+                      onValueChange={(value) => updateProfile({ primary_language: value })}
                     >
                       <SelectTrigger className="bg-white">
                         <SelectValue placeholder="Select option" />
@@ -482,8 +465,8 @@ export default function ProfilePage() {
                       Secondary Language
                     </Label>
                     <Select
-                      value={secondaryLanguage}
-                      onValueChange={setSecondaryLanguage}
+                      value={profile.secondary_language || ''}
+                      onValueChange={(value) => updateProfile({ secondary_language: value })}
                     >
                       <SelectTrigger className="bg-white">
                         <SelectValue placeholder="Select option" />
@@ -519,12 +502,12 @@ export default function ProfilePage() {
                     Weekly Commitment
                   </Label>
                   <span className="text-lg font-serif font-semibold text-charcoal">
-                    {weeklyHours[0]} hours
+                    {profile.weekly_commitment_hours} hours
                   </span>
                 </div>
                 <Slider
-                  value={weeklyHours}
-                  onValueChange={setWeeklyHours}
+                  value={[profile.weekly_commitment_hours]}
+                  onValueChange={([value]) => updateProfile({ weekly_commitment_hours: value })}
                   min={2}
                   max={40}
                   step={1}
@@ -548,7 +531,7 @@ export default function ProfilePage() {
                   onClick={selectAllLearningStyles}
                   className="text-sm text-sage-600 hover:text-sage-700 hover:underline"
                 >
-                  {learningStyles.length === LEARNING_STYLES.length ? 'Deselect All' : 'Select All'}
+                  {profile.learning_style.length === LEARNING_STYLES.length ? 'Deselect All' : 'Select All'}
                 </button>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -556,37 +539,14 @@ export default function ProfilePage() {
                   <LearningStyleCard
                     key={style.value}
                     style={style}
-                    isSelected={learningStyles.includes(style.value)}
+                    isSelected={profile.learning_style.includes(style.value)}
                     onSelect={() => toggleLearningStyle(style.value)}
                   />
                 ))}
               </div>
             </div>
           </section>
-
-          {/* Save Button */}
-          <div className="flex justify-center pt-4">
-            <Button
-              type="submit"
-              disabled={isSaving}
-              className="bg-charcoal hover:bg-charcoal-light text-white px-8 py-2.5 min-w-[160px]"
-            >
-              {isSaving ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Saving...
-                </>
-              ) : saveSuccess ? (
-                <>
-                  <CheckCircle2 className="mr-2 h-4 w-4" />
-                  Saved
-                </>
-              ) : (
-                'Save Profile'
-              )}
-            </Button>
-          </div>
-        </form>
+        </div>
       </div>
 
       {/* Tech Assessment Dialog */}
@@ -606,57 +566,148 @@ export default function ProfilePage() {
 function TechStackRow({
   item,
   allTechStack,
+  availableTechnologies,
   onUpdate,
   onRemove,
   onAssess,
 }: {
-  item: TechStackItem;
-  allTechStack: TechStackItem[];
-  onUpdate: (id: string, field: keyof TechStackItem, value: string) => void;
-  onRemove: (id: string) => void;
+  item: TechStackRowItem;
+  allTechStack: TechStackRowItem[];
+  availableTechnologies: string[];
+  onUpdate: (oldTechnology: string, field: keyof TechStackItem, value: string) => void;
+  onRemove: (technology: string) => void;
   onAssess: (technology: string, proficiency: string) => void;
 }) {
+  const [isCustomInput, setIsCustomInput] = React.useState(false);
+  const [customValue, setCustomValue] = React.useState('');
+  
+  // 只使用数据库中有测验题目的技术栈（使用预定义常量提供更好的label）
+  const allTechOptions = React.useMemo(() => {
+    return availableTechnologies.map(tech => ({
+      value: tech,
+      label: getTechLabel(tech, availableTechnologies),
+    }));
+  }, [availableTechnologies]);
+  
+  // 检查当前技术栈是否在选项中
+  const currentTechExists = item.technology && allTechOptions.some(t => t.value === item.technology);
+  
+  // 构建完整的选项列表（包括当前自定义值）
+  const displayOptions = React.useMemo(() => {
+    const options = [...allTechOptions];
+    // 如果当前值是自定义的（不在预定义列表中），添加到选项中
+    if (item.technology && !currentTechExists) {
+      options.unshift({
+        value: item.technology,
+        label: `${item.technology} (Custom)`,
+      });
+    }
+    return options;
+  }, [allTechOptions, item.technology, currentTechExists]);
+  
   return (
     <Card className="border shadow-sm bg-white">
       <CardContent className="p-4">
         <div className="flex items-center gap-4">
-          {/* Technology Select */}
+          {/* Technology Select with Custom Input */}
           <div className="w-40">
-            <Select
-              value={item.technology}
-              onValueChange={(value) => onUpdate(item.id, 'technology', value)}
-            >
-              <SelectTrigger className="bg-white">
-                <SelectValue placeholder="Select tech" />
-              </SelectTrigger>
-              <SelectContent>
-                {TECHNOLOGIES.map((tech) => {
-                  // 检查该技术是否已被其他行选择
-                  const isSelected = allTechStack.some(
-                    (stackItem) => stackItem.technology === tech.value && stackItem.id !== item.id
-                  );
-                  
-                  return (
-                    <SelectItem 
-                      key={tech.value} 
-                      value={tech.value}
-                      disabled={isSelected}
-                      className={cn(isSelected && 'opacity-50 cursor-not-allowed')}
-                    >
-                      {tech.label}
-                      {isSelected && ' (已选择)'}
+            {isCustomInput ? (
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={customValue}
+                  onChange={(e) => setCustomValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && customValue.trim()) {
+                      onUpdate(item.technology, 'technology', customValue.trim());
+                      setIsCustomInput(false);
+                      setCustomValue('');
+                    } else if (e.key === 'Escape') {
+                      setIsCustomInput(false);
+                      setCustomValue('');
+                    }
+                  }}
+                  onBlur={() => {
+                    // 失去焦点时，如果有内容则保存
+                    if (customValue.trim()) {
+                      onUpdate(item.technology, 'technology', customValue.trim());
+                      setIsCustomInput(false);
+                      setCustomValue('');
+                    }
+                  }}
+                  placeholder="Enter technology name"
+                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  autoFocus
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setIsCustomInput(false);
+                    setCustomValue('');
+                  }}
+                >
+                  ✕
+                </Button>
+              </div>
+            ) : (
+              <Select
+                value={item.technology}
+                onValueChange={(value) => {
+                  if (value === '__custom__') {
+                    setIsCustomInput(true);
+                    setCustomValue('');
+                  } else if (value === '__edit_custom__') {
+                    // 编辑当前自定义值
+                    setIsCustomInput(true);
+                    setCustomValue(item.technology);
+                  } else {
+                    onUpdate(item.technology, 'technology', value);
+                  }
+                }}
+              >
+                <SelectTrigger className="bg-white">
+                  <SelectValue placeholder="Select technology" />
+                </SelectTrigger>
+                <SelectContent>
+                  {displayOptions.map((tech) => {
+                    // 检查该技术是否已被其他行选择
+                    const isSelected = allTechStack.some(
+                      (stackItem) => stackItem.technology === tech.value && stackItem.id !== item.id
+                    );
+                    
+                    return (
+                      <SelectItem 
+                        key={tech.value} 
+                        value={tech.value}
+                        disabled={isSelected}
+                        className={cn(isSelected && 'opacity-50 cursor-not-allowed')}
+                      >
+                        {tech.label}
+                        {isSelected && ' (selected)'}
+                      </SelectItem>
+                    );
+                  })}
+                  {/* 如果当前是自定义值，提供编辑选项 */}
+                  {item.technology && !currentTechExists && (
+                    <SelectItem value="__edit_custom__" className="text-sage-600 font-medium">
+                      ✏️ Edit Custom
                     </SelectItem>
-                  );
-                })}
-              </SelectContent>
-            </Select>
+                  )}
+                  <SelectItem value="__custom__" className="text-sage-600 font-medium">
+                    + Custom Technology
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            )}
           </div>
 
           {/* Proficiency Selector */}
           <div className="flex-1">
             <ProficiencySelector
               value={item.proficiency}
-              onChange={(value) => onUpdate(item.id, 'proficiency', value)}
+              onChange={(value) => onUpdate(item.technology, 'proficiency', value)}
             />
           </div>
 
@@ -678,7 +729,7 @@ function TechStackRow({
             type="button"
             variant="ghost"
             size="icon"
-            onClick={() => onRemove(item.id)}
+            onClick={() => onRemove(item.technology)}
             className="text-muted-foreground hover:text-destructive"
           >
             <Trash2 className="w-4 h-4" />

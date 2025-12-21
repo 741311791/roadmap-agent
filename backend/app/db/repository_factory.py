@@ -24,6 +24,8 @@ from app.db.repositories.user_profile_repo import UserProfileRepository
 from app.db.repositories.execution_log_repo import ExecutionLogRepository
 from app.db.repositories.chat_repo import ChatRepository
 from app.db.repositories.note_repo import NoteRepository
+from app.db.repositories.validation_repo import ValidationRepository
+from app.db.repositories.edit_repo import EditRepository
 
 import structlog
 
@@ -244,6 +246,36 @@ class RepositoryFactory:
         """
         return NoteRepository(session)
     
+    def create_validation_repo(
+        self,
+        session: AsyncSession,
+    ) -> ValidationRepository:
+        """
+        创建结构验证记录 Repository
+        
+        Args:
+            session: 数据库会话
+            
+        Returns:
+            ValidationRepository 实例
+        """
+        return ValidationRepository(session)
+    
+    def create_edit_repo(
+        self,
+        session: AsyncSession,
+    ) -> EditRepository:
+        """
+        创建路线图编辑记录 Repository
+        
+        Args:
+            session: 数据库会话
+            
+        Returns:
+            EditRepository 实例
+        """
+        return EditRepository(session)
+    
     # ============================================================
     # 批量创建（便捷方法）
     # ============================================================
@@ -269,6 +301,8 @@ class RepositoryFactory:
             "execution_log": self.create_execution_log_repo(session),
             "chat": self.create_chat_repo(session),
             "note": self.create_note_repo(session),
+            "validation": self.create_validation_repo(session),
+            "edit": self.create_edit_repo(session),
         }
 
 

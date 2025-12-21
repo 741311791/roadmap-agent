@@ -232,19 +232,8 @@ class RoadmapService:
                 if final_state.get("roadmap_framework"):
                     framework: RoadmapFramework = final_state["roadmap_framework"]
                     
-                    # 保存需求分析元数据（A1: 需求分析师产出）
-                    # 注意：这个不在 ContentRunner 中处理，需要在此保存
-                    intent_analysis = final_state.get("intent_analysis")
-                    if intent_analysis:
-                        intent_repo = self.repo_factory.create_intent_analysis_repo(session)
-                        await intent_repo.save_intent_analysis(
-                            task_id=task_id,
-                            intent_analysis=intent_analysis,
-                        )
-                        logger.info(
-                            "intent_analysis_metadata_saved",
-                            task_id=task_id,
-                        )
+                    # 注意：需求分析元数据已由 brain.save_intent_analysis() 在 intent_runner 中保存
+                    # 不需要在此重复保存
                     
                     # 从 final_state 获取内容生成结果（用于日志和通知）
                     tutorial_refs = final_state.get("tutorial_refs", {})
@@ -469,18 +458,12 @@ class RoadmapService:
             # ============================================================
             async with self.repo_factory.create_session() as session:
                 if approved:
-                    # 用户批准，保存需求分析元数据（不在 ContentRunner 中处理）
+                    # 用户批准
                     if final_state.get("roadmap_framework"):
                         framework: RoadmapFramework = final_state["roadmap_framework"]
                         
-                        # 保存需求分析元数据
-                        intent_analysis = final_state.get("intent_analysis")
-                        if intent_analysis:
-                            intent_repo = self.repo_factory.create_intent_analysis_repo(session)
-                            await intent_repo.save_intent_analysis(
-                                task_id=task_id,
-                                intent_analysis=intent_analysis,
-                            )
+                        # 注意：需求分析元数据已由 brain.save_intent_analysis() 在 intent_runner 中保存
+                        # 不需要在此重复保存
                         
                         # 注意：任务状态已由 brain.save_content_results() 更新
                         # 如果工作流未到达 ContentRunner（例如跳过内容生成），则需要在此更新
@@ -492,6 +475,31 @@ class RoadmapService:
                                 current_step="completed",
                                 roadmap_id=framework.roadmap_id,
                             )
+                        
+                        await session.commit()
+                        
+                        # ============================================================
+                        # 发布完成通知（触发前端状态更新）
+                        # ============================================================
+                        # 即使 brain.save_content_results() 已经更新了状态，
+                        # 也需要发布通知让前端通过 WebSocket 收到完成事件
+                        tutorial_refs = final_state.get("tutorial_refs", {})
+                        failed_concepts = final_state.get("failed_concepts", [])
+                        
+                        await notification_service.publish_completed(
+                            task_id=task_id,
+                            roadmap_id=framework.roadmap_id,
+                            tutorials_count=len(tutorial_refs),
+                            failed_count=len(failed_concepts),
+                        )
+                        
+                        logger.info(
+                            "human_review_completion_notified",
+                            task_id=task_id,
+                            roadmap_id=framework.roadmap_id,
+                            tutorials_count=len(tutorial_refs),
+                            failed_count=len(failed_concepts),
+                        )
                     else:
                         # 如果没有生成框架，标记为失败
                         task_repo = self.repo_factory.create_task_repo(session)
@@ -501,6 +509,13 @@ class RoadmapService:
                             current_step="failed",
                             error_message="路线图框架生成失败",
                         )
+                        await session.commit()
+                        
+                        # 发布失败通知
+                        await notification_service.publish_failed(
+                            task_id=task_id,
+                            error="路线图框架生成失败",
+                        )
                 else:
                     # 用户要求修改，工作流会返回重新设计
                     task_repo = self.repo_factory.create_task_repo(session)
@@ -509,8 +524,7 @@ class RoadmapService:
                         status="processing",
                         current_step="curriculum_design",
                     )
-                
-                await session.commit()
+                    await session.commit()
             
             logger.info(
                 "human_review_processed",

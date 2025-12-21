@@ -22,7 +22,6 @@ import {
   Eye,
   AlertCircle,
   Loader2,
-  Sparkles,
   MoreVertical,
   Trash2,
 } from 'lucide-react';
@@ -234,15 +233,8 @@ function MyRoadmapCard(props: Omit<MyRoadmapCardProps, 'type'>) {
           <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/50 to-black/20" />
 
           {/* Content */}
-          <div className="relative flex h-full flex-col justify-between p-4 sm:p-5 text-white">
-            {/* Top Section - Sparkles Icon */}
-            <div className="flex h-24 sm:h-32 items-start">
-              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg bg-white/10 backdrop-blur-sm border border-white/20 flex items-center justify-center">
-                <Sparkles size={18} className="sm:size-5 text-white/90" />
-              </div>
-            </div>
-
-            {/* Middle Section - slides up on hover */}
+          <div className="relative flex h-full flex-col justify-end p-4 sm:p-5 text-white">
+            {/* Main Section - slides up on hover */}
             <div className="space-y-2 sm:space-y-3 transition-transform duration-500 ease-in-out group-hover:-translate-y-10 sm:group-hover:-translate-y-12">
               {/* Title */}
               <h3 className="text-base sm:text-lg lg:text-xl font-serif font-bold text-white line-clamp-2 leading-tight">

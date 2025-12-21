@@ -66,6 +66,7 @@ class EditorRunner:
             状态更新字典
         """
         modification_count = state.get("modification_count", 0)
+        edit_round = modification_count + 1
         
         # 使用 WorkflowBrain 统一管理执行生命周期
         async with self.brain.node_execution("roadmap_edit", state):
@@ -81,16 +82,29 @@ class EditorRunner:
                 if state.get("validation_result")
                 else [],
                 user_preferences=state["user_request"].preferences,
-                modification_context=f"第 {modification_count + 1} 次修改"
+                modification_context=f"第 {edit_round} 次修改"
             )
+            
+            # 保存原始框架（用于对比）
+            origin_framework = state["roadmap_framework"]
             
             # 执行 Agent
             result = await agent.execute(edit_input)
             
+            # 保存编辑记录（在更新框架之前）
+            roadmap_id = result.framework.roadmap_id
+            await self.brain.save_edit_result(
+                task_id=state["task_id"],
+                roadmap_id=roadmap_id,
+                origin_framework=origin_framework,
+                modified_framework=result.framework,
+                edit_round=edit_round,
+            )
+            
             # 保存更新后的框架（使用 brain 的事务性保存方法）
             await self.brain.save_roadmap_framework(
                 task_id=state["task_id"],
-                roadmap_id=result.framework.roadmap_id,
+                roadmap_id=roadmap_id,
                 user_id=state["user_request"].user_id,
                 framework=result.framework,
             )
@@ -122,10 +136,14 @@ class EditorRunner:
                 duration_ms=duration_ms,
             )
             
+            # 递增 validation_round（下次 validation 时使用）
+            validation_round = state.get("validation_round", 1) + 1
+            
             # 返回纯状态更新
             return {
                 "roadmap_framework": result.framework,
                 "modification_count": modification_count + 1,
+                "validation_round": validation_round,
                 "current_step": "roadmap_edit",
-                "execution_history": [f"路线图修改完成（第 {modification_count + 1} 次）"],
+                "execution_history": [f"路线图修改完成（第 {edit_round} 次）"],
             }

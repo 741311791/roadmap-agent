@@ -10,8 +10,29 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 # 导入应用配置和模型
 from app.config.settings import settings
-from app.models.database import User, RoadmapTask, RoadmapMetadata, TutorialMetadata  # 导入所有数据库模型
+from app.models.database import (
+    Base,  # 重要：导入 Base，用于 User 表
+    User, 
+    RoadmapTask, 
+    RoadmapMetadata, 
+    TutorialMetadata,
+    IntentAnalysisMetadata,
+    ResourceRecommendationMetadata,
+    QuizMetadata,
+    TechStackAssessment,
+    UserProfile,
+    ExecutionLog,
+    ConceptProgress,
+    QuizAttempt,
+    StructureValidationRecord,
+    RoadmapEditRecord,
+    ChatSession,
+    ChatMessage,
+    LearningNote,
+    WaitlistEmail,
+)
 from sqlmodel import SQLModel
+from sqlalchemy import MetaData
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -25,11 +46,17 @@ config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("+asyncpg
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# add your model's MetaData object here
-# for 'autogenerate' support
-# from myapp import mymodel
-# target_metadata = mymodel.Base.metadata
-target_metadata = SQLModel.metadata
+# 关键修复：合并 Base.metadata 和 SQLModel.metadata
+# User 表使用 Base (DeclarativeBase)
+# 其他表使用 SQLModel
+# 必须同时注册两个 metadata，否则 Alembic 会认为 User 表不存在
+combined_metadata = MetaData()
+for table in Base.metadata.tables.values():
+    table.to_metadata(combined_metadata)
+for table in SQLModel.metadata.tables.values():
+    table.to_metadata(combined_metadata)
+
+target_metadata = combined_metadata
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
@@ -55,6 +82,15 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        # 忽略 LangGraph checkpoint 表
+        include_object=lambda obj, name, type_, reflected, compare_to: (
+            False if type_ == "table" and name in [
+                "checkpoints", 
+                "checkpoint_blobs", 
+                "checkpoint_writes", 
+                "checkpoint_migrations"
+            ] else True
+        )
     )
 
     with context.begin_transaction():
@@ -62,7 +98,22 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection):
-    context.configure(connection=connection, target_metadata=target_metadata)
+    # 配置 Alembic 忽略 LangGraph checkpoint 相关表
+    # 这些表由 LangGraph 自动管理，不应该被 Alembic 迁移
+    context.configure(
+        connection=connection, 
+        target_metadata=target_metadata,
+        include_schemas=True,
+        # 忽略 LangGraph checkpoint 表
+        include_object=lambda obj, name, type_, reflected, compare_to: (
+            False if type_ == "table" and name in [
+                "checkpoints", 
+                "checkpoint_blobs", 
+                "checkpoint_writes", 
+                "checkpoint_migrations"
+            ] else True
+        )
+    )
 
     with context.begin_transaction():
         context.run_migrations()
@@ -87,8 +138,20 @@ async def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        # 配置 Alembic 忽略 LangGraph checkpoint 相关表
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection, 
+            target_metadata=target_metadata,
+            include_schemas=True,
+            # 忽略 LangGraph checkpoint 表
+            include_object=lambda obj, name, type_, reflected, compare_to: (
+                False if type_ == "table" and name in [
+                    "checkpoints", 
+                    "checkpoint_blobs", 
+                    "checkpoint_writes", 
+                    "checkpoint_migrations"
+                ] else True
+            )
         )
 
         with context.begin_transaction():

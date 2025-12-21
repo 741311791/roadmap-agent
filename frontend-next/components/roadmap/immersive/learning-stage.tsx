@@ -40,6 +40,11 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
 /**
+ * Content Type for retry tracking
+ */
+type ContentType = 'tutorial' | 'resources' | 'quiz';
+
+/**
  * Learning Format Types
  */
 type LearningFormat = 'immersive-text' | 'learning-resources' | 'quiz' | 'slides' | 'audio' | 'mindmap';
@@ -942,7 +947,7 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId, 
   const [activeFormat, setActiveFormat] = useState<LearningFormat>('immersive-text');
   
   // Learning progress state
-  const { conceptProgressMap, updateConceptProgress: updateProgressInStore } = useRoadmapStore();
+  const { conceptProgressMap, updateConceptProgress: updateProgressInStore, updateConceptStatus } = useRoadmapStore();
   const [isTogglingProgress, setIsTogglingProgress] = useState(false);
   
   // Resources state
@@ -956,6 +961,7 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId, 
   const [quizError, setQuizError] = useState<string | null>(null);
   
   // 检测内容生成状态
+  // 注意：不再使用本地重试状态，完全依赖后端状态和WebSocket更新
   const tutorialFailed = concept?.content_status === 'failed';
   const tutorialGenerating = concept?.content_status === 'generating';
   const tutorialPending = concept?.content_status === 'pending';
@@ -988,6 +994,59 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId, 
     setQuiz(null);
     setQuizError(null);
   }, [concept?.concept_id]);
+
+  // 检查是否有正在进行的重试任务
+  // 当切换到对应tab或concept变化时，检查backend是否有active task
+  useEffect(() => {
+    if (!roadmapId || !concept) return;
+
+    let isMounted = true; // 防止组件卸载后更新状态
+
+    const checkActiveRetryTasks = async () => {
+      try {
+        const { checkRoadmapStatusQuick } = await import('@/lib/api/endpoints');
+        const result = await checkRoadmapStatusQuick(roadmapId);
+
+        // 检查组件是否仍然挂载
+        if (!isMounted) return;
+
+        if (result.has_active_task && result.active_tasks) {
+          // 检查是否有当前concept的active task
+          const currentConceptTasks = result.active_tasks.filter(
+            (task: any) => task.concept_id === concept.concept_id
+          );
+
+          // 更新各个content type的状态
+          currentConceptTasks.forEach((task: any) => {
+            if (task.content_type === 'tutorial' && task.status === 'processing') {
+              if (concept.content_status !== 'generating') {
+                console.log('[LearningStage] Found active tutorial task, updating status to generating');
+                updateConceptStatus(concept.concept_id, { content_status: 'generating' });
+              }
+            } else if (task.content_type === 'resources' && task.status === 'processing') {
+              if (concept.resources_status !== 'generating') {
+                console.log('[LearningStage] Found active resources task, updating status to generating');
+                updateConceptStatus(concept.concept_id, { resources_status: 'generating' });
+              }
+            } else if (task.content_type === 'quiz' && task.status === 'processing') {
+              if (concept.quiz_status !== 'generating') {
+                console.log('[LearningStage] Found active quiz task, updating status to generating');
+                updateConceptStatus(concept.concept_id, { quiz_status: 'generating' });
+              }
+            }
+          });
+        }
+      } catch (error) {
+        console.error('[LearningStage] Failed to check active tasks:', error);
+      }
+    };
+
+    checkActiveRetryTasks();
+
+    return () => {
+      isMounted = false; // 清理函数：标记组件已卸载
+    };
+  }, [roadmapId, concept?.concept_id, activeFormat]);
 
   // Fetch resources when tab is activated or concept changes
   useEffect(() => {
@@ -1081,51 +1140,53 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId, 
           {activeFormat === 'immersive-text' && (
             <>
               {/* Collapsible Table of Contents - Fixed to left edge */}
-              <TableOfContents 
-                items={tocItems}
-                onItemClick={handleTOCClick}
-              />
+              {tutorialContent && (
+                <TableOfContents 
+                  items={tocItems}
+                  onItemClick={handleTOCClick}
+                />
+              )}
               
-              {/* 编辑风格的文章排版 - 浅色主题 */}
-              <article className="prose prose-stone max-w-none 
-                prose-headings:font-serif prose-headings:tracking-tight prose-headings:text-foreground
-                prose-h2:text-2xl prose-h2:mt-12 prose-h2:mb-4 prose-h2:border-b prose-h2:border-border prose-h2:pb-3
-                prose-h3:text-xl prose-h3:mt-8 prose-h3:mb-3
-                prose-h4:text-lg prose-h4:mt-6 prose-h4:mb-2
-                prose-p:leading-relaxed prose-p:text-foreground/85 prose-p:mb-4
-                prose-strong:text-foreground prose-strong:font-semibold
-                prose-ul:text-foreground/85 prose-ol:text-foreground/85
-                prose-li:marker:text-sage-500
-                prose-pre:bg-stone-900 prose-pre:border prose-pre:border-stone-800 prose-pre:rounded-lg prose-pre:text-stone-100
-                prose-code:text-sage-700 prose-code:bg-sage-50 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-sm prose-code:font-normal prose-code:before:content-[''] prose-code:after:content-['']
-                prose-a:text-sage-600 prose-a:no-underline hover:prose-a:underline hover:prose-a:text-sage-700
-                prose-blockquote:border-l-sage-300 prose-blockquote:bg-sage-50/50 prose-blockquote:rounded-r-lg prose-blockquote:py-1 prose-blockquote:text-foreground/70"
-              >
-                {tutorialGenerating || tutorialPending ? (
-                  /* 教程正在生成中，使用僵尸状态检测器 */
-                  roadmapId && concept && userPreferences ? (
-                    <StaleStatusDetector
-                      roadmapId={roadmapId}
-                      conceptId={concept.concept_id}
-                      contentType="tutorial"
-                      status={concept.content_status}
-                      preferences={userPreferences}
-                      timeoutSeconds={120}
-                      onSuccess={() => onRetrySuccess?.()}
-                    />
-                  ) : (
-                    <GeneratingContentLoader contentType="tutorial" />
-                  )
-                ) : tutorialFailed && roadmapId && concept && userPreferences ? (
-                  /* 教程生成失败，显示重试按钮 */
-                  <FailedContentAlert
+              {tutorialGenerating || tutorialPending ? (
+                /* 教程正在生成中，使用僵尸状态检测器 */
+                roadmapId && concept && userPreferences ? (
+                  <StaleStatusDetector
                     roadmapId={roadmapId}
                     conceptId={concept.concept_id}
                     contentType="tutorial"
+                    status={concept.content_status}
                     preferences={userPreferences}
-                    onSuccess={() => onRetrySuccess?.()}
+                    timeoutSeconds={120}
+                  onSuccess={() => onRetrySuccess?.()}
                   />
-                ) : tutorialContent ? (
+                ) : (
+                  <GeneratingContentLoader contentType="tutorial" />
+                )
+              ) : tutorialFailed && roadmapId && concept && userPreferences ? (
+                /* 教程生成失败，显示重试按钮 */
+                <FailedContentAlert
+                  roadmapId={roadmapId}
+                  conceptId={concept.concept_id}
+                  contentType="tutorial"
+                  preferences={userPreferences}
+                  onSuccess={() => onRetrySuccess?.()}
+                />
+              ) : tutorialContent ? (
+                /* 编辑风格的文章排版 - 浅色主题 */
+                <article className="prose prose-stone max-w-none 
+                  prose-headings:font-serif prose-headings:tracking-tight prose-headings:text-foreground
+                  prose-h2:text-2xl prose-h2:mt-12 prose-h2:mb-4 prose-h2:border-b prose-h2:border-border prose-h2:pb-3
+                  prose-h3:text-xl prose-h3:mt-8 prose-h3:mb-3
+                  prose-h4:text-lg prose-h4:mt-6 prose-h4:mb-2
+                  prose-p:leading-relaxed prose-p:text-foreground/85 prose-p:mb-4
+                  prose-strong:text-foreground prose-strong:font-semibold
+                  prose-ul:text-foreground/85 prose-ol:text-foreground/85
+                  prose-li:marker:text-sage-500
+                  prose-pre:bg-stone-900 prose-pre:border prose-pre:border-stone-800 prose-pre:rounded-lg prose-pre:text-stone-100
+                  prose-code:text-sage-700 prose-code:bg-sage-50 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-sm prose-code:font-normal prose-code:before:content-[''] prose-code:after:content-['']
+                  prose-a:text-sage-600 prose-a:no-underline hover:prose-a:underline hover:prose-a:text-sage-700
+                  prose-blockquote:border-l-sage-300 prose-blockquote:bg-sage-50/50 prose-blockquote:rounded-r-lg prose-blockquote:py-1 prose-blockquote:text-foreground/70"
+                >
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm]}
                     rehypePlugins={[rehypeHighlight]}
@@ -1168,15 +1229,15 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId, 
                   >
                     {tutorialContent}
                   </ReactMarkdown>
-                ) : (
-                  <div className="space-y-4">
-                    <div className="h-4 bg-muted rounded w-3/4 animate-pulse" />
-                    <div className="h-4 bg-muted rounded w-full animate-pulse" />
-                    <div className="h-4 bg-muted rounded w-5/6 animate-pulse" />
-                    <div className="h-32 bg-muted/70 rounded w-full animate-pulse mt-8" />
-                  </div>
-                )}
-              </article>
+                </article>
+              ) : (
+                <div className="space-y-4">
+                  <div className="h-4 bg-muted rounded w-3/4 animate-pulse" />
+                  <div className="h-4 bg-muted rounded w-full animate-pulse" />
+                  <div className="h-4 bg-muted rounded w-5/6 animate-pulse" />
+                  <div className="h-32 bg-muted/70 rounded w-full animate-pulse mt-8" />
+                </div>
+              )}
             </>
           )}
 
@@ -1204,7 +1265,7 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId, 
                 conceptId={concept.concept_id}
                 contentType="resources"
                 preferences={userPreferences}
-                onSuccess={() => onRetrySuccess?.()}
+                  onSuccess={() => onRetrySuccess?.()}
               />
             ) : (
               <ResourceList 
@@ -1242,7 +1303,7 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId, 
                 conceptId={concept.concept_id}
                 contentType="quiz"
                 preferences={userPreferences}
-                onSuccess={() => onRetrySuccess?.()}
+                  onSuccess={() => onRetrySuccess?.()}
               />
             ) : (
               <QuizList 

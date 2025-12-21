@@ -65,7 +65,7 @@ export default function RoadmapDetailPage() {
 
   // Local State
   const [tutorialContent, setTutorialContent] = useState<string | undefined>(undefined);
-  const [activeTask, setActiveTask] = useState<{ taskId: string; status: string } | null>(null);
+  const [activeTask, setActiveTask] = useState<{ taskId: string; status: string; taskType?: string } | null>(null);
   const [userPreferences, setUserPreferences] = useState<LearningPreferences | undefined>(undefined);
 
   // UI State - 折叠状态和抽屉状态
@@ -173,7 +173,8 @@ export default function RoadmapDetailPage() {
         if (task.has_active_task && task.task_id) {
           setActiveTask({ 
             taskId: task.task_id, 
-            status: task.status ?? 'pending' 
+            status: task.status ?? 'pending',
+            taskType: task.task_type ?? undefined
           });
         }
       } catch (e) {
@@ -212,16 +213,23 @@ export default function RoadmapDetailPage() {
     loadTutorialContent(selectedConceptId);
   }, [selectedConceptId, loadTutorialContent]);
 
-  // 6. 重定向逻辑：如果有活跃任务且任务状态不是 completed 或 partial_failure，重定向到任务详情页
+  // 6. 重定向逻辑：只有初始路线图生成任务才重定向到任务详情页
+  // 单内容重试任务（retry_tutorial/retry_resources/retry_quiz）留在当前页面实时更新
   // 必须放在所有 early return 之前，遵守 Hooks 规则
   useEffect(() => {
     const isGenerating = activeTask && 
       activeTask.status !== 'completed' && 
       activeTask.status !== 'partial_failure';
 
-    if (isGenerating && activeTask?.taskId) {
-      console.log('[RoadmapDetail] Task is still generating, redirecting to task detail page');
+    // 只有初始路线图生成任务（task_type === 'creation'）才触发重定向
+    // 单内容重试任务不触发重定向，留在当前页面实时更新
+    const isInitialGeneration = activeTask?.taskType === 'creation' || !activeTask?.taskType;
+
+    if (isGenerating && activeTask?.taskId && isInitialGeneration) {
+      console.log('[RoadmapDetail] Initial roadmap generation task is still processing, redirecting to task detail page');
       router.push(`/tasks/${activeTask.taskId}`);
+    } else if (isGenerating && activeTask?.taskId && !isInitialGeneration) {
+      console.log('[RoadmapDetail] Content retry task is processing, staying on current page for real-time updates');
     }
   }, [activeTask, router]);
 
@@ -342,11 +350,11 @@ export default function RoadmapDetailPage() {
               roadmapId={roadmapId}
               userPreferences={userPreferences}
               onRetrySuccess={async () => {
-                // 重试成功后，重新加载路线图数据和教程内容
-                // 注意：需要等待路线图数据更新完成后再加载教程内容
+                // WebSocket已经通过updateConceptStatus更新了store中的状态为completed
+                // 现在可以安全地refetch以获取最新的content_url等数据
                 await refetchRoadmap();
+                // 重新加载教程内容
                 if (selectedConceptId) {
-                  // 手动触发教程内容重新加载
                   loadTutorialContent(selectedConceptId);
                 }
               }}

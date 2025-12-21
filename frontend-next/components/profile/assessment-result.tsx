@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { CheckCircle2, AlertCircle, XCircle, Sparkles, Loader2 } from 'lucide-react';
+import { useUserProfileStore } from '@/lib/store/user-profile-store';
 import type { AssessmentEvaluationResult, CapabilityAnalysisResult } from '@/types/assessment';
 
 interface AssessmentResultProps {
@@ -29,6 +30,9 @@ export function AssessmentResult({
 }: AssessmentResultProps) {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  
+  // 从 Zustand store 获取更新函数
+  const { updateTechStack } = useUserProfileStore();
 
   const handleAnalyze = async () => {
     try {
@@ -36,15 +40,25 @@ export function AssessmentResult({
       setAnalysisError(null);
 
       const { analyzeTechCapability } = await import('@/lib/api/endpoints');
+      
+      // 调用能力分析API，但不保存到后端
       const analysisResult = await analyzeTechCapability(
         technology,
         proficiency,
         userId,
         assessmentId,
         answers,
-        true // 保存到用户画像
+        false // 不保存到后端，由前端更新 store
       );
+      
+      // 更新 Zustand store 中的技术栈项
+      // 将能力分析结果附加到技术栈项
+      updateTechStack(technology, {
+        proficiency: proficiency as 'beginner' | 'intermediate' | 'expert',
+        capability_analysis: analysisResult as any, // 添加能力分析结果
+      });
 
+      console.log('[AssessmentResult] Capability analysis saved to store:', technology);
       onAnalysisComplete?.(analysisResult);
     } catch (err: any) {
       console.error('Failed to analyze capability:', err);

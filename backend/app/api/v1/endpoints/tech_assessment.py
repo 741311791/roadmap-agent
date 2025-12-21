@@ -191,9 +191,48 @@ class CustomAssessmentResponse(BaseModel):
     assessment: Optional[AssessmentResponse] = None
 
 
+class AvailableTechnologiesResponse(BaseModel):
+    """可用技术栈列表响应模型"""
+    technologies: List[str] = Field(..., description="技术栈名称列表")
+    count: int = Field(..., description="技术栈总数")
+
+
 # ============================================================
 # API Endpoints
 # ============================================================
+
+@router.get("/available-technologies", response_model=AvailableTechnologiesResponse)
+async def get_available_technologies(
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    获取所有有测验题目的技术栈列表
+    
+    Returns:
+        所有可用技术栈的列表（去重并排序）
+        
+    Example:
+        GET /api/v1/tech-assessments/available-technologies
+        Response: {
+            "technologies": ["angular", "aws", "docker", "python", "react", ...],
+            "count": 20
+        }
+    """
+    logger.info("get_available_technologies_requested")
+    
+    repo = TechAssessmentRepository(db)
+    technologies = await repo.get_available_technologies()
+    
+    logger.info(
+        "available_technologies_retrieved",
+        count=len(technologies),
+    )
+    
+    return AvailableTechnologiesResponse(
+        technologies=technologies,
+        count=len(technologies),
+    )
+
 
 @router.get("/{technology}/{proficiency}", response_model=AssessmentResponse)
 async def get_tech_assessment(
@@ -774,7 +813,7 @@ async def _generate_custom_assessment_pool(
                     proficiency_level=level,
                 )
                 
-                # 保存到数据库
+                # 保存到数据库（使用 upsert 逻辑，避免唯一约束冲突）
                 await repo.create_assessment(
                     assessment_id=assessment_data["assessment_id"],
                     technology=technology,
@@ -794,6 +833,9 @@ async def _generate_custom_assessment_pool(
                 await asyncio.sleep(1)
                 
             except Exception as e:
+                # 回滚当前事务，避免影响后续操作
+                await db.rollback()
+                
                 logger.error(
                     "custom_assessment_generation_failed",
                     technology=technology,
@@ -801,6 +843,8 @@ async def _generate_custom_assessment_pool(
                     error=str(e),
                     error_type=type(e).__name__,
                 )
+                # 继续处理下一个级别
+                continue
         
         logger.info(
             "custom_assessment_pool_generation_completed",

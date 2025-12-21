@@ -47,6 +47,8 @@ interface CoreDisplayAreaProps {
   currentStep: string;
   /** 任务状态 */
   status: string;
+  /** 任务 ID（用于获取验证结果） */
+  taskId?: string;
   /** 路线图 ID（用于跳转详情页） */
   roadmapId?: string | null;
   /** 需求分析输出 */
@@ -144,43 +146,51 @@ function getDifficultyConfig(level: string): { label: string; className: string 
  */
 function CoreDisplaySkeleton() {
   return (
-    <Card className="p-6">
-      <div className="flex gap-6">
-        {/* 左侧需求分析骨架 */}
-        <div className="w-[320px] flex-shrink-0 space-y-4">
-          <div className="flex items-center gap-2">
-            <Skeleton className="w-5 h-5 rounded" />
-            <Skeleton className="h-5 w-32" />
+    <Card>
+      {/* 标题部分 */}
+      <div className="px-6 py-4 border-b">
+        <h2 className="text-lg font-serif font-semibold">Learning Path Overview</h2>
+      </div>
+      
+      {/* 内容区域 */}
+      <div className="p-6">
+        <div className="flex gap-6">
+          {/* 左侧需求分析骨架 */}
+          <div className="w-[320px] flex-shrink-0 space-y-4">
+            <div className="flex items-center gap-2">
+              <Skeleton className="w-5 h-5 rounded" />
+              <Skeleton className="h-5 w-32" />
+            </div>
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-3/4" />
+            <div className="flex gap-2">
+              <Skeleton className="h-6 w-16 rounded-full" />
+              <Skeleton className="h-6 w-16 rounded-full" />
+              <Skeleton className="h-6 w-16 rounded-full" />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <Skeleton className="h-12 rounded" />
+              <Skeleton className="h-12 rounded" />
+            </div>
           </div>
-          <Skeleton className="h-4 w-full" />
-          <Skeleton className="h-4 w-3/4" />
-          <div className="flex gap-2">
-            <Skeleton className="h-6 w-16 rounded-full" />
-            <Skeleton className="h-6 w-16 rounded-full" />
-            <Skeleton className="h-6 w-16 rounded-full" />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <Skeleton className="h-12 rounded" />
-            <Skeleton className="h-12 rounded" />
-          </div>
-        </div>
-        
-        {/* 右侧路线图骨架 */}
-        <div className="flex-1 space-y-4">
-          <div className="flex items-center gap-2">
-            <Skeleton className="w-5 h-5 rounded" />
-            <Skeleton className="h-5 w-40" />
-          </div>
-          <div className="space-y-3">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="flex items-center gap-4">
-                <Skeleton className="h-8 w-24 rounded-full" />
-                <div className="flex gap-2">
-                  <Skeleton className="h-7 w-20 rounded-full" />
-                  <Skeleton className="h-7 w-20 rounded-full" />
+          
+          {/* 右侧路线图骨架 */}
+          <div className="flex-1 space-y-4">
+            <div className="flex items-center gap-2">
+              <Skeleton className="w-5 h-5 rounded" />
+              <Skeleton className="h-5 w-40" />
+            </div>
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="flex items-center gap-4">
+                  <Skeleton className="h-8 w-24 rounded-full" />
+                  <div className="flex gap-2">
+                    <Skeleton className="h-7 w-20 rounded-full" />
+                    <Skeleton className="h-7 w-20 rounded-full" />
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         </div>
       </div>
@@ -240,14 +250,9 @@ function IntentAnalysisCardInline({ data }: { data: IntentAnalysisOutput }) {
           </div>
           <div>
             <p className="text-base font-semibold text-foreground">
-              {data.estimated_duration_weeks}
+              {data.estimated_duration_weeks} weeks
             </p>
-            <p className="text-xs text-muted-foreground">
-              weeks
-              {data.estimated_hours_per_week && (
-                <> · {data.estimated_hours_per_week}h/week</>
-              )}
-            </p>
+            
           </div>
         </div>
 
@@ -334,14 +339,41 @@ function IntentAnalysisCardInline({ data }: { data: IntentAnalysisOutput }) {
 }
 
 /**
- * 路线图加载等待组件
+ * 获取当前步骤的等待状态文本
+ * 
+ * @param currentStep 当前工作流步骤
+ * @returns 等待状态的描述文本
  */
-function RoadmapWaitingSkeleton() {
+function getWaitingStatusText(currentStep: string): string {
+  const statusMap: Record<string, string> = {
+    'intent_analysis': 'Analyzing your learning goals...',
+    'curriculum_design': 'Designing roadmap structure...',
+    'framework_generation': 'Generating curriculum framework...',
+    'structure_validation': 'Validating roadmap structure...',
+    'roadmap_edit': 'Applying modifications...',
+    'human_review': 'Awaiting your review...',
+    'human_review_pending': 'Awaiting your review...',
+    'content_generation': 'Generating learning content...',
+    'tutorial_generation': 'Generating tutorials...',
+    'resource_recommendation': 'Finding learning resources...',
+    'quiz_generation': 'Creating quiz questions...',
+    'finalizing': 'Finalizing your roadmap...',
+  };
+  
+  return statusMap[currentStep] || 'Preparing your roadmap...';
+}
+
+/**
+ * 路线图加载等待组件
+ * 
+ * @param currentStep 当前工作流步骤，用于显示对应的状态文本
+ */
+function RoadmapWaitingSkeleton({ currentStep = 'curriculum_design' }: { currentStep?: string }) {
   return (
     <div className="flex-1 flex items-center justify-center py-12">
       <div className="text-center space-y-3">
         <Loader2 className="w-8 h-8 text-sage-500 animate-spin mx-auto" />
-        <p className="text-sm text-muted-foreground">Designing roadmap structure...</p>
+        <p className="text-sm text-muted-foreground">{getWaitingStatusText(currentStep)}</p>
       </div>
     </div>
   );
@@ -350,6 +382,7 @@ function RoadmapWaitingSkeleton() {
 export function CoreDisplayArea({
   currentStep,
   status,
+  taskId,
   roadmapId,
   intentAnalysis,
   roadmapFramework,
@@ -448,14 +481,17 @@ export function CoreDisplayArea({
                  stages={roadmapFramework.stages}
                  showStartNode={showIntentCard && !isIntentCollapsed} // 只在显示需求分析卡片时显示起始节点
                  isEditing={isEditing}
+                 taskId={taskId}
+                 roadmapId={roadmapId}  // 传递 roadmapId
+                 showHistoryButton={true}  // 启用历史版本按钮
                  modifiedNodeIds={modifiedNodeIds}
                  loadingConceptIds={loadingConceptIds}
                  failedConceptIds={failedConceptIds}
                  partialFailedConceptIds={partialFailedConceptIds}
                />
              ) : showIntentCard ? (
-               // 需求分析已完成但路线图还在生成
-               <RoadmapWaitingSkeleton />
+               // 需求分析已完成但路线图还在生成，传入当前步骤以显示正确的状态文本
+               <RoadmapWaitingSkeleton currentStep={currentStep} />
              ) : null}
            </div>
         </div>

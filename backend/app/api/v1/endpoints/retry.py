@@ -118,10 +118,10 @@ async def retry_failed_content(
     # 4. 创建重试任务
     retry_task_id = str(uuid.uuid4())
     
-    # 5. 启动后台重试任务（具体实现在 roadmap.py 中）
-    from app.api.v1.roadmap import _execute_retry_failed_task
+    # 5. 启动后台重试任务
+    from app.services.retry_service import execute_retry_failed_task
     background_tasks.add_task(
-        _execute_retry_failed_task,
+        execute_retry_failed_task,
         retry_task_id=retry_task_id,
         roadmap_id=roadmap_id,
         items_to_retry=items_to_retry,
@@ -485,9 +485,9 @@ async def retry_task(
     await db.commit()
     
     # 9. 启动后台重试任务
-    from app.api.v1.roadmap import _execute_retry_failed_task
+    from app.services.retry_service import execute_retry_failed_task
     background_tasks.add_task(
-        _execute_retry_failed_task,
+        execute_retry_failed_task,
         retry_task_id=new_task_id,
         roadmap_id=roadmap_id,
         items_to_retry=items_to_retry,

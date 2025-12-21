@@ -114,6 +114,15 @@ export interface RoadmapTreeProps {
   /** 当前编辑模式（显示蒙版加载动画） */
   isEditing?: boolean;
   
+  /** 任务 ID（用于获取验证结果） */
+  taskId?: string;
+  
+  /** 路线图 ID（用于获取历史版本） */
+  roadmapId?: string;
+  
+  /** 是否显示历史版本按钮 */
+  showHistoryButton?: boolean;
+  
   /** 修改过的节点 ID 列表 */
   modifiedNodeIds?: string[];
   

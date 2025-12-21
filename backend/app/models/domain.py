@@ -11,7 +11,7 @@
 - A6: 测验生成器 (QuizGeneration*)
 """
 from pydantic import BaseModel, Field, field_serializer
-from typing import List, Optional, Literal, Dict, Any
+from typing import List, Optional, Literal, Dict, Any, Tuple
 from datetime import datetime
 
 
@@ -182,21 +182,143 @@ class RoadmapFramework(BaseModel):
     total_estimated_hours: float
     recommended_completion_weeks: int
 
-    def validate_structure(self) -> bool:
-        """验证结构完整性（所有前置关系是否有效）"""
+    def validate_structure(self) -> Tuple[bool, List["ValidationIssue"]]:
+        """
+        执行硬性结构检查
+        
+        Returns:
+            (是否通过, 问题列表)
+        """
+        issues = []
+        
+        # 1. 检查前置关系有效性
         all_concept_ids = {
             c.concept_id
             for stage in self.stages
             for module in stage.modules
             for c in module.concepts
         }
+        
         for stage in self.stages:
             for module in stage.modules:
                 for concept in module.concepts:
                     for prereq in concept.prerequisites:
                         if prereq not in all_concept_ids:
-                            return False
-        return True
+                            issues.append(ValidationIssue(
+                                severity="critical",
+                                category="structural_flaw",
+                                location=f"Stage {stage.order} > {module.name} > {concept.name}",
+                                issue=f"前置概念 '{prereq}' 不存在于路线图中",
+                                suggestion="移除无效的前置关系或添加缺失的概念"
+                            ))
+        
+        # 2. 检查循环依赖（使用 DFS）
+        cycles = self._detect_cycles()
+        for cycle in cycles:
+            cycle_str = " → ".join(cycle)
+            issues.append(ValidationIssue(
+                severity="critical",
+                category="structural_flaw",
+                location="多个 Concepts",
+                issue=f"检测到循环依赖：{cycle_str}",
+                suggestion="移除循环中的某个前置关系"
+            ))
+        
+        # 3. 检查 Stage/Module 是否为空
+        for stage in self.stages:
+            if not stage.modules:
+                issues.append(ValidationIssue(
+                    severity="critical",
+                    category="structural_flaw",
+                    location=f"Stage {stage.order}: {stage.name}",
+                    issue="阶段不包含任何模块",
+                    suggestion="添加至少一个模块或删除该阶段"
+                ))
+            else:
+                for module in stage.modules:
+                    if not module.concepts:
+                        issues.append(ValidationIssue(
+                            severity="critical",
+                            category="structural_flaw",
+                            location=f"Stage {stage.order} > {module.name}",
+                            issue="模块不包含任何概念",
+                            suggestion="添加至少一个概念或删除该模块"
+                        ))
+        
+        # 判断是否通过：没有 critical 问题
+        is_valid = len([i for i in issues if i.severity == "critical"]) == 0
+        
+        return (is_valid, issues)
+    
+    def _build_dependency_graph(self) -> Dict[str, List[str]]:
+        """
+        构建概念依赖图
+        
+        Returns:
+            概念 ID -> 依赖它的概念 ID 列表
+        """
+        graph = {}
+        
+        for stage in self.stages:
+            for module in stage.modules:
+                for concept in module.concepts:
+                    if concept.concept_id not in graph:
+                        graph[concept.concept_id] = []
+                    
+                    for prereq in concept.prerequisites:
+                        if prereq not in graph:
+                            graph[prereq] = []
+                        # prereq -> concept (concept 依赖 prereq)
+                        graph[prereq].append(concept.concept_id)
+        
+        return graph
+    
+    def _detect_cycles(self) -> List[List[str]]:
+        """
+        使用 DFS 检测循环依赖
+        
+        Returns:
+            循环列表，每个循环是一个概念 ID 列表
+        """
+        # 构建依赖图（反向：concept -> prerequisites）
+        graph = {}
+        for stage in self.stages:
+            for module in stage.modules:
+                for concept in module.concepts:
+                    graph[concept.concept_id] = concept.prerequisites
+        
+        cycles = []
+        visited = set()
+        rec_stack = set()
+        path = []
+        
+        def dfs(node: str) -> bool:
+            """DFS 检测循环，返回 True 表示发现循环"""
+            visited.add(node)
+            rec_stack.add(node)
+            path.append(node)
+            
+            if node in graph:
+                for neighbor in graph[node]:
+                    if neighbor not in visited:
+                        if dfs(neighbor):
+                            return True
+                    elif neighbor in rec_stack:
+                        # 发现循环
+                        cycle_start = path.index(neighbor)
+                        cycle = path[cycle_start:] + [neighbor]
+                        cycles.append(cycle)
+                        return True
+            
+            path.pop()
+            rec_stack.remove(node)
+            return False
+        
+        for concept_id in graph:
+            if concept_id not in visited:
+                dfs(concept_id)
+        
+        return cycles
 
 
 # ============================================================
@@ -341,17 +463,42 @@ class ValidationInput(BaseModel):
     user_preferences: LearningPreferences
 
 
+class DimensionScore(BaseModel):
+    """单个评估维度的分数"""
+    dimension: str = Field(..., description="维度名称")
+    score: float = Field(..., ge=0, le=100, description="该维度得分（0-100）")
+    rationale: str = Field(..., description="评分理由（50字以内）")
+
+
+class StructuralSuggestion(BaseModel):
+    """结构化修改建议"""
+    action: Literal["add_concept", "add_module", "add_stage", "modify_concept", "reorder_stage", "merge_modules"]
+    target_location: str = Field(..., description="目标位置，如 'Stage 2 > Module 1 之后'")
+    content: str = Field(..., description="建议的具体内容")
+    reason: str = Field(..., description="为什么需要此修改")
+
+
 class ValidationIssue(BaseModel):
-    severity: Literal["critical", "warning", "suggestion"]
+    """验证问题"""
+    severity: Literal["critical", "warning"]  # 移除 suggestion
+    category: Literal["knowledge_gap", "structural_flaw", "user_mismatch"]
     location: str = Field(..., description="问题位置，如 'Stage 2 > Module 1'")
     issue: str
-    suggestion: str
+    suggestion: str  # 保留描述性建议
+    structural_suggestion: Optional[StructuralSuggestion] = None  # 新增：结构化建议
 
 
 class ValidationOutput(BaseModel):
-    is_valid: bool
-    issues: List[ValidationIssue] = []
-    overall_score: float = Field(..., ge=0, le=100, description="结构质量评分")
+    """验证输出结果"""
+    # === LLM 输出部分 ===
+    dimension_scores: List[DimensionScore] = Field(default_factory=list, description="5个维度的独立评分")
+    issues: List[ValidationIssue] = Field(default_factory=list, description="只包含 critical 和 warning")
+    improvement_suggestions: List[StructuralSuggestion] = Field(default_factory=list, description="改进建议（不影响通过与否）")
+    
+    # === Python 计算部分 ===
+    overall_score: float = Field(..., ge=0, le=100, description="加权总分（Python 计算）")
+    is_valid: bool = Field(..., description="是否通过验证（Python 判定）")
+    validation_summary: str = Field(..., description="验证摘要（Python 生成）")
 
 
 # --- A4: Tutorial Generator (教程生成器) ---

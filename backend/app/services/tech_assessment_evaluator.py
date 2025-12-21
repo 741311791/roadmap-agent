@@ -113,13 +113,13 @@ def evaluate_answers(questions: List[dict], answers: List[str]) -> Dict[str, Any
     # 判定建议
     if percentage >= 80:
         recommendation = "confirmed"
-        message = "您的能力与当前级别匹配，继续保持！"
+        message = "Your ability matches the current level, continue to maintain!"
     elif percentage >= 60:
         recommendation = "adjust"
-        message = "建议保持当前级别，加强薄弱环节的学习"
+        message = "It is recommended to keep the current level and strengthen the learning of薄弱环节"
     else:
         recommendation = "downgrade"
-        message = "建议选择更基础的级别，循序渐进提升能力"
+        message = "It is recommended to choose a more basic level and gradually improve your ability"
 
     result = {
         "score": score,

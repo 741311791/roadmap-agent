@@ -216,7 +216,7 @@ export default function MyRoadmapsPage() {
           <>
             {/* Grid View */}
             {viewMode === 'grid' && (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-8">
+              <div className="grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4 mb-8">
                 {displayedRoadmaps.map((roadmap) => (
                   <div key={roadmap.id} className="w-full">
                     <RoadmapCard
