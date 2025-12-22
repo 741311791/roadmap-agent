@@ -8,6 +8,7 @@
 - EditorRunner: 路线图编辑节点
 - ReviewRunner: 人工审核节点
 - ContentRunner: 内容生成节点（教程/资源/测验）
+- EditPlanRunner: 修改计划分析节点（Human Review 反馈解析）
 
 每个 Runner 负责：
 1. 执行对应的 Agent
@@ -23,6 +24,7 @@ from .validation_runner import ValidationRunner
 from .editor_runner import EditorRunner
 from .review_runner import ReviewRunner
 from .content_runner import ContentRunner
+from .edit_plan_runner import EditPlanRunner
 
 __all__ = [
     "IntentAnalysisRunner",
@@ -31,5 +33,6 @@ __all__ = [
     "EditorRunner",
     "ReviewRunner",
     "ContentRunner",
+    "EditPlanRunner",
 ]
 

@@ -27,12 +27,27 @@ export function CapabilityHistoryDialog({
   proficiency,
   capabilityAnalysis,
 }: CapabilityHistoryDialogProps) {
-  // 格式化时间
-  const formattedDate = format(
-    new Date(capabilityAnalysis.analyzed_at),
-    'MMM dd, yyyy HH:mm',
-    { locale: enUS }
-  );
+  // 格式化时间 - 添加防御性检查
+  const formattedDate = (() => {
+    try {
+      // 检查 analyzed_at 是否存在
+      if (!capabilityAnalysis.analyzed_at) {
+        return 'Unknown date';
+      }
+      
+      const date = new Date(capabilityAnalysis.analyzed_at);
+      
+      // 检查日期是否有效
+      if (isNaN(date.getTime())) {
+        return 'Invalid date';
+      }
+      
+      return format(date, 'MMM dd, yyyy HH:mm', { locale: enUS });
+    } catch (error) {
+      console.error('Failed to format date:', error);
+      return 'Unknown date';
+    }
+  })();
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

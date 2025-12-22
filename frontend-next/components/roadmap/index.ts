@@ -23,6 +23,9 @@ export { RoadmapCard } from './roadmap-card';
 export { RoadmapListItem } from './roadmap-list-item';
 export { LearningCard } from './learning-card';
 export { FeaturedRoadmapCard } from './featured-roadmap-card';
+export { MyLearningCard } from './my-learning-card';
+export { CreateLearningCard } from './create-learning-card';
 export type { MyRoadmap, CommunityRoadmap } from './roadmap-card';
 export type { FeaturedRoadmap } from './featured-roadmap-card';
+export type { MyLearningCardProps } from './my-learning-card';
 

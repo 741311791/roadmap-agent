@@ -75,8 +75,19 @@ class WebSearchRouter(BaseTool[SearchQuery, SearchResult]):
         if not self.tavily_tool:
             return False
         
-        api_key = self.tavily_tool.api_key
-        return api_key and api_key != "your_tavily_api_key_here"
+        # 检查 TavilyAPIKeyManager 是否有可用的 API keys
+        try:
+            return (
+                hasattr(self.tavily_tool, 'key_manager') and 
+                self.tavily_tool.key_manager is not None and
+                len(self.tavily_tool.key_manager.api_keys) > 0
+            )
+        except Exception as e:
+            logger.warning(
+                "web_search_router_tavily_config_check_failed",
+                error=str(e)
+            )
+            return False
     
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
     async def execute(self, input_data: SearchQuery) -> SearchResult:

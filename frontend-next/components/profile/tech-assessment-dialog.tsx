@@ -151,10 +151,14 @@ export function TechAssessmentDialog({
         );
 
         if (techItem?.capability_analysis) {
+          // 确保 analyzed_at 字段存在，如果不存在则使用当前时间
+          const analyzed_at = techItem.capability_analysis.analyzed_at || new Date().toISOString();
+          
           setHistoricalAnalysis({
             ...techItem.capability_analysis,
             technology,
             proficiency_level: proficiency,
+            analyzed_at,
           } as CapabilityAnalysisResult & { analyzed_at: string });
         } else {
           setHistoricalAnalysis(null);

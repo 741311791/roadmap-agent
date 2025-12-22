@@ -1,7 +1,11 @@
 """
 Roadmap Editor Agent（路线图编辑师）
+
+重构说明：
+- 统一使用 EditPlan 作为修改指令来源
+- 移除了 validation_issues 直接处理逻辑
+- 所有修改来源（验证失败、人工反馈）都通过 EditPlanAnalyzerAgent 转换为 EditPlan
 """
-import json
 import yaml
 from app.agents.base import BaseAgent
 from app.models.domain import (
@@ -9,7 +13,7 @@ from app.models.domain import (
     LearningPreferences,
     RoadmapEditInput,
     RoadmapEditOutput,
-    ValidationIssue,
+    EditPlan,
 )
 from app.config.settings import settings
 import structlog
@@ -123,9 +127,10 @@ def _parse_yaml_roadmap(yaml_content: str) -> dict:
             # 假设每周学习10小时
             data["recommended_completion_weeks"] = max(1, int(data.get("total_estimated_hours", 0) / 10))
         
-        # 补全 stage.order（如果缺失）
+        # 补全或修正 stage.order（缺失或无效时自动修正）
+        # 注意：order 必须 >= 1，LLM 可能错误输出 0 或负数
         for idx, stage in enumerate(data.get("stages", []), start=1):
-            if "order" not in stage:
+            if "order" not in stage or not isinstance(stage.get("order"), int) or stage["order"] < 1:
                 stage["order"] = idx
         
         # 补全 concept 的默认字段（如果LLM遗漏）
@@ -191,22 +196,92 @@ class RoadmapEditorAgent(BaseAgent):
             max_tokens=16384,
         )
     
-    async def edit(
+    def _build_user_message(
         self,
         existing_framework: RoadmapFramework,
-        validation_issues: list[ValidationIssue],
         user_preferences: LearningPreferences,
-        modification_count: int = 0,
-        modification_context: str | None = None,
-    ) -> RoadmapEditOutput:
+        edit_plan: EditPlan,
+    ) -> str:
         """
-        基于验证问题修改现有路线图框架
+        构建用户消息（简化版：统一使用 EditPlan）
         
         Args:
             existing_framework: 现有路线图框架
-            validation_issues: 验证发现的问题列表
             user_preferences: 用户偏好
-            modification_count: 修改次数（用于上下文）
+            edit_plan: 修改计划（必需）
+            
+        Returns:
+            格式化的用户消息
+        """
+        # 基础路线图信息
+        base_info = f"""
+**现有路线图框架**:
+- 标题: {existing_framework.title}
+- 总预估时长: {existing_framework.total_estimated_hours} 小时
+- 推荐完成周数: {existing_framework.recommended_completion_weeks} 周
+- 阶段数量: {len(existing_framework.stages)}
+
+**用户约束**:
+- 每周可投入时间: {user_preferences.available_hours_per_week} 小时
+- 当前水平: {user_preferences.current_level}
+- 学习目标: {user_preferences.learning_goal}
+"""
+        
+        # 格式化修改意图列表
+        intents_text = "\n".join([
+            f"- **[{intent.priority.upper()}]** {intent.intent_type} {intent.target_type} @ {intent.target_path}\n  描述: {intent.description}"
+            for intent in edit_plan.intents
+        ])
+        
+        # 格式化保留要求
+        preservation_text = "\n".join([f"- {item}" for item in edit_plan.preservation_requirements]) if edit_plan.preservation_requirements else "- 修改计划中未提及的所有内容"
+        
+        return f"""
+请根据以下修改计划编辑学习路线图：
+
+{base_info}
+
+**修改计划摘要**:
+{edit_plan.feedback_summary}
+
+**修改意图列表（请严格按照此计划执行）**:
+{intents_text}
+
+**影响范围分析**:
+{edit_plan.scope_analysis}
+
+**⚠️ 必须保留不变的部分**:
+{preservation_text}
+
+**执行要求**:
+1. **严格执行**: 只修改计划中指定的内容，不要擅自修改其他部分
+2. **优先级顺序**: 优先处理 priority=must 的意图，然后处理 should，最后处理 could
+3. **保持稳定**: 计划中未提及的 Stage/Module/Concept 必须保持原样（包括 ID、名称、内容）
+4. **最小改动**: 即使是要修改的部分，也要尽量保留原有的合理设计
+5. **ID 保持**: 除非是新增或删除，否则保持所有 ID 不变
+
+请以 YAML 格式返回修改后的完整路线图框架。
+"""
+    
+    async def edit(
+        self,
+        existing_framework: RoadmapFramework,
+        user_preferences: LearningPreferences,
+        edit_plan: EditPlan,
+        modification_context: str | None = None,
+    ) -> RoadmapEditOutput:
+        """
+        基于 EditPlan 修改现有路线图框架（简化版）
+        
+        重构说明：
+        - 统一使用 EditPlan 作为修改指令来源
+        - 移除了 validation_issues 直接处理逻辑
+        - 所有修改来源都通过 EditPlanAnalyzerAgent 转换为 EditPlan
+        
+        Args:
+            existing_framework: 现有路线图框架
+            user_preferences: 用户偏好
+            edit_plan: 结构化的修改计划（必需，来自 EditPlanAnalyzerAgent）
             modification_context: 修改上下文说明
             
         Returns:
@@ -214,57 +289,35 @@ class RoadmapEditorAgent(BaseAgent):
         """
         # 构建修改上下文
         if not modification_context:
-            critical_count = sum(1 for issue in validation_issues if issue.severity == "critical")
-            warning_count = sum(1 for issue in validation_issues if issue.severity == "warning")
-            modification_context = (
-                f"第 {modification_count + 1} 次修改，"
-                f"主要解决 {critical_count} 个严重问题和 {warning_count} 个警告问题"
-            )
+            must_count = sum(1 for i in edit_plan.intents if i.priority == "must")
+            should_count = sum(1 for i in edit_plan.intents if i.priority == "should")
+            modification_context = f"修改计划包含 {must_count} 个必须执行、{should_count} 个建议执行的意图"
         
         # 加载 System Prompt
         system_prompt = self._load_system_prompt(
             "roadmap_editor.j2",
             agent_name="Roadmap Editor",
-            role_description="路线图编辑专家，基于验证反馈对现有路线图进行针对性修改，保留合理部分，解决结构问题。",
+            role_description="路线图编辑专家，基于 EditPlan 对现有路线图进行精确修改，保留未涉及部分，解决指定问题。",
             user_goal=user_preferences.learning_goal,
             existing_framework=existing_framework,
-            validation_issues=validation_issues,
-            modification_count=modification_count,
             modification_context=modification_context,
+            edit_plan=edit_plan,
         )
         
         # 构建用户消息
-        issues_text = "\n".join([
-            f"- [{issue.severity.upper()}] {issue.location}: {issue.issue}\n  建议：{issue.suggestion}"
-            for issue in validation_issues
-        ])
+        user_message = self._build_user_message(
+            existing_framework=existing_framework,
+            user_preferences=user_preferences,
+            edit_plan=edit_plan,
+        )
         
-        user_message = f"""
-请根据以下验证反馈修改现有的学习路线图框架：
-
-**现有路线图框架**:
-- 标题: {existing_framework.title}
-- 总预估时长: {existing_framework.total_estimated_hours} 小时
-- 推荐完成周数: {existing_framework.recommended_completion_weeks} 周
-- 阶段数量: {len(existing_framework.stages)}
-
-**验证发现的问题**:
-{issues_text if validation_issues else "无"}
-
-**用户约束**:
-- 每周可投入时间: {user_preferences.available_hours_per_week} 小时
-- 当前水平: {user_preferences.current_level}
-- 学习目标: {user_preferences.learning_goal}
-
-**修改要求**:
-1. 必须解决所有 critical 级别的问题
-2. 尽量解决 warning 级别的问题
-3. 保留路线图中合理的部分（特别是没有问题的部分）
-4. 确保修改后的路线图仍然符合用户的学习目标和时间约束
-5. 保持路线图的整体结构和逻辑一致性
-
-请以 JSON 格式返回修改后的路线图框架，严格遵循 RoadmapEditOutput Schema。
-"""
+        logger.info(
+            "roadmap_edit_started",
+            roadmap_id=existing_framework.roadmap_id,
+            intents_count=len(edit_plan.intents),
+            must_count=sum(1 for i in edit_plan.intents if i.priority == "must"),
+            should_count=sum(1 for i in edit_plan.intents if i.priority == "should"),
+        )
         
         messages = [
             {"role": "system", "content": system_prompt},
@@ -305,8 +358,7 @@ class RoadmapEditorAgent(BaseAgent):
             logger.info(
                 "roadmap_edit_success",
                 roadmap_id=framework.roadmap_id,
-                modification_count=modification_count + 1,
-                issues_resolved=len(validation_issues),
+                intents_executed=len(edit_plan.intents),
                 preserved_count=len(preserved_elements),
             )
             return result
@@ -322,8 +374,8 @@ class RoadmapEditorAgent(BaseAgent):
         """实现基类的抽象方法"""
         return await self.edit(
             existing_framework=input_data.existing_framework,
-            validation_issues=input_data.validation_issues,
             user_preferences=input_data.user_preferences,
+            edit_plan=input_data.edit_plan,
             modification_context=input_data.modification_context,
         )
 

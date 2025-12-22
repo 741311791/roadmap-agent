@@ -15,7 +15,15 @@
  */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { Maximize2, Minimize2, Loader2, ChevronsRight, ChevronsDown, Filter, History } from 'lucide-react';
+import { 
+  Maximize2, 
+  Minimize2, 
+  Loader2, 
+  ChevronsRight, 
+  ChevronsDown, 
+  Filter, 
+  History,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -44,79 +52,16 @@ import type {
 import { roadmapsApi, type EditHistoryVersion } from '@/lib/api/endpoints/roadmaps';
 
 /**
- * 编辑模式蒙版组件
+ * 编辑模式蒙版组件（简化版）
+ * 
+ * 显示简单的加载状态蒙版，提示用户路线图正在更新中
  */
-function EditingOverlay({ taskId }: { taskId?: string }) {
-  const [editRecord, setEditRecord] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (!taskId) {
-      setLoading(false);
-      return;
-    }
-
-    // 获取最新的编辑记录
-    const fetchEditRecord = async () => {
-      try {
-        const { roadmapsApi } = await import('@/lib/api/endpoints');
-        const data = await roadmapsApi.getLatestEdit(taskId);
-        setEditRecord(data);
-      } catch (error) {
-        console.error('Failed to fetch edit record:', error);
-        // 即使获取失败，也不影响显示
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchEditRecord();
-  }, [taskId]);
-
+function EditingOverlay() {
   return (
-    <div className="absolute inset-0 bg-white/90 backdrop-blur-sm z-40 rounded-lg overflow-auto">
-      <div className="p-6 space-y-6">
-        {/* 顶部状态指示 */}
-        <div className="flex items-center gap-3">
-          <Loader2 className="w-6 h-6 text-sage-600 animate-spin flex-shrink-0" />
-          <div>
-            <h3 className="font-semibold text-lg">Updating Roadmap Structure</h3>
-            <p className="text-sm text-muted-foreground">
-              AI is refining the roadmap based on validation feedback...
-            </p>
-          </div>
-        </div>
-
-        {/* 编辑记录详情 */}
-        {!loading && editRecord && (
-          <div className="space-y-3">
-            <div className="rounded-lg border bg-white p-4">
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-muted-foreground">Edit Round</span>
-                  <span className="text-sm font-semibold">#{editRecord.edit_round}</span>
-                </div>
-                <div className="text-sm">
-                  <span className="font-medium text-muted-foreground">Summary:</span>
-                  <p className="mt-1 text-foreground">{editRecord.modification_summary}</p>
-                </div>
-                <div className="flex items-center justify-between pt-2 border-t">
-                  <span className="text-sm text-muted-foreground">Modified Nodes</span>
-                  <span className="text-sm font-semibold text-sage-600">
-                    {editRecord.modified_node_ids?.length || 0}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* 加载中 */}
-        {loading && (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="w-6 h-6 text-sage-500 animate-spin" />
-          </div>
-        )}
+    <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-40 flex items-center justify-center rounded-lg">
+      <div className="text-center space-y-3">
+        <Loader2 className="w-10 h-10 text-sage-600 animate-spin mx-auto" />
+        <p className="text-sm text-gray-600">Updating roadmap structure...</p>
       </div>
     </div>
   );
@@ -176,7 +121,7 @@ function TreeViewContent({
       ))}
       
       {/* 编辑模式蒙版 */}
-      {isEditing && <EditingOverlay taskId={taskId} />}
+      {isEditing && <EditingOverlay />}
     </div>
   );
 }

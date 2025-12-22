@@ -12,11 +12,14 @@
 特殊处理:
 - 审核前将状态更新为 "human_review_pending"
 - 审核后恢复为 "processing"
+- 保存用户审核反馈到数据库（HumanReviewFeedback 表）
 """
 import structlog
 from langgraph.types import interrupt
 
 from app.services.execution_logger import execution_logger, LogCategory
+from app.db.session import AsyncSessionLocal
+from app.db.repositories.review_feedback_repo import ReviewFeedbackRepository
 from ..base import RoadmapState
 from ..workflow_brain import WorkflowBrain
 
@@ -188,7 +191,54 @@ class ReviewRunner:
                 has_feedback=bool(feedback),
             )
             
-            # 记录审核结果日志（新增 - 用于前端展示）
+            # ========================================
+            # 保存用户审核反馈到数据库
+            # ========================================
+            try:
+                async with AsyncSessionLocal() as session:
+                    feedback_repo = ReviewFeedbackRepository(session)
+                    
+                    # 计算当前审核轮次
+                    review_count = await feedback_repo.count_by_task(task_id)
+                    current_round = review_count + 1
+                    
+                    # 获取路线图框架快照
+                    framework = state.get("roadmap_framework")
+                    roadmap_snapshot = framework.model_dump() if framework else {}
+                    
+                    # 获取用户 ID（从 state 中提取）
+                    user_id = state.get("user_request", {}).user_id if hasattr(state.get("user_request"), "user_id") else state["task_id"]
+                    
+                    # 创建审核反馈记录
+                    feedback_record = await feedback_repo.create_feedback(
+                        task_id=task_id,
+                        roadmap_id=roadmap_id,
+                        user_id=user_id,
+                        approved=approved,
+                        feedback_text=feedback if feedback else None,
+                        roadmap_version_snapshot=roadmap_snapshot,
+                        review_round=current_round,
+                    )
+                    
+                    # 关键修复：提交事务以确保记录真正保存到数据库
+                    await session.commit()
+                    
+                    logger.info(
+                        "review_feedback_saved_to_db",
+                        task_id=task_id,
+                        feedback_id=feedback_record.id,
+                        review_round=current_round,
+                        approved=approved,
+                    )
+            except Exception as e:
+                logger.error(
+                    "failed_to_save_review_feedback",
+                    task_id=task_id,
+                    error=str(e),
+                )
+                # 不阻塞工作流执行，仅记录错误
+            
+            # 记录审核结果日志（用于前端展示）
             if approved:
                 await execution_logger.info(
                     task_id=state["task_id"],
@@ -222,8 +272,25 @@ class ReviewRunner:
             )
             
             # 返回纯状态更新
-            return {
+            # 关键修复：将用户反馈传递到状态中，供后续 EditPlanAnalyzer 和 RoadmapEditor 使用
+            # 同时传递 feedback_id 用于关联 EditPlanRecord
+            # 同时添加 edit_source 标记（用于路由判断和前端分支显示）
+            state_update = {
                 "human_approved": approved,
+                "user_feedback": feedback if not approved and feedback else None,  # 仅当拒绝且有反馈时保存
                 "current_step": "human_review",
                 "execution_history": [f"人工审核完成 - {'批准' if approved else '拒绝'}"],
             }
+            
+            # 当用户拒绝时，添加 edit_source 标记
+            if not approved:
+                state_update["edit_source"] = "human_review"
+            
+            # 如果成功保存了反馈记录，将 feedback_id 添加到状态中
+            try:
+                if 'feedback_record' in locals():
+                    state_update["review_feedback_id"] = feedback_record.id
+            except:
+                pass
+            
+            return state_update

@@ -609,6 +609,152 @@ class RoadmapEditRecord(SQLModel, table=True):
     )
 
 
+class HumanReviewFeedback(SQLModel, table=True):
+    """
+    人工审核反馈记录表
+    
+    存储 human_review 节点中用户提交的审核反馈，用于追溯和分析用户需求。
+    """
+    __tablename__ = "human_review_feedbacks"
+    
+    # 主键
+    id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        primary_key=True,
+        description="反馈记录唯一标识"
+    )
+    
+    # 关联字段
+    task_id: str = Field(
+        foreign_key="roadmap_tasks.task_id",
+        index=True,
+        description="关联的任务 ID"
+    )
+    roadmap_id: str = Field(
+        index=True,
+        description="关联的路线图 ID"
+    )
+    user_id: str = Field(
+        index=True,
+        description="用户 ID"
+    )
+    
+    # 审核结果
+    approved: bool = Field(
+        description="是否批准：True=批准通过，False=拒绝并要求修改"
+    )
+    feedback_text: Optional[str] = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
+        description="用户反馈文本（拒绝时必填）"
+    )
+    
+    # 关联上下文
+    roadmap_version_snapshot: dict = Field(
+        sa_column=Column(JSON),
+        description="审核时的路线图框架快照（用于追溯）"
+    )
+    
+    # 审核轮次（同一任务可能有多轮审核）
+    review_round: int = Field(
+        default=1,
+        index=True,
+        description="第几轮审核"
+    )
+    
+    # 时间戳
+    created_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False)),
+        description="反馈提交时间（北京时间）"
+    )
+
+
+class EditPlanRecord(SQLModel, table=True):
+    """
+    修改计划记录表
+    
+    存储 EditPlanAnalyzerAgent 解析用户反馈后生成的结构化修改计划。
+    """
+    __tablename__ = "edit_plan_records"
+    
+    # 主键
+    id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        primary_key=True,
+        description="修改计划唯一标识"
+    )
+    
+    # 关联字段
+    task_id: str = Field(
+        foreign_key="roadmap_tasks.task_id",
+        index=True,
+        description="关联的任务 ID"
+    )
+    roadmap_id: str = Field(
+        index=True,
+        description="关联的路线图 ID"
+    )
+    feedback_id: str = Field(
+        foreign_key="human_review_feedbacks.id",
+        index=True,
+        description="关联的用户反馈记录 ID"
+    )
+    
+    # 修改计划内容（JSON 格式）
+    feedback_summary: str = Field(
+        sa_column=Column(Text),
+        description="反馈摘要"
+    )
+    scope_analysis: str = Field(
+        sa_column=Column(Text),
+        description="修改范围分析"
+    )
+    intents: list = Field(
+        sa_column=Column(JSON),
+        description="修改意图列表（EditIntent 对象列表）"
+    )
+    preservation_requirements: list = Field(
+        sa_column=Column(JSON),
+        description="需保持不变的部分列表"
+    )
+    
+    # 完整计划数据（JSON 格式，用于恢复 EditPlan 对象）
+    full_plan_data: dict = Field(
+        sa_column=Column(JSON),
+        description="完整的 EditPlan 数据"
+    )
+    
+    # 分析结果元数据
+    confidence: Optional[str] = Field(
+        default=None,
+        description="解析置信度：high, medium, low"
+    )
+    needs_clarification: bool = Field(
+        default=False,
+        description="是否需要用户澄清"
+    )
+    clarification_questions: Optional[list] = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+        description="需要澄清的问题列表"
+    )
+    
+    # 执行状态
+    execution_status: str = Field(
+        default="pending",
+        index=True,
+        description="执行状态：pending, executing, completed, failed"
+    )
+    
+    # 时间戳
+    created_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False)),
+        description="创建时间（北京时间）"
+    )
+
+
 # ============================================================
 # 伴学Agent相关表
 # ============================================================

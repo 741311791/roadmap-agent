@@ -38,6 +38,8 @@ class WorkflowBuilder:
         editor_runner=None,
         review_runner=None,
         content_runner=None,
+        edit_plan_runner=None,  # 修改计划分析节点（人工审核触发）
+        validation_edit_plan_runner=None,  # 验证结果修改计划分析节点（验证失败触发）
     ):
         self.config = config
         self.router = router
@@ -49,6 +51,8 @@ class WorkflowBuilder:
         self.editor_runner = editor_runner
         self.review_runner = review_runner
         self.content_runner = content_runner
+        self.edit_plan_runner = edit_plan_runner
+        self.validation_edit_plan_runner = validation_edit_plan_runner  # 新增
     
     def build(self, checkpointer) -> CompiledStateGraph:
         """
@@ -95,11 +99,17 @@ class WorkflowBuilder:
                 workflow.add_node("structure_validation", self.validation_runner.run)
             if self.editor_runner:
                 workflow.add_node("roadmap_edit", self.editor_runner.run)
+            # 新增：验证结果修改计划分析节点（验证失败时触发）
+            if self.validation_edit_plan_runner:
+                workflow.add_node("validation_edit_plan_analysis", self.validation_edit_plan_runner.run)
         
         # 可选节点：人工审核
         if not self.config.skip_human_review:
             if self.review_runner:
                 workflow.add_node("human_review", self.review_runner.run)
+            # 新增：修改计划分析节点（仅在有人工审核时添加）
+            if self.edit_plan_runner:
+                workflow.add_node("edit_plan_analysis", self.edit_plan_runner.run)
         
         # 可选节点：教程生成
         if not self.config.skip_tutorial_generation:
@@ -135,7 +145,13 @@ class WorkflowBuilder:
             self._add_human_review_edges(workflow)
     
     def _add_edges_with_validation(self, workflow: StateGraph):
-        """添加包含结构验证的边"""
+        """
+        添加包含结构验证的边
+        
+        重构后的流程：
+        structure_validation → [失败] → validation_edit_plan_analysis → roadmap_edit → structure_validation
+        structure_validation → [通过] → human_review / tutorial_generation / END
+        """
         # 课程设计 → 结构验证
         workflow.add_edge("curriculum_design", "structure_validation")
         
@@ -144,7 +160,8 @@ class WorkflowBuilder:
             "structure_validation",
             self.router.route_after_validation,
             {
-                "edit_roadmap": "roadmap_edit",
+                # 重构：验证失败后先进入修改计划分析
+                "validation_edit_plan_analysis": "validation_edit_plan_analysis",
                 "human_review": "human_review"
                 if not self.config.skip_human_review
                 else (
@@ -159,8 +176,21 @@ class WorkflowBuilder:
             },
         )
         
-        # 路线图编辑后重新验证
-        workflow.add_edge("roadmap_edit", "structure_validation")
+        # 新增：验证结果修改计划分析 → 路线图编辑
+        if self.validation_edit_plan_runner:
+            workflow.add_edge("validation_edit_plan_analysis", "roadmap_edit")
+        
+        # 路线图编辑后的条件路由：
+        # - 如果编辑来源是 "human_review"，直接返回人工审核
+        # - 如果编辑来源是 "validation_failed"，返回结构验证
+        workflow.add_conditional_edges(
+            "roadmap_edit",
+            self.router.route_after_edit,
+            {
+                "human_review": "human_review" if not self.config.skip_human_review else END,
+                "structure_validation": "structure_validation",
+            },
+        )
         
         # 人工审核后路由
         if not self.config.skip_human_review:
@@ -171,16 +201,28 @@ class WorkflowBuilder:
             workflow.add_edge("tutorial_generation", END)
     
     def _add_human_review_edges(self, workflow: StateGraph):
-        """添加人工审核节点的边"""
+        """
+        添加人工审核节点的边
+        
+        新流程（当用户拒绝时）：
+        human_review → edit_plan_analysis → roadmap_edit → structure_validation
+        """
+        # 确定用户拒绝后的下一个节点
+        # 如果有 edit_plan_runner，先进入修改计划分析
+        if self.edit_plan_runner:
+            modify_next_node = "edit_plan_analysis"
+        elif not self.config.skip_structure_validation:
+            modify_next_node = "roadmap_edit"
+        else:
+            modify_next_node = "curriculum_design" if not self.config.skip_tutorial_generation else END
+        
         if self.config.skip_tutorial_generation:
             workflow.add_conditional_edges(
                 "human_review",
                 self.router.route_after_human_review,
                 {
                     "approved": END,
-                    "modify": "roadmap_edit"
-                    if not self.config.skip_structure_validation
-                    else END,
+                    "modify": modify_next_node,
                     "end": END,
                 },
             )
@@ -190,10 +232,12 @@ class WorkflowBuilder:
                 self.router.route_after_human_review,
                 {
                     "approved": "tutorial_generation",
-                    "modify": "roadmap_edit"
-                    if not self.config.skip_structure_validation
-                    else "curriculum_design",
+                    "modify": modify_next_node,
                     "end": END,
                 },
             )
+        
+        # 新增：edit_plan_analysis → roadmap_edit 的边
+        if self.edit_plan_runner and not self.config.skip_structure_validation:
+            workflow.add_edge("edit_plan_analysis", "roadmap_edit")
 

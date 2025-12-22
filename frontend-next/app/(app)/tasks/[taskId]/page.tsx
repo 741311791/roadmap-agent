@@ -22,7 +22,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { TaskWebSocket } from '@/lib/api/websocket';
 import { getTaskDetail, getTaskLogs, getRoadmap, getIntentAnalysis } from '@/lib/api/endpoints';
-import { WorkflowProgressEnhanced } from '@/components/task/workflow-progress-enhanced';
+import { WorkflowTopology } from '@/components/task/workflow-topology';
 import { CoreDisplayArea } from '@/components/task/core-display-area';
 import { ExecutionLogTimeline } from '@/components/task/execution-log-timeline';
 import { cn } from '@/lib/utils';
@@ -105,6 +105,9 @@ export default function TaskDetailPage() {
 
   // 部分失败的 Concept ID
   const [partialFailedConceptIds, setPartialFailedConceptIds] = useState<string[]>([]);
+
+  // 编辑来源（用于区分分支）
+  const [editSource, setEditSource] = useState<'validation_failed' | 'human_review' | null>(null);
 
   // 加载状态
   const [isLoading, setIsLoading] = useState(true);
@@ -302,6 +305,11 @@ export default function TaskDetailPage() {
         // 更新 current_step
         if (event.step) {
           setTaskInfo((prev) => prev ? { ...prev, current_step: event.step } : null);
+        }
+
+        // 更新 edit_source（用于区分分支）
+        if (event.data?.edit_source) {
+          setEditSource(event.data.edit_source);
         }
         
         // 当节点完成时，刷新日志和路线图
@@ -667,10 +675,11 @@ export default function TaskDetailPage() {
 
       {/* Main Content - 三段式布局 */}
       <div className="max-w-7xl mx-auto px-6 py-8 space-y-6">
-        {/* 1. Workflow Progress（增强版） */}
-        <WorkflowProgressEnhanced
+        {/* 1. Workflow Progress（拓扑图版） */}
+        <WorkflowTopology
           currentStep={taskInfo.current_step}
           status={taskInfo.status}
+          editSource={editSource}
           taskId={taskId}
           roadmapId={taskInfo.roadmap_id}
           roadmapTitle={roadmapFramework?.title || taskInfo.title}

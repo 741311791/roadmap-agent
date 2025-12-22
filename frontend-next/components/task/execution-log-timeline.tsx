@@ -60,20 +60,35 @@ interface ExecutionLogTimelineProps {
  * Step 配置映射
  */
 const STEP_CONFIG: Record<string, { label: string; color: string; bgColor: string }> = {
+  // 初始化阶段
   init: { label: 'Initialize', color: 'text-gray-700', bgColor: 'bg-gray-50' },
   queued: { label: 'Queued', color: 'text-gray-700', bgColor: 'bg-gray-50' },
   starting: { label: 'Starting', color: 'text-gray-700', bgColor: 'bg-gray-50' },
+  
+  // 主路节点
   intent_analysis: { label: 'Intent Analysis', color: 'text-sage-700', bgColor: 'bg-sage-50' },
   curriculum_design: { label: 'Curriculum Design', color: 'text-sage-700', bgColor: 'bg-sage-50' },
   framework_generation: { label: 'Framework Generation', color: 'text-sage-700', bgColor: 'bg-sage-50' },
   structure_validation: { label: 'Structure Validation', color: 'text-sage-700', bgColor: 'bg-sage-50' },
-  roadmap_edit: { label: 'Roadmap Edit', color: 'text-sage-700', bgColor: 'bg-sage-50' },
   human_review: { label: 'Human Review', color: 'text-amber-700', bgColor: 'bg-amber-50' },
   human_review_pending: { label: 'Awaiting Review', color: 'text-amber-700', bgColor: 'bg-amber-50' },
+  
+  // 验证分支节点（验证失败触发）
+  validation_edit_plan_analysis: { label: 'Validation Edit Plan', color: 'text-amber-700', bgColor: 'bg-amber-50' },
+  
+  // 审核分支节点（用户拒绝触发）
+  edit_plan_analysis: { label: 'Review Edit Plan', color: 'text-blue-700', bgColor: 'bg-blue-50' },
+  
+  // 共享的编辑节点（由 edit_source 区分来源）
+  roadmap_edit: { label: 'Roadmap Edit', color: 'text-purple-700', bgColor: 'bg-purple-50' },
+  
+  // 内容生成阶段
   content_generation: { label: 'Content Generation', color: 'text-sage-700', bgColor: 'bg-sage-50' },
   tutorial_generation: { label: 'Tutorial Generation', color: 'text-sage-700', bgColor: 'bg-sage-50' },
   resource_recommendation: { label: 'Resource Recommendation', color: 'text-sage-700', bgColor: 'bg-sage-50' },
   quiz_generation: { label: 'Quiz Generation', color: 'text-sage-700', bgColor: 'bg-sage-50' },
+  
+  // 完成阶段
   finalizing: { label: 'Finalizing', color: 'text-sage-700', bgColor: 'bg-sage-50' },
   completed: { label: 'Completed', color: 'text-sage-700', bgColor: 'bg-sage-50' },
 };

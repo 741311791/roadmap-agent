@@ -6,6 +6,7 @@
 重构改进:
 - 使用 WorkflowBrain 统一管理状态、日志、通知
 - 使用 brain.save_roadmap_framework() 保存更新后的框架
+- 统一使用 EditPlan 作为修改指令来源（移除 validation_issues 直接处理）
 - 代码行数减少 ~70%
 """
 import structlog
@@ -49,24 +50,68 @@ class EditorRunner:
         self.brain = brain
         self.agent_factory = agent_factory
     
+    def _build_modification_context(self, state: RoadmapState, edit_round: int) -> str:
+        """
+        构建修改上下文说明
+        
+        重构后统一使用 EditPlan，上下文根据 EditPlan 内容生成
+        
+        Args:
+            state: 工作流状态
+            edit_round: 当前编辑轮次
+            
+        Returns:
+            上下文说明字符串
+        """
+        context_parts = [f"第 {edit_round} 次修改"]
+        
+        edit_plan = state.get("edit_plan")
+        if edit_plan:
+            context_parts.append(f"修改计划：包含 {len(edit_plan.intents)} 个修改意图")
+            # 统计各优先级的意图数量
+            must_count = sum(1 for i in edit_plan.intents if i.priority == "must")
+            should_count = sum(1 for i in edit_plan.intents if i.priority == "should")
+            could_count = sum(1 for i in edit_plan.intents if i.priority == "could")
+            if must_count:
+                context_parts.append(f"必须执行：{must_count} 项")
+            if should_count:
+                context_parts.append(f"建议执行：{should_count} 项")
+            if could_count:
+                context_parts.append(f"可选执行：{could_count} 项")
+        
+        return "；".join(context_parts)
+    
     async def run(self, state: RoadmapState) -> dict:
         """
         执行路线图编辑节点（重构版 - 使用 WorkflowBrain）
         
         简化后的逻辑:
-        1. 使用 brain.node_execution() 自动处理状态/日志/通知
-        2. 调用 RoadmapEditorAgent
-        3. 使用 brain.save_roadmap_framework() 保存更新后的框架
-        4. 返回纯结果
+        1. 检查 edit_plan 是否存在（必需）
+        2. 使用 brain.node_execution() 自动处理状态/日志/通知
+        3. 调用 RoadmapEditorAgent（统一使用 EditPlan）
+        4. 使用 brain.save_roadmap_framework() 保存更新后的框架
+        5. 返回纯结果
         
         Args:
             state: 当前工作流状态
             
         Returns:
             状态更新字典
+            
+        Raises:
+            ValueError: 如果 edit_plan 不存在
         """
         modification_count = state.get("modification_count", 0)
         edit_round = modification_count + 1
+        
+        # 检查 edit_plan 是否存在（重构后必需）
+        edit_plan = state.get("edit_plan")
+        if not edit_plan:
+            raise ValueError(
+                "edit_plan 不存在，无法执行路线图编辑。"
+                "请确保在调用 EditorRunner 前已执行 EditPlanAnalyzerAgent "
+                "（通过 EditPlanRunner 或 ValidationEditPlanRunner）。"
+            )
         
         # 使用 WorkflowBrain 统一管理执行生命周期
         async with self.brain.node_execution("roadmap_edit", state):
@@ -75,14 +120,15 @@ class EditorRunner:
             # 创建 Agent
             agent = self.agent_factory.create_roadmap_editor()
             
-            # 准备输入
+            # 构建修改上下文
+            modification_context = self._build_modification_context(state, edit_round)
+            
+            # 准备输入（简化版：统一使用 EditPlan）
             edit_input = RoadmapEditInput(
                 existing_framework=state["roadmap_framework"],
-                validation_issues=state["validation_result"].issues
-                if state.get("validation_result")
-                else [],
                 user_preferences=state["user_request"].preferences,
-                modification_context=f"第 {edit_round} 次修改"
+                modification_context=modification_context,
+                edit_plan=edit_plan,
             )
             
             # 保存原始框架（用于对比）
@@ -140,10 +186,17 @@ class EditorRunner:
             validation_round = state.get("validation_round", 1) + 1
             
             # 返回纯状态更新
-            return {
+            state_update = {
                 "roadmap_framework": result.framework,
                 "modification_count": modification_count + 1,
                 "validation_round": validation_round,
                 "current_step": "roadmap_edit",
                 "execution_history": [f"路线图修改完成（第 {edit_round} 次）"],
             }
+            
+            # 关键修复：保持 edit_source 字段（用于前端区分分支）
+            # edit_source 由上游的 EditPlanRunner 或 ValidationEditPlanRunner 设置
+            if "edit_source" in state:
+                state_update["edit_source"] = state["edit_source"]
+            
+            return state_update

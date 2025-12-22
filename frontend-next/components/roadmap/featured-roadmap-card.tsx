@@ -15,6 +15,12 @@ import { FlippingCard } from '@/components/ui/flipping-card';
 import { getCoverImage, fetchCoverImageFromAPI } from '@/lib/cover-image';
 import { cn } from '@/lib/utils';
 import { Star, Clock, BookOpen, ChevronRight } from 'lucide-react';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 
 export interface FeaturedRoadmap {
   id: string;
@@ -210,81 +216,98 @@ function CardBack({ roadmap }: { roadmap: FeaturedRoadmap }) {
   const hasStages = stages.length > 0;
 
   return (
-    <div className="flex flex-col h-full w-full p-4">
-      {/* 标题 */}
-      <h3 className="font-serif font-semibold text-base text-foreground mb-3 line-clamp-2">
-        {roadmap.title}
-      </h3>
+    <TooltipProvider>
+      <div className="flex flex-col h-full w-full p-4">
+        {/* 标题 */}
+        <h3 className="font-serif font-semibold text-base text-foreground mb-3 line-clamp-2">
+          {roadmap.title}
+        </h3>
 
-      {/* Stages 列表 */}
-      {hasStages ? (
-        <div className="flex-1 overflow-y-auto space-y-2 mb-3">
-          {stages.slice(0, 5).map((stage, index) => (
-            <div
-              key={index}
-              className="flex items-start gap-2 p-2 rounded-lg bg-sage-50/50 hover:bg-sage-100/50 transition-colors"
-            >
-              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-sage-200 flex items-center justify-center text-[10px] font-bold text-sage-700 mt-0.5">
-                {stage.order}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-foreground line-clamp-1">
-                  {stage.name}
-                </div>
-                {stage.description && (
-                  <div className="text-xs text-muted-foreground line-clamp-2 mt-0.5">
-                    {stage.description}
+        {/* Stages 列表 */}
+        {hasStages ? (
+          <div className="flex-1 overflow-y-auto space-y-2 mb-3">
+            {stages.slice(0, 5).map((stage, index) => (
+              <Tooltip key={index} delayDuration={300}>
+                <TooltipTrigger asChild>
+                  <div
+                    className="flex items-start gap-2 p-2 rounded-lg bg-sage-50/50 hover:bg-sage-100/50 transition-colors cursor-pointer"
+                  >
+                    <div className="flex-shrink-0 w-6 h-6 rounded-full bg-sage-200 flex items-center justify-center text-[10px] font-bold text-sage-700 mt-0.5">
+                      {stage.order}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-foreground line-clamp-1">
+                        {stage.name}
+                      </div>
+                      {stage.description && (
+                        <div className="text-xs text-muted-foreground line-clamp-2 mt-0.5">
+                          {stage.description}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                )}
+                </TooltipTrigger>
+                <TooltipContent 
+                  side="top" 
+                  className="max-w-xs z-[100]"
+                  sideOffset={5}
+                >
+                  <div className="space-y-1">
+                    <p className="font-semibold text-sm">{stage.name}</p>
+                    {stage.description && (
+                      <p className="text-xs text-muted-foreground">{stage.description}</p>
+                    )}
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            ))}
+            {stages.length > 5 && (
+              <div className="text-xs text-muted-foreground text-center py-1">
+                +{stages.length - 5} more stages
               </div>
-            </div>
-          ))}
-          {stages.length > 5 && (
-            <div className="text-xs text-muted-foreground text-center py-1">
-              +{stages.length - 5} more stages
-            </div>
-          )}
-        </div>
-      ) : (
-        <div className="flex-1 flex items-center justify-center">
-          <p className="text-sm text-muted-foreground text-center">
-            {roadmap.tags && roadmap.tags.length > 0 
-              ? `Explore ${roadmap.tags.join(', ')} concepts and build your skills step by step.`
-              : `A comprehensive learning path to master ${roadmap.topic}.`
-            }
-          </p>
-        </div>
-      )}
+            )}
+          </div>
+        ) : (
+          <div className="flex-1 flex items-center justify-center">
+            <p className="text-sm text-muted-foreground text-center">
+              {roadmap.tags && roadmap.tags.length > 0 
+                ? `Explore ${roadmap.tags.join(', ')} concepts and build your skills step by step.`
+                : `A comprehensive learning path to master ${roadmap.topic}.`
+              }
+            </p>
+          </div>
+        )}
 
-      {/* 底部操作区域 */}
-      <div className="flex items-center justify-between pt-3 border-t border-sage-100">
-        {/* 统计信息 */}
-        <div className="flex items-center gap-3 text-xs text-muted-foreground">
-          {roadmap.totalConcepts && roadmap.totalConcepts > 0 && (
-            <div className="flex items-center gap-1">
-              <BookOpen className="w-3.5 h-3.5" />
-              <span>{roadmap.totalConcepts}</span>
-            </div>
-          )}
-          {roadmap.totalHours && roadmap.totalHours > 0 && (
-            <div className="flex items-center gap-1">
-              <Clock className="w-3.5 h-3.5" />
-              <span>{roadmap.totalHours}h</span>
-            </div>
-          )}
-        </div>
+        {/* 底部操作区域 */}
+        <div className="flex items-center justify-between pt-3 border-t border-sage-100">
+          {/* 统计信息 */}
+          <div className="flex items-center gap-3 text-xs text-muted-foreground">
+            {roadmap.totalConcepts && roadmap.totalConcepts > 0 && (
+              <div className="flex items-center gap-1">
+                <BookOpen className="w-3.5 h-3.5" />
+                <span>{roadmap.totalConcepts}</span>
+              </div>
+            )}
+            {roadmap.totalHours && roadmap.totalHours > 0 && (
+              <div className="flex items-center gap-1">
+                <Clock className="w-3.5 h-3.5" />
+                <span>{roadmap.totalHours}h</span>
+              </div>
+            )}
+          </div>
 
-        {/* 查看按钮 */}
-        <Link
-          href={`/roadmap/${roadmap.id}`}
-          className="flex items-center gap-1 text-xs font-medium text-sage-600 hover:text-sage-700 transition-colors"
-          onClick={(e) => e.stopPropagation()}
-        >
-          View
-          <ChevronRight className="w-3 h-3" />
-        </Link>
+          {/* 查看按钮 */}
+          <Link
+            href={`/roadmap/${roadmap.id}`}
+            className="flex items-center gap-1 text-xs font-medium text-sage-600 hover:text-sage-700 transition-colors"
+            onClick={(e) => e.stopPropagation()}
+          >
+            View
+            <ChevronRight className="w-3 h-3" />
+          </Link>
+        </div>
       </div>
-    </div>
+    </TooltipProvider>
   );
 }
 

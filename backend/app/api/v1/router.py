@@ -29,6 +29,7 @@ from .endpoints import (
     intent,
     trace,
     cover_image,
+    tavily_metrics,
 )
 from app.core.auth import fastapi_users, auth_backend
 from app.core.auth.schemas import UserRead, UserCreate, UserUpdate
@@ -103,6 +104,9 @@ router.include_router(waitlist.router)
 
 # 封面图相关
 router.include_router(cover_image.router, tags=["cover-image"])
+
+# Tavily API Key 监控相关
+router.include_router(tavily_metrics.router, prefix="/tavily", tags=["tavily-metrics"])
 
 # ==================== FastAPI Users 认证路由 ====================
 # JWT 认证路由（登录、登出）

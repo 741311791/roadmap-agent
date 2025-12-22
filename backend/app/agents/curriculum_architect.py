@@ -116,9 +116,10 @@ def _parse_yaml_roadmap(yaml_content: str) -> dict:
             # 假设每周学习10小时
             data["recommended_completion_weeks"] = max(1, int(data.get("total_estimated_hours", 0) / 10))
         
-        # 补全 stage.order（如果缺失）
+        # 补全或修正 stage.order（缺失或无效时自动修正）
+        # 注意：order 必须 >= 1，LLM 可能错误输出 0 或负数
         for idx, stage in enumerate(data.get("stages", []), start=1):
-            if "order" not in stage:
+            if "order" not in stage or not isinstance(stage.get("order"), int) or stage["order"] < 1:
                 stage["order"] = idx
         
         # 补全 concept 的默认字段（如果LLM遗漏）

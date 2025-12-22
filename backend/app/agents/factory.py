@@ -153,6 +153,30 @@ class AgentFactory:
             api_key=self.settings.EDITOR_API_KEY,
         )
     
+    def create_edit_plan_analyzer(self):
+        """
+        创建修改计划分析器
+        
+        将用户的自然语言反馈解析为结构化的修改计划：
+        - 识别修改类型（add/remove/modify/reorder/merge/split）
+        - 定位修改目标（stage/module/concept）
+        - 生成优先级排序的修改意图列表
+        - 明确必须保留不变的元素
+        
+        Returns:
+            EditPlanAnalyzerAgent 实例
+        """
+        from app.agents.edit_plan_analyzer import EditPlanAnalyzerAgent
+        
+        # 复用 ANALYZER 配置，因为这是轻量级的意图识别任务
+        return EditPlanAnalyzerAgent(
+            agent_id="edit_plan_analyzer",
+            model_provider=self.settings.ANALYZER_PROVIDER,
+            model_name=self.settings.ANALYZER_MODEL,
+            base_url=self.settings.ANALYZER_BASE_URL,
+            api_key=self.settings.ANALYZER_API_KEY,
+        )
+    
     def create_tutorial_generator(self) -> TutorialGeneratorProtocol:
         """
         创建教程生成器

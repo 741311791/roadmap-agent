@@ -82,6 +82,8 @@ function shouldShowIntentCard(currentStep: string, intentAnalysis?: IntentAnalys
     'curriculum_design',
     'framework_generation',
     'structure_validation',
+    'edit_plan',                    // 添加：用户审核后的修改计划分析
+    'validation_edit_plan',         // 添加：验证失败后的修改计划分析
     'roadmap_edit',
     'human_review',
     'human_review_pending',
@@ -107,6 +109,8 @@ function shouldShowRoadmap(currentStep: string, roadmapFramework?: RoadmapFramew
   // curriculum_design 完成后的任何阶段都显示
   const stepsAfterDesign = [
     'structure_validation',
+    'edit_plan',                    // 添加：用户审核后的修改计划分析
+    'validation_edit_plan',         // 添加：验证失败后的修改计划分析
     'roadmap_edit',
     'human_review',
     'human_review_pending',

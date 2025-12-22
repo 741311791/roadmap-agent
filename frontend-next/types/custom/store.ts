@@ -22,6 +22,16 @@ export interface RoadmapHistory {
   total_concepts: number;
   completed_concepts: number;
   topic?: string;
+  // 新增字段：支持未完成路线图的恢复
+  task_id?: string | null;
+  task_status?: string | null;
+  current_step?: string | null;
+  // Stages 信息
+  stages?: Array<{
+    name: string;
+    description?: string;
+    order: number;
+  }> | null;
 }
 
 export interface RoadmapStoreState {

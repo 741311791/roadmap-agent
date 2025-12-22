@@ -66,6 +66,13 @@ class UserProfileResponse(BaseModel):
 # ============================================================
 
 
+class StageSummary(BaseModel):
+    """Stage 摘要信息，用于卡片展示"""
+    name: str
+    description: Optional[str] = None
+    order: int
+
+
 class RoadmapHistoryItem(BaseModel):
     """路线图历史项"""
     roadmap_id: str
@@ -75,6 +82,8 @@ class RoadmapHistoryItem(BaseModel):
     completed_concepts: int
     topic: Optional[str] = None
     status: Optional[str] = None
+    # Stages 摘要信息
+    stages: Optional[list[StageSummary]] = None
     # 新增字段：用于支持未完成路线图的恢复
     task_id: Optional[str] = None
     task_status: Optional[str] = None  # processing, pending, human_review_pending 等
@@ -323,16 +332,24 @@ async def get_user_roadmaps(
     for roadmap in roadmaps:
         # 从 framework_data 中提取概念信息
         framework_data = roadmap.framework_data or {}
-        stages = framework_data.get("stages", [])
+        stages_data = framework_data.get("stages", [])
         
         total_concepts = 0
         
-        # 统计总概念数
-        for stage in stages:
+        # 统计总概念数，同时提取 Stage 摘要
+        stage_summaries = []
+        for stage in stages_data:
             modules = stage.get("modules", [])
             for module in modules:
                 concepts = module.get("concepts", [])
                 total_concepts += len(concepts)
+            
+            # 提取 Stage 摘要信息
+            stage_summaries.append(StageSummary(
+                name=stage.get("name", ""),
+                description=stage.get("description"),
+                order=stage.get("order", 0),
+            ))
         
         # 从 concept_progress 表获取用户完成的概念数
         user_progress = await progress_repo.get_roadmap_progress(user_id, roadmap.roadmap_id)
@@ -359,6 +376,7 @@ async def get_user_roadmaps(
             completed_concepts=completed_concepts,
             topic=topic,
             status=status,
+            stages=stage_summaries if stage_summaries else None,
         ))
     
     return RoadmapHistoryResponse(

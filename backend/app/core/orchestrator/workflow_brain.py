@@ -253,11 +253,18 @@ class WorkflowBrain:
         )
         
         # 4. 发布进度通知
+        # 从 state 中提取 edit_source（用于前端区分分支）
+        extra_data = {}
+        edit_source = state.get("edit_source")
+        if edit_source:
+            extra_data["edit_source"] = edit_source
+        
         await self.notification_service.publish_progress(
             task_id=task_id,
             step=node_name,
             status="processing",
             message=f"正在执行: {node_name}...",
+            extra_data=extra_data if extra_data else None,
         )
         
         return ctx
@@ -295,11 +302,18 @@ class WorkflowBrain:
         )
         
         # 2. 发布完成通知
+        # 从 state 中提取 edit_source（用于前端区分分支）
+        extra_data = {}
+        edit_source = state.get("edit_source")
+        if edit_source:
+            extra_data["edit_source"] = edit_source
+        
         await self.notification_service.publish_progress(
             task_id=ctx.task_id,
             step=ctx.node_name,
             status="completed",
             message=f"完成: {ctx.node_name}",
+            extra_data=extra_data if extra_data else None,
         )
         
         # 3. 清理执行上下文
@@ -369,12 +383,18 @@ class WorkflowBrain:
         )
         
         # 3. 发布错误通知
+        # 从 state 中提取 edit_source（用于前端区分分支）
+        extra_data = {"error": str(error)}
+        edit_source = state.get("edit_source")
+        if edit_source:
+            extra_data["edit_source"] = edit_source
+        
         await self.notification_service.publish_progress(
             task_id=ctx.task_id,
             step=ctx.node_name,
             status="failed",
             message=f"执行失败: {ctx.node_name}",
-            extra_data={"error": str(error)},
+            extra_data=extra_data,
         )
         
         # 4. 清理执行上下文

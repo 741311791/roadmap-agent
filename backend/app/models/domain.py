@@ -436,15 +436,93 @@ class CurriculumDesignOutput(BaseModel):
 
 
 # --- A2E: Roadmap Editor (路线图编辑师) ---
+
+class EditIntent(BaseModel):
+    """
+    单条修改意图
+    
+    用于将用户的自然语言反馈解析为结构化的修改计划。
+    每个 EditIntent 代表一个具体的修改操作。
+    """
+    intent_type: Literal["add", "remove", "modify", "reorder", "merge", "split"] = Field(
+        ..., description="修改类型：add（添加）、remove（删除）、modify（修改）、reorder（重排）、merge（合并）、split（拆分）"
+    )
+    target_type: Literal["stage", "module", "concept"] = Field(
+        ..., description="修改目标类型：stage（阶段）、module（模块）、concept（概念）"
+    )
+    target_id: Optional[str] = Field(
+        None, description="目标 ID（如 'stage-2', 'mod-1-1', 'c-1-1-1'），新增时可为空"
+    )
+    target_path: str = Field(
+        ..., description="目标位置路径（如 'Stage 2 > Module 1 > Concept 3'）"
+    )
+    description: str = Field(
+        ..., description="具体修改内容描述"
+    )
+    priority: Literal["must", "should", "could"] = Field(
+        default="must", description="优先级：must（必须执行）、should（应该执行）、could（可选执行）"
+    )
+
+
+class EditPlan(BaseModel):
+    """
+    路线图修改计划
+    
+    由 EditPlanAnalyzerAgent 生成，将用户的自然语言反馈
+    解析为结构化的修改计划，指导 RoadmapEditorAgent 精确执行。
+    """
+    feedback_summary: str = Field(
+        ..., description="用户反馈的简明摘要"
+    )
+    intents: List[EditIntent] = Field(
+        ..., description="结构化的修改意图列表，按优先级排序"
+    )
+    scope_analysis: str = Field(
+        ..., description="影响范围分析，说明此次修改会影响哪些部分"
+    )
+    preservation_requirements: List[str] = Field(
+        default=[], description="必须保留不变的元素（如：'Stage 1 完整结构'、'所有已完成的 Concept'）"
+    )
+
+
+class EditPlanAnalyzerInput(BaseModel):
+    """修改计划分析器输入"""
+    user_feedback: str = Field(..., description="用户的原始反馈文本")
+    existing_framework: RoadmapFramework = Field(..., description="当前路线图框架")
+    user_preferences: LearningPreferences = Field(..., description="用户偏好")
+
+
+class EditPlanAnalyzerOutput(BaseModel):
+    """修改计划分析器输出"""
+    edit_plan: EditPlan = Field(..., description="解析后的结构化修改计划")
+    confidence: float = Field(
+        ..., ge=0, le=1, description="解析置信度（0-1）"
+    )
+    needs_clarification: bool = Field(
+        default=False, description="是否需要向用户澄清"
+    )
+    clarification_questions: List[str] = Field(
+        default=[], description="如果需要澄清，要问用户的问题"
+    )
+
+
 class RoadmapEditInput(BaseModel):
-    """路线图编辑输入"""
+    """
+    路线图编辑输入（简化版）
+    
+    重构说明：
+    - 统一使用 EditPlan 作为修改指令来源
+    - 移除了 validation_issues 和 user_feedback 字段
+    - 所有修改来源（验证失败、人工反馈）都通过 EditPlanAnalyzerAgent 转换为 EditPlan
+    """
     existing_framework: RoadmapFramework = Field(..., description="现有路线图框架")
-    validation_issues: List["ValidationIssue"] = Field(..., description="验证发现的问题列表")
     user_preferences: LearningPreferences = Field(..., description="用户偏好")
     modification_context: Optional[str] = Field(
         None, 
-        description="修改上下文说明（如：第2次修改，主要解决前置关系问题）"
+        description="修改上下文说明（如：第2次修改，验证问题修复）"
     )
+    # 统一使用 EditPlan 作为修改指令来源
+    edit_plan: EditPlan = Field(..., description="结构化的修改计划（必需，来自 EditPlanAnalyzerAgent）")
 
 
 class RoadmapEditOutput(BaseModel):

@@ -25,7 +25,9 @@ from .orchestrator.node_runners import (
     EditorRunner,
     ReviewRunner,
     ContentRunner,
+    EditPlanRunner,
 )
+from .orchestrator.node_runners.validation_edit_plan_runner import ValidationEditPlanRunner
 
 logger = structlog.get_logger()
 
@@ -197,6 +199,8 @@ class OrchestratorFactory:
         editor_runner = EditorRunner(brain, agent_factory)  # ← 已迁移
         review_runner = ReviewRunner(brain)  # ← 已迁移
         content_runner = ContentRunner(brain, config, agent_factory)  # ← 已迁移
+        edit_plan_runner = EditPlanRunner(brain, agent_factory)  # 修改计划分析节点（人工审核触发）
+        validation_edit_plan_runner = ValidationEditPlanRunner(brain, agent_factory)  # 验证结果修改计划分析节点（验证失败触发）
         
         # 创建 Builder
         builder = WorkflowBuilder(
@@ -208,6 +212,8 @@ class OrchestratorFactory:
             editor_runner=editor_runner,
             review_runner=review_runner,
             content_runner=content_runner,
+            edit_plan_runner=edit_plan_runner,
+            validation_edit_plan_runner=validation_edit_plan_runner,  # 新增
         )
         
         # 创建 Executor
@@ -220,7 +226,7 @@ class OrchestratorFactory:
         logger.info(
             "workflow_executor_created",
             brain_created=True,
-            runners_count=6,
+            runners_count=8,  # 包含 EditPlanRunner 和 ValidationEditPlanRunner
         )
         
         return executor

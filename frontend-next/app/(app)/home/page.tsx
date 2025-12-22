@@ -15,14 +15,13 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { EmptyState } from '@/components/common/empty-state';
-import { RoadmapCard, FeaturedRoadmapCard, MyRoadmap, FeaturedRoadmap } from '@/components/roadmap';
+import { MyLearningCard, CreateLearningCard, FeaturedRoadmapCard, MyRoadmap, FeaturedRoadmap } from '@/components/roadmap';
 import { Button } from '@/components/ui/button';
 import {
   BookOpen,
   ArrowRight,
   Sparkles,
   TrendingUp,
-  Plus,
 } from 'lucide-react';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import { getUserRoadmaps, getFeaturedRoadmaps } from '@/lib/api/endpoints';
@@ -108,6 +107,7 @@ export default function HomePage() {
             task_id: item.task_id,
             task_status: item.task_status,
             current_step: item.current_step,
+            stages: item.stages || null, // 保留 stages 数据
           };
         });
         setHistory(historyData as any);
@@ -168,7 +168,7 @@ export default function HomePage() {
   }, []);
   
   // Map history to roadmap format for display (过滤掉生成中的路线图)
-  const allRoadmaps: MyRoadmap[] = history
+  const allRoadmaps = history
     .filter(item => item.status !== 'generating')
     .map((item) => ({
       id: item.roadmap_id,
@@ -182,6 +182,7 @@ export default function HomePage() {
       taskId: (item as any).task_id || null,
       taskStatus: (item as any).task_status || null,
       currentStep: (item as any).current_step || null,
+      stages: (item as any).stages || null,
     }));
   
   // My Learning Journeys: 最多显示3个（+ Create 卡片 = 4个）
@@ -233,61 +234,26 @@ export default function HomePage() {
               <div className="overflow-x-auto overflow-y-visible pb-4 scrollbar-hide">
                 <div className="flex gap-4 min-w-max sm:min-w-0 sm:grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                   {/* Create New Button Card */}
-                  <Link href="/new" className="group block w-[280px] sm:w-auto flex-shrink-0">
-                    <div className="relative w-full overflow-hidden rounded-xl border-2 border-dashed border-sage-300 bg-card shadow-lg transition-all duration-300 hover:shadow-2xl hover:-translate-y-1 hover:border-sage-500 h-full">
-                      {/* 顶部装饰区域 - 与CoverImage保持相同比例 */}
-                      <div className="aspect-[16/9] relative overflow-hidden bg-gradient-to-br from-sage-50 via-white to-sage-100">
-                        {/* 背景装饰 */}
-                        <div className="absolute inset-0 opacity-30">
-                          <div className="absolute top-0 left-0 w-24 h-24 bg-sage-300 rounded-full blur-3xl transform -translate-x-1/2 -translate-y-1/2 group-hover:scale-150 transition-transform duration-700" />
-                          <div className="absolute bottom-0 right-0 w-24 h-24 bg-sage-400 rounded-full blur-3xl transform translate-x-1/2 translate-y-1/2 group-hover:scale-150 transition-transform duration-700" />
-                        </div>
-                        
-                        {/* 居中的图标 */}
-                        <div className="absolute inset-0 flex items-center justify-center">
-                          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-sage-100 to-sage-200 flex items-center justify-center group-hover:from-sage-200 group-hover:to-sage-300 transition-all duration-300 shadow-lg group-hover:shadow-xl group-hover:scale-110">
-                            <Plus size={24} className="text-sage-600 group-hover:text-sage-700 transition-colors" />
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* 底部内容区域 */}
-                      <div className="p-4 bg-white/95 backdrop-blur-sm">
-                        {/* 标题区域 - 与RoadmapCard对齐 */}
-                        <div className="flex items-start gap-2 mb-2">
-                          <div className="w-3.5 h-3.5 opacity-0" /> {/* 占位符，对齐Sparkles图标 */}
-                          <h3 className="font-serif font-medium text-sm text-center text-foreground group-hover:text-sage-700 transition-colors min-h-[40px] flex-1 flex items-center justify-center">
-                            Create New Roadmap
-                          </h3>
-                        </div>
-                        
-                        {/* 副标题区域 - 对齐进度条区域 */}
-                        <div className="space-y-2 mb-3">
-                          <div className="text-center">
-                            <p className="text-[10px] text-muted-foreground">
-                              Start your learning journey
-                            </p>
-                          </div>
-                          {/* 占位符，保持与进度条相同的高度 */}
-                          <div className="h-2 opacity-0" />
-                        </div>
-                        
-                        {/* 底部占位区域 - 对齐状态栏 */}
-                        <div className="flex items-center justify-between opacity-0">
-                          <span className="text-[10px] px-2 py-0.5">placeholder</span>
-                          <span className="text-[10px]">placeholder</span>
-                        </div>
-                      </div>
-                    </div>
-                  </Link>
+                  <div className="w-[280px] sm:w-auto flex-shrink-0">
+                    <CreateLearningCard />
+                  </div>
 
                   {/* User's Roadmaps */}
                   {displayedRoadmaps.map((roadmap) => (
                     <div key={roadmap.id} className="w-[280px] sm:w-auto flex-shrink-0">
-                      <RoadmapCard
-                        roadmap={roadmap}
-                        type="my"
+                      <MyLearningCard
+                        id={roadmap.id}
+                        title={roadmap.title}
+                        topic={roadmap.topic}
+                        status={roadmap.status}
+                        totalConcepts={roadmap.totalConcepts}
+                        completedConcepts={roadmap.completedConcepts}
+                        lastAccessedAt={roadmap.lastAccessedAt}
+                        taskId={roadmap.taskId}
+                        taskStatus={roadmap.taskStatus}
+                        currentStep={roadmap.currentStep}
                         showActions={false}
+                        stages={roadmap.stages}
                       />
                     </div>
                   ))}

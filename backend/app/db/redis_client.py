@@ -69,3 +69,13 @@ class RedisClient:
 # 全局单例
 redis_client = RedisClient()
 
+
+def get_redis_client() -> RedisClient:
+    """
+    获取 Redis 客户端实例（用于依赖注入）
+    
+    Returns:
+        RedisClient 全局单例实例
+    """
+    return redis_client
+

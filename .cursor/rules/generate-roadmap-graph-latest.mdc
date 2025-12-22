@@ -1,0 +1,40 @@
+---
+alwaysApply: true
+---
+最新的路线图生成Graph为：
+```mermaid
+graph TB
+    START([START]) --> Intent[IntentAnalysisRunner]
+    Intent --> Curriculum[CurriculumDesignRunner]
+    Curriculum --> Validation{ValidationRunner}
+    
+    %% 验证通过
+    Validation -->|✅ 通过| Review{ReviewRunner}
+    
+    %% 验证失败：自动修复循环
+    Validation -->|❌ 失败| ValidationEditPlan[ValidationEditPlanRunner<br/>🏷️ edit_source=validation_failed]
+    ValidationEditPlan --> Editor1[EditorRunner]
+    Editor1 -->|检查 edit_source| Validation
+    
+    %% 用户审核通过
+    Review -->|✅ 批准| Content[ContentRunner]
+    
+    %% 用户审核拒绝：直接返回审核
+    Review -->|❌ 拒绝| EditPlan[EditPlanRunner<br/>🏷️ edit_source=human_review]
+    EditPlan --> Editor2[EditorRunner]
+    Editor2 -->|检查 edit_source| Review
+    
+    Content --> END([END])
+    
+    classDef coreNode fill:#4CAF50,stroke:#2E7D32,stroke-width:3px,color:#fff
+    classDef analyzerNode fill:#2196F3,stroke:#1565C0,stroke-width:3px,color:#fff
+    classDef validationNode fill:#FF9800,stroke:#E65100,stroke-width:3px,color:#fff
+    classDef editorNode fill:#9C27B0,stroke:#6A1B9A,stroke-width:3px,color:#fff
+    classDef humanNode fill:#F44336,stroke:#C62828,stroke-width:3px,color:#fff
+    
+    class Intent,Curriculum,Content coreNode
+    class ValidationEditPlan,EditPlan analyzerNode
+    class Validation validationNode
+    class Editor1,Editor2 editorNode
+    class Review humanNode
+```

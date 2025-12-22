@@ -81,8 +81,14 @@ class Settings(BaseSettings):
     S3_REGION: str | None = Field(None, description="区域（MinIO 可留空）")
     
     # ==================== Web Search 配置 ====================
-    TAVILY_API_KEY: str | None = Field(None, description="Tavily API 密钥（可选）")
+    TAVILY_API_KEY: str | None = Field(None, description="Tavily API 密钥（可选，单个 Key）")
+    TAVILY_API_KEY_LIST: str | None = Field(None, description="Tavily API Key 列表（逗号分隔或 JSON 数组格式，优先于 TAVILY_API_KEY）")
     USE_DUCKDUCKGO_FALLBACK: bool = Field(True, description="是否使用 DuckDuckGo 作为备选搜索引擎")
+    
+    # Tavily 配额追踪配置
+    TAVILY_QUOTA_TRACKING_ENABLED: bool = Field(True, description="是否启用 Tavily API 配额追踪")
+    TAVILY_DAILY_QUOTA_PER_KEY: int = Field(1000, description="每个 Tavily API Key 的每日配额")
+    TAVILY_MINUTE_QUOTA_PER_KEY: int = Field(100, description="每个 Tavily API Key 的每分钟配额")
     
     # ==================== LLM 配置 ====================
     # A1: Intent Analyzer (需求分析师)
@@ -197,8 +203,40 @@ class Settings(BaseSettings):
             return f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
         return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
     
+    @property
+    def get_tavily_api_keys(self) -> list[str]:
+        """
+        解析并返回所有可用的 Tavily API Keys
+        
+        优先级: TAVILY_API_KEY_LIST → TAVILY_API_KEY
+        
+        Returns:
+            有效的 API Key 列表（已过滤无效值）
+        """
+        import json
+        
+        keys = []
+        
+        # 方式 1: 从 TAVILY_API_KEY_LIST 解析（优先）
+        if self.TAVILY_API_KEY_LIST:
+            # 尝试作为 JSON 数组解析
+            try:
+                keys = json.loads(self.TAVILY_API_KEY_LIST)
+            except (json.JSONDecodeError, TypeError):
+                # 作为逗号分隔字符串解析
+                keys = [k.strip() for k in self.TAVILY_API_KEY_LIST.split(',') if k.strip()]
+        
+        # 方式 2: 回退到单个 TAVILY_API_KEY
+        if not keys and self.TAVILY_API_KEY:
+            keys = [self.TAVILY_API_KEY]
+        
+        # 过滤无效 Key
+        valid_keys = [k for k in keys if k and k != "your_tavily_api_key_here"]
+        
+        return valid_keys
+    
     # ==================== 外部服务配置 ====================
-    TAVILY_API_KEY: str = Field("your_tavily_api_key_here", description="Tavily API 密钥（用于 Web 搜索）")
+    # 注意: Tavily 配置已移至 "Web Search 配置" 部分
     
     # ==================== 观测性配置 ====================
     OTEL_ENABLED: bool = Field(False, description="是否启用 OpenTelemetry")

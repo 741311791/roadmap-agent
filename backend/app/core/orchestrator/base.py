@@ -22,6 +22,7 @@ from app.models.domain import (
     TutorialGenerationOutput,
     ResourceRecommendationOutput,
     QuizGenerationOutput,
+    EditPlan,
 )
 
 logger = structlog.get_logger()
@@ -72,6 +73,18 @@ class RoadmapState(TypedDict):
     current_step: str
     modification_count: int
     human_approved: bool
+    
+    # 人工审核反馈（Human Review 阶段产出）
+    user_feedback: str | None  # 用户拒绝时提供的修改反馈
+    edit_plan: EditPlan | None  # 解析后的结构化修改计划
+    review_feedback_id: str | None  # 用户审核反馈记录ID（关联 HumanReviewFeedback 表）
+    edit_plan_record_id: str | None  # 修改计划记录ID（关联 EditPlanRecord 表）
+    
+    # 编辑来源标记（用于路由决策）
+    edit_source: str | None  # "validation_failed" 或 "human_review"
+    
+    # 验证轮次（用于记录）
+    validation_round: int
     
     # 元数据（执行历史）
     execution_history: Annotated[list[str], add]
