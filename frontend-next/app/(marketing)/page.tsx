@@ -1,27 +1,24 @@
 'use client';
 
 /**
- * 落地页 Mockup - 重构版
+ * 落地页主页
  * 
  * 使用 Motion 和 Magic UI 设计风格
  * 杂志风格 + 流畅的点线动画
+ * 
+ * 注意：Header 和 Footer 由 (marketing)/layout.tsx 统一管理
  */
 
 import React from 'react';
-import { SiteHeader } from '@/components/landing/site-header';
 import { HeroSection } from '@/components/landing/hero-section';
 import { FeaturesSection } from '@/components/landing/features-section';
 import { AgentsGrid } from '@/components/landing/agents-grid';
 import { TestimonialsSection } from '@/components/landing/testimonials';
 import { CTASection } from '@/components/landing/cta-section';
-import { Footer } from '@/components/landing/footer';
 
-export default function MockupPage() {
+export default function LandingPage() {
   return (
-    <div className="min-h-screen bg-background">
-      {/* 导航栏区域 */}
-      <SiteHeader />
-
+    <>
       {/* Hero 区域 */}
       <HeroSection />
 
@@ -36,9 +33,6 @@ export default function MockupPage() {
 
       {/* CTA 区域 */}
       <CTASection />
-
-      {/* Footer 区域 */}
-      <Footer />
-    </div>
+    </>
   );
 }

@@ -27,6 +27,9 @@ export const metadata: Metadata = {
   title: 'Fast Learning - Master Any Skill with AI',
   description: 'Master any skill in record time with AI-powered personalized learning roadmaps',
   keywords: ['fast learning', 'roadmap', 'AI', 'education', 'personalized learning', 'skill mastery'],
+  icons: {
+    icon: '/logo/svg_noword.svg',
+  },
 };
 
 export default function RootLayout({

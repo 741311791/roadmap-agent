@@ -26,6 +26,7 @@ import { cn } from '@/lib/utils';
 import { motion, useScroll, useMotionValueEvent } from 'motion/react';
 
 const navLinks = [
+  { name: 'Home', href: '/' },
   { name: 'Methodology', href: '/methodology' },
   { name: 'Pricing', href: '/pricing' },
   { name: 'About', href: '/about' },
@@ -54,15 +55,28 @@ export function SiteHeader() {
       <div className="container mx-auto px-4 h-16 flex items-center justify-between">
         {/* Left: Logo */}
         <Link href="/" className="flex items-center gap-2 relative z-50">
-          <div className="relative w-32 h-8 hidden md:block">
-            <Image
-              src="/logo/svg_word.svg"
-              alt="Fast Learning"
-              fill
-              className="object-contain"
-              priority
-            />
+          {/* Desktop: Icon + Text */}
+          <div className="hidden md:flex items-center gap-2">
+            <div className="relative w-9 h-9">
+              <Image
+                src="/logo/svg_noword.svg"
+                alt="Logo"
+                fill
+                className="object-contain"
+                priority
+              />
+            </div>
+            <div className="relative w-40 h-8">
+              <Image
+                src="/logo/svg_onlyword.svg"
+                alt="Fast Learning"
+                fill
+                className="object-contain object-left"
+                priority
+              />
+            </div>
           </div>
+          {/* Mobile: Icon Only */}
           <div className="relative w-8 h-8 md:hidden">
             <Image
               src="/logo/svg_noword.svg"
@@ -109,13 +123,23 @@ export function SiteHeader() {
             <SheetContent side="right" className="w-[300px] sm:w-[400px]">
               <SheetHeader>
                 <SheetTitle className="text-left">
-                  <div className="relative w-32 h-8">
-                    <Image
-                      src="/logo/svg_word.svg"
-                      alt="Fast Learning"
-                      fill
-                      className="object-contain"
-                    />
+                  <div className="flex items-center gap-2">
+                    <div className="relative w-8 h-8">
+                      <Image
+                        src="/logo/svg_noword.svg"
+                        alt="Logo"
+                        fill
+                        className="object-contain"
+                      />
+                    </div>
+                    <div className="relative w-36 h-7">
+                      <Image
+                        src="/logo/svg_onlyword.svg"
+                        alt="Fast Learning"
+                        fill
+                        className="object-contain object-left"
+                      />
+                    </div>
                   </div>
                 </SheetTitle>
               </SheetHeader>

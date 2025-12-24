@@ -57,12 +57,12 @@ export function Footer() {
           {/* Logo 和描述 */}
           <div className="col-span-2 md:col-span-1">
             <Link href="/" className="flex items-center gap-2 mb-4">
-              <div className="relative w-32 h-8">
+              <div className="relative w-40 h-24">
                 <Image
                   src="/logo/svg_word.svg"
                   alt="Fast Learning"
                   fill
-                  className="object-contain"
+                  className="object-contain object-left"
                 />
               </div>
             </Link>

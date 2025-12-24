@@ -1,8 +1,6 @@
 'use client';
 
-import Link from 'next/link';
-import { Button } from '@/components/ui/button';
-import { ArrowLeft, Sparkles, Target, Brain, Heart, Zap, Github, Twitter, Mail } from 'lucide-react';
+import { Sparkles, Target, Brain, Heart, Zap, Github, Twitter, Mail } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 /**
@@ -16,46 +14,13 @@ import { motion } from 'framer-motion';
  */
 export default function AboutPage() {
   return (
-    <div className="min-h-screen bg-background">
+    <div className="bg-background">
       {/* 动态背景 */}
       <div className="fixed inset-0 bg-gradient-to-br from-sage-50/50 via-background to-stone-50/30 -z-10" />
       
-      {/* Navigation */}
-      <nav className="fixed top-0 left-0 right-0 z-50 bg-background/80 backdrop-blur-md border-b border-border/50">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2.5 group">
-            <div className="w-9 h-9 bg-sage-600 rounded-xl flex items-center justify-center text-white font-serif font-bold text-sm shadow-sm group-hover:shadow-md transition-shadow">
-              FL
-            </div>
-            <span className="font-serif font-bold text-xl tracking-tight">Fast Learning</span>
-          </Link>
-          <div className="hidden md:flex items-center gap-8">
-            <Link href="/methodology" className="text-sm text-muted-foreground hover:text-foreground transition-colors font-medium">
-              Methodology
-            </Link>
-            <Link href="/pricing" className="text-sm text-muted-foreground hover:text-foreground transition-colors font-medium">
-              Pricing
-            </Link>
-            <Link href="/about" className="text-sm text-foreground font-medium">
-              About
-            </Link>
-          </div>
-        </div>
-      </nav>
-
       {/* Hero */}
       <section className="pt-32 pb-16 px-6">
         <div className="max-w-4xl mx-auto">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-          >
-            <Link href="/" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-8 transition-colors">
-              <ArrowLeft className="w-4 h-4" /> Back to Home
-            </Link>
-          </motion.div>
-          
           <motion.h1
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
@@ -264,34 +229,6 @@ export default function AboutPage() {
           </motion.div>
         </div>
       </section>
-
-      {/* Footer */}
-      <footer className="py-16 px-6 border-t border-border">
-        <div className="max-w-6xl mx-auto">
-          <div className="flex flex-col md:flex-row items-center justify-between gap-6">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 bg-sage-600 rounded-xl flex items-center justify-center text-white font-serif font-bold text-xs">
-                FL
-              </div>
-              <span className="font-serif font-bold text-lg">Fast Learning</span>
-            </div>
-            <div className="flex items-center gap-8 text-sm text-muted-foreground">
-              <Link href="/methodology" className="hover:text-foreground transition-colors">
-                Methodology
-              </Link>
-              <Link href="/pricing" className="hover:text-foreground transition-colors">
-                Pricing
-              </Link>
-              <Link href="/about" className="hover:text-foreground transition-colors">
-                About
-              </Link>
-            </div>
-          </div>
-          <div className="mt-8 pt-8 border-t border-border/50 text-center text-sm text-muted-foreground">
-            © 2024 Fast Learning. All rights reserved.
-          </div>
-        </div>
-      </footer>
     </div>
   );
 }

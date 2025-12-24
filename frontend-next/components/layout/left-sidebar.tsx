@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -109,15 +110,32 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
       <div className="h-14 flex items-center justify-between px-4 border-b border-border/5">
         {!isCollapsed ? (
           <Link href="/" className="flex items-center gap-2">
-            <div className="w-6 h-6 bg-sage-600 rounded-lg flex items-center justify-center text-white font-serif font-bold text-[10px]">
-              FL
+            <div className="relative w-8 h-8">
+              <Image
+                src="/logo/svg_noword.svg"
+                alt="Fast Learning"
+                fill
+                className="object-contain"
+              />
             </div>
-            <span className="font-serif font-bold text-lg tracking-tight">Fast Learning</span>
+            <div className="relative w-32 h-6">
+              <Image
+                src="/logo/svg_onlyword.svg"
+                alt="Fast Learning"
+                fill
+                className="object-contain object-left"
+              />
+            </div>
           </Link>
         ) : (
           <Link href="/" className="mx-auto">
-            <div className="w-6 h-6 bg-sage-600 rounded-lg flex items-center justify-center text-white font-serif font-bold text-[10px]">
-              FL
+            <div className="relative w-8 h-8">
+              <Image
+                src="/logo/svg_noword.svg"
+                alt="Fast Learning"
+                fill
+                className="object-contain"
+              />
             </div>
           </Link>
         )}

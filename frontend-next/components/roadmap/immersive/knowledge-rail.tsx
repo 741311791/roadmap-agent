@@ -10,6 +10,7 @@ import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/comp
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import { UserMenu } from '@/components/user-menu';
 import Link from 'next/link';
+import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 
 /**
@@ -119,8 +120,13 @@ export function KnowledgeRail({
           {/* Brand Logo */}
           <div className="flex items-center gap-3">
             {/* Logo */}
-            <div className="w-10 h-10 rounded-lg bg-sage-600 flex items-center justify-center shrink-0 shadow-sm">
-              <span className="text-white font-serif font-bold text-sm">FL</span>
+            <div className="relative w-10 h-10 shrink-0">
+              <Image
+                src="/logo/svg_noword.svg"
+                alt="Logo"
+                fill
+                className="object-contain"
+              />
             </div>
             {/* Product Name */}
             <div className="flex-1 min-w-0">

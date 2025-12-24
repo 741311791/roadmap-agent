@@ -9,6 +9,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -125,9 +126,15 @@ export default function LoginPage() {
         >
           {/* Logo 和标题 */}
           <div className="text-center mb-10">
-            <Link href="/" className="inline-flex items-center gap-2.5 group mb-6">
-              <div className="w-12 h-12 bg-sage-500 rounded-full flex items-center justify-center shadow-sm group-hover:shadow-md transition-all">
-                <Brain className="w-6 h-6 text-white" />
+            <Link href="/" className="inline-flex items-center justify-center group mb-6 w-full">
+              <div className="relative w-48 h-28">
+                <Image
+                  src="/logo/svg_word.svg"
+                  alt="Fast Learning"
+                  fill
+                  className="object-contain"
+                  priority
+                />
               </div>
             </Link>
             <h1 className="text-3xl font-serif font-bold text-foreground mb-2">
