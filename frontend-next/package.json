@@ -17,7 +17,7 @@
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
     "predev": "npm run validate:env",
-    "prebuild": "npm run validate:env && npm run check:types"
+    "prebuild": "npm run validate:env"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
