@@ -16,19 +16,16 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
 # 配置环境变量：将 uv 添加到 PATH
 ENV PATH="/root/.local/bin:$PATH"
 
-# 配置 uv 使用系统 Python（在 Docker 容器中不需要虚拟环境）
-ENV UV_SYSTEM_PYTHON=1
+# 复制 pyproject.toml 和创建最小的项目结构（用于安装依赖）
+COPY pyproject.toml ./
+RUN mkdir -p /app/app && touch /app/app/__init__.py
 
-# 复制依赖文件（uv 需要 pyproject.toml 和 uv.lock）
-COPY pyproject.toml uv.lock ./
+# 使用 uv pip 安装项目依赖到系统 Python
+# --system: 直接安装到系统 Python，不创建虚拟环境
+# -e .: 以 editable 模式安装当前项目，会安装 pyproject.toml 中的所有依赖
+RUN uv pip install --system -e .
 
-# 使用 uv 同步生产环境依赖
-# --frozen: 使用 uv.lock 锁定版本，确保可重现构建
-# --no-dev: 不安装开发依赖（pytest, black 等）
-# --no-install-project: 只安装依赖，不安装项目本身（app/ 代码还未复制）
-RUN uv sync --frozen --no-dev --no-install-project
-
-# 复制应用代码
+# 复制实际的应用代码（覆盖之前的占位符）
 COPY ./app /app/app
 COPY ./prompts /app/prompts
 
