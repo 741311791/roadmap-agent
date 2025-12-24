@@ -11,10 +11,10 @@ RUN apt-get update && apt-get install -y \
 
 # 安装 uv（使用官方安装脚本）并验证安装
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
-    /root/.cargo/bin/uv --version
+    /root/.local/bin/uv --version
 
 # 配置环境变量：将 uv 添加到 PATH
-ENV PATH="/root/.cargo/bin:$PATH"
+ENV PATH="/root/.local/bin:$PATH"
 
 # 配置 uv 使用系统 Python（在 Docker 容器中不需要虚拟环境）
 ENV UV_SYSTEM_PYTHON=1
