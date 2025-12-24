@@ -47,12 +47,12 @@ COPY ./alembic.ini /app/alembic.ini
 COPY ./scripts /app/scripts
 
 # 启动命令：
-# 1. 运行数据库初始化脚本（创建表结构）
-# 2. 运行 Alembic 迁移（如果有新的迁移）
+# 1. 创建数据库表（使用 SQLModel，不依赖 ENVIRONMENT）
+# 2. 标记 Alembic 迁移为完成（避免运行 ALTER 迁移）
 # 3. 创建超级管理员（使用环境变量，如果已存在则跳过）
 # 4. 启动 Uvicorn，使用 Railway 提供的 $PORT 环境变量（默认为 8000）
-CMD sh -c "python scripts/init_db.py && \
-          alembic upgrade head && \
+CMD sh -c "python scripts/create_tables.py && \
+          alembic stamp head && \
           python scripts/create_admin_user.py \
             --email ${ADMIN_EMAIL:-admin@example.com} \
             --password ${ADMIN_PASSWORD:-admin123} \
