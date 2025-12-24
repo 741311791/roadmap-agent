@@ -49,6 +49,13 @@ COPY ./scripts /app/scripts
 # 启动命令：
 # 1. 运行数据库初始化脚本（创建表结构）
 # 2. 运行 Alembic 迁移（如果有新的迁移）
-# 3. 启动 Uvicorn，使用 Railway 提供的 $PORT 环境变量（默认为 8000）
-CMD sh -c "python scripts/init_db.py && alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"
+# 3. 创建超级管理员（使用环境变量，如果已存在则跳过）
+# 4. 启动 Uvicorn，使用 Railway 提供的 $PORT 环境变量（默认为 8000）
+CMD sh -c "python scripts/init_db.py && \
+          alembic upgrade head && \
+          python scripts/create_admin_user.py \
+            --email ${ADMIN_EMAIL:-admin@example.com} \
+            --password ${ADMIN_PASSWORD:-admin123} \
+            --username ${ADMIN_USERNAME:-admin} || true && \
+          uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"
 
