@@ -236,7 +236,7 @@ export default function AboutPage() {
             
             <div className="flex items-center justify-center gap-6">
               <a 
-                href="mailto:hello@fastlearning.ai" 
+                href="mailto:hello@fastlearning.app" 
                 className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
               >
                 <Mail className="w-5 h-5" />

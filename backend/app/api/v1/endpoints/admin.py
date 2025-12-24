@@ -97,6 +97,74 @@ class WaitlistResponse(BaseModel):
     invited: int
 
 
+class WaitlistInviteItem(BaseModel):
+    """
+    Waitlist 邀请列表项（包含凭证信息）
+    
+    Args:
+        email: 用户邮箱
+        source: 来源
+        invited: 是否已邀请
+        invited_at: 邀请时间
+        created_at: 加入时间
+        username: 生成的用户名
+        password: 临时密码（仅管理员可见）
+        expires_at: 密码过期时间
+        sent_content: 发送历史记录
+    """
+    email: str
+    source: str
+    invited: bool
+    invited_at: Optional[str] = None
+    created_at: str
+    username: Optional[str] = None
+    password: Optional[str] = None
+    expires_at: Optional[str] = None
+    sent_content: Optional[dict] = None
+
+
+class WaitlistInviteListResponse(BaseModel):
+    """
+    Waitlist 邀请列表响应
+    
+    Args:
+        items: 邀请列表项
+        total: 总数
+        pending: 待邀请数
+        invited: 已邀请数
+    """
+    items: List[WaitlistInviteItem]
+    total: int
+    pending: int
+    invited: int
+
+
+class BatchSendInviteRequest(BaseModel):
+    """
+    批量发送邀请请求
+    
+    Args:
+        emails: 要发送邀请的邮箱列表
+        password_validity_days: 密码有效期（天），默认 30 天
+    """
+    emails: List[str]
+    password_validity_days: int = 30
+
+
+class BatchSendInviteResponse(BaseModel):
+    """
+    批量发送响应
+    
+    Args:
+        success: 成功发送的数量
+        failed: 失败的数量
+        errors: 失败详情列表
+    """
+    success: int
+    failed: int
+    errors: List[dict]
+
+
 # ============================================================
 # 工具函数
 # ============================================================
@@ -301,6 +369,258 @@ async def get_waitlist(
         total=total,
         pending=total - invited,
         invited=invited,
+    )
+
+
+@router.get("/waitlist-invites", response_model=WaitlistInviteListResponse)
+async def get_waitlist_invites(
+    current_user: User = Depends(current_superuser),
+    db: AsyncSession = Depends(get_db),
+    limit: int = 100,
+    offset: int = 0,
+    status: str = "all",
+):
+    """
+    获取 Waitlist 邀请列表（包含凭证信息）
+    
+    只有超级管理员可以查看。
+    
+    Args:
+        limit: 每页数量
+        offset: 偏移量
+        status: 过滤状态 - all: 全部, pending: 未邀请, invited: 已邀请
+        
+    Returns:
+        Waitlist 邀请列表和统计信息
+    """
+    # 构建查询
+    query = select(WaitlistEmail)
+    if status == "pending":
+        query = query.where(WaitlistEmail.invited == False)
+    elif status == "invited":
+        query = query.where(WaitlistEmail.invited == True)
+    
+    query = query.order_by(WaitlistEmail.created_at.desc()).limit(limit).offset(offset)
+    
+    result = await db.execute(query)
+    items = result.scalars().all()
+    
+    # 统计信息
+    total_result = await db.execute(
+        select(func.count()).select_from(WaitlistEmail)
+    )
+    total = total_result.scalar() or 0
+    
+    invited_result = await db.execute(
+        select(func.count()).select_from(WaitlistEmail).where(WaitlistEmail.invited == True)
+    )
+    invited = invited_result.scalar() or 0
+    
+    logger.info(
+        "admin_get_waitlist_invites",
+        admin_id=current_user.id,
+        status=status,
+        total=total,
+    )
+    
+    return WaitlistInviteListResponse(
+        items=[
+            WaitlistInviteItem(
+                email=item.email,
+                source=item.source,
+                invited=item.invited,
+                invited_at=item.invited_at.isoformat() if item.invited_at else None,
+                created_at=item.created_at.isoformat(),
+                username=item.username,
+                password=item.password,
+                expires_at=item.expires_at.isoformat() if item.expires_at else None,
+                sent_content=item.sent_content,
+            )
+            for item in items
+        ],
+        total=total,
+        pending=total - invited,
+        invited=invited,
+    )
+
+
+@router.post("/waitlist-invites/batch-send", response_model=BatchSendInviteResponse)
+async def batch_send_invites(
+    request: BatchSendInviteRequest,
+    current_user: User = Depends(current_superuser),
+    user_manager: UserManager = Depends(get_user_manager),
+    email_service: EmailService = Depends(get_email_service),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    批量发送 Waitlist 邀请
+    
+    为选中的邮箱生成临时凭证并发送邀请邮件。
+    支持部分成功模式：成功的更新状态，失败的收集错误信息。
+    
+    只有超级管理员可以调用此接口。
+    
+    Args:
+        request: 批量发送请求，包含邮箱列表和密码有效期
+        
+    Returns:
+        批量发送结果，包含成功/失败数量和错误详情
+    """
+    logger.info(
+        "admin_batch_send_invites_requested",
+        admin_id=current_user.id,
+        email_count=len(request.emails),
+        validity_days=request.password_validity_days,
+    )
+    
+    success_count = 0
+    failed_count = 0
+    errors = []
+    
+    for email_raw in request.emails:
+        email = email_raw.lower().strip()
+        
+        try:
+            # 检查 waitlist 记录是否存在
+            waitlist_result = await db.execute(
+                select(WaitlistEmail).where(WaitlistEmail.email == email)
+            )
+            waitlist_entry = waitlist_result.scalar_one_or_none()
+            
+            if not waitlist_entry:
+                errors.append({
+                    "email": email,
+                    "error": "Email not found in waitlist"
+                })
+                failed_count += 1
+                continue
+            
+            # 如果已经发送过，跳过
+            if waitlist_entry.invited:
+                errors.append({
+                    "email": email,
+                    "error": "Invitation already sent"
+                })
+                failed_count += 1
+                continue
+            
+            # 检查用户是否已存在
+            existing_user_result = await db.execute(
+                select(User).where(User.email == email)
+            )
+            existing_user = existing_user_result.scalar_one_or_none()
+            
+            if existing_user:
+                errors.append({
+                    "email": email,
+                    "error": "User account already exists"
+                })
+                failed_count += 1
+                continue
+            
+            # 生成用户名（从邮箱提取）
+            username = email.split('@')[0]
+            
+            # 生成临时密码
+            temp_password = generate_random_password()
+            
+            # 计算密码过期时间
+            expires_at = beijing_now() + timedelta(days=request.password_validity_days)
+            
+            # 创建用户账号
+            try:
+                user_create = UserCreate(
+                    email=email,
+                    username=username,
+                    password=temp_password,
+                )
+                new_user = await user_manager.create(user_create)
+                
+                # 设置密码过期时间（不立即提交）
+                new_user.password_expires_at = expires_at
+                
+            except Exception as user_create_error:
+                errors.append({
+                    "email": email,
+                    "error": f"Failed to create user account: {str(user_create_error)}"
+                })
+                failed_count += 1
+                await db.rollback()
+                continue
+            
+            # 更新 waitlist 记录（不立即提交）
+            waitlist_entry.username = username
+            waitlist_entry.password = temp_password
+            waitlist_entry.expires_at = expires_at
+            
+            # 发送邀请邮件
+            email_sent = await email_service.send_invite_email(
+                to_email=email,
+                temp_password=temp_password,
+                expires_at=expires_at,
+                username=username,
+            )
+            
+            if email_sent:
+                # 邮件发送成功，提交用户创建和 waitlist 更新
+                waitlist_entry.invited = True
+                waitlist_entry.invited_at = beijing_now()
+                waitlist_entry.sent_content = {
+                    "username": username,
+                    "expires_at": expires_at.isoformat(),
+                    "sent_at": beijing_now().isoformat(),
+                    "sent_by": current_user.id,
+                }
+                await db.commit()
+                success_count += 1
+                
+                logger.info(
+                    "admin_batch_send_invite_success",
+                    admin_id=current_user.id,
+                    email=email,
+                    username=username,
+                    user_id=new_user.id,
+                )
+            else:
+                # 邮件发送失败，回滚用户创建
+                logger.warning(
+                    "admin_batch_send_invite_email_failed",
+                    admin_id=current_user.id,
+                    email=email,
+                    username=username,
+                )
+                errors.append({
+                    "email": email,
+                    "error": "Failed to send email, user account not created"
+                })
+                failed_count += 1
+                await db.rollback()
+                
+        except Exception as e:
+            logger.error(
+                "admin_batch_send_invite_error",
+                admin_id=current_user.id,
+                email=email,
+                error=str(e),
+            )
+            errors.append({
+                "email": email,
+                "error": str(e)
+            })
+            failed_count += 1
+            await db.rollback()
+    
+    logger.info(
+        "admin_batch_send_invites_completed",
+        admin_id=current_user.id,
+        success=success_count,
+        failed=failed_count,
+    )
+    
+    return BatchSendInviteResponse(
+        success=success_count,
+        failed=failed_count,
+        errors=errors,
     )
 
 

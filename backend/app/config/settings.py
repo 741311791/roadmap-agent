@@ -306,7 +306,7 @@ class Settings(BaseSettings):
         description="Resend API 密钥（用于发送邀请邮件）"
     )
     RESEND_FROM_EMAIL: str = Field(
-        "noreply@fastlearning.dev",
+        "noreply@fastlearning.app",
         description="发件人邮箱地址"
     )
     
