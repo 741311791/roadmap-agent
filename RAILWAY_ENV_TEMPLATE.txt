@@ -1,0 +1,77 @@
+# ==================== Railway 环境变量配置模板 ====================
+# 复制此文件内容到 Railway Dashboard -> Variables 中
+# 注意：Railway 使用 Key-Value 格式，每行一个变量
+
+# ==================== 数据库连接（引用 Railway 数据库服务）====================
+POSTGRES_HOST=${{Postgres.PGHOST}}
+POSTGRES_PORT=${{Postgres.PGPORT}}
+POSTGRES_USER=${{Postgres.PGUSER}}
+POSTGRES_PASSWORD=${{Postgres.PGPASSWORD}}
+POSTGRES_DB=${{Postgres.PGDATABASE}}
+
+REDIS_HOST=${{Redis.REDISHOST}}
+REDIS_PORT=${{Redis.REDISPORT}}
+REDIS_PASSWORD=${{Redis.REDISPASSWORD}}
+
+# ==================== 应用基础配置 ====================
+ENVIRONMENT=production
+DEBUG=false
+CORS_ORIGINS=["https://your-frontend.up.railway.app"]
+
+# ==================== LLM API Keys ====================
+# OpenAI Keys
+ANALYZER_API_KEY=sk-your-openai-key-here
+VALIDATOR_API_KEY=sk-your-openai-key-here
+RECOMMENDER_API_KEY=sk-your-openai-key-here
+QUIZ_API_KEY=sk-your-openai-key-here
+
+# Anthropic Keys
+ARCHITECT_API_KEY=sk-ant-your-anthropic-key-here
+EDITOR_API_KEY=sk-ant-your-anthropic-key-here
+GENERATOR_API_KEY=sk-ant-your-anthropic-key-here
+
+# ==================== Web Search API ====================
+TAVILY_API_KEY=tvly-your-tavily-key-here
+USE_DUCKDUCKGO_FALLBACK=true
+
+# ==================== S3 存储（使用 AWS S3 或 Cloudflare R2）====================
+# Option 1: AWS S3
+S3_ENDPOINT_URL=https://s3.amazonaws.com
+S3_ACCESS_KEY_ID=AKIA...
+S3_SECRET_ACCESS_KEY=...
+S3_BUCKET_NAME=roadmap-content
+S3_REGION=us-east-1
+
+# Option 2: Cloudflare R2
+# S3_ENDPOINT_URL=https://<accountid>.r2.cloudflarestorage.com
+# S3_ACCESS_KEY_ID=...
+# S3_SECRET_ACCESS_KEY=...
+# S3_BUCKET_NAME=roadmap-content
+# S3_REGION=auto
+
+# ==================== JWT 认证 ====================
+# 生成方法: openssl rand -base64 48
+JWT_SECRET_KEY=<生成一个至少32字符的随机字符串>
+JWT_ALGORITHM=HS256
+JWT_LIFETIME_SECONDS=86400
+
+# ==================== 邮件服务（可选，用于邀请功能）====================
+RESEND_API_KEY=re-your-resend-key-here
+RESEND_FROM_EMAIL=noreply@yourdomain.com
+FRONTEND_URL=https://your-frontend.up.railway.app
+
+# ==================== 工作流控制（可选）====================
+SKIP_STRUCTURE_VALIDATION=false
+SKIP_HUMAN_REVIEW=false
+SKIP_TUTORIAL_GENERATION=false
+SKIP_RESOURCE_RECOMMENDATION=false
+SKIP_QUIZ_GENERATION=false
+MAX_FRAMEWORK_RETRY=3
+PARALLEL_TUTORIAL_LIMIT=10
+
+# ==================== 任务恢复配置（可选）====================
+ENABLE_TASK_RECOVERY=true
+TASK_RECOVERY_MAX_AGE_HOURS=24
+TASK_RECOVERY_MAX_CONCURRENT=3
+TASK_RECOVERY_DELAY_SECONDS=5.0
+

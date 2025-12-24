@@ -25,9 +25,15 @@ COPY ./app /app/app
 COPY ./prompts /app/prompts
 COPY ./specs /app/specs
 
-# 暴露端口
-EXPOSE 8000
+# 复制 Alembic 迁移配置（Railway 部署时需要运行数据库迁移）
+COPY ./alembic /app/alembic
+COPY ./alembic.ini /app/alembic.ini
 
-# 启动命令
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Railway 会自动检测端口，无需显式 EXPOSE
+# EXPOSE 8000
+
+# 启动命令：
+# 1. 运行数据库迁移 (alembic upgrade head)
+# 2. 启动 Uvicorn，使用 Railway 提供的 $PORT 环境变量（默认为 8000）
+CMD sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"
 
