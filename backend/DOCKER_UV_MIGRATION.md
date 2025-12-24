@@ -27,9 +27,8 @@ RUN poetry install --no-dev --no-interaction --no-ansi
 
 **现在（uv）**：
 ```dockerfile
-# 安装 uv (使用官方安装脚本)
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.cargo/bin:$PATH"
+# 安装 uv（使用 pip 安装，更简单可靠）
+RUN pip install --no-cache-dir uv
 
 # 配置 uv 使用系统 Python（在 Docker 容器中不需要虚拟环境）
 ENV UV_SYSTEM_PYTHON=1
@@ -41,16 +40,18 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 ```
 
-### 2. 新增系统依赖
+### 2. uv 安装方式
 
-添加了 `curl` 用于下载 uv 安装脚本：
+使用 pip 直接安装 uv，无需额外的系统依赖：
 ```dockerfile
-RUN apt-get update && apt-get install -y \
-    gcc \
-    postgresql-client \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir uv
 ```
+
+**为什么选择 pip 而非官方安装脚本？**
+- ✅ 更简单：一行命令搞定
+- ✅ 更可靠：自动添加到 PATH
+- ✅ 更小：不需要安装 curl 和 Rust 工具链
+- ✅ 更快：Docker 层缓存更友好
 
 ---
 
