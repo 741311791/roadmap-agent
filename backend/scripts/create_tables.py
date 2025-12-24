@@ -9,7 +9,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from app.models.database import SQLModel
+from app.models.database import SQLModel, Base
 from app.db.session import engine
 import structlog
 
@@ -22,11 +22,13 @@ async def main():
         logger.info("creating_database_tables")
         
         async with engine.begin() as conn:
-            # 强制创建所有表（忽略 ENVIRONMENT 设置）
+            # 创建 Base 的表（包括 User 表）
+            await conn.run_sync(Base.metadata.create_all)
+            # 创建 SQLModel 的表（其他所有表）
             await conn.run_sync(SQLModel.metadata.create_all)
         
         logger.info("database_tables_created_successfully")
-        print("✅ 数据库表创建成功")
+        print("✅ 数据库表创建成功（包括 users 表）")
         
     except Exception as e:
         logger.error("database_tables_creation_failed", error=str(e))
