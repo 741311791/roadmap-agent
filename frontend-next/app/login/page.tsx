@@ -6,7 +6,7 @@
  * 极简设计风格，支持邮箱+密码登录。
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
@@ -18,7 +18,10 @@ import { authService } from '@/lib/services/auth-service';
 import { Loader2, Brain, AlertCircle, ArrowLeft } from 'lucide-react';
 import { motion } from 'framer-motion';
 
-export default function LoginPage() {
+/**
+ * 登录表单组件（包含 useSearchParams）
+ */
+function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { isAuthenticated, user } = useAuthStore();
@@ -242,5 +245,20 @@ export default function LoginPage() {
         © 2024 Fast Learning. All rights reserved.
       </footer>
     </div>
+  );
+}
+
+/**
+ * 登录页面入口（使用 Suspense 包裹）
+ */
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-[#f8f5f0]">
+        <Loader2 className="w-8 h-8 animate-spin text-sage-600" />
+      </div>
+    }>
+      <LoginForm />
+    </Suspense>
   );
 }

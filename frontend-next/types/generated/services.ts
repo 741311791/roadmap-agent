@@ -10,7 +10,11 @@ import type {
   ResourceRecommendation,
   Quiz,
   QuizQuestion,
+  TutorialWithContent,
 } from './models';
+
+// Re-export TutorialWithContent to avoid duplication
+export type { TutorialWithContent };
 
 /**
  * 生成路线图响应
@@ -46,13 +50,6 @@ export interface TutorialResponse {
 }
 
 /**
- * 完整的教程内容（包含状态）
- */
-export interface TutorialWithContent extends Tutorial {
-  status: 'completed' | 'generating' | 'failed';
-}
-
-/**
  * 资源推荐响应
  */
 export interface ResourcesResponse {
@@ -65,8 +62,17 @@ export interface ResourcesResponse {
  * 测验响应
  */
 export interface QuizResponse {
+  quiz_id: string;
   quiz: Quiz;
-  questions: QuizQuestion[];
+  questions: {
+    question_id: string;
+    question_type: 'single_choice' | 'multiple_choice' | 'true_false';
+    question: string;
+    options: string[];
+    correct_answer: number[];
+    explanation: string;
+    difficulty: 'easy' | 'medium' | 'hard';
+  }[];
   total_questions: number;
   status: 'completed' | 'generating' | 'failed';
 }

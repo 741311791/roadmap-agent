@@ -52,7 +52,7 @@ interface IntentAnalysisOutput {
 interface ExecutionLog {
   id: string;
   task_id: string;
-  level: string;
+  level: 'debug' | 'info' | 'success' | 'warning' | 'error';
   category: string;
   step: string | null;
   agent_name: string | null;
@@ -69,7 +69,7 @@ interface TaskInfo {
   task_id: string;
   title: string;
   status: string;
-  current_step: string;
+  current_step: string | null;
   created_at: string;
   updated_at: string;
   completed_at?: string | null;

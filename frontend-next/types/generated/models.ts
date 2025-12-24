@@ -177,6 +177,7 @@ export interface ResourceRecommendation {
   estimated_time_minutes?: number;
   is_free: boolean;
   rating?: number;
+  relevance_score?: number;
   author?: string;
   platform?: string;
 }

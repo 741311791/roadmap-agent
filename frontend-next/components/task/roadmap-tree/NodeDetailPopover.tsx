@@ -43,12 +43,16 @@ function getTypeIcon(type: TreeNodeType) {
  */
 function getTypeLabel(type: TreeNodeType): string {
   switch (type) {
+    case 'start':
+      return 'Start';
     case 'stage':
       return 'Stage';
     case 'module':
       return 'Module';
     case 'concept':
       return 'Concept';
+    default:
+      return 'Unknown';
   }
 }
 

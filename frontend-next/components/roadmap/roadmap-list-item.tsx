@@ -5,7 +5,7 @@
  */
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Badge } from '@/components/ui/badge';
@@ -68,7 +68,7 @@ export function RoadmapListItem({ roadmap, onDelete }: RoadmapListItemProps) {
   const initial = getTopicInitial(roadmap.title);
   
   // 尝试从 API 获取封面图
-  React.useEffect(() => {
+  useEffect(() => {
     fetchCoverImageFromAPI(roadmap.id).then((apiUrl) => {
       if (apiUrl) {
         setImageUrl(apiUrl);

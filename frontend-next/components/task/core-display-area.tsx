@@ -44,7 +44,7 @@ interface IntentAnalysisOutput {
 
 interface CoreDisplayAreaProps {
   /** 当前工作流步骤 */
-  currentStep: string;
+  currentStep: string | null;
   /** 任务状态 */
   status: string;
   /** 任务 ID（用于获取验证结果） */
@@ -74,8 +74,8 @@ interface CoreDisplayAreaProps {
 /**
  * 判断是否应该显示需求分析卡片
  */
-function shouldShowIntentCard(currentStep: string, intentAnalysis?: IntentAnalysisOutput | null): boolean {
-  if (!intentAnalysis) return false;
+function shouldShowIntentCard(currentStep: string | null, intentAnalysis?: IntentAnalysisOutput | null): boolean {
+  if (!intentAnalysis || !currentStep) return false;
   
   // intent_analysis 完成后的任何阶段都显示
   const stepsAfterIntent = [
@@ -101,8 +101,8 @@ function shouldShowIntentCard(currentStep: string, intentAnalysis?: IntentAnalys
 /**
  * 判断是否应该显示路线图
  */
-function shouldShowRoadmap(currentStep: string, roadmapFramework?: RoadmapFramework | null): boolean {
-  if (!roadmapFramework || !roadmapFramework.stages || roadmapFramework.stages.length === 0) {
+function shouldShowRoadmap(currentStep: string | null, roadmapFramework?: RoadmapFramework | null): boolean {
+  if (!roadmapFramework || !roadmapFramework.stages || roadmapFramework.stages.length === 0 || !currentStep) {
     return false;
   }
   
@@ -128,7 +128,7 @@ function shouldShowRoadmap(currentStep: string, roadmapFramework?: RoadmapFramew
 /**
  * 判断是否正在编辑路线图
  */
-function isRoadmapEditing(currentStep: string, isEditingRoadmap?: boolean): boolean {
+function isRoadmapEditing(currentStep: string | null, isEditingRoadmap?: boolean): boolean {
   return isEditingRoadmap === true || currentStep === 'roadmap_edit';
 }
 
@@ -372,12 +372,12 @@ function getWaitingStatusText(currentStep: string): string {
  * 
  * @param currentStep 当前工作流步骤，用于显示对应的状态文本
  */
-function RoadmapWaitingSkeleton({ currentStep = 'curriculum_design' }: { currentStep?: string }) {
+function RoadmapWaitingSkeleton({ currentStep = 'curriculum_design' }: { currentStep?: string | null }) {
   return (
     <div className="flex-1 flex items-center justify-center py-12">
       <div className="text-center space-y-3">
         <Loader2 className="w-8 h-8 text-sage-500 animate-spin mx-auto" />
-        <p className="text-sm text-muted-foreground">{getWaitingStatusText(currentStep)}</p>
+        <p className="text-sm text-muted-foreground">{getWaitingStatusText(currentStep || 'curriculum_design')}</p>
       </div>
     </div>
   );
@@ -409,7 +409,7 @@ export function CoreDisplayArea({
   // 加载状态：还没有任何数据
   const isLoading = !showIntentCard && !showRoadmap && 
     !['completed', 'failed'].includes(status) &&
-    !['completed', 'failed'].includes(currentStep);
+    currentStep && !['completed', 'failed'].includes(currentStep);
   
   // 骨架状态
   if (isLoading) {

@@ -118,7 +118,7 @@ export interface RoadmapTreeProps {
   taskId?: string;
   
   /** 路线图 ID（用于获取历史版本） */
-  roadmapId?: string;
+  roadmapId?: string | null;
   
   /** 是否显示历史版本按钮 */
   showHistoryButton?: boolean;

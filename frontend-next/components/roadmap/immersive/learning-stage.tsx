@@ -8,7 +8,6 @@ import { getConceptResources, getConceptQuiz, updateConceptProgress, submitQuizA
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import { FailedContentAlert } from '@/components/common/retry-content-button';
 import { GeneratingContentLoader } from '@/components/common/generating-content-loader';
-import { StaleStatusDetector } from '@/components/common/stale-status-detector';
 import { 
   Sparkles, 
   BookOpen, 
@@ -30,7 +29,8 @@ import {
   Loader2 as Loader2Icon,
   Loader2,
   AlertCircle,
-  RefreshCw
+  RefreshCw,
+  Star
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -307,6 +307,7 @@ function generateHeadingId(text: string | React.ReactNode): string {
 
 /**
  * ResourceCard - 学习资源卡片组件
+ * 简洁扁平设计：参考落地页风格，使用 glass-panel 样式
  */
 function ResourceCard({ 
   resource, 
@@ -315,101 +316,87 @@ function ResourceCard({
   resource: ResourcesResponse['resources'][0];
   index: number;
 }) {
+  // 根据资源类型返回对应图标
   const getResourceIcon = (type: string) => {
     switch (type) {
       case 'video':
-        return <Video className="w-4 h-4" />;
+        return <Video className="w-5 h-5 text-sage-600" />;
       case 'article':
-        return <FileTextIcon className="w-4 h-4" />;
+        return <FileTextIcon className="w-5 h-5 text-sage-600" />;
       case 'book':
-        return <BookMarked className="w-4 h-4" />;
+        return <BookMarked className="w-5 h-5 text-sage-600" />;
       case 'course':
-        return <Award className="w-4 h-4" />;
+        return <Award className="w-5 h-5 text-sage-600" />;
       case 'documentation':
-        return <BookOpen className="w-4 h-4" />;
+        return <BookOpen className="w-5 h-5 text-sage-600" />;
       case 'tool':
-        return <Code className="w-4 h-4" />;
+        return <Code className="w-5 h-5 text-sage-600" />;
       default:
-        return <FileTextIcon className="w-4 h-4" />;
+        return <FileTextIcon className="w-5 h-5 text-sage-600" />;
     }
   };
 
-  const getTypeColor = (type: string) => {
-    switch (type) {
-      case 'video':
-        return 'bg-red-50 text-red-600 border-red-200';
-      case 'article':
-        return 'bg-blue-50 text-blue-600 border-blue-200';
-      case 'book':
-        return 'bg-purple-50 text-purple-600 border-purple-200';
-      case 'course':
-        return 'bg-green-50 text-green-600 border-green-200';
-      case 'documentation':
-        return 'bg-amber-50 text-amber-600 border-amber-200';
-      case 'tool':
-        return 'bg-cyan-50 text-cyan-600 border-cyan-200';
-      default:
-        return 'bg-stone-50 text-stone-600 border-stone-200';
-    }
-  };
+  // 计算星级评分（基于 relevance_score）
+  const starRating = Math.round((resource.relevance_score ?? 0) * 5);
 
   return (
     <a
       href={resource.url}
       target="_blank"
       rel="noopener noreferrer"
-      className="group block p-4 rounded-xl border border-sage-200 bg-white hover:bg-sage-50/50 hover:border-sage-300 transition-all hover:shadow-sm"
+      className="group flex gap-3 p-3 rounded-lg glass-panel hover:border-sage-500/50 hover:scale-[1.01] transition-all cursor-pointer"
     >
-      <div className="flex items-start gap-3">
-        {/* Index Badge */}
-        <div className="flex-shrink-0 w-8 h-8 rounded-full bg-sage-100 flex items-center justify-center text-xs font-medium text-sage-700">
-          {index + 1}
-        </div>
+      {/* 左侧：资源类型图标 */}
+      <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-sage-600/10 flex items-center justify-center">
+        {getResourceIcon(resource.type)}
+      </div>
 
-        <div className="flex-1 min-w-0">
-          {/* Title & External Link */}
-          <div className="flex items-start gap-2 mb-2">
-            <h3 className="text-sm font-medium text-foreground group-hover:text-sage-700 transition-colors line-clamp-2 flex-1">
-              {resource.title}
-            </h3>
-            <ExternalLink className="w-4 h-4 text-sage-400 group-hover:text-sage-600 transition-colors flex-shrink-0 mt-0.5" />
-          </div>
+      {/* 中间：内容区域 */}
+      <div className="flex-1 min-w-0">
+        {/* 标题 */}
+        <p className="text-sm font-medium text-foreground line-clamp-1 group-hover:text-sage-600 transition-colors">
+          {resource.title}
+        </p>
 
-          {/* Description */}
-          <p className="text-xs text-muted-foreground line-clamp-2 mb-3">
+        {/* 资源描述 */}
+        {resource.description && (
+          <p className="text-xs text-muted-foreground line-clamp-2 mt-1 leading-relaxed">
             {resource.description}
           </p>
+        )}
 
-          {/* Type Badge & Relevance */}
-          <div className="flex items-center gap-2">
-            <span className={cn(
-              "inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-medium border",
-              getTypeColor(resource.type)
-            )}>
-              {getResourceIcon(resource.type)}
-              {resource.type}
+        {/* 元数据：来源 / 时长 + 星级评分 */}
+        <div className="flex items-center gap-3 mt-2">
+          {/* 来源信息 */}
+          <span className="text-xs text-muted-foreground">
+            {resource.type === 'video' ? 'Video' : 
+             resource.type === 'book' ? 'Book' : 
+             resource.type === 'course' ? 'Course' : 
+             'Article'}
+          </span>
+
+          {/* 星级评分 */}
+          <div className="flex items-center gap-0.5">
+            {[...Array(5)].map((_, i) => (
+              <Star
+                key={i}
+                className={cn(
+                  "w-2.5 h-2.5 transition-colors",
+                  i < starRating 
+                    ? "text-sage-600 fill-current" 
+                    : "text-border"
+                )}
+              />
+            ))}
+            <span className="text-xs text-muted-foreground ml-1">
+              {(resource.relevance_score ?? 0).toFixed(1)}
             </span>
-            <div className="flex items-center gap-1">
-              <div className="flex gap-0.5">
-                {[...Array(5)].map((_, i) => (
-                  <div
-                    key={i}
-                    className={cn(
-                      "w-1 h-1 rounded-full",
-                      i < Math.round(resource.relevance_score * 5)
-                        ? "bg-amber-400"
-                        : "bg-stone-200"
-                    )}
-                  />
-                ))}
-              </div>
-              <span className="text-[10px] text-muted-foreground">
-                {Math.round(resource.relevance_score * 100)}% match
-              </span>
-            </div>
           </div>
         </div>
       </div>
+
+      {/* 右侧：完成/外链图标 */}
+      <ExternalLink className="w-4 h-4 text-sage-600 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
     </a>
   );
 }
@@ -494,9 +481,13 @@ function ResourceList({
           {resources.length} handpicked resources to deepen your understanding
         </p>
       </div>
-      {resources.map((resource, index) => (
-        <ResourceCard key={`${resource.url}-${index}`} resource={resource} index={index} />
-      ))}
+
+      {/* 资源列表 */}
+      <div className="space-y-2.5">
+        {resources.map((resource, index) => (
+          <ResourceCard key={`${resource.url}-${index}`} resource={resource} index={index} />
+        ))}
+      </div>
     </div>
   );
 }
@@ -512,7 +503,15 @@ function QuizQuestionCard({
   selectedAnswers,
   onAnswerSelect
 }: { 
-  question: QuizResponse['questions'][0];
+  question: {
+    question_id: string;
+    question_type: 'single_choice' | 'multiple_choice' | 'true_false';
+    question: string;
+    options: string[];
+    correct_answer: number[];
+    explanation: string;
+    difficulty: 'easy' | 'medium' | 'hard';
+  };
   index: number;
   isAnswered: boolean;
   selectedAnswers: number[];
@@ -1148,20 +1147,8 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId, 
               )}
               
               {tutorialGenerating || tutorialPending ? (
-                /* 教程正在生成中，使用僵尸状态检测器 */
-                roadmapId && concept && userPreferences ? (
-                  <StaleStatusDetector
-                    roadmapId={roadmapId}
-                    conceptId={concept.concept_id}
-                    contentType="tutorial"
-                    status={concept.content_status}
-                    preferences={userPreferences}
-                    timeoutSeconds={120}
-                  onSuccess={() => onRetrySuccess?.()}
-                  />
-                ) : (
-                  <GeneratingContentLoader contentType="tutorial" />
-                )
+                /* 教程正在生成中 */
+                <GeneratingContentLoader contentType="tutorial" />
               ) : tutorialFailed && roadmapId && concept && userPreferences ? (
                 /* 教程生成失败，显示重试按钮 */
                 <FailedContentAlert
@@ -1265,20 +1252,8 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId, 
           {/* Placeholder for other formats */}
           {activeFormat === 'learning-resources' && (
             resourcesGenerating || resourcesPending ? (
-              /* 资源推荐正在生成中，使用僵尸状态检测器 */
-              roadmapId && concept && userPreferences ? (
-                <StaleStatusDetector
-                  roadmapId={roadmapId}
-                  conceptId={concept.concept_id}
-                  contentType="resources"
-                  status={concept.resources_status}
-                  preferences={userPreferences}
-                  timeoutSeconds={120}
-                  onSuccess={() => onRetrySuccess?.()}
-                />
-              ) : (
-                <GeneratingContentLoader contentType="resources" />
-              )
+              /* 资源推荐正在生成中 */
+              <GeneratingContentLoader contentType="resources" />
             ) : resourcesFailed && roadmapId && concept && userPreferences ? (
               /* 资源推荐生成失败，显示重试按钮 */
               <FailedContentAlert
@@ -1303,20 +1278,8 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId, 
 
           {activeFormat === 'quiz' && (
             quizGenerating || quizPending ? (
-              /* 测验正在生成中，使用僵尸状态检测器 */
-              roadmapId && concept && userPreferences ? (
-                <StaleStatusDetector
-                  roadmapId={roadmapId}
-                  conceptId={concept.concept_id}
-                  contentType="quiz"
-                  status={concept.quiz_status}
-                  preferences={userPreferences}
-                  timeoutSeconds={120}
-                  onSuccess={() => onRetrySuccess?.()}
-                />
-              ) : (
-                <GeneratingContentLoader contentType="quiz" />
-              )
+              /* 测验正在生成中 */
+              <GeneratingContentLoader contentType="quiz" />
             ) : quizFailed && roadmapId && concept && userPreferences ? (
               /* 测验生成失败，显示重试按钮 */
               <FailedContentAlert

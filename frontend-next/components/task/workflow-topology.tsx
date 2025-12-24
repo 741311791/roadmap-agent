@@ -176,7 +176,7 @@ const REVIEW_BRANCH: WorkflowBranch = {
  * @returns 步骤位置信息
  */
 export function getStepLocation(
-  currentStep: string,
+  currentStep: string | null,
   editSource?: EditSource
 ): {
   stageId: string;
@@ -184,6 +184,11 @@ export function getStepLocation(
   branchType?: 'validation' | 'review';
   branchNodeIndex?: number;
 } {
+  // 处理 null 值
+  if (!currentStep) {
+    return { stageId: 'START', isOnBranch: false };
+  }
+  
   // 检查主路节点
   for (const stage of MAIN_STAGES) {
     if (stage.steps.includes(currentStep)) {
@@ -249,7 +254,7 @@ interface ExecutionLog {
 
 interface WorkflowTopologyProps {
   /** 当前步骤 */
-  currentStep: string;
+  currentStep: string | null;
   /** 任务状态 */
   status: string;
   /** 编辑来源（用于区分分支） */
