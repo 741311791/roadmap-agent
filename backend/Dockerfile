@@ -16,8 +16,11 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
 # 配置环境变量：将 uv 添加到 PATH
 ENV PATH="/root/.local/bin:$PATH"
 
-# 复制依赖配置文件
-COPY pyproject.toml uv.lock ./
+# 复制依赖配置文件和 README（构建需要）
+COPY pyproject.toml uv.lock README.md ./
+
+# 创建临时的 app 目录（满足项目结构要求）
+RUN mkdir -p /app/app && touch /app/app/__init__.py
 
 # 使用 uv 导出生产环境依赖到 requirements.txt
 # --no-dev: 不包含开发依赖
