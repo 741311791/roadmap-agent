@@ -43,8 +43,12 @@ COPY ./alembic.ini /app/alembic.ini
 # Railway 会自动检测端口，无需显式 EXPOSE
 # EXPOSE 8000
 
+# 复制数据库初始化脚本
+COPY ./scripts /app/scripts
+
 # 启动命令：
-# 1. 运行数据库迁移 (alembic upgrade head)
-# 2. 启动 Uvicorn，使用 Railway 提供的 $PORT 环境变量（默认为 8000）
-CMD sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"
+# 1. 运行数据库初始化脚本（创建表结构）
+# 2. 运行 Alembic 迁移（如果有新的迁移）
+# 3. 启动 Uvicorn，使用 Railway 提供的 $PORT 环境变量（默认为 8000）
+CMD sh -c "python scripts/init_db.py && alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"
 
