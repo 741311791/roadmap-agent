@@ -8,6 +8,7 @@ import structlog
 
 from app.api.v1.router import router as api_router_v1
 from app.api.v1.websocket import router as websocket_router
+from app.config.settings import settings
 from app.core.dependencies import init_orchestrator, cleanup_orchestrator
 from app.db.minio_init import ensure_bucket_exists
 from app.services.task_recovery_service import recover_interrupted_tasks_on_startup
@@ -81,15 +82,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# 配置 CORS 中间件
+# 配置 CORS 中间件（从环境变量读取允许的域名）
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:3001",
-    ],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
