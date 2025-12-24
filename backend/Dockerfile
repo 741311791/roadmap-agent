@@ -6,12 +6,10 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     gcc \
     postgresql-client \
-    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# 安装 uv (使用官方安装脚本)
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.cargo/bin:$PATH"
+# 安装 uv（使用 pip 安装，更简单可靠）
+RUN pip install --no-cache-dir uv
 
 # 配置 uv 使用系统 Python（在 Docker 容器中不需要虚拟环境）
 ENV UV_SYSTEM_PYTHON=1
