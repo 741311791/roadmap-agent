@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Workflow Topology Debug</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="p-8 bg-gray-50">
+  <div class="max-w-4xl mx-auto">
+    <h1 class="text-2xl font-bold mb-4">Workflow Topology Debug Tool</h1>
+    
+    <div class="bg-white p-6 rounded-lg shadow mb-6">
+      <h2 class="text-lg font-semibold mb-4">Task ID: 87ebd107-9517-4515-959f-9bb453ecb7ca</h2>
+      
+      <button 
+        onclick="checkBranchStatus()" 
+        class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+      >
+        Check Branch Status
+      </button>
+      
+      <div id="results" class="mt-6"></div>
+    </div>
+  </div>
+
+  <script>
+    async function checkBranchStatus() {
+      const resultsDiv = document.getElementById('results');
+      resultsDiv.innerHTML = '<p class="text-gray-500">Loading...</p>';
+      
+      try {
+        // 获取执行日志
+        const response = await fetch('http://localhost:8000/api/v1/trace/87ebd107-9517-4515-959f-9bb453ecb7ca/logs?limit=2000');
+        const data = await response.json();
+        const logs = data.logs || [];
+        
+        console.log('Total logs:', logs.length);
+        
+        // 检查有 edit_source 的日志
+        const logsWithEditSource = logs.filter(log => 
+          log.details?.edit_source
+        );
+        
+        console.log('Logs with edit_source:', logsWithEditSource);
+        
+        // 模拟前端的判断逻辑
+        const reviewBranchTriggered = logs.some(
+          log => 
+            (log.step === 'edit_plan_analysis' || log.step === 'roadmap_edit') &&
+            log.details?.edit_source === 'human_review'
+        );
+        
+        const validationBranchTriggered = logs.some(
+          log => 
+            (log.step === 'validation_edit_plan_analysis' || log.step === 'roadmap_edit') &&
+            log.details?.edit_source === 'validation_failed'
+        );
+        
+        // 提取最新的 edit_source
+        const latestEditSource = logs
+          .filter(log => 
+            (log.step === 'roadmap_edit' || log.step === 'edit_plan_analysis') && 
+            log.details?.edit_source
+          )
+          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+          [0]?.details?.edit_source || null;
+        
+        // 显示结果
+        resultsDiv.innerHTML = `
+          <div class="space-y-4">
+            <div class="p-4 bg-blue-50 rounded">
+              <h3 class="font-semibold mb-2">Data Summary:</h3>
+              <ul class="space-y-1 text-sm">
+                <li>Total logs: <strong>${logs.length}</strong></li>
+                <li>Logs with edit_source: <strong>${logsWithEditSource.length}</strong></li>
+                <li>Latest edit_source: <strong>${latestEditSource || 'null'}</strong></li>
+              </ul>
+            </div>
+            
+            <div class="p-4 ${reviewBranchTriggered ? 'bg-green-50' : 'bg-red-50'} rounded">
+              <h3 class="font-semibold mb-2">Review Branch (上方):</h3>
+              <p class="text-sm">
+                Status: <strong>${reviewBranchTriggered ? '✅ TRIGGERED' : '❌ NOT TRIGGERED'}</strong>
+              </p>
+              <p class="text-xs text-gray-600 mt-1">
+                Should show: Plan and Edit nodes with solid green color
+              </p>
+            </div>
+            
+            <div class="p-4 ${validationBranchTriggered ? 'bg-green-50' : 'bg-red-50'} rounded">
+              <h3 class="font-semibold mb-2">Validation Branch (下方):</h3>
+              <p class="text-sm">
+                Status: <strong>${validationBranchTriggered ? '✅ TRIGGERED' : '❌ NOT TRIGGERED'}</strong>
+              </p>
+              <p class="text-xs text-gray-600 mt-1">
+                Should show: Plan and Edit nodes with solid green color
+              </p>
+            </div>
+            
+            <div class="p-4 bg-gray-50 rounded">
+              <h3 class="font-semibold mb-2">Logs with edit_source:</h3>
+              <pre class="text-xs overflow-auto">${JSON.stringify(logsWithEditSource, null, 2)}</pre>
+            </div>
+          </div>
+        `;
+        
+      } catch (error) {
+        resultsDiv.innerHTML = `
+          <div class="p-4 bg-red-50 rounded text-red-700">
+            <p class="font-semibold">Error:</p>
+            <p class="text-sm">${error.message}</p>
+          </div>
+        `;
+        console.error('Error:', error);
+      }
+    }
+  </script>
+</body>
+</html>
+

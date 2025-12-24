@@ -20,8 +20,10 @@ import {
   Trash2,
   ListTodo,
   BookOpen,
+  Mail,
 } from 'lucide-react';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
+import { useAuthStore } from '@/lib/store/auth-store';
 import { UserMenu } from '@/components/user-menu';
 
 interface LeftSidebarProps {
@@ -80,6 +82,7 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
   const [isRecentExpanded, setIsRecentExpanded] = useState(true);
   
   const { history } = useRoadmapStore();
+  const { user, isAdmin } = useAuthStore();
 
   const isActive = (path: string) => pathname === path || pathname.startsWith(path + '/');
 
@@ -209,6 +212,26 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
             active={isActive('/profile')}
             isCollapsed={isCollapsed}
           />
+
+          {/* Admin Section - 仅超级管理员可见 */}
+          {isAdmin() && (
+            <>
+              {!isCollapsed && (
+                <div className="px-2 py-1 text-xs font-bold text-foreground/40 uppercase tracking-wider mt-6 mb-2">
+                  Admin
+                </div>
+              )}
+              {isCollapsed && <div className="h-4" />}
+              
+              <NavItem
+                icon={Mail}
+                label="Waitlist Management"
+                href="/admin/waitlist"
+                active={isActive('/admin/waitlist')}
+                isCollapsed={isCollapsed}
+              />
+            </>
+          )}
 
           {/* Recent Section */}
           {!isCollapsed ? (

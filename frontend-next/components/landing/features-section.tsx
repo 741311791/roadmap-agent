@@ -3,15 +3,21 @@
 /**
  * Features 区域组件
  * 
- * 基于 Magic UI feature-1 设计
- * 左侧展示特性列表，右侧展示对应的卡片
- * 
- * 使用全局设计令牌
+ * 特点：
+ * - 左侧自动轮播的特性列表（类似 feature-1 设计）
+ * - 激活项显示完整描述，非激活项只显示标题
+ * - 右侧展示对应的交互卡片
+ * - 支持自动轮播和手动切换
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Target, BookOpen, RefreshCw, Lightbulb } from 'lucide-react';
+import { 
+  Target, 
+  BookOpen, 
+  RefreshCw, 
+  Lightbulb
+} from 'lucide-react';
 import {
   IntentAnalysisCard,
   RoadmapCard,
@@ -31,39 +37,55 @@ const features: Feature[] = [
   {
     id: 'identify-gaps',
     icon: Target,
-    title: 'Identify Gaps',
+    title: 'AI-Powered Gap Analysis',
     description:
-      'AI analyzes your goals and current knowledge to pinpoint exactly what you need to learn.',
+      'Advanced AI analyzes your goals, experience level, and current knowledge to identify precise learning gaps and create a personalized curriculum tailored to your needs.',
     card: IntentAnalysisCard,
   },
   {
     id: 'structured-path',
     icon: BookOpen,
-    title: 'Structured Path',
+    title: 'Hierarchical Learning Structure',
     description:
-      'Stage-Module-Concept hierarchy creates clear, achievable milestones for systematic progress.',
+      'Stage-Module-Concept hierarchy breaks down complex skills into manageable milestones. Each stage builds on previous knowledge, ensuring systematic and sustainable progress.',
     card: RoadmapCard,
   },
   {
     id: 'learn-by-doing',
     icon: RefreshCw,
-    title: 'Learn by Doing',
+    title: 'Active Learning by Doing',
     description:
-      'Every concept ties to practical exercises and real-world projects to solidify understanding.',
+      'Every concept is reinforced through practical exercises, coding challenges, and real-world projects. Build portfolio-worthy work while mastering fundamental skills.',
     card: QuizCard,
   },
   {
     id: 'iterate-improve',
     icon: Lightbulb,
-    title: 'Iterate & Improve',
+    title: 'Continuous Iteration Loop',
     description:
-      'Curated resources and continuous feedback loops help you master each skill through iteration.',
+      'Curated resources, instant feedback, and adaptive recommendations create a continuous improvement cycle. Learn from mistakes and refine your understanding through iteration.',
     card: ResourceCard,
   },
 ];
 
 export function FeaturesSection() {
   const [activeFeature, setActiveFeature] = useState(features[0].id);
+  const [isPaused, setIsPaused] = useState(false);
+
+  // 自动轮播逻辑
+  useEffect(() => {
+    if (isPaused) return;
+
+    const interval = setInterval(() => {
+      setActiveFeature((current) => {
+        const currentIndex = features.findIndex((f) => f.id === current);
+        const nextIndex = (currentIndex + 1) % features.length;
+        return features[nextIndex].id;
+      });
+    }, 5000); // 每5秒切换
+
+    return () => clearInterval(interval);
+  }, [isPaused]);
 
   const activeFeatureData = features.find((f) => f.id === activeFeature);
   const ActiveCard = activeFeatureData?.card;
@@ -93,9 +115,16 @@ export function FeaturesSection() {
         </div>
 
         {/* 内容区域 */}
-        <div className="grid lg:grid-cols-2 gap-12 items-start">
-          {/* 左侧：特性列表 */}
-          <div className="space-y-4">
+        <div className="grid lg:grid-cols-2 gap-16 items-start">
+          {/* 左侧：特性列表 - 带自动轮播 */}
+          <div 
+            className="relative space-y-0"
+            onMouseEnter={() => setIsPaused(true)}
+            onMouseLeave={() => setIsPaused(false)}
+          >
+            {/* 垂直指示线 */}
+            <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-border" />
+
             {features.map((feature, index) => {
               const Icon = feature.icon;
               const isActive = activeFeature === feature.id;
@@ -106,53 +135,82 @@ export function FeaturesSection() {
                   initial={{ opacity: 0, x: -20 }}
                   whileInView={{ opacity: 1, x: 0 }}
                   viewport={{ once: true }}
-                  transition={{ duration: 0.5, delay: index * 0.1 }}
-                  onClick={() => setActiveFeature(feature.id)}
-                  className={`w-full text-left p-6 rounded-2xl border-2 transition-all duration-300 ${
-                    isActive
-                      ? 'border-sage bg-muted shadow-lg'
-                      : 'border-border bg-card hover:border-accent hover:bg-muted/50'
+                  transition={{ duration: 0.5, delay: index * 0.05 }}
+                  onClick={() => {
+                    setActiveFeature(feature.id);
+                    setIsPaused(true);
+                  }}
+                  className={`w-full text-left pl-8 pr-4 py-6 relative transition-all duration-500 group ${
+                    isActive ? '' : 'hover:bg-muted/30'
                   }`}
                 >
+                  {/* 激活指示器 */}
+                  <motion.div
+                    initial={false}
+                    animate={{
+                      width: isActive ? '4px' : '0px',
+                      opacity: isActive ? 1 : 0,
+                    }}
+                    transition={{ duration: 0.3 }}
+                    className="absolute left-0 top-0 bottom-0 bg-sage"
+                  />
+
                   <div className="flex items-start gap-4">
-                    <div
-                      className={`flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center transition-colors ${
-                        isActive ? 'bg-sage' : 'bg-muted'
-                      }`}
+                    {/* 图标 */}
+                    <motion.div
+                      initial={false}
+                      animate={{
+                        scale: isActive ? 1.1 : 1,
+                        backgroundColor: isActive ? 'rgb(134, 166, 144)' : 'rgb(243, 244, 246)',
+                      }}
+                      className="flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center transition-all duration-300"
                     >
                       <Icon
-                        className={`w-6 h-6 ${isActive ? 'text-white' : 'text-sage'}`}
+                        className={`w-5 h-5 transition-colors duration-300 ${
+                          isActive ? 'text-white' : 'text-sage'
+                        }`}
                       />
-                    </div>
-                    <div className="flex-1">
+                    </motion.div>
+
+                    {/* 内容区域 */}
+                    <div className="flex-1 min-w-0">
                       <h3
-                        className={`text-lg font-semibold mb-2 ${
-                          isActive ? 'text-sage' : 'text-foreground'
+                        className={`text-lg font-bold mb-1 transition-colors duration-300 ${
+                          isActive ? 'text-foreground' : 'text-foreground/70'
                         }`}
                       >
                         {feature.title}
                       </h3>
-                      <p
-                        className={`text-sm leading-relaxed ${
-                          isActive ? 'text-sage' : 'text-muted-foreground'
-                        }`}
-                      >
-                        {feature.description}
-                      </p>
+
+                      {/* 描述文字 - 只在激活时显示 */}
+                      <AnimatePresence mode="wait">
+                        {isActive && (
+                          <motion.p
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            exit={{ opacity: 0, height: 0 }}
+                            transition={{ duration: 0.3 }}
+                            className="text-sm leading-relaxed text-muted-foreground"
+                          >
+                            {feature.description}
+                          </motion.p>
+                        )}
+                      </AnimatePresence>
                     </div>
                   </div>
-
-                  {/* 激活指示器 */}
-                  {isActive && (
-                    <motion.div
-                      layoutId="activeIndicator"
-                      className="absolute left-0 top-0 bottom-0 w-1 bg-sage rounded-r-full"
-                      transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-                    />
-                  )}
                 </motion.button>
               );
             })}
+
+            {/* 自动播放提示 */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="mt-6 ml-8 text-xs text-muted-foreground flex items-center gap-2"
+            >
+              <div className={`w-2 h-2 rounded-full ${isPaused ? 'bg-muted-foreground/30' : 'bg-sage animate-pulse'}`} />
+              <span>{isPaused ? 'Paused' : 'Auto-rotating every 5s'}</span>
+            </motion.div>
           </div>
 
           {/* 右侧：展示卡片 */}
@@ -164,7 +222,7 @@ export function FeaturesSection() {
                   initial={{ opacity: 0, y: 20, scale: 0.95 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: -20, scale: 0.95 }}
-                  transition={{ duration: 0.3 }}
+                  transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
                 >
                   <ActiveCard />
                 </motion.div>

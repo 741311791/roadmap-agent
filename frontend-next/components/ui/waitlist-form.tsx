@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import confetti from "canvas-confetti";
 import { ArrowRight, Sparkles } from "lucide-react";
+import { toast } from "sonner";
 
 const SMALL_BREAKPOINT = 570;
 
@@ -84,6 +85,7 @@ const WaitlistForm: React.FC<WaitlistFormProps> = ({
       setEmail('');
     } catch (error) {
       console.error('Failed to submit:', error);
+      toast.error("Something went wrong. Please try again.");
     } finally {
       setLocalSubmitting(false);
     }

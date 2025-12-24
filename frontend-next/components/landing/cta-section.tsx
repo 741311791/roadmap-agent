@@ -10,21 +10,17 @@
  * - 参考 methodology 页面设计
  */
 
-import React, { useState } from 'react';
+import React from 'react';
 import { motion } from 'motion/react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Particles } from '@/components/ui/particles';
-import { ArrowRight } from 'lucide-react';
+import { WaitlistForm } from '@/components/ui/waitlist-form';
+import { joinWaitlist } from '@/lib/api/endpoints';
 
 export function CTASection() {
-  const [email, setEmail] = useState('');
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    // TODO: 实现 waitlist 提交逻辑
-    console.log('Email submitted:', email);
+  const handleJoin = async (email: string) => {
+    await joinWaitlist({ email, source: 'cta_section' });
   };
 
   return (
@@ -58,29 +54,9 @@ export function CTASection() {
           Join thousands of learners building their future with AI-powered personalized roadmaps
         </p>
 
-        <form
-          onSubmit={handleSubmit}
-          className="flex flex-col sm:flex-row items-center justify-center gap-3 max-w-md mx-auto mb-6"
-        >
-          <Input
-            type="email"
-            placeholder="Enter your email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="h-12 px-5 text-base bg-card/98 border-0 rounded-xl w-full sm:flex-1 shadow-lg focus:shadow-xl transition-shadow"
-            required
-          />
-          <Button
-            type="submit"
-            size="lg"
-            className="h-12 px-8 rounded-xl font-semibold gap-2 bg-card text-sage hover:bg-card/90 w-full sm:w-auto shadow-lg hover:shadow-xl transition-all hover:scale-105 relative overflow-hidden group"
-          >
-            <span className="relative z-10">Get Started</span>
-            <ArrowRight className="w-4 h-4 relative z-10" />
-            {/* 光晕效果 */}
-            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-muted/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-          </Button>
-        </form>
+        <div className="max-w-md mx-auto mb-6 text-left">
+          <WaitlistForm onSubmit={handleJoin} className="w-full" />
+        </div>
 
         <p className="text-sm text-white/80">
           No credit card required · Start learning in minutes
@@ -92,7 +68,7 @@ export function CTASection() {
           <Link href="/login">
             <Button
               variant="outline"
-              className="border-white/30 text-white hover:bg-white/10 hover:border-white/50"
+              className="bg-white/5 border-white/50 text-white hover:bg-white/15 hover:border-white"
             >
               Sign In
             </Button>

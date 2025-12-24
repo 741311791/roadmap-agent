@@ -926,6 +926,26 @@ class WaitlistEmail(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=False)),
         description="加入候补名单时间"
     )
+    
+    # 邀请凭证字段（管理员发送邀请时生成）
+    username: Optional[str] = Field(
+        default=None,
+        description="生成的用户名（从邮箱提取）"
+    )
+    password: Optional[str] = Field(
+        default=None,
+        description="临时密码（明文存储用于邮件发送）"
+    )
+    expires_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=False), nullable=True),
+        description="密码过期时间"
+    )
+    sent_content: Optional[dict] = Field(
+        default=None,
+        sa_column=Column(JSON),
+        description="发送历史记录（JSON 格式）"
+    )
 
 
 # ============================================================

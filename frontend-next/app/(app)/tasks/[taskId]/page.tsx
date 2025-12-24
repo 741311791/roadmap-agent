@@ -234,6 +234,21 @@ export default function TaskDetailPage() {
         
         setExecutionLogs(limitedLogs);
         
+        // 从执行日志中提取最新的 edit_source（用于区分工作流分支）
+        // 优先从 roadmap_edit 或 edit_plan_analysis 日志中读取 edit_source
+        const latestEditSource = allLogs
+          .filter(log => 
+            (log.step === 'roadmap_edit' || log.step === 'edit_plan_analysis') && 
+            log.details?.edit_source
+          )
+          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+          [0]?.details?.edit_source || null;
+        
+        if (latestEditSource) {
+          setEditSource(latestEditSource);
+          console.log('[TaskDetail] Extracted edit_source from logs:', latestEditSource);
+        }
+        
         // 加载需求分析数据（从数据库获取，内容更丰富）
         await loadIntentAnalysis(taskId);
 

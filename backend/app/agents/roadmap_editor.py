@@ -6,6 +6,7 @@ Roadmap Editor Agent（路线图编辑师）
 - 移除了 validation_issues 直接处理逻辑
 - 所有修改来源（验证失败、人工反馈）都通过 EditPlanAnalyzerAgent 转换为 EditPlan
 """
+import re
 import yaml
 from app.agents.base import BaseAgent
 from app.models.domain import (
@@ -160,8 +161,30 @@ def _parse_yaml_roadmap(yaml_content: str) -> dict:
         }
         
     except yaml.YAMLError as e:
-        logger.error("yaml_parse_error", error=str(e), yaml_content_preview=yaml_content[:500])
-        raise ValueError(f"YAML 解析失败: {e}")
+        error_msg = str(e)
+        
+        # 检测是否包含 Markdown 格式标记，提供更明确的错误提示
+        markdown_markers = []
+        if '`' in yaml_content:
+            markdown_markers.append("反引号（`）")
+        if '**' in yaml_content or '__' in yaml_content:
+            markdown_markers.append("强调标记（** 或 __）")
+        if re.search(r'\*[^\s*]', yaml_content):
+            markdown_markers.append("斜体标记（*）")
+        
+        if markdown_markers:
+            error_msg += f"\n\n⚠️ 检测到 YAML 内容包含 Markdown 格式标记：{', '.join(markdown_markers)}"
+            error_msg += "\n提示：YAML 字段值不应包含 Markdown 格式，请使用纯文本。"
+            error_msg += "\n示例：name: useEffect Hook（正确） 而不是 name: `useEffect` Hook（错误）"
+        
+        logger.error(
+            "yaml_parse_error", 
+            error=str(e), 
+            yaml_content_preview=yaml_content[:500],
+            has_markdown_markers=bool(markdown_markers),
+            markdown_markers=markdown_markers if markdown_markers else None
+        )
+        raise ValueError(f"YAML 解析失败: {error_msg}")
     except Exception as e:
         logger.error("yaml_roadmap_processing_error", error=str(e))
         raise

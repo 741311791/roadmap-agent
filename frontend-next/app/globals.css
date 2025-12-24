@@ -109,6 +109,7 @@
 
   body {
     @apply bg-background text-foreground font-sans antialiased;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.05'/%3E%3C/svg%3E");
     font-feature-settings: "rlig" 1, "calt" 1;
   }
 
@@ -189,11 +190,11 @@
 
   /* === EDITORIAL GLASS PANELS === */
   .glass-panel {
-    @apply bg-card/80 backdrop-blur-sm border border-border shadow-sm rounded-lg;
+    @apply bg-white/40 dark:bg-black/40 backdrop-blur-xl border border-white/20 dark:border-white/10 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.6)] dark:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.1)] rounded-lg;
   }
 
   .glass-input {
-    @apply bg-muted/50 backdrop-blur-sm border border-input focus:border-primary/50 focus:ring-2 focus:ring-ring/20 transition-all outline-none rounded-md px-4 py-2;
+    @apply bg-white/40 dark:bg-black/40 backdrop-blur-xl border border-white/20 dark:border-white/10 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.6)] dark:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.1)] focus:border-primary/50 focus:ring-2 focus:ring-ring/20 transition-all outline-none rounded-md px-4 py-2;
   }
 
   /* === IMMERSIVE LEARNING PANELS (Light Theme) === */
@@ -242,33 +243,18 @@
     background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.05'/%3E%3C/svg%3E");
   }
 
-  /* === SCROLLBAR STYLING === */
-  .scrollbar-hide {
-    -ms-overflow-style: none;
-    scrollbar-width: none;
+  /* === SVG LINE ANIMATION === */
+  .animate-draw-line {
+    stroke-dasharray: 1000;
+    stroke-dashoffset: 1000;
+    /* 速度曲线调整：开始慢，中间快，结束慢 (easeInOutQuart) */
+    animation: draw-line 8s cubic-bezier(0.76, 0, 0.24, 1) forwards;
   }
 
-  .scrollbar-hide::-webkit-scrollbar {
-    display: none;
-  }
-
-  .scrollbar-thin {
-    scrollbar-width: thin;
-    scrollbar-color: hsl(var(--border)) transparent;
-  }
-
-  .scrollbar-thin::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-  }
-
-  .scrollbar-thin::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
-  .scrollbar-thin::-webkit-scrollbar-thumb {
-    background-color: hsl(var(--border));
-    border-radius: 3px;
+  @keyframes draw-line {
+    to {
+      stroke-dashoffset: 0;
+    }
   }
 }
 
@@ -402,5 +388,27 @@
 
 .animate-shimmer {
   animation: shimmer 2s ease-in-out infinite;
+}
+
+/* Liquid Shine Animation */
+@keyframes shine {
+  from {
+    mask-position: 150%;
+  }
+  to {
+    mask-position: -50%;
+  }
+
+}
+
+.animate-shine {
+  mask-image: linear-gradient(
+    -75deg,
+    rgba(0,0,0,0.6) 30%,
+    #000 50%,
+    rgba(0,0,0,0.6) 70%
+  );
+  mask-size: 200%;
+  animation: shine 2s infinite;
 }
 

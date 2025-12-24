@@ -162,14 +162,14 @@ export function HumanReviewCard({
         <div className="p-4 bg-muted/50 rounded-lg space-y-3">
           <div>
             <p className="text-sm text-muted-foreground mb-1">Roadmap Title</p>
-            <p className="font-medium">{roadmapTitle}</p>
+            <p className="font-medium truncate" title={roadmapTitle}>{roadmapTitle}</p>
           </div>
           <div className="flex items-center gap-4">
             <Badge variant="secondary" className="gap-1">
               <Clock className="w-3 h-3" />
               {stagesCount} stages
             </Badge>
-            <span className="text-xs text-muted-foreground">
+            <span className="text-xs text-muted-foreground truncate" title={roadmapId}>
               ID: {roadmapId.substring(0, 20)}...
             </span>
           </div>

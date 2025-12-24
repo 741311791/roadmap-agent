@@ -138,10 +138,21 @@ export function MermaidDiagram({ chart, className }: MermaidDiagramProps) {
         // 清空容器
         containerRef.current.innerHTML = '';
 
-        // 生成唯一 ID
+        // 第一步：语法预验证（捕获语法错误）
+        // 使用 suppressErrors: true 避免抛出异常，返回 false 表示语法错误
+        const parseResult = await mermaid.parse(chart, { suppressErrors: true });
+        if (parseResult === false) {
+          // 语法错误 - 静默失败
+          console.warn('[Mermaid] Syntax validation failed, skipping diagram. Chart:', chart.substring(0, 100) + '...');
+          setError('Invalid diagram syntax');
+          setIsLoading(false);
+          return;
+        }
+
+        // 第二步：生成唯一 ID
         const id = `mermaid-${Math.random().toString(36).substr(2, 9)}`;
 
-        // 渲染图表
+        // 第三步：渲染图表
         const { svg } = await mermaid.render(id, chart);
         
         if (containerRef.current) {
@@ -167,7 +178,8 @@ export function MermaidDiagram({ chart, className }: MermaidDiagramProps) {
           }
         }
       } catch (err) {
-        console.error('Mermaid rendering error:', err);
+        // 渲染阶段错误 - 静默失败
+        console.error('[Mermaid] Rendering error:', err);
         setError(err instanceof Error ? err.message : 'Failed to render diagram');
       } finally {
         setIsLoading(false);

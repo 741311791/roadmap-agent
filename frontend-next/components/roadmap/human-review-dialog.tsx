@@ -86,14 +86,14 @@ export function HumanReviewDialog({
           <div className="p-4 bg-muted/50 rounded-lg space-y-3">
             <div>
               <p className="text-sm text-muted-foreground">Roadmap title</p>
-              <p className="font-medium">{roadmapTitle}</p>
+              <p className="font-medium truncate" title={roadmapTitle}>{roadmapTitle}</p>
             </div>
             <div className="flex items-center gap-4">
               <Badge variant="secondary" className="gap-1">
                 <Clock className="w-3 h-3" />
                 {stagesCount} stages
               </Badge>
-              <span className="text-xs text-muted-foreground">
+              <span className="text-xs text-muted-foreground truncate" title={roadmapId}>
                 ID: {roadmapId.slice(0, 20)}...
               </span>
             </div>
@@ -148,7 +148,6 @@ export function HumanReviewDialog({
                 disabled={isSubmitting}
               >
                 <X className="w-4 h-4 mr-2" />
-              Needs changes
               </Button>
               <Button
                 onClick={handleApprove}
@@ -160,7 +159,6 @@ export function HumanReviewDialog({
                 ) : (
                   <Check className="w-4 h-4 mr-2" />
                 )}
-              Approve and continue
               </Button>
             </>
           )}

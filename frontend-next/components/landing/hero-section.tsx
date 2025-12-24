@@ -10,55 +10,64 @@
  * - 渐变背景
  */
 
-import React, { useState } from 'react';
+import React from 'react';
 import { motion } from 'motion/react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { ArrowRight, Sparkles } from 'lucide-react';
 import { WorkflowAnimation } from './workflow-animation';
+import { WaitlistForm } from '@/components/ui/waitlist-form';
+import { joinWaitlist } from '@/lib/api/endpoints';
 
 export function HeroSection() {
-  const [email, setEmail] = useState('');
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    // TODO: 实现 waitlist 提交逻辑
-    console.log('Email submitted:', email);
+  const handleJoin = async (email: string) => {
+    await joinWaitlist({ email, source: 'hero_section' });
   };
 
   return (
     <section className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden pt-16 pb-20 px-6">
-      {/* 背景渐变 */}
-      <div className="absolute inset-0 bg-gradient-to-b from-muted/30 via-background to-card -z-10" />
-      
-      {/* 装饰性粒子 */}
-      <div className="absolute top-1/4 left-1/4 w-64 h-64 bg-accent/10 rounded-full blur-3xl -z-10" />
-      <div className="absolute bottom-1/4 right-1/4 w-64 h-64 bg-accent/15 rounded-full blur-3xl -z-10" />
+      {/* Fluid Background */}
+      <div className="absolute inset-0 overflow-hidden -z-10 pointer-events-none">
+        <motion.div 
+          animate={{ 
+            x: [0, 100, 0],
+            y: [0, -50, 0],
+            rotate: [0, 45, 0],
+            scale: [1, 1.2, 1]
+          }}
+          transition={{
+            duration: 20,
+            repeat: Infinity,
+            ease: "linear"
+          }}
+          className="absolute top-1/4 left-1/4 w-[500px] h-[500px] bg-sage/20 rounded-full blur-[100px] opacity-50" 
+        />
+        <motion.div 
+          animate={{ 
+            x: [0, -100, 0],
+            y: [0, 100, 0],
+            rotate: [0, -45, 0],
+            scale: [1, 1.5, 1]
+          }}
+          transition={{
+            duration: 25,
+            repeat: Infinity,
+            ease: "linear"
+          }}
+          className="absolute bottom-1/4 right-1/4 w-[600px] h-[600px] bg-primary/5 rounded-full blur-[120px] opacity-40" 
+        />
+      </div>
 
-      <div className="max-w-7xl mx-auto w-full">
-        {/* 标题区域 */}
-        <div className="text-center mb-12">
-          {/* Badge */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.1 }}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-muted border border-border rounded-full text-sage text-sm font-medium mb-8"
-          >
-            <Sparkles className="w-4 h-4" />
-            AI-Powered Learning Platform
-          </motion.div>
-
+      <div className="max-w-7xl mx-auto w-full relative z-10 grid lg:grid-cols-2 gap-12 items-center">
+        {/* 标题区域 - 左侧 */}
+        <div className="text-left">
           {/* 主标题 */}
           <motion.h1
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.2 }}
-            className="text-5xl md:text-7xl lg:text-8xl font-serif font-bold text-foreground leading-tight mb-6"
+            className="text-5xl md:text-6xl lg:text-7xl font-serif font-semibold text-foreground leading-tight mb-6"
           >
             Master Any Skill
             <br />
-            <span className="text-sage">Faster Than Ever</span>
+            <span className="text-sage italic">Faster Than Ever</span>
           </motion.h1>
 
           {/* 副标题 */}
@@ -66,50 +75,32 @@ export function HeroSection() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.4 }}
-            className="text-xl md:text-2xl text-muted-foreground max-w-3xl mx-auto mb-8"
+            className="text-xl text-muted-foreground max-w-xl mb-10 leading-relaxed"
           >
             AI creates personalized learning roadmaps that adapt to your goals, experience, and learning style.
           </motion.p>
 
-          {/* 邮箱订阅表单 */}
+          {/* Email Waitlist Form */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.6 }}
+            className="max-w-lg"
           >
-            <form
-              onSubmit={handleSubmit}
-              className="flex flex-col sm:flex-row items-center justify-center gap-3 max-w-md mx-auto mb-4"
-            >
-              <Input
-                type="email"
-                placeholder="Enter your email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="h-12 px-5 text-base glass-input w-full sm:flex-1"
-                required
-              />
-              <Button
-                type="submit"
-                size="lg"
-                className="h-12 px-8 btn-sage gap-2 w-full sm:w-auto"
-              >
-                Get Started
-                <ArrowRight className="w-4 h-4" />
-              </Button>
-            </form>
-            <p className="text-sm text-muted-foreground">
+            <WaitlistForm onSubmit={handleJoin} className="w-full" />
+            
+            <p className="text-sm text-muted-foreground mt-4 text-center sm:text-left pl-2">
               Join 2,400+ learners building their future
             </p>
           </motion.div>
         </div>
 
-        {/* 工作流动画 */}
+        {/* 工作流动画 - 右侧布局 */}
         <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.8, delay: 0.8 }}
-          className="mt-20"
+          initial={{ opacity: 0, x: 50 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 1, delay: 0.4 }}
+          className="relative lg:h-[600px] flex items-center justify-center lg:justify-end"
         >
           <WorkflowAnimation />
         </motion.div>
@@ -117,4 +108,3 @@ export function HeroSection() {
     </section>
   );
 }
-
