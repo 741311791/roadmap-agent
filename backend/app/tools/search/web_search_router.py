@@ -7,17 +7,19 @@ Web Search Router（搜索工具路由器）
 - 统一错误处理
 
 优先级：
-1. Tavily API（如果配置了 API Key）
+1. Tavily API（从数据库读取配额）
 2. DuckDuckGo（如果启用了 fallback）
 """
 import structlog
 from tenacity import retry, stop_after_attempt, wait_fixed
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.tools.base import BaseTool
 from app.models.domain import SearchQuery, SearchResult
 from app.config.settings import settings
 from app.tools.search.tavily_api_search import TavilyAPISearchTool
 from app.tools.search.duckduckgo_search import DuckDuckGoSearchTool
+from app.db.session import get_db
 
 logger = structlog.get_logger()
 
@@ -33,26 +35,15 @@ class WebSearchRouter(BaseTool[SearchQuery, SearchResult]):
     - 易于扩展新的搜索引擎
     
     优先级策略：
-    1. Tavily API - 高质量搜索结果（需要 API Key）
+    1. Tavily API - 高质量搜索结果（从数据库读取配额）
     2. DuckDuckGo - 免费备选方案（如果启用）
     """
     
     def __init__(self):
         super().__init__(tool_id="web_search_v1")
         
-        # 初始化搜索工具
-        self.tavily_tool = None
+        # DuckDuckGo 工具（无需数据库会话）
         self.duckduckgo_tool = None
-        
-        # 尝试初始化 Tavily API 工具
-        try:
-            self.tavily_tool = TavilyAPISearchTool()
-        except Exception as e:
-            logger.warning(
-                "web_search_router_tavily_init_failed",
-                error=str(e),
-                message="Tavily API 工具初始化失败，将跳过 Tavily"
-            )
         
         # 尝试初始化 DuckDuckGo 工具
         if settings.USE_DUCKDUCKGO_FALLBACK:
@@ -65,41 +56,40 @@ class WebSearchRouter(BaseTool[SearchQuery, SearchResult]):
                     message="DuckDuckGo 工具初始化失败"
                 )
     
-    def _has_valid_tavily_config(self) -> bool:
+    async def _has_valid_tavily_keys(self, db_session: AsyncSession) -> bool:
         """
-        检查是否有有效的 Tavily API 配置
+        检查数据库中是否有可用的 Tavily API Key
         
+        Args:
+            db_session: 数据库会话
+            
         Returns:
-            True 如果 Tavily API 可用
+            True 如果有可用的 Key
         """
-        if not self.tavily_tool:
-            return False
-        
-        # 检查 TavilyAPIKeyManager 是否有可用的 API keys
         try:
-            return (
-                hasattr(self.tavily_tool, 'key_manager') and 
-                self.tavily_tool.key_manager is not None and
-                len(self.tavily_tool.key_manager.api_keys) > 0
-            )
+            from app.db.repositories.tavily_key_repo import TavilyKeyRepository
+            repo = TavilyKeyRepository(db_session)
+            key_record = await repo.get_best_key()
+            return key_record is not None
         except Exception as e:
             logger.warning(
-                "web_search_router_tavily_config_check_failed",
+                "web_search_router_tavily_check_failed",
                 error=str(e)
             )
             return False
     
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
-    async def execute(self, input_data: SearchQuery) -> SearchResult:
+    async def execute(self, input_data: SearchQuery, db_session: AsyncSession = None) -> SearchResult:
         """
         执行网络搜索（按优先级路由）
         
         优先级：
-        1. Tavily API（如果配置了 API Key）
+        1. Tavily API（从数据库读取配额）
         2. DuckDuckGo（如果启用了 fallback）
         
         Args:
             input_data: 搜索查询
+            db_session: 数据库会话（用于 Tavily API Key 查询）
             
         Returns:
             搜索结果
@@ -107,22 +97,32 @@ class WebSearchRouter(BaseTool[SearchQuery, SearchResult]):
         Raises:
             ValueError: 如果所有搜索引擎都不可用或都失败
         """
+        # 如果没有提供数据库会话，尝试获取一个
+        if db_session is None:
+            async for session in get_db():
+                db_session = session
+                break
+        
+        tavily_available = await self._has_valid_tavily_keys(db_session)
+        
         logger.info(
             "web_search_router_start",
             query=input_data.query,
             max_results=input_data.max_results,
-            tavily_available=self._has_valid_tavily_config(),
+            tavily_available=tavily_available,
             duckduckgo_available=self.duckduckgo_tool is not None,
         )
         
         # 策略 1: 尝试使用 Tavily API
-        if self._has_valid_tavily_config():
+        if tavily_available:
             try:
                 logger.info(
                     "web_search_router_trying_tavily",
                     query=input_data.query
                 )
-                result = await self.tavily_tool.execute(input_data)
+                # 动态创建 TavilyAPISearchTool 实例（传递数据库会话）
+                tavily_tool = TavilyAPISearchTool(db_session)
+                result = await tavily_tool.execute(input_data)
                 
                 logger.info(
                     "web_search_router_success",
@@ -178,7 +178,7 @@ class WebSearchRouter(BaseTool[SearchQuery, SearchResult]):
         logger.error(
             "web_search_router_no_engines_available",
             query=input_data.query,
-            tavily_configured=self._has_valid_tavily_config(),
+            tavily_configured=tavily_available,
             duckduckgo_enabled=settings.USE_DUCKDUCKGO_FALLBACK,
         )
         raise ValueError(error_msg)

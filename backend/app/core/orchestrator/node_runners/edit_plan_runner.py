@@ -149,6 +149,7 @@ class EditPlanRunner:
                     "confidence": result.confidence,
                     "preservation_requirements": result.edit_plan.preservation_requirements,
                     "needs_clarification": result.needs_clarification,
+                    "edit_source": "human_review",  # 标记编辑来源
                 },
                 duration_ms=duration_ms,
             )

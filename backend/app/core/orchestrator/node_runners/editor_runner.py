@@ -167,6 +167,16 @@ class EditorRunner:
             )
             
             # 记录详细的编辑完成日志（新增 - 用于前端展示）
+            # 从状态中获取 edit_source（由上游的 EditPlanRunner 或 ValidationEditPlanRunner 设置）
+            edit_source = state.get("edit_source")
+            log_details = {
+                "log_type": "edit_completed",
+                "modification_count": modification_count + 1,
+                "changes_summary": result.modification_summary if hasattr(result, 'modification_summary') else "Roadmap structure updated",
+            }
+            if edit_source:
+                log_details["edit_source"] = edit_source
+            
             await execution_logger.info(
                 task_id=state["task_id"],
                 category=LogCategory.AGENT,
@@ -174,11 +184,7 @@ class EditorRunner:
                 agent_name="RoadmapEditorAgent",
                 roadmap_id=result.framework.roadmap_id,
                 message="✅ Roadmap updated based on your feedback",
-                details={
-                    "log_type": "edit_completed",
-                    "modification_count": modification_count + 1,
-                    "changes_summary": result.modification_summary if hasattr(result, 'modification_summary') else "Roadmap structure updated",
-                },
+                details=log_details,
                 duration_ms=duration_ms,
             )
             

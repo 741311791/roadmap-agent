@@ -13,7 +13,7 @@
  * - 虚线连接主路和分支节点
  */
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -29,9 +29,6 @@ import {
   X,
   AlertCircle,
   FileSearch,
-  RotateCcw,
-  ArrowDown,
-  ArrowUp,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { approveRoadmap } from '@/lib/api/endpoints';
@@ -240,6 +237,16 @@ function getMainStageIndex(stageId: string): number {
 // 组件 Props
 // ============================================================================
 
+/** 执行日志类型（简化版） */
+interface ExecutionLog {
+  step: string | null;
+  details?: {
+    edit_source?: EditSource;
+    [key: string]: any;
+  };
+  [key: string]: any;
+}
+
 interface WorkflowTopologyProps {
   /** 当前步骤 */
   currentStep: string;
@@ -255,6 +262,8 @@ interface WorkflowTopologyProps {
   roadmapTitle?: string;
   /** 阶段数量（用于 Human Review 展示） */
   stagesCount?: number;
+  /** 执行日志（用于判断分支是否被触发过） */
+  executionLogs?: ExecutionLog[];
   /** Human Review 完成回调 */
   onHumanReviewComplete?: () => void;
 }
@@ -271,6 +280,7 @@ export function WorkflowTopology({
   roadmapId,
   roadmapTitle,
   stagesCount = 0,
+  executionLogs = [],
   onHumanReviewComplete,
 }: WorkflowTopologyProps) {
   // Human Review 状态
@@ -282,13 +292,52 @@ export function WorkflowTopology({
   // 获取当前步骤位置
   const stepLocation = getStepLocation(currentStep, editSource);
   
-  // 状态判断
+  // 状态判断（需要在 useEffect 之前定义）
   const isFailed = status === 'failed';
   const isCompleted = status === 'completed' || status === 'partial_failure';
   const isHumanReviewActive = 
     currentStep === 'human_review' || 
     currentStep === 'human_review_pending' ||
     status === 'human_review_pending';
+
+  /**
+   * 跟踪上一次的 Human Review 状态，用于检测状态变化
+   */
+  const prevHumanReviewActiveRef = useRef<boolean>(false);
+
+  /**
+   * 当任务重新进入 Human Review 状态时，重置审核状态
+   * 场景：用户reject后，编辑完成，工作流再次回到review节点
+   */
+  useEffect(() => {
+    // 检测：从非human_review状态 → 进入human_review状态
+    const isReenteringHumanReview = !prevHumanReviewActiveRef.current && isHumanReviewActive;
+    
+    // 当重新进入human_review状态，且当前处于已完成的审核状态时，重置为waiting
+    if (isReenteringHumanReview && (reviewStatus === 'approved' || reviewStatus === 'rejected')) {
+      setReviewStatus('waiting');
+      setFeedback('');
+      setShowFeedback(false);
+      setReviewError(null);
+    }
+    
+    // 更新上一次的状态
+    prevHumanReviewActiveRef.current = isHumanReviewActive;
+  }, [isHumanReviewActive, reviewStatus]); // 监听human_review状态和审核状态变化
+
+  // 检查分支是否被触发过（通过执行日志的 details.edit_source 判断）
+  // edit_source === 'validation_failed': 验证分支
+  // edit_source === 'human_review': 审核分支
+  const validationBranchTriggered = executionLogs.some(
+    log => 
+      (log.step === 'validation_edit_plan_analysis' || log.step === 'roadmap_edit') &&
+      log.details?.edit_source === 'validation_failed'
+  );
+  const reviewBranchTriggered = executionLogs.some(
+    log => 
+      (log.step === 'edit_plan_analysis' || log.step === 'roadmap_edit') &&
+      log.details?.edit_source === 'human_review'
+  );
 
   /**
    * 获取主路节点状态
@@ -327,8 +376,19 @@ export function WorkflowTopology({
     nodeIndex: number,
     nodeId: string
   ): NodeStatus => {
-    // 如果任务已完成，分支显示为 skipped（未触发）或 completed（已触发过）
-    if (isCompleted) return 'skipped';
+    // 检查分支是否被触发过
+    const wasBranchTriggered = 
+      branchType === 'validation' ? validationBranchTriggered : reviewBranchTriggered;
+    
+    // 如果任务已完成
+    if (isCompleted) {
+      // 如果分支被触发过，显示为已完成（实心颜色）
+      if (wasBranchTriggered) {
+        return 'completed';
+      }
+      // 否则显示为跳过（空心颜色）
+      return 'skipped';
+    }
     
     // 如果当前不在此分支上
     if (!stepLocation.isOnBranch || stepLocation.branchType !== branchType) {
@@ -691,21 +751,9 @@ function BranchNodes({ branch, branchType, isActive, getNodeStatus, getNodeIcon 
       <div 
         className={cn(
           'flex items-center justify-center gap-3 py-2 px-3 rounded-xl border-2 transition-all duration-300 bg-white shadow-sm',
-          isActive ? 'border-sage-400 shadow-sage-200/50' : 'border-gray-200 opacity-70 hover:opacity-100'
+          isActive ? 'border-sage-400 shadow-sage-200/50' : 'border-gray-200'
         )}
       >
-        {/* 返回循环指示 */}
-        <div className={cn(
-          'absolute left-1/2 -translate-x-1/2 flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium transition-all duration-300',
-          isTopBranch ? '-bottom-2.5' : '-top-2.5',
-          isActive 
-            ? 'bg-sage-100 text-sage-700 border border-sage-300' 
-            : 'bg-gray-100 text-gray-500 border border-gray-200'
-        )}>
-          <RotateCcw className="w-2.5 h-2.5" />
-          <span>{branchType === 'validation' ? 'Validate' : 'Review'}</span>
-        </div>
-
         {/* 分支节点 */}
         {branch.nodes.map((node, index) => {
           const nodeStatus = getNodeStatus(index, node.id);
@@ -714,10 +762,10 @@ function BranchNodes({ branch, branchType, isActive, getNodeStatus, getNodeIcon 
           const isFailedNode = nodeStatus === 'failed';
 
           return (
-            <div key={node.id} className="flex items-center gap-2">
+            <div key={node.id} className="flex items-start gap-2">
               {/* 连接箭头 */}
               {index > 0 && (
-                <div className="relative w-6 h-1">
+                <div className="relative w-6 h-1 mt-[19px]">
                   {isCompleteNode ? (
                     // 已完成的连接线：显示电流脉冲动画（sage 色系）
                     <GradientTracing

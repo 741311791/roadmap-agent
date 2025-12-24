@@ -1204,9 +1204,18 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId, 
                         const id = generateHeadingId(children);
                         return <h4 id={id} {...props}>{children}</h4>;
                       },
-                      // Fix code block text color
+                      // Fix code block text color & support Mermaid diagrams
                       code: ({ inline, className, children, ...props }: any) => {
                         const match = /language-(\w+)/.exec(className || '');
+                        const language = match ? match[1] : '';
+                        const code = String(children).replace(/\n$/, '');
+                        
+                        // 检查是否是 Mermaid 图表
+                        if (!inline && language === 'mermaid') {
+                          const MermaidDiagram = require('@/components/tutorial/mermaid-diagram').MermaidDiagram;
+                          return <MermaidDiagram chart={code} />;
+                        }
+                        
                         if (!inline && match) {
                           // Block code - use default styling with explicit color
                           return (
@@ -1218,7 +1227,19 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId, 
                         // Inline code
                         return <code className={className} {...props}>{children}</code>;
                       },
-                      pre: ({ children, ...props }) => {
+                      pre: ({ children, ...props }: any) => {
+                        // 检查是否包含 Mermaid 图表
+                        // 方法1: 检查 code 标签的 className
+                        const codeChild = Array.isArray(children) ? children[0] : children;
+                        const className = codeChild?.props?.className || '';
+                        const isMermaid = className.includes('language-mermaid');
+                        
+                        if (isMermaid) {
+                          // Mermaid 图表不需要 pre 包裹（避免黑色边框）
+                          return <>{children}</>;
+                        }
+                        
+                        // 普通代码块使用 pre 标签
                         return (
                           <pre {...props} style={{ backgroundColor: '#1c1917', color: '#e7e5e4' }}>
                             {children}

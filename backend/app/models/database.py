@@ -973,3 +973,45 @@ class RoadmapCoverImage(SQLModel, table=True):
         description="更新时间"
     )
 
+
+# ============================================================
+# Tavily API Key 配额表
+# ============================================================
+
+class TavilyAPIKey(SQLModel, table=True):
+    """
+    Tavily API Key 配额表
+    
+    存储 Tavily API Key 的配额信息，由外部项目定时更新。
+    本项目仅读取该表以选择剩余配额最多的 Key。
+    """
+    __tablename__ = "tavily_api_keys"
+    
+    api_key: str = Field(
+        primary_key=True,
+        description="Tavily API Key"
+    )
+    plan_limit: int = Field(
+        description="计划总配额（每月总请求数）"
+    )
+    remaining_quota: int = Field(
+        description="剩余配额（当前剩余可用请求数）"
+    )
+    created_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(
+            DateTime(timezone=False),
+            server_default=text("CURRENT_TIMESTAMP")
+        ),
+        description="录入时间"
+    )
+    updated_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(
+            DateTime(timezone=False),
+            server_default=text("CURRENT_TIMESTAMP"),
+            onupdate=beijing_now
+        ),
+        description="最后更新时间"
+    )
+

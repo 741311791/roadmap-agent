@@ -142,6 +142,7 @@ class ValidationEditPlanRunner:
                     "scope_analysis": result.edit_plan.scope_analysis,
                     "preservation_requirements": result.edit_plan.preservation_requirements,
                     "source": "structure_validation",  # 标识来源是结构验证
+                    "edit_source": "validation_failed",  # 标记编辑来源
                 },
                 duration_ms=duration_ms,
             )

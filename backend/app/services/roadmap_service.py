@@ -517,14 +517,18 @@ class RoadmapService:
                             error="路线图框架生成失败",
                         )
                 else:
-                    # 用户要求修改，工作流会返回重新设计
-                    task_repo = self.repo_factory.create_task_repo(session)
-                    await task_repo.update_task_status(
-                        task_id=task_id,
-                        status="processing",
-                        current_step="curriculum_design",
-                    )
-                    await session.commit()
+                    # 用户拒绝：工作流会进入 edit_plan_analysis → roadmap_edit → human_review 修改分支
+                    # 注意：不再需要手动更新 current_step
+                    # - 工作流节点会通过 WorkflowBrain.node_execution() 自动更新状态
+                    # - 如果在这里错误地设置 current_step，会导致数据库状态与实际工作流状态不一致
+                    # 
+                    # 原代码（已删除）：
+                    # await task_repo.update_task_status(
+                    #     task_id=task_id,
+                    #     status="processing",
+                    #     current_step="curriculum_design",  # ❌ 旧逻辑，不再适用
+                    # )
+                    pass  # 工作流会自动管理状态
             
             logger.info(
                 "human_review_processed",
@@ -535,7 +539,7 @@ class RoadmapService:
             return {
                 "task_id": task_id,
                 "approved": approved,
-                "message": "审核结果已提交，工作流将继续执行" if approved else "已记录修改要求，将重新设计路线图",
+                "message": "审核结果已提交，工作流将继续执行" if approved else "已记录修改要求，将根据反馈修改路线图",
             }
             
         except Exception as e:

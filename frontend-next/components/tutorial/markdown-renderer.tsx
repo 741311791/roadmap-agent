@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { CodeBlock } from './code-block';
+import { MermaidDiagram } from './mermaid-diagram';
 import { cn } from '@/lib/utils';
 
 // Import highlight.js styles
@@ -38,6 +39,11 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
             const language = match ? match[1] : '';
             const code = String(children).replace(/\n$/, '');
 
+            // 检查是否是 Mermaid 图表
+            if (!isInline && language === 'mermaid') {
+              return <MermaidDiagram chart={code} />;
+            }
+
             if (!isInline && language) {
               return (
                 <CodeBlock
@@ -60,6 +66,22 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
                 {children}
               </code>
             );
+          },
+
+          // 自定义 pre 标签（避免 Mermaid 图表被包裹）
+          pre({ children, ...props }: any) {
+            // 检查是否包含 Mermaid 图表
+            const codeChild = Array.isArray(children) ? children[0] : children;
+            const className = codeChild?.props?.className || '';
+            const isMermaid = className.includes('language-mermaid');
+            
+            if (isMermaid) {
+              // Mermaid 图表不需要 pre 包裹
+              return <>{children}</>;
+            }
+            
+            // 普通代码块使用 pre 标签
+            return <pre {...props}>{children}</pre>;
           },
 
           // 标题自定义（添加锚点）

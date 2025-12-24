@@ -11,7 +11,6 @@ from app.api.v1.websocket import router as websocket_router
 from app.core.dependencies import init_orchestrator, cleanup_orchestrator
 from app.db.minio_init import ensure_bucket_exists
 from app.services.task_recovery_service import recover_interrupted_tasks_on_startup
-from app.services.tavily_health_checker import start_health_checker, stop_health_checker
 
 
 logger = structlog.get_logger()
@@ -67,32 +66,9 @@ async def lifespan(app: FastAPI):
             error_type=type(e).__name__,
         )
     
-    # 启动 Tavily API Key 健康检查服务（后台任务）
-    try:
-        await start_health_checker()
-        logger.info("tavily_health_checker_service_started")
-    except Exception as e:
-        # 健康检查启动失败不应阻止服务启动
-        logger.error(
-            "tavily_health_checker_start_failed",
-            error=str(e),
-            error_type=type(e).__name__,
-        )
-    
     yield
     
     logger.info("application_shutdown")
-    
-    # 停止 Tavily API Key 健康检查服务
-    try:
-        await stop_health_checker()
-        logger.info("tavily_health_checker_service_stopped")
-    except Exception as e:
-        logger.error(
-            "tavily_health_checker_stop_failed",
-            error=str(e),
-            error_type=type(e).__name__,
-        )
     
     # 清理 orchestrator 和关闭 Redis 连接
     await cleanup_orchestrator()

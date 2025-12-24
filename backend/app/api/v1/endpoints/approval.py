@@ -64,7 +64,7 @@ async def approve_roadmap(
         ```json
         {
             "status": "rejected",
-            "message": "审核未通过，需要重新设计",
+            "message": "审核未通过，将根据反馈修改路线图",
             "task_id": "550e8400-e29b-41d4-a716-446655440000",
             "feedback": "需要增加更多实战项目"
         }

@@ -684,6 +684,7 @@ export default function TaskDetailPage() {
           roadmapId={taskInfo.roadmap_id}
           roadmapTitle={roadmapFramework?.title || taskInfo.title}
           stagesCount={roadmapFramework?.stages?.length || 0}
+          executionLogs={executionLogs}
           onHumanReviewComplete={handleHumanReviewComplete}
         />
 

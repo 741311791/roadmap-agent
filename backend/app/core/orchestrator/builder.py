@@ -205,15 +205,23 @@ class WorkflowBuilder:
         添加人工审核节点的边
         
         新流程（当用户拒绝时）：
-        human_review → edit_plan_analysis → roadmap_edit → structure_validation
+        human_review → edit_plan_analysis → roadmap_edit → human_review
+        
+        注意：roadmap_edit 后的路由由 route_after_edit() 根据 edit_source 决定：
+        - edit_source="human_review" → 返回 human_review（用户反馈触发的修改）
+        - edit_source="validation_failed" → 返回 structure_validation（验证失败触发的修改）
         """
         # 确定用户拒绝后的下一个节点
-        # 如果有 edit_plan_runner，先进入修改计划分析
+        # 正常流程：edit_plan_runner 存在 → 进入修改计划分析
         if self.edit_plan_runner:
             modify_next_node = "edit_plan_analysis"
         elif not self.config.skip_structure_validation:
+            # Fallback 1：无 edit_plan_runner 但有 validation → 直接编辑
             modify_next_node = "roadmap_edit"
         else:
+            # Fallback 2：无 edit_plan_runner 且无 validation（极端边缘情况）
+            # 注意：当前 OrchestratorFactory 始终提供 edit_plan_runner，此分支不会触发
+            # 保留作为防御性代码，避免配置异常时工作流崩溃
             modify_next_node = "curriculum_design" if not self.config.skip_tutorial_generation else END
         
         if self.config.skip_tutorial_generation:

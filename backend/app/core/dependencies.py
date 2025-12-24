@@ -84,17 +84,6 @@ def get_workflow_executor() -> WorkflowExecutor:
     return _get_workflow_executor()
 
 
-# 向后兼容：保留旧的函数名
-def get_orchestrator() -> WorkflowExecutor:
-    """
-    【已废弃】向后兼容函数，请使用 get_workflow_executor()
-    
-    Returns:
-        WorkflowExecutor 实例
-    """
-    return get_workflow_executor()
-
-
 def get_repository_factory() -> RepositoryFactory:
     """
     获取 RepositoryFactory 实例

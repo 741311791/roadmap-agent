@@ -30,6 +30,7 @@ from app.models.database import (
     ChatMessage,
     LearningNote,
     WaitlistEmail,
+    TavilyAPIKey,
 )
 from sqlmodel import SQLModel
 from sqlalchemy import MetaData

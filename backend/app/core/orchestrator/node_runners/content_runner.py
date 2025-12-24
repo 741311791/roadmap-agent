@@ -86,10 +86,14 @@ class ContentRunner:
                 raise ValueError("路线图框架不存在，无法生成内容")
             
             # 提取所有概念（三层结构：Stage -> Module -> Concept）
+            # 同时构建 concept_id -> concept 的映射，用于查找前置概念
             all_concepts: list[Concept] = []
+            concept_map: dict[str, Concept] = {}
             for stage in framework.stages:
                 for module in stage.modules:
-                    all_concepts.extend(module.concepts)
+                    for concept in module.concepts:
+                        all_concepts.append(concept)
+                        concept_map[concept.concept_id] = concept
             
             logger.info(
                 "content_runner_started",
@@ -102,6 +106,7 @@ class ContentRunner:
             tutorial_refs, resource_refs, quiz_refs, failed_concepts = await self._generate_content_parallel(
                 state=state,
                 concepts=all_concepts,
+                concept_map=concept_map,
             )
             
             # 检查失败率，如果过高则中断执行
@@ -206,6 +211,7 @@ class ContentRunner:
         self,
         state: RoadmapState,
         concepts: list[Concept],
+        concept_map: dict[str, Concept],
     ) -> tuple[
         dict[str, TutorialGenerationOutput],
         dict[str, ResourceRecommendationOutput],
@@ -218,6 +224,7 @@ class ContentRunner:
         Args:
             state: 工作流状态
             concepts: 概念列表
+            concept_map: 概念ID到概念对象的映射（用于查找前置概念）
             
         Returns:
             (tutorial_refs, resource_refs, quiz_refs, failed_concepts)
@@ -231,6 +238,7 @@ class ContentRunner:
             self._generate_single_concept(
                 state=state,
                 concept=concept,
+                concept_map=concept_map,
                 semaphore=semaphore,
             )
             for concept in concepts
@@ -271,6 +279,7 @@ class ContentRunner:
         self,
         state: RoadmapState,
         concept: Concept,
+        concept_map: dict[str, Concept],
         semaphore: asyncio.Semaphore,
     ) -> tuple[
         TutorialGenerationOutput | None,
@@ -283,6 +292,7 @@ class ContentRunner:
         Args:
             state: 工作流状态
             concept: 概念
+            concept_map: 概念ID到概念对象的映射（用于查找前置概念）
             semaphore: 信号量（控制并发）
             
         Returns:
@@ -301,6 +311,20 @@ class ContentRunner:
                 resource_agent = self.agent_factory.create_resource_recommender()
                 quiz_agent = self.agent_factory.create_quiz_generator()
                 
+                # 构建前置概念详情列表（包含 concept_id, name, url）
+                prerequisite_details = []
+                if concept.prerequisites:
+                    for prereq_id in concept.prerequisites:
+                        prereq_concept = concept_map.get(prereq_id)
+                        if prereq_concept:
+                            # 构造概念跳转URL
+                            prereq_url = f"/roadmap/{roadmap_id}?concept={prereq_id}"
+                            prerequisite_details.append({
+                                "concept_id": prereq_id,
+                                "name": prereq_concept.name,
+                                "url": prereq_url,
+                            })
+                
                 # 准备输入
                 tutorial_input = TutorialGenerationInput(
                     concept=concept,
@@ -308,6 +332,7 @@ class ContentRunner:
                     context={
                         "intent_analysis": state.get("intent_analysis"),
                         "roadmap_id": roadmap_id,
+                        "prerequisite_details": prerequisite_details,  # 新增：前置概念详情
                     },
                 )
                 resource_input = ResourceRecommendationInput(

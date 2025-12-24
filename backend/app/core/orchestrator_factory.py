@@ -70,14 +70,14 @@ class OrchestratorFactory:
             # - min_size=2: 最小保持 2 个连接
             # - max_size=10: 最大 10 个连接
             # - max_idle=300: 空闲连接最多保持 5 分钟
-            # - timeout=30: 获取连接超时 30 秒
-            # - reconnect_timeout=60: 重连超时 60 秒（0 表示自动重试）
+            # - timeout=60: 获取连接超时 60 秒（增加以应对网络延迟）
+            # - reconnect_timeout=0: 自动重连
             cls._connection_pool = AsyncConnectionPool(
                 conninfo=settings.CHECKPOINTER_DATABASE_URL,
                 min_size=2,
                 max_size=10,
                 max_idle=300,
-                timeout=30,
+                timeout=60,  # ✅ 增加到 60 秒（原30秒）
                 reconnect_timeout=0,  # 自动重连
                 kwargs={
                     "autocommit": True,

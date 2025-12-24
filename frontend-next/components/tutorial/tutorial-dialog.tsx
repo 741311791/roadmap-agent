@@ -210,6 +210,41 @@ export function TutorialDialog({
                         remarkPlugins={[remarkGfm]}
                         rehypePlugins={[rehypeHighlight]}
                         components={{
+                          // 代码块自定义渲染（支持 Mermaid）
+                          code({ className, children, ...props }) {
+                            const isInline = !className?.includes('language-');
+                            const match = /language-(\w+)/.exec(className || '');
+                            const language = match ? match[1] : '';
+                            const code = String(children).replace(/\n$/, '');
+
+                            // 检查是否是 Mermaid 图表
+                            if (!isInline && language === 'mermaid') {
+                              const MermaidDiagram = require('@/components/tutorial/mermaid-diagram').MermaidDiagram;
+                              return <MermaidDiagram chart={code} />;
+                            }
+
+                            // 普通代码块
+                            return (
+                              <code className={className} {...props}>
+                                {children}
+                              </code>
+                            );
+                          },
+                          // 自定义 pre 标签（避免 Mermaid 图表被包裹）
+                          pre: ({ children, ...props }: any) => {
+                            // 检查是否包含 Mermaid 图表
+                            const codeChild = Array.isArray(children) ? children[0] : children;
+                            const className = codeChild?.props?.className || '';
+                            const isMermaid = className.includes('language-mermaid');
+                            
+                            if (isMermaid) {
+                              // Mermaid 图表不需要 pre 包裹
+                              return <>{children}</>;
+                            }
+                            
+                            // 普通代码块使用 pre 标签
+                            return <pre {...props}>{children}</pre>;
+                          },
                           // Customize markdown rendering
                           a: ({ node, ...props }) => (
                             <a {...props} target="_blank" rel="noopener noreferrer" />

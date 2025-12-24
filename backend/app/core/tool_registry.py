@@ -9,7 +9,6 @@
 from typing import Dict, Optional
 from app.tools.base import BaseTool
 from app.tools.search.web_search_router import WebSearchRouter
-from app.tools.search.tavily_api_search import TavilyAPISearchTool
 from app.tools.search.duckduckgo_search import DuckDuckGoSearchTool
 from app.tools.storage.s3_client import S3StorageTool
 # 伴学Agent工具
@@ -39,14 +38,15 @@ class ToolRegistry:
         """
         初始化工具注册表
         
-        工具架构（重构后）：
-        - WebSearchRouter (web_search_v1): 主要搜索工具，按优先级路由
-        - TavilyAPISearchTool (tavily_api_search): Tavily API 专用工具
+        工具架构（简化后）：
+        - WebSearchRouter (web_search_v1): 主要搜索工具，按优先级路由（Tavily → DuckDuckGo）
         - DuckDuckGoSearchTool (duckduckgo_search): DuckDuckGo 专用工具
         - S3StorageTool: 对象存储工具
+        
+        注意：TavilyAPISearchTool 需要数据库会话，因此由 WebSearchRouter 动态创建，不在此注册。
         """
         # 注册 Web Search Router（统一的搜索入口）
-        # 按优先级：Tavily API → DuckDuckGo
+        # 按优先级：Tavily API（从数据库读取配额）→ DuckDuckGo
         try:
             self.register(WebSearchRouter())
         except Exception as e:
@@ -56,16 +56,7 @@ class ToolRegistry:
                 message="Web Search Router 注册失败"
             )
         
-        # 注册独立的搜索工具（可被其他组件直接使用）
-        try:
-            self.register(TavilyAPISearchTool())
-        except Exception as e:
-            logger.warning(
-                "tavily_api_tool_registration_failed",
-                error=str(e),
-                message="Tavily API 工具注册失败"
-            )
-        
+        # 注册 DuckDuckGo 工具（可被其他组件直接使用）
         try:
             self.register(DuckDuckGoSearchTool())
         except Exception as e:

@@ -65,12 +65,14 @@ class Settings(BaseSettings):
         - keepalives_idle=30: 空闲 30 秒后发送 keepalive（默认是 2 小时）
         - keepalives_interval=10: keepalive 间隔 10 秒
         - keepalives_count=5: 最大重试 5 次
-        - connect_timeout=10: 连接超时 10 秒
+        - connect_timeout=30: 连接超时 30 秒（增加以应对网络延迟）
+        - options=-c statement_timeout=120s: SQL 语句执行超时 120 秒（防止大数据量写入超时）
         """
         return (
             f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
             f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
-            f"?keepalives=1&keepalives_idle=30&keepalives_interval=10&keepalives_count=5&connect_timeout=10"
+            f"?keepalives=1&keepalives_idle=30&keepalives_interval=10&keepalives_count=5"
+            f"&connect_timeout=30&options=-c%20statement_timeout%3D120s"
         )
     
     # ==================== S3/MinIO 配置 ====================
@@ -84,11 +86,6 @@ class Settings(BaseSettings):
     TAVILY_API_KEY: str | None = Field(None, description="Tavily API 密钥（可选，单个 Key）")
     TAVILY_API_KEY_LIST: str | None = Field(None, description="Tavily API Key 列表（逗号分隔或 JSON 数组格式，优先于 TAVILY_API_KEY）")
     USE_DUCKDUCKGO_FALLBACK: bool = Field(True, description="是否使用 DuckDuckGo 作为备选搜索引擎")
-    
-    # Tavily 配额追踪配置
-    TAVILY_QUOTA_TRACKING_ENABLED: bool = Field(True, description="是否启用 Tavily API 配额追踪")
-    TAVILY_DAILY_QUOTA_PER_KEY: int = Field(1000, description="每个 Tavily API Key 的每日配额")
-    TAVILY_MINUTE_QUOTA_PER_KEY: int = Field(100, description="每个 Tavily API Key 的每分钟配额")
     
     # ==================== LLM 配置 ====================
     # A1: Intent Analyzer (需求分析师)

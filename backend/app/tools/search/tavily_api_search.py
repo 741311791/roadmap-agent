@@ -1,63 +1,60 @@
 """
-Tavily API Search Tool（基于官方 Python SDK）
+Tavily API Search Tool（简化版）
 
 职责：
-- 使用官方 TavilyClient（同步客户端，按照官方示例）
+- 使用官方 TavilyClient（同步客户端）
+- 从数据库读取配额信息，选择最优 Key
 - 支持完整的 API 参数（search_depth, time_range, include_domains 等）
-- 多 API Key 池化管理（支持配额追踪和智能选择）
 - 速率控制
-- 智能重试（遇到限流自动切换 Key）
 - 结果格式化
 
 不负责：
 - 回退逻辑（由 Router 处理）
+- 配额追踪和健康检查（由外部项目维护）
 
 官方文档：https://github.com/tavily-ai/tavily-python
 """
 import asyncio
 import time
 import structlog
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 from collections import deque
 
 from tavily import TavilyClient
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.tools.base import BaseTool
 from app.models.domain import SearchQuery, SearchResult
-from app.config.settings import settings
-from app.db.redis_client import get_redis_client
-from app.tools.search.tavily_key_manager import TavilyAPIKeyManager
+from app.db.repositories.tavily_key_repo import TavilyKeyRepository
 
 logger = structlog.get_logger()
 
 
 class TavilyAPISearchTool(BaseTool[SearchQuery, SearchResult]):
     """
-    Tavily API 搜索工具（官方 SDK + 多 Key 池化）
+    Tavily API 搜索工具（简化版）
     
     特性：
     - 使用官方 TavilyClient（按照官方示例调用）
-    - 🆕 多 API Key 池化管理（配额追踪、智能选择）
-    - 🆕 智能重试（遇到限流自动切换 Key）
+    - 从数据库读取配额信息（由外部项目维护）
     - 内置速率控制（最多3个并发，最少500ms间隔）
     - 支持高级搜索参数（search_depth, time_range, include_domains 等）
     """
     
-    def __init__(self):
+    def __init__(self, db_session: AsyncSession):
+        """
+        初始化搜索工具
+        
+        Args:
+            db_session: 数据库会话（用于查询 API Key）
+        """
         super().__init__(tool_id="tavily_api_search")
         
-        # 🆕 使用 Key Manager 管理多个 API Keys
-        api_keys = settings.get_tavily_api_keys
-        if not api_keys:
-            raise ValueError("未配置任何 Tavily API Key，请设置 TAVILY_API_KEY 或 TAVILY_API_KEY_LIST")
+        # 数据库仓储
+        self.repo = TavilyKeyRepository(db_session)
         
-        # 初始化 Key Manager
-        self.key_manager = TavilyAPIKeyManager(
-            redis_client=get_redis_client(),
-            api_keys=api_keys
-        )
-        
-        # 🆕 为每个 Key 创建独立的 TavilyClient（延迟初始化）
-        self._clients: Dict[int, TavilyClient] = {}
+        # TavilyClient 缓存（按 API Key 索引）
+        self._clients: Dict[str, TavilyClient] = {}
         
         # 速率控制 - 多层次限制
         self._search_semaphore = asyncio.Semaphore(3)  # 最多3个并发请求
@@ -65,30 +62,27 @@ class TavilyAPISearchTool(BaseTool[SearchQuery, SearchResult]):
         self._min_request_interval = 0.5  # 最小请求间隔500ms
         
         # 滑动窗口速率限制器（每分钟最多100次）
-        # 注意：多 Key 场景下，每个 Key 都有独立的配额，所以这里的限制可以放宽
         self._request_timestamps = deque()
-        self._max_requests_per_minute = 100 * len(api_keys)  # 🆕 按 Key 数量放大
+        self._max_requests_per_minute = 100
         self._rate_limit_window = 60.0
     
-    def _get_client(self, key_index: int) -> TavilyClient:
+    def _get_client(self, api_key: str) -> TavilyClient:
         """
         获取或创建指定 Key 的 TavilyClient 实例
         
         Args:
-            key_index: API Key 索引
+            api_key: API Key
             
         Returns:
             TavilyClient 实例
         """
-        if key_index not in self._clients:
-            api_key = self.key_manager.api_keys[key_index]
-            self._clients[key_index] = TavilyClient(api_key=api_key)
+        if api_key not in self._clients:
+            self._clients[api_key] = TavilyClient(api_key=api_key)
             logger.debug(
                 "tavily_client_created",
-                key_index=key_index,
                 key_prefix=api_key[:10] + "..."
             )
-        return self._clients[key_index]
+        return self._clients[api_key]
     
     async def _rate_limited_request(self, func, *args, **kwargs):
         """
@@ -159,37 +153,21 @@ class TavilyAPISearchTool(BaseTool[SearchQuery, SearchResult]):
             
             return result
     
-    def _classify_error(self, error: Exception) -> str:
+    async def _get_best_key(self) -> Optional[str]:
         """
-        分类错误类型
+        从数据库获取最优 API Key
         
-        Args:
-            error: 异常对象
-            
         Returns:
-            错误类型：
-            - "rate_limit": 限流错误（429 或包含 "rate limit"）
-            - "timeout": 超时错误
-            - "auth": 认证错误（401 或 "unauthorized"）
-            - "network": 网络错误
-            - "unknown": 未知错误
+            API Key 字符串，如果没有可用 Key 则返回 None
         """
-        error_str = str(error).lower()
-        
-        if "rate limit" in error_str or "429" in error_str or "too many requests" in error_str:
-            return "rate_limit"
-        elif "timeout" in error_str or "timed out" in error_str:
-            return "timeout"
-        elif "unauthorized" in error_str or "401" in error_str or "invalid api key" in error_str:
-            return "auth"
-        elif "network" in error_str or "connection" in error_str:
-            return "network"
-        else:
-            return "unknown"
+        key_record = await self.repo.get_best_key()
+        if key_record:
+            return key_record.api_key
+        return None
     
     async def execute(self, input_data: SearchQuery) -> SearchResult:
         """
-        执行 Tavily API 搜索（支持智能重试）
+        执行 Tavily API 搜索
         
         Args:
             input_data: 搜索查询，支持以下字段：
@@ -204,7 +182,7 @@ class TavilyAPISearchTool(BaseTool[SearchQuery, SearchResult]):
             搜索结果
             
         Raises:
-            ValueError: 如果所有 API Keys 都不可用
+            ValueError: 如果没有可用的 API Key
             Exception: 如果 API 调用失败
         """
         # 获取高级参数（使用默认值）
@@ -220,143 +198,84 @@ class TavilyAPISearchTool(BaseTool[SearchQuery, SearchResult]):
             max_results=max_results,
             search_depth=search_depth,
             time_range=time_range,
-            total_keys=len(self.key_manager.api_keys),
         )
         
-        # 🆕 智能重试：最多尝试 min(3, Key总数) 次
-        max_retries = min(3, len(self.key_manager.api_keys))
-        last_error = None
+        # 获取最优 API Key
+        api_key = await self._get_best_key()
         
-        for attempt in range(max_retries):
-            # 🆕 获取最优 Key
-            try:
-                api_key, key_index = await self.key_manager.get_best_key()
-            except Exception as e:
-                logger.error(
-                    "tavily_get_best_key_failed",
-                    attempt=attempt + 1,
-                    error=str(e),
-                )
-                raise ValueError(f"无法获取可用的 Tavily API Key: {e}")
+        if not api_key:
+            error_msg = "没有可用的 Tavily API Key（数据库中无配额充足的 Key）"
+            logger.error(
+                "tavily_no_available_key",
+                query=input_data.query,
+            )
+            raise ValueError(error_msg)
+        
+        logger.info(
+            "tavily_search_using_key",
+            query=input_data.query,
+            key_prefix=api_key[:10] + "...",
+        )
+        
+        try:
+            # 执行搜索
+            def do_search():
+                """执行搜索（同步调用，按照官方示例）"""
+                client = self._get_client(api_key)
+                
+                # 构建搜索参数（按照官方示例）
+                search_kwargs = {
+                    "query": input_data.query,
+                    "search_depth": search_depth,
+                    "max_results": max_results,
+                }
+                
+                # 添加可选的高级参数
+                if time_range:
+                    search_kwargs["time_range"] = time_range
+                if include_domains:
+                    search_kwargs["include_domains"] = include_domains
+                if exclude_domains:
+                    search_kwargs["exclude_domains"] = exclude_domains
+                
+                # 调用官方 SDK（按照官方示例）
+                response = client.search(**search_kwargs)
+                return response
+            
+            # 执行搜索（带速率限制）
+            data = await self._rate_limited_request(do_search)
+            
+            # Tavily SDK 返回格式：{"results": [{"title", "url", "content", "score", "published_date"}], ...}
+            tavily_results = data.get("results", [])
+            
+            results = [
+                {
+                    "title": item.get("title", ""),
+                    "url": item.get("url", ""),
+                    "snippet": item.get("content", "")[:200],  # 截取前200字符作为摘要
+                    "published_date": item.get("published_date", ""),
+                }
+                for item in tavily_results[:max_results]
+            ]
             
             logger.info(
-                "tavily_search_attempt",
-                attempt=attempt + 1,
-                max_retries=max_retries,
-                key_index=key_index,
+                "tavily_api_search_success",
+                query=input_data.query,
+                results_count=len(results),
                 key_prefix=api_key[:10] + "...",
             )
             
-            try:
-                # 执行搜索
-                def do_search():
-                    """执行搜索（同步调用，按照官方示例）"""
-                    client = self._get_client(key_index)
-                    
-                    # 构建搜索参数（按照官方示例）
-                    search_kwargs = {
-                        "query": input_data.query,
-                        "search_depth": search_depth,
-                        "max_results": max_results,
-                    }
-                    
-                    # 添加可选的高级参数
-                    if time_range:
-                        search_kwargs["time_range"] = time_range
-                    if include_domains:
-                        search_kwargs["include_domains"] = include_domains
-                    if exclude_domains:
-                        search_kwargs["exclude_domains"] = exclude_domains
-                    
-                    # 调用官方 SDK（按照官方示例）
-                    response = client.search(**search_kwargs)
-                    return response
-                
-                # 执行搜索（带速率限制）
-                data = await self._rate_limited_request(do_search)
-                
-                # 🆕 标记 Key 使用成功
-                await self.key_manager.mark_key_used(
-                    key_index=key_index,
-                    success=True,
-                    error_type=None
-                )
-                
-                # Tavily SDK 返回格式：{"results": [{"title", "url", "content", "score", "published_date"}], ...}
-                tavily_results = data.get("results", [])
-                
-                results = [
-                    {
-                        "title": item.get("title", ""),
-                        "url": item.get("url", ""),
-                        "snippet": item.get("content", "")[:200],  # 截取前200字符作为摘要
-                        "published_date": item.get("published_date", ""),
-                    }
-                    for item in tavily_results[:max_results]
-                ]
-                
-                logger.info(
-                    "tavily_api_search_success",
-                    query=input_data.query,
-                    results_count=len(results),
-                    key_index=key_index,
-                    attempt=attempt + 1,
-                )
-                
-                return SearchResult(
-                    results=results,
-                    total_found=len(results),
-                )
-                
-            except Exception as e:
-                # 🆕 分类错误并标记 Key 使用失败
-                error_type = self._classify_error(e)
-                await self.key_manager.mark_key_used(
-                    key_index=key_index,
-                    success=False,
-                    error_type=error_type
-                )
-                
-                logger.warning(
-                    "tavily_api_search_attempt_failed",
-                    query=input_data.query,
-                    key_index=key_index,
-                    attempt=attempt + 1,
-                    max_retries=max_retries,
-                    error_type=error_type,
-                    error=str(e)[:200],
-                )
-                
-                last_error = e
-                
-                # 🆕 判断是否应该重试
-                # 只有限流错误且还有重试机会时，才切换 Key 重试
-                if error_type == "rate_limit" and attempt < max_retries - 1:
-                    logger.info(
-                        "tavily_rate_limit_retry",
-                        key_index=key_index,
-                        attempt=attempt + 1,
-                        message="遇到限流，切换到下一个 Key 重试"
-                    )
-                    # 短暂延迟后重试
-                    await asyncio.sleep(0.5)
-                    continue
-                else:
-                    # 非限流错误或最后一次尝试，直接抛出
-                    logger.error(
-                        "tavily_api_search_failed",
-                        query=input_data.query,
-                        error_type=error_type,
-                        error=str(e),
-                    )
-                    raise
-        
-        # 所有 Key 都失败
-        error_msg = f"所有 Tavily API Keys 都不可用（尝试了 {max_retries} 次）: {last_error}"
-        logger.error(
-            "tavily_all_keys_failed",
-            query=input_data.query,
-            max_retries=max_retries,
-            last_error=str(last_error),
-        )
-        raise ValueError(error_msg)
+            return SearchResult(
+                results=results,
+                total_found=len(results),
+            )
+            
+        except Exception as e:
+            logger.error(
+                "tavily_api_search_failed",
+                query=input_data.query,
+                key_prefix=api_key[:10] + "...",
+                error=str(e)[:200],
+                error_type=type(e).__name__,
+            )
+            raise
