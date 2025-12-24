@@ -6,24 +6,28 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     gcc \
     postgresql-client \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# 安装 Poetry
-RUN pip install --no-cache-dir poetry
+# 安装 uv (使用官方安装脚本)
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.cargo/bin:$PATH"
 
-# 配置 Poetry（不使用虚拟环境）
-RUN poetry config virtualenvs.create false
+# 配置 uv 使用系统 Python（在 Docker 容器中不需要虚拟环境）
+ENV UV_SYSTEM_PYTHON=1
 
-# 复制依赖文件
-COPY pyproject.toml ./
+# 复制依赖文件（uv 需要 pyproject.toml 和 uv.lock）
+COPY pyproject.toml uv.lock ./
 
-# 安装 Python 依赖（生产环境）
-RUN poetry install --no-dev --no-interaction --no-ansi
+# 使用 uv 同步生产环境依赖
+# --frozen: 使用 uv.lock 锁定版本，确保可重现构建
+# --no-dev: 不安装开发依赖（pytest, black 等）
+# --no-install-project: 只安装依赖，不安装项目本身（app/ 代码还未复制）
+RUN uv sync --frozen --no-dev --no-install-project
 
 # 复制应用代码
 COPY ./app /app/app
 COPY ./prompts /app/prompts
-COPY ./specs /app/specs
 
 # 复制 Alembic 迁移配置（Railway 部署时需要运行数据库迁移）
 COPY ./alembic /app/alembic
