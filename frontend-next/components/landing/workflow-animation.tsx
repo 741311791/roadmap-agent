@@ -95,46 +95,83 @@ export function WorkflowAnimation() {
   }, []);
 
   return (
-    <div className="relative w-full h-[600px] flex items-center justify-center p-4">
+    <div className="relative w-full min-h-[400px] sm:min-h-[500px] lg:min-h-[600px] h-auto py-12 lg:py-16 flex items-center justify-center px-4 overflow-visible">
       {/* Background Glows (Theme Adapted) */}
-      <div className="absolute inset-0 pointer-events-none">
+      <div className="absolute inset-0 pointer-events-none overflow-hidden">
         <div className="absolute top-1/2 left-1/3 w-64 h-64 bg-sage/10 rounded-full blur-[100px] mix-blend-multiply animate-pulse-slow" />
         <div className="absolute bottom-1/3 right-1/3 w-64 h-64 bg-primary/5 rounded-full blur-[100px] mix-blend-multiply animate-pulse-slow delay-1000" />
       </div>
 
       <Xwrapper>
-        <div className="relative z-10 flex items-center w-full max-w-6xl">
-          
-          {/* Left: Input Card */}
-          <div className="relative z-20 shrink-0 mr-12 lg:mr-24 self-center">
-            <InputCard step={step} />
+        {/* 整体缩放容器 - 响应式缩放所有内容 */}
+        <div className="relative w-full max-w-6xl mx-auto scale-[0.75] sm:scale-[0.85] md:scale-[0.9] lg:scale-100 origin-center transition-transform duration-300">
+          <div className="relative z-10 flex flex-col lg:flex-row items-center justify-center gap-8 lg:gap-12">
             
-            {/* Connection Point (Output) - Visible only when connecting */}
-            {step >= 3 && (
-              <motion.div 
-                id="input-card-output"
-                className="absolute top-1/2 -right-3 w-4 h-4 rounded-full bg-sage border-2 border-white shadow-[0_0_10px_hsl(var(--sage))] z-30 translate-y-[-50%]"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ duration: 0.3 }}
-              />
-            )}
-          </div>
-
-          {/* Right: Tree Structure */}
-          <div className="flex-1 relative">
-            <AnimatePresence>
+            {/* Left: Input Card */}
+            <div className="relative z-20 w-full max-w-[340px] lg:w-auto shrink-0 self-center">
+              <InputCard step={step} />
+              
+              {/* Connection Point (Output) - 只在桌面端显示完整路径时显示 */}
               {step >= 3 && (
-                <TreeStructure />
+                <motion.div 
+                  id="input-card-output"
+                  className="hidden lg:block absolute top-1/2 -right-4 w-4 h-4 rounded-full bg-sage border-2 border-white shadow-[0_0_10px_hsl(var(--sage))] z-30 translate-y-[-50%]"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.3 }}
+                />
               )}
-            </AnimatePresence>
-          </div>
+              
+              {/* 移动端：简化的进度指示器 */}
+              {step >= 3 && (
+                <motion.div
+                  className="lg:hidden mt-6 flex justify-center gap-2"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.5, delay: 0.5 }}
+                >
+                  {treeData.map((branch, index) => (
+                    <motion.div
+                      key={branch.id}
+                      className="flex flex-col items-center gap-1.5"
+                      initial={{ opacity: 0, scale: 0.8 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ duration: 0.4, delay: branch.delay }}
+                    >
+                      <div className="w-10 h-10 rounded-full bg-sage/10 flex items-center justify-center border border-sage/20">
+                        {React.createElement(branch.icon, { className: "w-4 h-4 text-sage" })}
+                      </div>
+                      <span className="text-[10px] font-medium text-gray-600">{branch.label}</span>
+                      {/* 迷你进度条 */}
+                      <div className="w-10 h-1 bg-sage/10 rounded-full overflow-hidden">
+                        <motion.div
+                          className="h-full bg-sage"
+                          initial={{ width: 0 }}
+                          animate={{ width: "100%" }}
+                          transition={{ duration: 1.2, delay: branch.delay + 0.3 }}
+                        />
+                      </div>
+                    </motion.div>
+                  ))}
+                </motion.div>
+              )}
+            </div>
 
-          {/* Arrows Layer - Global Overlay */}
-          <div className="absolute inset-0 pointer-events-none z-0">
-             {step >= 3 && <ArrowsLayer />}
-          </div>
+            {/* Right: Tree Structure - 只在桌面端显示 */}
+            <div className="hidden lg:block flex-1 relative min-w-0">
+              <AnimatePresence>
+                {step >= 3 && (
+                  <TreeStructure />
+                )}
+              </AnimatePresence>
+            </div>
 
+            {/* Arrows Layer - 只在桌面端显示 */}
+            <div className="hidden lg:block">
+              {step >= 3 && <ArrowsLayer />}
+            </div>
+
+          </div>
         </div>
       </Xwrapper>
     </div>
@@ -144,7 +181,7 @@ export function WorkflowAnimation() {
 function InputCard({ step }: { step: number }) {
   return (
     <motion.div 
-      className="w-[300px] sm:w-[340px] bg-white/70 backdrop-blur-2xl border border-white/50 rounded-3xl p-6 shadow-[0_20px_40px_-12px_rgba(0,0,0,0.1)] relative overflow-hidden"
+      className="w-full max-w-[340px] sm:w-[340px] bg-white/70 backdrop-blur-2xl border border-white/50 rounded-3xl p-6 shadow-[0_20px_40px_-12px_rgba(0,0,0,0.1)] relative overflow-hidden"
       initial={{ scale: 0.9, opacity: 0 }}
       animate={{ scale: 1, opacity: 1 }}
       transition={{ duration: 0.5 }}
@@ -319,9 +356,9 @@ function Delayed({ children, wait }: { children: React.ReactNode; wait: number }
 
 function TreeStructure() {
   return (
-    <div className="relative w-full h-full flex flex-col justify-center">
+    <div className="relative w-full flex flex-col justify-center py-4">
       {/* DOM Nodes Layer */}
-      <div className="flex flex-col gap-12 py-4"> {/* Increased gap from 10 to 12 */}
+      <div className="flex flex-col gap-12"> {/* Increased gap from 10 to 12 */}
         {treeData.map((branch, i) => (
            <BranchNodeRow key={branch.id} branch={branch} />
         ))}
@@ -343,10 +380,19 @@ function ArrowsLayer() {
     return () => clearTimeout(timer);
   }, [updateXarrow]);
 
+  // 持续更新箭头位置（适配缩放和响应式）
+  useEffect(() => {
+    if (!ready) return;
+    const interval = setInterval(() => {
+      updateXarrow();
+    }, 100);
+    return () => clearInterval(interval);
+  }, [ready, updateXarrow]);
+
   if (!ready) return null;
 
   return (
-    <>
+    <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 1 }}>
       {treeData.map((branch) => (
         <React.Fragment key={`arrows-${branch.id}`}>
             {/* Input Card -> Branch Node */}
@@ -366,7 +412,7 @@ function ArrowsLayer() {
                         strokeWidth={2}
                         headSize={0}
                         path="smooth"
-                        zIndex={0}
+                        zIndex={1}
                     />
                 </motion.div>
             </Delayed>
@@ -390,7 +436,7 @@ function ArrowsLayer() {
                             strokeWidth={1.5}
                             headSize={0}
                             path="smooth"
-                            zIndex={0}
+                            zIndex={1}
                             showHead={false}
                         />
                     </motion.div>
@@ -398,7 +444,7 @@ function ArrowsLayer() {
             ))}
         </React.Fragment>
       ))}
-    </>
+    </div>
   );
 }
 

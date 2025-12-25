@@ -577,17 +577,23 @@ export async function chatModificationStream(
 // ============================================================
 
 /**
- * Download tutorial content from S3 URL
+ * Download tutorial content via backend proxy (solves CORS issue)
+ * 
+ * 前端不再直接访问 R2/S3 URL，而是通过后端代理下载
+ * 这样避免了 CORS 跨域问题
  */
 export async function downloadTutorialContent(
-  contentUrl: string
+  roadmapId: string,
+  conceptId: string
 ): Promise<string> {
   try {
-    const response = await fetch(contentUrl);
-    if (!response.ok) {
-      throw new Error(`Failed to download content: ${response.statusText}`);
-    }
-    return await response.text();
+    const response = await apiClient.get(
+      `/roadmaps/${roadmapId}/concepts/${conceptId}/tutorials/latest/content`,
+      {
+        responseType: 'text',
+      }
+    );
+    return response.data;
   } catch (error) {
     console.error('Error downloading tutorial content:', error);
     throw error;

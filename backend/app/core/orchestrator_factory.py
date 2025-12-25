@@ -67,17 +67,17 @@ class OrchestratorFactory:
         # 创建 AsyncPostgresSaver（使用连接池）
         try:
             # 使用连接池管理连接
-            # - min_size=2: 最小保持 2 个连接
-            # - max_size=10: 最大 10 个连接
-            # - max_idle=300: 空闲连接最多保持 5 分钟
-            # - timeout=60: 获取连接超时 60 秒（增加以应对网络延迟）
+            # - min_size=1: 最小保持 1 个连接（降低以避免与 SQLAlchemy 竞争）
+            # - max_size=5: 最大 5 个连接（降低以避免总连接数过多）
+            # - max_idle=180: 空闲连接最多保持 3 分钟（缩短以快速释放）
+            # - timeout=30: 获取连接超时 30 秒
             # - reconnect_timeout=0: 自动重连
             cls._connection_pool = AsyncConnectionPool(
                 conninfo=settings.CHECKPOINTER_DATABASE_URL,
-                min_size=2,
-                max_size=10,
-                max_idle=300,
-                timeout=60,  # ✅ 增加到 60 秒（原30秒）
+                min_size=1,
+                max_size=5,
+                max_idle=180,
+                timeout=30,
                 reconnect_timeout=0,  # 自动重连
                 kwargs={
                     "autocommit": True,
@@ -97,8 +97,8 @@ class OrchestratorFactory:
             logger.info(
                 "orchestrator_factory_initialized",
                 checkpointer_type="AsyncPostgresSaver",
-                pool_min_size=2,
-                pool_max_size=10,
+                pool_min_size=1,
+                pool_max_size=5,
                 database_url=settings.CHECKPOINTER_DATABASE_URL.split("@")[-1].split("?")[0],  # 隐藏凭据和参数
             )
             

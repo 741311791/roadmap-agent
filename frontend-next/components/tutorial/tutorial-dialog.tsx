@@ -57,14 +57,15 @@ export function TutorialDialog({
       setTutorial(tutorialMeta);
 
       // Load tutorial content if available
-      if (tutorialMeta.content_url) {
+      if (tutorialMeta && tutorialMeta.content_status === 'completed') {
         setContentLoading(true);
         try {
-          const markdownContent = await downloadTutorialContent(tutorialMeta.content_url);
+          // 通过后端代理下载内容（解决 CORS 问题）
+          const markdownContent = await downloadTutorialContent(roadmapId, conceptId);
           setContent(markdownContent);
         } catch (error) {
           console.error('Failed to load tutorial content:', error);
-          setContent('# 加载内容失败\n\n无法下载教程内容。请稍后重试。');
+          setContent('# Failed to load content\n\nUnable to download tutorial content. Please try again later.');
         } finally {
           setContentLoading(false);
         }

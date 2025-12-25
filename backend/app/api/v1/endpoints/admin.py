@@ -15,11 +15,12 @@ from pydantic import BaseModel, EmailStr
 import structlog
 
 from app.db.session import get_db
-from app.models.database import User, WaitlistEmail, beijing_now
+from app.models.database import User, WaitlistEmail, TavilyAPIKey, beijing_now
 from app.core.auth.deps import current_superuser
 from app.core.auth.user_manager import get_user_manager, UserManager
 from app.core.auth.schemas import UserCreate
 from app.services.email_service import get_email_service, EmailService
+from app.db.repositories.tavily_key_repo import TavilyKeyRepository
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 logger = structlog.get_logger()
@@ -163,6 +164,96 @@ class BatchSendInviteResponse(BaseModel):
     success: int
     failed: int
     errors: List[dict]
+
+
+class TavilyAPIKeyInfo(BaseModel):
+    """
+    Tavily API Key 信息
+    
+    Args:
+        api_key: API Key（脱敏显示）
+        plan_limit: 计划总配额
+        remaining_quota: 剩余配额
+        created_at: 录入时间
+        updated_at: 最后更新时间
+    """
+    api_key: str
+    plan_limit: int
+    remaining_quota: int
+    created_at: str
+    updated_at: str
+
+
+class TavilyAPIKeyListResponse(BaseModel):
+    """
+    Tavily API Key 列表响应
+    
+    Args:
+        keys: Key 列表
+        total: 总数
+    """
+    keys: List[TavilyAPIKeyInfo]
+    total: int
+
+
+class AddTavilyAPIKeyRequest(BaseModel):
+    """
+    添加 Tavily API Key 请求
+    
+    Args:
+        api_key: Tavily API Key
+        plan_limit: 计划总配额（每月总请求数）
+    """
+    api_key: str
+    plan_limit: int = 1000
+
+
+class BatchAddTavilyKeysRequest(BaseModel):
+    """
+    批量添加 Tavily API Keys 请求
+    
+    Args:
+        keys: Key 列表，每个Key包含 api_key 和 plan_limit
+    """
+    keys: List[AddTavilyAPIKeyRequest]
+
+
+class BatchAddTavilyKeysResponse(BaseModel):
+    """
+    批量添加 Tavily API Keys 响应
+    
+    Args:
+        success: 成功添加的数量
+        failed: 失败的数量
+        errors: 失败详情列表
+    """
+    success: int
+    failed: int
+    errors: List[dict]
+
+
+class UpdateTavilyAPIKeyRequest(BaseModel):
+    """
+    更新 Tavily API Key 配额请求
+    
+    Args:
+        remaining_quota: 剩余配额
+        plan_limit: 计划总配额（可选）
+    """
+    remaining_quota: Optional[int] = None
+    plan_limit: Optional[int] = None
+
+
+class DeleteTavilyAPIKeyResponse(BaseModel):
+    """
+    删除 Tavily API Key 响应
+    
+    Args:
+        success: 是否成功
+        message: 提示消息
+    """
+    success: bool
+    message: str
 
 
 # ============================================================
@@ -694,4 +785,363 @@ async def create_initial_superuser(
             status_code=500,
             detail=f"Failed to create superuser: {str(e)}"
         )
+
+
+# ============================================================
+# Tavily API Key Management
+# ============================================================
+
+@router.get("/tavily-keys", response_model=TavilyAPIKeyListResponse)
+async def get_tavily_keys(
+    current_user: User = Depends(current_superuser),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    获取所有 Tavily API Keys
+    
+    只有超级管理员可以查看。
+    
+    Returns:
+        Tavily API Key 列表和统计信息
+    """
+    try:
+        repo = TavilyKeyRepository(db)
+        keys = await repo.get_all_keys()
+        
+        logger.info(
+            "admin_get_tavily_keys",
+            admin_id=current_user.id,
+            total_keys=len(keys),
+        )
+        
+        return TavilyAPIKeyListResponse(
+            keys=[
+                TavilyAPIKeyInfo(
+                    api_key=f"{key.api_key[:10]}...{key.api_key[-4:]}" if len(key.api_key) > 14 else key.api_key,
+                    plan_limit=key.plan_limit,
+                    remaining_quota=key.remaining_quota,
+                    created_at=key.created_at.isoformat(),
+                    updated_at=key.updated_at.isoformat(),
+                )
+                for key in keys
+            ],
+            total=len(keys),
+        )
+        
+    except Exception as e:
+        logger.error(
+            "admin_get_tavily_keys_failed",
+            admin_id=current_user.id,
+            error=str(e),
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get Tavily API Keys: {str(e)}"
+        )
+
+
+@router.post("/tavily-keys", response_model=TavilyAPIKeyInfo)
+async def add_tavily_key(
+    request: AddTavilyAPIKeyRequest,
+    current_user: User = Depends(current_superuser),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    添加单个 Tavily API Key
+    
+    只有超级管理员可以调用此接口。
+    
+    Args:
+        request: 添加请求，包含 API Key 和计划配额
+        
+    Returns:
+        添加的 Tavily API Key 信息
+    """
+    logger.info(
+        "admin_add_tavily_key_requested",
+        admin_id=current_user.id,
+        key_prefix=request.api_key[:10] + "...",
+        plan_limit=request.plan_limit,
+    )
+    
+    try:
+        # 检查 Key 是否已存在
+        repo = TavilyKeyRepository(db)
+        existing_key = await repo.get_by_key(request.api_key)
+        
+        if existing_key:
+            raise HTTPException(
+                status_code=400,
+                detail=f"API Key already exists"
+            )
+        
+        # 创建新的 Key 记录
+        new_key = TavilyAPIKey(
+            api_key=request.api_key,
+            plan_limit=request.plan_limit,
+            remaining_quota=request.plan_limit,  # 初始配额等于计划配额
+        )
+        
+        db.add(new_key)
+        await db.commit()
+        await db.refresh(new_key)
+        
+        logger.info(
+            "admin_add_tavily_key_success",
+            admin_id=current_user.id,
+            key_prefix=request.api_key[:10] + "...",
+        )
+        
+        return TavilyAPIKeyInfo(
+            api_key=f"{new_key.api_key[:10]}...{new_key.api_key[-4:]}" if len(new_key.api_key) > 14 else new_key.api_key,
+            plan_limit=new_key.plan_limit,
+            remaining_quota=new_key.remaining_quota,
+            created_at=new_key.created_at.isoformat(),
+            updated_at=new_key.updated_at.isoformat(),
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "admin_add_tavily_key_failed",
+            admin_id=current_user.id,
+            key_prefix=request.api_key[:10] + "...",
+            error=str(e),
+        )
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to add Tavily API Key: {str(e)}"
+        )
+
+
+@router.post("/tavily-keys/batch", response_model=BatchAddTavilyKeysResponse)
+async def batch_add_tavily_keys(
+    request: BatchAddTavilyKeysRequest,
+    current_user: User = Depends(current_superuser),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    批量添加 Tavily API Keys
+    
+    支持部分成功模式：成功的添加记录，失败的收集错误信息。
+    只有超级管理员可以调用此接口。
+    
+    Args:
+        request: 批量添加请求，包含 Key 列表
+        
+    Returns:
+        批量添加结果，包含成功/失败数量和错误详情
+    """
+    logger.info(
+        "admin_batch_add_tavily_keys_requested",
+        admin_id=current_user.id,
+        key_count=len(request.keys),
+    )
+    
+    success_count = 0
+    failed_count = 0
+    errors = []
+    
+    repo = TavilyKeyRepository(db)
+    
+    for key_req in request.keys:
+        try:
+            # 检查 Key 是否已存在
+            existing_key = await repo.get_by_key(key_req.api_key)
+            
+            if existing_key:
+                errors.append({
+                    "api_key": f"{key_req.api_key[:10]}...",
+                    "error": "API Key already exists"
+                })
+                failed_count += 1
+                continue
+            
+            # 创建新的 Key 记录
+            new_key = TavilyAPIKey(
+                api_key=key_req.api_key,
+                plan_limit=key_req.plan_limit,
+                remaining_quota=key_req.plan_limit,  # 初始配额等于计划配额
+            )
+            
+            db.add(new_key)
+            await db.commit()
+            
+            success_count += 1
+            
+            logger.info(
+                "admin_batch_add_tavily_key_success",
+                admin_id=current_user.id,
+                key_prefix=key_req.api_key[:10] + "...",
+            )
+            
+        except Exception as e:
+            logger.error(
+                "admin_batch_add_tavily_key_error",
+                admin_id=current_user.id,
+                key_prefix=key_req.api_key[:10] + "...",
+                error=str(e),
+            )
+            errors.append({
+                "api_key": f"{key_req.api_key[:10]}...",
+                "error": str(e)
+            })
+            failed_count += 1
+            await db.rollback()
+    
+    logger.info(
+        "admin_batch_add_tavily_keys_completed",
+        admin_id=current_user.id,
+        success=success_count,
+        failed=failed_count,
+    )
+    
+    return BatchAddTavilyKeysResponse(
+        success=success_count,
+        failed=failed_count,
+        errors=errors,
+    )
+
+
+@router.put("/tavily-keys/{api_key}", response_model=TavilyAPIKeyInfo)
+async def update_tavily_key(
+    api_key: str,
+    request: UpdateTavilyAPIKeyRequest,
+    current_user: User = Depends(current_superuser),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    更新 Tavily API Key 配额
+    
+    只有超级管理员可以调用此接口。
+    
+    Args:
+        api_key: API Key
+        request: 更新请求，包含要更新的字段
+        
+    Returns:
+        更新后的 Tavily API Key 信息
+    """
+    logger.info(
+        "admin_update_tavily_key_requested",
+        admin_id=current_user.id,
+        key_prefix=api_key[:10] + "...",
+    )
+    
+    try:
+        repo = TavilyKeyRepository(db)
+        key_record = await repo.get_by_key(api_key)
+        
+        if not key_record:
+            raise HTTPException(
+                status_code=404,
+                detail="API Key not found"
+            )
+        
+        # 更新字段
+        if request.remaining_quota is not None:
+            key_record.remaining_quota = request.remaining_quota
+        
+        if request.plan_limit is not None:
+            key_record.plan_limit = request.plan_limit
+        
+        key_record.updated_at = beijing_now()
+        
+        await db.commit()
+        await db.refresh(key_record)
+        
+        logger.info(
+            "admin_update_tavily_key_success",
+            admin_id=current_user.id,
+            key_prefix=api_key[:10] + "...",
+        )
+        
+        return TavilyAPIKeyInfo(
+            api_key=f"{key_record.api_key[:10]}...{key_record.api_key[-4:]}" if len(key_record.api_key) > 14 else key_record.api_key,
+            plan_limit=key_record.plan_limit,
+            remaining_quota=key_record.remaining_quota,
+            created_at=key_record.created_at.isoformat(),
+            updated_at=key_record.updated_at.isoformat(),
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "admin_update_tavily_key_failed",
+            admin_id=current_user.id,
+            key_prefix=api_key[:10] + "...",
+            error=str(e),
+        )
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to update Tavily API Key: {str(e)}"
+        )
+
+
+@router.delete("/tavily-keys/{api_key}", response_model=DeleteTavilyAPIKeyResponse)
+async def delete_tavily_key(
+    api_key: str,
+    current_user: User = Depends(current_superuser),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    删除 Tavily API Key
+    
+    只有超级管理员可以调用此接口。
+    
+    Args:
+        api_key: API Key
+        
+    Returns:
+        删除结果
+    """
+    logger.info(
+        "admin_delete_tavily_key_requested",
+        admin_id=current_user.id,
+        key_prefix=api_key[:10] + "...",
+    )
+    
+    try:
+        repo = TavilyKeyRepository(db)
+        key_record = await repo.get_by_key(api_key)
+        
+        if not key_record:
+            raise HTTPException(
+                status_code=404,
+                detail="API Key not found"
+            )
+        
+        await db.delete(key_record)
+        await db.commit()
+        
+        logger.info(
+            "admin_delete_tavily_key_success",
+            admin_id=current_user.id,
+            key_prefix=api_key[:10] + "...",
+        )
+        
+        return DeleteTavilyAPIKeyResponse(
+            success=True,
+            message="API Key deleted successfully"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "admin_delete_tavily_key_failed",
+            admin_id=current_user.id,
+            key_prefix=api_key[:10] + "...",
+            error=str(e),
+        )
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to delete Tavily API Key: {str(e)}"
+        )
+
 

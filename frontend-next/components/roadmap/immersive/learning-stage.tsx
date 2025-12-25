@@ -994,7 +994,7 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId, 
     setQuizError(null);
   }, [concept?.concept_id]);
 
-  // 检查是否有正在进行的重试任务
+  // 检查是否有正在进行的重试任务 + 僵尸状态检测
   // 当切换到对应tab或concept变化时，检查backend是否有active task
   useEffect(() => {
     if (!roadmapId || !concept) return;
@@ -1034,6 +1034,29 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId, 
               }
             }
           });
+        } else if (!result.has_active_task && result.stale_concepts.length > 0) {
+          // 🔧 僵尸状态检测：没有活跃任务，但有僵尸状态的概念
+          const currentConceptStaleItems = result.stale_concepts.filter(
+            (stale: any) => stale.concept_id === concept.concept_id
+          );
+
+          if (currentConceptStaleItems.length > 0) {
+            console.warn('[LearningStage] 🧟 Detected stale/zombie status for concept:', concept.concept_id, currentConceptStaleItems);
+
+            // 将僵尸状态的内容标记为 failed
+            currentConceptStaleItems.forEach((stale: any) => {
+              if (stale.content_type === 'tutorial') {
+                console.log('[LearningStage] 🧟 Marking tutorial as failed (zombie detected)');
+                updateConceptStatus(concept.concept_id, { content_status: 'failed' });
+              } else if (stale.content_type === 'resources') {
+                console.log('[LearningStage] 🧟 Marking resources as failed (zombie detected)');
+                updateConceptStatus(concept.concept_id, { resources_status: 'failed' });
+              } else if (stale.content_type === 'quiz') {
+                console.log('[LearningStage] 🧟 Marking quiz as failed (zombie detected)');
+                updateConceptStatus(concept.concept_id, { quiz_status: 'failed' });
+              }
+            });
+          }
         }
       } catch (error) {
         console.error('[LearningStage] Failed to check active tasks:', error);

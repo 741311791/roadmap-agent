@@ -235,7 +235,8 @@ export default function ProfilePage() {
     if (field === 'technology') {
       // 如果改变了technology名称，需要特殊处理
       if (oldTechnology === '') {
-        // 新添加的项，直接更新
+        // 新添加的项（当前是空行），先删除空行，再添加新的
+        removeTechStack('');
         addTechStack({ technology: value, proficiency: 'beginner' });
       } else {
         // 已存在的项，删除旧的，添加新的
@@ -289,28 +290,30 @@ export default function ProfilePage() {
             roadmap and recommendations.
           </p>
           
-          {/* Auto-save indicator */}
-          {saveStatus !== 'idle' && (
-            <div className="flex items-center justify-center gap-2 text-sm">
-              {saveStatus === 'saving' && (
-                <>
-                  <Loader2 className="w-3 h-3 animate-spin text-sage-600" />
-                  <span className="text-muted-foreground">{saveMessage}</span>
-                </>
-              )}
-              {saveStatus === 'saved' && (
-                <>
-                  <CheckCircle2 className="w-3 h-3 text-sage-600" />
-                  <span className="text-sage-600">{saveMessage}</span>
-                </>
-              )}
-              {saveStatus === 'error' && (
-                <>
-                  <span className="text-destructive text-xs">{saveMessage}</span>
-                </>
-              )}
-            </div>
-          )}
+          {/* Auto-save indicator - 固定位置，避免布局跳动 */}
+          <div 
+            className={`flex items-center justify-center gap-2 text-sm min-h-[20px] transition-opacity duration-200 ${
+              saveStatus === 'idle' ? 'opacity-0 pointer-events-none' : 'opacity-100'
+            }`}
+          >
+            {saveStatus === 'saving' && (
+              <>
+                <Loader2 className="w-3 h-3 animate-spin text-sage-600" />
+                <span className="text-muted-foreground">{saveMessage}</span>
+              </>
+            )}
+            {saveStatus === 'saved' && (
+              <>
+                <CheckCircle2 className="w-3 h-3 text-sage-600" />
+                <span className="text-sage-600">{saveMessage}</span>
+              </>
+            )}
+            {saveStatus === 'error' && (
+              <>
+                <span className="text-destructive text-xs">{saveMessage}</span>
+              </>
+            )}
+          </div>
         </div>
 
         <div className="space-y-8">

@@ -22,6 +22,7 @@ import {
   ListTodo,
   BookOpen,
   Mail,
+  Key,
 } from 'lucide-react';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import { useAuthStore } from '@/lib/store/auth-store';
@@ -246,6 +247,13 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
                 label="Waitlist Management"
                 href="/admin/waitlist"
                 active={isActive('/admin/waitlist')}
+                isCollapsed={isCollapsed}
+              />
+              <NavItem
+                icon={Key}
+                label="API Keys Management"
+                href="/admin/api-keys"
+                active={isActive('/admin/api-keys')}
                 isCollapsed={isCollapsed}
               />
             </>

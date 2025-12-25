@@ -25,22 +25,22 @@ logger = structlog.get_logger()
 ASSESSMENT_CACHE_TTL = 7200  # 2小时过期时间
 ASSESSMENT_CACHE_PREFIX = "assessment:session:"
 
-# 根据用户选择的级别，混合抽取各 proficiency_level 的题目（共20题）
+# 根据用户选择的级别，混合抽取各 proficiency_level 的题目（共10题）
 PROFICIENCY_DISTRIBUTION = {
     "beginner": {
-        "beginner": 14,      # 70% 基础题
-        "intermediate": 4,   # 20% 中等题
-        "expert": 2,         # 10% 进阶题
+        "beginner": 7,       # 70% 基础题
+        "intermediate": 2,   # 20% 中等题
+        "expert": 1,         # 10% 进阶题
     },
     "intermediate": {
-        "beginner": 4,       # 20% 基础题
-        "intermediate": 12,  # 60% 中等题
-        "expert": 4,         # 20% 进阶题
+        "beginner": 2,       # 20% 基础题
+        "intermediate": 6,   # 60% 中等题
+        "expert": 2,         # 20% 进阶题
     },
     "expert": {
-        "beginner": 2,       # 10% 基础题
-        "intermediate": 6,   # 30% 中等题
-        "expert": 12,        # 60% 进阶题
+        "beginner": 1,       # 10% 基础题
+        "intermediate": 3,   # 30% 中等题
+        "expert": 6,         # 60% 进阶题
     },
 }
 
@@ -241,19 +241,19 @@ async def get_tech_assessment(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    获取技术栈能力测验题目（混合级别抽选20题）
+    获取技术栈能力测验题目（混合级别抽选10题）
     
     根据用户能力级别，从3个级别的题库中按不同比例随机抽选题目：
-    - Beginner: 14道beginner, 4道intermediate, 2道expert（侧重基础）
-    - Intermediate: 4道beginner, 12道intermediate, 4道expert（均衡分布）
-    - Expert: 2道beginner, 6道intermediate, 12道expert（侧重进阶）
+    - Beginner: 7道beginner, 2道intermediate, 1道expert（侧重基础）
+    - Intermediate: 2道beginner, 6道intermediate, 2道expert（均衡分布）
+    - Expert: 1道beginner, 3道intermediate, 6道expert（侧重进阶）
     
     Args:
         technology: 技术栈名称 (python, react, java等)
         proficiency: 能力级别 (beginner, intermediate, expert)
         
     Returns:
-        包含20道题目的测验数据（不包含答案和解析）
+        包含10道题目的测验数据（不包含答案和解析）
         
     Raises:
         HTTPException: 404 - 测验不存在
@@ -312,10 +312,10 @@ async def get_tech_assessment(
         selected_questions.extend(selected)
     
     # 验证题目总数
-    if len(selected_questions) < 20:
+    if len(selected_questions) < 10:
         raise HTTPException(
             status_code=400,
-            detail=f"Insufficient questions in pool. Required: 20, Available: {len(selected_questions)}"
+            detail=f"Insufficient questions in pool. Required: 10, Available: {len(selected_questions)}"
         )
     
     # 随机打乱题目顺序

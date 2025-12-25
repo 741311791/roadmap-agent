@@ -14,11 +14,12 @@ logger = structlog.get_logger()
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=False,  # 关闭 SQL 查询日志输出，避免终端信息过载
-    pool_size=20,  # 增加连接池大小
-    max_overflow=40,  # 增加溢出连接数
+    pool_size=10,  # 连接池大小（降低以避免竞争）
+    max_overflow=20,  # 溢出连接数（降低以避免耗尽）
     pool_pre_ping=True,  # 连接前 ping 检查
-    pool_recycle=3600,  # 1小时回收连接，避免长时间连接过期
+    pool_recycle=1800,  # 30分钟回收连接（缩短以避免连接过期）
     pool_timeout=30,  # 获取连接的超时时间（秒）
+    pool_use_lifo=True,  # 使用 LIFO 模式，优先复用最近使用的连接
     connect_args={
         "server_settings": {
             "application_name": "roadmap_agent",
@@ -60,83 +61,85 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     特别说明：
     - 会话在请求结束时自动 commit/rollback
     - 处理连接超时异常，避免服务器关闭连接导致的错误
+    - 处理流式传输中断（GeneratorExit），避免会话状态冲突
+    - 使用 context manager 确保连接正确释放
     """
-    session = AsyncSessionLocal()
-    try:
-        yield session
-        
-        # 尝试 commit，如果连接已经关闭则忽略
+    async with AsyncSessionLocal() as session:
         try:
-            await session.commit()
-        except Exception as commit_error:
-            # 检查是否是连接超时相关的异常
-            error_msg = str(commit_error).lower()
+            yield session
+            
+            # 尝试 commit，如果连接已经关闭则忽略
+            try:
+                await session.commit()
+            except Exception as commit_error:
+                # 检查是否是连接超时相关的异常
+                error_msg = str(commit_error).lower()
+                is_connection_error = any(
+                    keyword in error_msg
+                    for keyword in [
+                        "connection",
+                        "timeout",
+                        "closed",
+                        "does not exist",
+                        "terminated",
+                    ]
+                )
+                
+                if is_connection_error:
+                    logger.warning(
+                        "db_session_commit_connection_error",
+                        error=str(commit_error),
+                        error_type=type(commit_error).__name__,
+                        message="数据库连接已关闭，跳过 commit（数据可能已提交或无需提交）",
+                    )
+                    # 连接错误时不抛出异常，因为：
+                    # 1. 查询操作可能已经完成并返回数据
+                    # 2. 如果有写操作，数据库会自动回滚
+                else:
+                    # 非连接错误，正常抛出
+                    logger.error(
+                        "db_session_commit_failed",
+                        error=str(commit_error),
+                        error_type=type(commit_error).__name__,
+                    )
+                    raise
+        
+        except GeneratorExit:
+            # 客户端断开连接（常见于 SSE 流式传输中断）
+            # 此时不应尝试 commit/rollback，直接让会话关闭即可
+            logger.info(
+                "db_session_generator_exit",
+                message="客户端断开连接，会话将被清理（无需 commit/rollback）",
+            )
+            # 不抛出异常，避免产生 "Task exception was never retrieved" 警告
+            # 会话将由 context manager 自动清理
+            
+        except Exception as e:
+            # 捕获其他异常，尝试回滚
+            error_msg = str(e).lower()
             is_connection_error = any(
                 keyword in error_msg
-                for keyword in [
-                    "connection",
-                    "timeout",
-                    "closed",
-                    "does not exist",
-                    "terminated",
-                ]
+                for keyword in ["connection", "timeout", "closed", "does not exist"]
             )
             
             if is_connection_error:
                 logger.warning(
-                    "db_session_commit_connection_error",
-                    error=str(commit_error),
-                    error_type=type(commit_error).__name__,
-                    message="数据库连接已关闭，跳过 commit（数据可能已提交或无需提交）",
+                    "db_session_rollback_connection_error",
+                    error=str(e),
+                    error_type=type(e).__name__,
+                    message="数据库连接已关闭，跳过 rollback",
                 )
-                # 连接错误时不抛出异常，因为：
-                # 1. 查询操作可能已经完成并返回数据
-                # 2. 如果有写操作，数据库会自动回滚
             else:
-                # 非连接错误，正常抛出
-                logger.error(
-                    "db_session_commit_failed",
-                    error=str(commit_error),
-                    error_type=type(commit_error).__name__,
-                )
-                raise
-                
-    except Exception as e:
-        # 捕获其他异常，尝试回滚
-        error_msg = str(e).lower()
-        is_connection_error = any(
-            keyword in error_msg
-            for keyword in ["connection", "timeout", "closed", "does not exist"]
-        )
-        
-        if is_connection_error:
-            logger.warning(
-                "db_session_rollback_connection_error",
-                error=str(e),
-                error_type=type(e).__name__,
-                message="数据库连接已关闭，跳过 rollback",
-            )
-        else:
-            # 非连接错误，尝试回滚
-            try:
-                await session.rollback()
-            except Exception as rollback_error:
-                logger.error(
-                    "db_session_rollback_failed",
-                    original_error=str(e),
-                    rollback_error=str(rollback_error),
-                )
-        
-        raise
-        
-    finally:
-        # 确保会话被关闭
-        try:
-            await session.close()
-        except Exception as close_error:
-            logger.warning(
-                "db_session_close_failed",
-                error=str(close_error),
-                error_type=type(close_error).__name__,
-            )
+                # 非连接错误，尝试回滚
+                try:
+                    await session.rollback()
+                except Exception as rollback_error:
+                    logger.error(
+                        "db_session_rollback_failed",
+                        original_error=str(e),
+                        rollback_error=str(rollback_error),
+                    )
+            
+            raise
+        # context manager 会自动关闭会话
 

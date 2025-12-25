@@ -385,9 +385,9 @@ class TutorialGeneratorAgent(BaseAgent):
             tutorial_id = str(uuid.uuid4())
             
             # 上传到 S3
-            s3_tool = tool_registry.get("minio_storage_v1")
+            s3_tool = tool_registry.get("s3_storage_v1")
             if not s3_tool:
-                raise RuntimeError("MinIO Storage Tool 未注册")
+                raise RuntimeError("S3 Storage Tool 未注册")
             
             # 构建 S3 Key（包含版本号）
             roadmap_id = context.get("roadmap_id", "unknown")
@@ -690,9 +690,9 @@ class TutorialGeneratorAgent(BaseAgent):
                 tutorial_id = str(uuid.uuid4())
                 
                 # 上传到 S3
-                s3_tool = tool_registry.get("minio_storage_v1")
+                s3_tool = tool_registry.get("s3_storage_v1")
                 if not s3_tool:
-                    raise RuntimeError("MinIO Storage Tool 未注册")
+                    raise RuntimeError("S3 Storage Tool 未注册")
                 
                 # 构建 S3 Key（包含版本号）
                 roadmap_id = context.get("roadmap_id", "unknown")

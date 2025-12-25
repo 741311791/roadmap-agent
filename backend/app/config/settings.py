@@ -75,12 +75,12 @@ class Settings(BaseSettings):
             f"&connect_timeout=30&options=-c%20statement_timeout%3D120s"
         )
     
-    # ==================== S3/MinIO 配置 ====================
-    S3_ENDPOINT_URL: str = Field("http://localhost:9000", description="S3 兼容端点（MinIO）")
+    # ==================== S3/R2 对象存储配置 ====================
+    S3_ENDPOINT_URL: str = Field("http://localhost:9000", description="S3 兼容端点（Cloudflare R2 或 MinIO）")
     S3_ACCESS_KEY_ID: str = Field("minioadmin", description="访问密钥 ID")
     S3_SECRET_ACCESS_KEY: str = Field("minioadmin123", description="访问密钥")
     S3_BUCKET_NAME: str = Field("roadmap-content", description="存储桶名称")
-    S3_REGION: str | None = Field(None, description="区域（MinIO 可留空）")
+    S3_REGION: str | None = Field("auto", description="区域（R2 使用 'auto'，MinIO 可留空）")
     
     # ==================== Web Search 配置 ====================
     TAVILY_API_KEY: str | None = Field(None, description="Tavily API 密钥（可选，单个 Key）")

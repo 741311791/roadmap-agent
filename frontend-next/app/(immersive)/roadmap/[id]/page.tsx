@@ -192,8 +192,9 @@ export default function RoadmapDetailPage() {
     setTutorialContent(undefined); // 先清空显示加载状态
     try {
       const meta = await getLatestTutorial(roadmapId, conceptId);
-      if (meta?.content_url) {
-        const text = await downloadTutorialContent(meta.content_url);
+      if (meta && meta.content_status === 'completed') {
+        // 通过后端代理下载内容（解决 CORS 问题）
+        const text = await downloadTutorialContent(roadmapId, conceptId);
         setTutorialContent(text);
       } else {
         setTutorialContent('# No content available yet\n\nThis concept is still being generated or is pending.');

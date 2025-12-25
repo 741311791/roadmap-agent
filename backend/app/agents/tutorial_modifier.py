@@ -239,7 +239,7 @@ class TutorialModifierAgent(BaseAgent):
             )
             
             # 获取 S3 存储工具
-            s3_tool = tool_registry.get("minio_storage_v1")
+            s3_tool = tool_registry.get("s3_storage_v1")
             if not s3_tool:
                 raise RuntimeError("S3 Storage Tool 未注册")
             
@@ -410,7 +410,7 @@ class TutorialModifierAgent(BaseAgent):
         s3_key = f"{roadmap_id}/concepts/{concept_id}/v{version}.md"
         
         # 获取 S3 存储工具
-        s3_tool = tool_registry.get("minio_storage_v1")
+        s3_tool = tool_registry.get("s3_storage_v1")
         if not s3_tool:
             raise RuntimeError("S3 Storage Tool 未注册")
         

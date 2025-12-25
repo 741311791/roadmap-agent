@@ -10,7 +10,7 @@ from app.api.v1.router import router as api_router_v1
 from app.api.v1.websocket import router as websocket_router
 from app.config.settings import settings
 from app.core.dependencies import init_orchestrator, cleanup_orchestrator
-from app.db.minio_init import ensure_bucket_exists
+from app.db.s3_init import ensure_bucket_exists
 from app.services.task_recovery_service import recover_interrupted_tasks_on_startup
 
 
@@ -25,7 +25,7 @@ async def lifespan(app: FastAPI):
     # 初始化全局 orchestrator 和 Redis 连接
     await init_orchestrator()
     
-    # 初始化 MinIO bucket（如果不存在则创建）
+    # 初始化 S3 兼容存储 bucket（如果不存在则创建）
     await ensure_bucket_exists()
     
     # 恢复被中断的任务（服务器重启后自动恢复）
