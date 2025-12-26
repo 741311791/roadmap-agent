@@ -85,7 +85,7 @@ app = FastAPI(
 # 配置 CORS 中间件（从环境变量读取允许的域名）
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=settings.get_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

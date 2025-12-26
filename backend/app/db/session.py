@@ -11,14 +11,18 @@ from app.config.settings import settings
 logger = structlog.get_logger()
 
 # 创建异步引擎
+# 生产环境配置（数据库最大连接数 200）
+# - pool_size=40: 基础连接池（常驻连接）
+# - max_overflow=60: 溢出连接（高峰期临时连接）
+# - 总计: 100 个连接（预留 100 个给其他服务/管理连接）
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=False,  # 关闭 SQL 查询日志输出，避免终端信息过载
-    pool_size=10,  # 连接池大小（降低以避免竞争）
-    max_overflow=20,  # 溢出连接数（降低以避免耗尽）
-    pool_pre_ping=True,  # 连接前 ping 检查
+    pool_size=40,  # 连接池大小（生产环境调大以应对高并发）
+    max_overflow=60,  # 溢出连接数（允许更多临时连接）
+    pool_pre_ping=True,  # 连接前 ping 检查（防止使用已断开的连接）
     pool_recycle=1800,  # 30分钟回收连接（缩短以避免连接过期）
-    pool_timeout=30,  # 获取连接的超时时间（秒）
+    pool_timeout=60,  # 获取连接的超时时间（增加到 60 秒，应对 Railway 网络延迟）
     pool_use_lifo=True,  # 使用 LIFO 模式，优先复用最近使用的连接
     connect_args={
         "server_settings": {
@@ -26,7 +30,7 @@ engine = create_async_engine(
             "jit": "off",  # 禁用 JIT，可能提高稳定性
         },
         "command_timeout": 300,  # 命令超时 300 秒（5分钟），避免长时间运行的查询超时
-        "timeout": 30,  # 连接超时 30 秒
+        "timeout": 60,  # 连接超时 60 秒（增加以应对 Railway 网络延迟）
     },
 )
 
