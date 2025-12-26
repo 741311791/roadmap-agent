@@ -406,7 +406,12 @@ class TutorialModifierAgent(BaseAgent):
         content: str,
         version: int,
     ) -> str:
-        """上传新版本到 S3"""
+        """
+        上传新版本到 S3
+        
+        Returns:
+            S3 Key（不是预签名 URL）
+        """
         s3_key = f"{roadmap_id}/concepts/{concept_id}/v{version}.md"
         
         # 获取 S3 存储工具
@@ -432,7 +437,8 @@ class TutorialModifierAgent(BaseAgent):
             size_bytes=upload_result.size_bytes,
         )
         
-        return upload_result.url
+        # ✅ 返回 S3 Key 而不是预签名 URL
+        return s3_key
     
     async def execute(self, input_data: TutorialModificationInput) -> TutorialModificationOutput:
         """实现基类的抽象方法"""

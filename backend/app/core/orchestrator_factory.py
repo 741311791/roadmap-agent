@@ -72,6 +72,7 @@ class OrchestratorFactory:
             # - max_idle=180: 空闲连接最多保持 3 分钟（缩短以快速释放）
             # - timeout=60: 获取连接超时 60 秒（增加以应对 Railway 网络延迟）
             # - reconnect_timeout=0: 自动重连
+            # - open=False: 避免弃用警告，显式调用 await pool.open()
             # 总连接数预算: SQLAlchemy(100) + Checkpointer(10) = 110/200
             cls._connection_pool = AsyncConnectionPool(
                 conninfo=settings.CHECKPOINTER_DATABASE_URL,
@@ -80,6 +81,7 @@ class OrchestratorFactory:
                 max_idle=180,
                 timeout=60,
                 reconnect_timeout=0,  # 自动重连
+                open=False,  # 禁用构造函数自动打开（避免 DeprecationWarning）
                 kwargs={
                     "autocommit": True,
                     "prepare_threshold": 0,

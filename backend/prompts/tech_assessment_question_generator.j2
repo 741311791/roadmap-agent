@@ -50,6 +50,12 @@
    - 避免明显错误的选项（如语法错误、无意义的内容）
    - 干扰项应与正确答案在同一知识维度上
 
+5. **代码格式要求（重要）**:
+   - **如果题目或选项中包含代码片段，必须使用 Markdown 代码块格式**
+   - 使用三个反引号 ` ``` ` 包裹代码，并指定语言（如 python, javascript, sql 等）
+   - 示例：` ```python\ncode here\n``` `
+   - 这样可以确保前端能正确渲染代码高亮和格式
+
 ## 输出格式
 请严格按照以下 JSON 格式输出（不要包含任何其他文字，不要使用 markdown 代码块包裹）:
 
@@ -71,7 +77,21 @@
 
 ## 示例
 
-### 单选题示例（Python intermediate 级别）
+### 单选题示例（Python intermediate 级别 - 包含代码）
+{
+  "question": "在 Python 中，以下代码的输出结果是什么？\n\n```python\nfrom datetime import datetime, timezone, timedelta\n\nlocal_tz = timezone(timedelta(hours=8))\nnaive_dt = datetime(2023, 10, 1, 12, 0, 0)\naware_dt = naive_dt.replace(tzinfo=local_tz)\ntimestamp = aware_dt.timestamp()\nresult = datetime.utcfromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')\nprint(result)\n```",
+  "type": "single_choice",
+  "options": [
+    "2023-10-01 12:00:00",
+    "2023-10-01 04:00:00",
+    "2023-10-01 20:00:00",
+    "2023-10-01 00:00:00"
+  ],
+  "correct_answer": "2023-10-01 04:00:00",
+  "explanation": "代码将本地时间（UTC+8）转换为 UTC 时间，因此 12:00 减去 8 小时得到 04:00。"
+}
+
+### 单选题示例（Python intermediate 级别 - 概念题）
 {
   "question": "在 Python 中，以下哪种方式可以正确实现一个带参数的装饰器？",
   "type": "single_choice",
@@ -82,7 +102,7 @@
     "@decorator(arg) def func(): pass"
   ],
   "correct_answer": "def decorator(arg): def outer(func): def inner(*args, **kwargs): return func(*args, **kwargs); return inner; return outer",
-  "explanation": "带参数的装饰器需要三层嵌套：最外层接收装饰器参数，中间层接收被装饰函数，最内层是实际执行的包装函数。"
+  "explanation": "带参数的装饰器需要三层嵌套：最外层接收装饰器参数,中间层接收被装饰函数，最内层是实际执行的包装函数。"
 }
 
 ### 多选题示例（JavaScript intermediate 级别）

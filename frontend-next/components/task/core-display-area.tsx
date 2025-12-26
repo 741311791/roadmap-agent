@@ -73,11 +73,14 @@ interface CoreDisplayAreaProps {
 
 /**
  * 判断是否应该显示需求分析卡片
+ * 
+ * 只有在 intentAnalysis 数据存在时才显示，避免在 intent_analysis 阶段未完成时显示加载状态
  */
 function shouldShowIntentCard(currentStep: string | null, intentAnalysis?: IntentAnalysisOutput | null): boolean {
+  // 必须有数据才显示
   if (!intentAnalysis || !currentStep) return false;
   
-  // intent_analysis 完成后的任何阶段都显示
+  // intent_analysis 完成后的任何阶段都显示（不包括 intent_analysis 阶段本身，因为此时数据可能还未完成）
   const stepsAfterIntent = [
     'curriculum_design',
     'framework_generation',
@@ -95,7 +98,7 @@ function shouldShowIntentCard(currentStep: string | null, intentAnalysis?: Inten
     'completed',
   ];
   
-  return stepsAfterIntent.includes(currentStep) || currentStep === 'intent_analysis';
+  return stepsAfterIntent.includes(currentStep);
 }
 
 /**
@@ -406,10 +409,17 @@ export function CoreDisplayArea({
   const showRoadmap = shouldShowRoadmap(currentStep, roadmapFramework);
   const isEditing = isRoadmapEditing(currentStep, isEditingRoadmap);
   
-  // 加载状态：还没有任何数据
-  const isLoading = !showIntentCard && !showRoadmap && 
-    !['completed', 'failed'].includes(status) &&
-    currentStep && !['completed', 'failed'].includes(currentStep);
+  // 加载状态：
+  // 1. 任务还在运行中（未完成/失败）
+  // 2. 当前步骤存在且不是完成/失败状态
+  // 3. intent_analysis 数据不存在（即使在后续阶段，也说明数据未加载）
+  // 4. 或者既不显示 Intent 卡片也不显示路线图（正在生成初始阶段）
+  const isLoading = !['completed', 'failed'].includes(status) &&
+    currentStep && 
+    !['completed', 'failed'].includes(currentStep) &&
+    !intentAnalysis && // Intent Analysis 未完成时才显示骨架加载
+    !showIntentCard && 
+    !showRoadmap;
   
   // 骨架状态
   if (isLoading) {

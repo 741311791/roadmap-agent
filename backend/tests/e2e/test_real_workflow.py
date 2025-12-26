@@ -198,7 +198,7 @@ class TestRealWorkflow:
             # 验证数据库中的状态
             async with AsyncSessionLocal() as session:
                 repo = RoadmapRepository(session)
-                task = await repo.get_task_by_id(task_id)
+                task = await repo.get_task(task_id)
                 
                 assert task is not None
                 assert task.roadmap_id is not None

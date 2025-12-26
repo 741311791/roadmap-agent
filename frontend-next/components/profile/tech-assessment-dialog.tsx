@@ -200,25 +200,28 @@ export function TechAssessmentDialog({
       <Dialog open={open} onOpenChange={handleClose}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <div className="flex items-center justify-between">
-              <DialogTitle className="text-2xl font-serif">
-                {technology} - {proficiency} Assessment
-              </DialogTitle>
-              
-              {/* View historical report button */}
-              {historicalAnalysis && !result && !analysisResult && (
+            <DialogTitle className="text-2xl font-serif">
+              {technology} - {proficiency} Assessment
+            </DialogTitle>
+            
+            {/* View historical report button - 放在标题下方，避免与关闭按钮冲突 */}
+            {historicalAnalysis && !result && !analysisResult && (
+              <div className="mt-3">
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={handleViewHistory}
                   disabled={isLoadingHistory}
-                  className="gap-2"
+                  className="gap-2 border-sage-300 text-sage-700 hover:bg-sage-50 hover:border-sage-400 font-medium shadow-sm"
                 >
                   <History className="w-4 h-4" />
                   View Last Analysis
+                  <span className="ml-1 px-1.5 py-0.5 rounded-md bg-sage-100 text-xs text-sage-700">
+                    Available
+                  </span>
                 </Button>
-              )}
-            </div>
+              </div>
+            )}
           </DialogHeader>
 
           {isLoading ? (

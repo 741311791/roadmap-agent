@@ -77,14 +77,14 @@ class Settings(BaseSettings):
         - keepalives_idle=30: 空闲 30 秒后发送 keepalive（默认是 2 小时）
         - keepalives_interval=10: keepalive 间隔 10 秒
         - keepalives_count=5: 最大重试 5 次
-        - connect_timeout=60: 连接超时 60 秒（增加以应对 Railway 网络延迟）
+        - connect_timeout=30: 连接超时 30 秒（增加以应对网络延迟）
         - options=-c statement_timeout=120s: SQL 语句执行超时 120 秒（防止大数据量写入超时）
         """
         return (
             f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
             f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
             f"?keepalives=1&keepalives_idle=30&keepalives_interval=10&keepalives_count=5"
-            f"&connect_timeout=60&options=-c%20statement_timeout%3D120s"
+            f"&connect_timeout=30&options=-c%20statement_timeout%3D120s"
         )
     
     # ==================== S3/R2 对象存储配置 ====================

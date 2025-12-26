@@ -72,7 +72,8 @@ class ReviewRunner:
         try:
             async with AsyncSessionLocal() as session:
                 repo = RoadmapRepository(session)
-                task = await repo.get_task_by_id(task_id)
+                # 修复：使用正确的方法名 get_task 而不是 get_task_by_id
+                task = await repo.get_task(task_id)
                 
                 if task and task.status == "human_review_pending":
                     logger.debug(

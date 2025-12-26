@@ -261,35 +261,31 @@ async def download_latest_tutorial_content(
             detail=f"Tutorial is not ready yet (status: {tutorial.content_status})"
         )
     
-    # 2. 从 content_url 提取 S3 key 和 bucket
+    # 2. 从 content_url 提取 S3 key
+    # content_url 现在存储的是 S3 Key（格式：roadmap_id/concepts/concept_id/vN.md）
+    # 或者历史数据可能是完整的预签名 URL
     content_url = tutorial.content_url
     s3_key = content_url
-    s3_bucket = None  # 从 URL 中提取，或使用默认值
+    s3_bucket = None
     
-    # 如果是完整 URL，提取 bucket 和 key
+    # 如果是完整 URL（历史数据兼容），提取 key
     if "://" in content_url:
-        # URL 格式可能是：
-        # - R2: https://xxx.r2.cloudflarestorage.com/roadmap-content/key...
-        # - MinIO: http://47.111.115.130:9000/roadmap/key...
+        # URL 格式示例：
+        # - R2: https://xxx.r2.cloudflarestorage.com/roadmap-content/key?signature=...
+        # - MinIO: http://47.111.115.130:9000/bucket/key?signature=...
         
         parts = content_url.split("/")
         
         # 尝试识别 bucket（通常在 host 后的第一个部分）
-        # MinIO: protocol://host:port/bucket/key...
-        # R2: protocol://host/bucket/key...
-        
         if len(parts) >= 4:
-            # 假设 parts[3] 是 bucket
             potential_bucket = parts[3]
             
             # 检查这是否是合法的 bucket 名称
-            # bucket 名称通常不包含 % 编码，且不是 key 的一部分
             if "%" not in potential_bucket and ":" not in potential_bucket:
                 s3_bucket = potential_bucket
-                # key 从 bucket 后开始
                 s3_key = "/".join(parts[4:])
             else:
-                # 如果无法识别 bucket，使用默认值
+                # 无法识别，使用默认值
                 from app.config.settings import settings
                 s3_bucket = settings.S3_BUCKET_NAME
                 s3_key = "/".join(parts[4:])
@@ -303,7 +299,7 @@ async def download_latest_tutorial_content(
     if "?" in s3_key:
         s3_key = s3_key.split("?")[0]
     
-    # 解码 URL 编码的字符（如 %3A -> :）
+    # 解码 URL 编码的字符
     s3_key = unquote(s3_key)
     
     logger.info(

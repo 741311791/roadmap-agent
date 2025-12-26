@@ -317,8 +317,9 @@ class ContentRunner:
                     for prereq_id in concept.prerequisites:
                         prereq_concept = concept_map.get(prereq_id)
                         if prereq_concept:
-                            # 构造概念跳转URL
-                            prereq_url = f"/roadmap/{roadmap_id}?concept={prereq_id}"
+                            # 构造概念跳转URL（对 concept_id 进行 URL 编码，处理冒号等特殊字符）
+                            from urllib.parse import quote
+                            prereq_url = f"/roadmap/{roadmap_id}?concept={quote(prereq_id)}"
                             prerequisite_details.append({
                                 "concept_id": prereq_id,
                                 "name": prereq_concept.name,

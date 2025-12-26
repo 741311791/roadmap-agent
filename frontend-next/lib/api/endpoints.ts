@@ -332,6 +332,7 @@ export interface TutorialContent {
   content?: string;
   content_url?: string;
   content_version?: number;
+  content_status?: 'completed' | 'generating' | 'failed';
   estimated_completion_time?: number;
   version: number;
   generated_at: string;

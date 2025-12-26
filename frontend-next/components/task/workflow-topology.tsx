@@ -395,8 +395,13 @@ export function WorkflowTopology({
       return 'skipped';
     }
     
-    // 如果当前不在此分支上
+    // 关键修复：如果当前不在此分支上，但分支已被触发过，节点应显示为 completed
     if (!stepLocation.isOnBranch || stepLocation.branchType !== branchType) {
+      // 如果分支被触发过，说明已经执行完成并返回主路
+      if (wasBranchTriggered) {
+        return 'completed';
+      }
+      // 否则显示为等待状态
       return 'pending';
     }
 

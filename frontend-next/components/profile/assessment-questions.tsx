@@ -9,6 +9,10 @@ import { Label } from '@/components/ui/label';
 import { CheckCircle2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { TechAssessment } from '@/types/assessment';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeHighlight from 'rehype-highlight';
+import 'highlight.js/styles/github-dark.css';
 
 interface AssessmentQuestionsProps {
   assessment: TechAssessment | null;
@@ -16,6 +20,61 @@ interface AssessmentQuestionsProps {
   onAnswerChange: (answers: Record<number, string>) => void;
   onSubmit: () => void;
   isSubmitting: boolean;
+}
+
+/**
+ * QuestionMarkdown - 为测验题目内容提供的轻量级 Markdown 渲染器
+ * 支持代码块语法高亮，适用于包含代码的题目和选项
+ */
+function QuestionMarkdown({ content }: { content: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      rehypePlugins={[rehypeHighlight]}
+      components={{
+        // 代码块渲染
+        code({ node, className, children, ...props }) {
+          const isInline = !className?.includes('language-');
+          const match = /language-(\w+)/.exec(className || '');
+          const language = match ? match[1] : '';
+          const code = String(children).replace(/\n$/, '');
+
+          if (!isInline && language) {
+            // 多行代码块 - 精简样式，移除冗余标签栏
+            return (
+              <div className="my-2 rounded-lg overflow-hidden border border-slate-700/30 bg-slate-950/95 shadow-sm">
+                <pre className="p-3 overflow-x-auto text-sm">
+                  <code className={className} {...props}>
+                    {children}
+                  </code>
+                </pre>
+              </div>
+            );
+          }
+
+          // 行内代码 - 增强对比度
+          return (
+            <code
+              className="px-2 py-0.5 rounded-md bg-sage-50 text-sage-900 text-sm font-mono border border-sage-300/50 font-semibold"
+              {...props}
+            >
+              {children}
+            </code>
+          );
+        },
+        // 段落样式
+        p({ children }) {
+          return <span className="block leading-relaxed">{children}</span>;
+        },
+        // 禁用其他不需要的元素以保持紧凑
+        h1: ({ children }) => <strong className="text-lg">{children}</strong>,
+        h2: ({ children }) => <strong className="text-base">{children}</strong>,
+        h3: ({ children }) => <strong className="text-base">{children}</strong>,
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  );
 }
 
 export function AssessmentQuestions({
@@ -36,13 +95,13 @@ export function AssessmentQuestions({
   const getProficiencyBadgeVariant = (proficiency?: string) => {
     switch (proficiency) {
       case 'beginner':
-        return 'bg-sage-50 text-sage-700 border-sage-200';
+        return 'bg-emerald-50 text-emerald-700 border-emerald-300';
       case 'intermediate':
-        return 'bg-stone-100 text-stone-700 border-stone-200';
+        return 'bg-amber-50 text-amber-700 border-amber-300';
       case 'expert':
-        return 'bg-stone-800 text-white border-stone-700';
+        return 'bg-rose-50 text-rose-700 border-rose-300';
       default:
-        return 'bg-stone-50 text-stone-600 border-stone-200';
+        return 'bg-stone-50 text-stone-700 border-stone-300';
     }
   };
 
@@ -94,27 +153,27 @@ export function AssessmentQuestions({
                 {/* Question Content */}
                 <div className="flex-1 pt-0.5">
                   {/* Proficiency Badge */}
-                  <div className="flex items-center gap-2 mb-3">
+                  <div className="flex items-center gap-3 mb-3">
                     <span className={cn(
-                      "inline-flex px-2.5 py-1 rounded-md text-[10px] font-semibold border uppercase tracking-wider",
+                      "inline-flex px-3 py-1.5 rounded-lg text-xs font-bold border-2 uppercase tracking-wider shadow-sm",
                       getProficiencyBadgeVariant(question.proficiency_level)
                     )}>
                       {getProficiencyLabel(question.proficiency_level)}
                     </span>
-                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">
-                      {isMultipleChoice ? 'Select All' : 'Choose One'}
+                    <span className="text-xs text-slate-600 uppercase tracking-wide font-semibold">
+                      {isMultipleChoice ? '✓ Select All' : '◉ Choose One'}
                     </span>
                   </div>
 
                   {/* Question Text */}
-                  <p className="text-base font-medium text-foreground leading-relaxed font-serif">
-                    {question.question}
-                  </p>
+                  <div className="text-base font-medium text-foreground leading-relaxed font-serif">
+                    <QuestionMarkdown content={question.question} />
+                  </div>
                 </div>
               </div>
 
               {/* Options */}
-              <div className="space-y-3 pl-14">
+              <div className="space-y-4 pl-10">
                 {isMultipleChoice ? (
                   // Multiple Choice (Checkboxes)
                   <div className="space-y-3">
@@ -127,20 +186,24 @@ export function AssessmentQuestions({
                         <label
                           key={optIndex}
                           className={cn(
-                            "group flex items-center gap-3 px-4 py-3.5 rounded-xl border transition-all duration-200 cursor-pointer text-sm",
-                            "hover:border-sage-400 hover:bg-sage-50 hover:shadow-sm",
-                            isChecked ? "border-sage-500 bg-sage-100 shadow-sm" : "border-sage-200/80 bg-white/80"
+                            "group flex items-center gap-4 px-5 py-4 rounded-xl border-2 transition-all duration-200 cursor-pointer",
+                            "hover:border-sage-400 hover:bg-sage-50/80 hover:shadow-md hover:-translate-y-0.5",
+                            isChecked 
+                              ? "border-sage-600 bg-gradient-to-br from-sage-50 to-sage-100 shadow-lg ring-2 ring-sage-200" 
+                              : "border-sage-200 bg-white hover:border-sage-300"
                           )}
                         >
                           <div className={cn(
-                            "flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center transition-all duration-200 text-xs font-semibold",
-                            isChecked ? "bg-sage-600 text-white" : "bg-sage-100 text-sage-600 group-hover:bg-sage-200"
+                            "flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 text-sm font-bold",
+                            isChecked 
+                              ? "bg-sage-600 text-white shadow-md scale-110" 
+                              : "bg-gradient-to-br from-sage-50 to-sage-100 text-sage-700 group-hover:from-sage-100 group-hover:to-sage-200"
                           )}>
-                            {isChecked ? <CheckCircle2 className="w-4 h-4" /> : optionLetter}
+                            {isChecked ? <CheckCircle2 className="w-5 h-5" /> : optionLetter}
                           </div>
-                          <span className="flex-1 leading-relaxed text-foreground">
-                            {option}
-                          </span>
+                          <div className="flex-1 leading-relaxed text-foreground text-sm">
+                            <QuestionMarkdown content={option} />
+                          </div>
                           <Checkbox
                             id={`q${index}-opt${optIndex}`}
                             checked={isChecked}
@@ -183,9 +246,11 @@ export function AssessmentQuestions({
                             key={optIndex}
                             htmlFor={`q${index}-opt${optIndex}`}
                             className={cn(
-                              "group flex items-center gap-3 px-4 py-3.5 rounded-xl border transition-all duration-200 cursor-pointer text-sm",
-                              "hover:border-sage-400 hover:bg-sage-50 hover:shadow-sm",
-                              isSelected ? "border-sage-500 bg-sage-100 shadow-sm" : "border-sage-200/80 bg-white/80"
+                              "group flex items-center gap-4 px-5 py-4 rounded-xl border-2 transition-all duration-200 cursor-pointer",
+                              "hover:border-sage-400 hover:bg-sage-50/80 hover:shadow-md hover:-translate-y-0.5",
+                              isSelected 
+                                ? "border-sage-600 bg-gradient-to-br from-sage-50 to-sage-100 shadow-lg ring-2 ring-sage-200" 
+                                : "border-sage-200 bg-white hover:border-sage-300"
                             )}
                           >
                             <div className={cn(
@@ -194,9 +259,9 @@ export function AssessmentQuestions({
                             )}>
                               {optionLetter}
                             </div>
-                            <span className="flex-1 leading-relaxed text-foreground">
-                              {option}
-                            </span>
+                            <div className="flex-1 leading-relaxed text-foreground text-sm">
+                              <QuestionMarkdown content={option} />
+                            </div>
                             <RadioGroupItem
                               value={option}
                               id={`q${index}-opt${optIndex}`}

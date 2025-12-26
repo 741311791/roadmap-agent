@@ -403,12 +403,15 @@ class TutorialGeneratorAgent(BaseAgent):
             upload_result = await s3_tool.execute(upload_request)
             
             # 构建输出（包含版本信息）
+            # ⚠️ 重要：content_url 存储 S3 Key（不是预签名 URL）
+            # 这样可以避免 7 天后链接失效的问题
+            # 前端通过后端代理端点下载：GET /api/v1/roadmaps/{roadmap_id}/concepts/{concept_id}/tutorials/latest/content
             result = TutorialGenerationOutput(
                 concept_id=concept.concept_id,
                 tutorial_id=tutorial_id,
                 title=metadata.get("title", concept.name),
                 summary=metadata.get("summary", concept.description[:500] if concept.description else ""),
-                content_url=upload_result.url,
+                content_url=s3_key,  # ✅ 存储 S3 Key 而不是预签名 URL
                 content_status="completed",
                 estimated_completion_time=metadata.get("estimated_completion_time", int(concept.estimated_hours * 60)),
                 generated_at=datetime.now(),
@@ -419,7 +422,7 @@ class TutorialGeneratorAgent(BaseAgent):
                 "tutorial_generation_success",
                 concept_id=concept.concept_id,
                 tutorial_id=tutorial_id,
-                content_url=upload_result.url,
+                s3_key=s3_key,  # 记录 S3 Key
                 content_version=content_version,
             )
             return result

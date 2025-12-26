@@ -719,6 +719,11 @@ class WorkflowBrain:
             resource_refs: 资源引用字典 {concept_id: ResourceRecommendationOutput}
             quiz_refs: 测验引用字典 {concept_id: QuizGenerationOutput}
             failed_concepts: 失败的概念 ID 列表
+        
+        特别说明:
+            - 使用独立的数据库会话（不依赖 FastAPI 的 get_db()）
+            - 处理客户端断开连接（GeneratorExit）和数据库连接超时异常
+            - 确保即使客户端断开，内容仍然能被保存（后台持久化）
         """
         logger.info(
             "workflow_brain_save_content_results",
@@ -730,197 +735,246 @@ class WorkflowBrain:
             failed_count=len(failed_concepts),
         )
         
-        async with AsyncSessionLocal() as session:
-            repo = RoadmapRepository(session)
-            
-            # 同一事务中批量保存元数据
-            if tutorial_refs:
-                await repo.save_tutorials_batch(tutorial_refs, roadmap_id)
-            if resource_refs:
-                await repo.save_resources_batch(resource_refs, roadmap_id)
-            if quiz_refs:
-                await repo.save_quizzes_batch(quiz_refs, roadmap_id)
-            
-            # ============================================================
-            # BUG FIX: 更新 roadmap_metadata 的 framework_data
-            # ============================================================
-            # 读取当前的 framework，更新 Concept 中的内容引用，然后保存回数据库
-            logger.info(
-                "workflow_brain_reading_roadmap_metadata",
-                roadmap_id=roadmap_id,
-            )
-            roadmap_metadata = await repo.get_roadmap_metadata(roadmap_id)
-            logger.info(
-                "workflow_brain_roadmap_metadata_read",
-                roadmap_id=roadmap_id,
-                found=roadmap_metadata is not None,
-                has_framework_data=bool(roadmap_metadata.framework_data) if roadmap_metadata else False,
-            )
-            if roadmap_metadata and roadmap_metadata.framework_data:
-                try:
-                    # ========================================================
-                    # DEBUG: 记录更新前的 framework 状态（抽样检查第一个 concept）
-                    # ========================================================
-                    original_framework = roadmap_metadata.framework_data
-                    sample_concept_before = None
-                    if original_framework.get("stages"):
-                        first_stage = original_framework["stages"][0]
-                        if first_stage.get("modules"):
-                            first_module = first_stage["modules"][0]
-                            if first_module.get("concepts"):
-                                sample_concept_before = first_module["concepts"][0].copy()
-                    
-                    logger.info(
-                        "workflow_brain_framework_before_update",
-                        roadmap_id=roadmap_id,
-                        sample_concept_id=sample_concept_before.get("concept_id") if sample_concept_before else None,
-                        sample_content_status=sample_concept_before.get("content_status") if sample_concept_before else None,
-                        sample_content_ref=sample_concept_before.get("content_ref") if sample_concept_before else None,
-                        sample_quiz_id=sample_concept_before.get("quiz_id") if sample_concept_before else None,
-                    )
-                    
-                    # 使用辅助方法更新 framework 中的 Concept 状态
-                    updated_framework = self._update_framework_with_content_refs(
-                        framework_data=roadmap_metadata.framework_data,
-                        tutorial_refs=tutorial_refs,
-                        resource_refs=resource_refs,
-                        quiz_refs=quiz_refs,
-                        failed_concepts=failed_concepts,
-                    )
-                    
-                    # ========================================================
-                    # DEBUG: 记录更新后的 framework 状态（抽样检查第一个 concept）
-                    # ========================================================
-                    sample_concept_after = None
-                    if updated_framework.get("stages"):
-                        first_stage = updated_framework["stages"][0]
-                        if first_stage.get("modules"):
-                            first_module = first_stage["modules"][0]
-                            if first_module.get("concepts"):
-                                sample_concept_after = first_module["concepts"][0]
-                    
-                    logger.info(
-                        "workflow_brain_framework_after_update",
-                        roadmap_id=roadmap_id,
-                        sample_concept_id=sample_concept_after.get("concept_id") if sample_concept_after else None,
-                        sample_content_status=sample_concept_after.get("content_status") if sample_concept_after else None,
-                        sample_content_ref=sample_concept_after.get("content_ref") if sample_concept_after else None,
-                        sample_quiz_id=sample_concept_after.get("quiz_id") if sample_concept_after else None,
-                    )
-                    
-                    # 保存更新后的 framework
-                    from app.models.domain import RoadmapFramework
-                    framework_obj = RoadmapFramework.model_validate(updated_framework)
-                    
-                    # ========================================================
-                    # DEBUG: 验证 Pydantic 模型转换后的状态
-                    # ========================================================
-                    framework_dict_after_pydantic = framework_obj.model_dump()
-                    sample_concept_pydantic = None
-                    if framework_dict_after_pydantic.get("stages"):
-                        first_stage = framework_dict_after_pydantic["stages"][0]
-                        if first_stage.get("modules"):
-                            first_module = first_stage["modules"][0]
-                            if first_module.get("concepts"):
-                                sample_concept_pydantic = first_module["concepts"][0]
-                    
-                    logger.info(
-                        "workflow_brain_framework_after_pydantic_validate",
-                        roadmap_id=roadmap_id,
-                        sample_concept_id=sample_concept_pydantic.get("concept_id") if sample_concept_pydantic else None,
-                        sample_content_status=sample_concept_pydantic.get("content_status") if sample_concept_pydantic else None,
-                        sample_content_ref=sample_concept_pydantic.get("content_ref") if sample_concept_pydantic else None,
-                        sample_quiz_id=sample_concept_pydantic.get("quiz_id") if sample_concept_pydantic else None,
-                    )
-                    
-                    await repo.save_roadmap_metadata(
-                        roadmap_id=roadmap_id,
-                        user_id=roadmap_metadata.user_id,
-                        framework=framework_obj,
-                    )
-                    
-                    # ========================================================
-                    # DEBUG: 保存后立即重新读取，验证数据是否真的被保存
-                    # ========================================================
-                    verification_metadata = await repo.get_roadmap_metadata(roadmap_id)
-                    if verification_metadata and verification_metadata.framework_data:
-                        verify_sample = None
-                        if verification_metadata.framework_data.get("stages"):
-                            first_stage = verification_metadata.framework_data["stages"][0]
+        try:
+            async with AsyncSessionLocal() as session:
+                repo = RoadmapRepository(session)
+                
+                # 同一事务中批量保存元数据
+                if tutorial_refs:
+                    await repo.save_tutorials_batch(tutorial_refs, roadmap_id)
+                if resource_refs:
+                    await repo.save_resources_batch(resource_refs, roadmap_id)
+                if quiz_refs:
+                    await repo.save_quizzes_batch(quiz_refs, roadmap_id)
+                
+                # ============================================================
+                # BUG FIX: 更新 roadmap_metadata 的 framework_data
+                # ============================================================
+                # 读取当前的 framework，更新 Concept 中的内容引用，然后保存回数据库
+                logger.info(
+                    "workflow_brain_reading_roadmap_metadata",
+                    roadmap_id=roadmap_id,
+                )
+                roadmap_metadata = await repo.get_roadmap_metadata(roadmap_id)
+                logger.info(
+                    "workflow_brain_roadmap_metadata_read",
+                    roadmap_id=roadmap_id,
+                    found=roadmap_metadata is not None,
+                    has_framework_data=bool(roadmap_metadata.framework_data) if roadmap_metadata else False,
+                )
+                if roadmap_metadata and roadmap_metadata.framework_data:
+                    try:
+                        # ========================================================
+                        # DEBUG: 记录更新前的 framework 状态（抽样检查第一个 concept）
+                        # ========================================================
+                        original_framework = roadmap_metadata.framework_data
+                        sample_concept_before = None
+                        if original_framework.get("stages"):
+                            first_stage = original_framework["stages"][0]
                             if first_stage.get("modules"):
                                 first_module = first_stage["modules"][0]
                                 if first_module.get("concepts"):
-                                    verify_sample = first_module["concepts"][0]
+                                    sample_concept_before = first_module["concepts"][0].copy()
                         
                         logger.info(
-                            "workflow_brain_framework_verification_after_save",
+                            "workflow_brain_framework_before_update",
                             roadmap_id=roadmap_id,
-                            sample_concept_id=verify_sample.get("concept_id") if verify_sample else None,
-                            sample_content_status=verify_sample.get("content_status") if verify_sample else None,
-                            sample_content_ref=verify_sample.get("content_ref") if verify_sample else None,
-                            sample_quiz_id=verify_sample.get("quiz_id") if verify_sample else None,
-                            verification_success=verify_sample.get("content_status") == "completed" if verify_sample else False,
+                            sample_concept_id=sample_concept_before.get("concept_id") if sample_concept_before else None,
+                            sample_content_status=sample_concept_before.get("content_status") if sample_concept_before else None,
+                            sample_content_ref=sample_concept_before.get("content_ref") if sample_concept_before else None,
+                            sample_quiz_id=sample_concept_before.get("quiz_id") if sample_concept_before else None,
                         )
-                    else:
+                        
+                        # 使用辅助方法更新 framework 中的 Concept 状态
+                        updated_framework = self._update_framework_with_content_refs(
+                            framework_data=roadmap_metadata.framework_data,
+                            tutorial_refs=tutorial_refs,
+                            resource_refs=resource_refs,
+                            quiz_refs=quiz_refs,
+                            failed_concepts=failed_concepts,
+                        )
+                        
+                        # ========================================================
+                        # DEBUG: 记录更新后的 framework 状态（抽样检查第一个 concept）
+                        # ========================================================
+                        sample_concept_after = None
+                        if updated_framework.get("stages"):
+                            first_stage = updated_framework["stages"][0]
+                            if first_stage.get("modules"):
+                                first_module = first_stage["modules"][0]
+                                if first_module.get("concepts"):
+                                    sample_concept_after = first_module["concepts"][0]
+                        
+                        logger.info(
+                            "workflow_brain_framework_after_update",
+                            roadmap_id=roadmap_id,
+                            sample_concept_id=sample_concept_after.get("concept_id") if sample_concept_after else None,
+                            sample_content_status=sample_concept_after.get("content_status") if sample_concept_after else None,
+                            sample_content_ref=sample_concept_after.get("content_ref") if sample_concept_after else None,
+                            sample_quiz_id=sample_concept_after.get("quiz_id") if sample_concept_after else None,
+                        )
+                        
+                        # 保存更新后的 framework
+                        from app.models.domain import RoadmapFramework
+                        framework_obj = RoadmapFramework.model_validate(updated_framework)
+                        
+                        # ========================================================
+                        # DEBUG: 验证 Pydantic 模型转换后的状态
+                        # ========================================================
+                        framework_dict_after_pydantic = framework_obj.model_dump()
+                        sample_concept_pydantic = None
+                        if framework_dict_after_pydantic.get("stages"):
+                            first_stage = framework_dict_after_pydantic["stages"][0]
+                            if first_stage.get("modules"):
+                                first_module = first_stage["modules"][0]
+                                if first_module.get("concepts"):
+                                    sample_concept_pydantic = first_module["concepts"][0]
+                        
+                        logger.info(
+                            "workflow_brain_framework_after_pydantic_validate",
+                            roadmap_id=roadmap_id,
+                            sample_concept_id=sample_concept_pydantic.get("concept_id") if sample_concept_pydantic else None,
+                            sample_content_status=sample_concept_pydantic.get("content_status") if sample_concept_pydantic else None,
+                            sample_content_ref=sample_concept_pydantic.get("content_ref") if sample_concept_pydantic else None,
+                            sample_quiz_id=sample_concept_pydantic.get("quiz_id") if sample_concept_pydantic else None,
+                        )
+                        
+                        await repo.save_roadmap_metadata(
+                            roadmap_id=roadmap_id,
+                            user_id=roadmap_metadata.user_id,
+                            framework=framework_obj,
+                        )
+                        
+                        # ========================================================
+                        # DEBUG: 保存后立即重新读取，验证数据是否真的被保存
+                        # ========================================================
+                        verification_metadata = await repo.get_roadmap_metadata(roadmap_id)
+                        if verification_metadata and verification_metadata.framework_data:
+                            verify_sample = None
+                            if verification_metadata.framework_data.get("stages"):
+                                first_stage = verification_metadata.framework_data["stages"][0]
+                                if first_stage.get("modules"):
+                                    first_module = first_stage["modules"][0]
+                                    if first_module.get("concepts"):
+                                        verify_sample = first_module["concepts"][0]
+                            
+                            logger.info(
+                                "workflow_brain_framework_verification_after_save",
+                                roadmap_id=roadmap_id,
+                                sample_concept_id=verify_sample.get("concept_id") if verify_sample else None,
+                                sample_content_status=verify_sample.get("content_status") if verify_sample else None,
+                                sample_content_ref=verify_sample.get("content_ref") if verify_sample else None,
+                                sample_quiz_id=verify_sample.get("quiz_id") if verify_sample else None,
+                                verification_success=verify_sample.get("content_status") == "completed" if verify_sample else False,
+                            )
+                        else:
+                            logger.error(
+                                "workflow_brain_framework_verification_failed",
+                                roadmap_id=roadmap_id,
+                                message="无法重新读取保存后的元数据",
+                            )
+                        
+                        logger.info(
+                            "workflow_brain_framework_updated_with_content_refs",
+                            roadmap_id=roadmap_id,
+                            tutorial_count=len(tutorial_refs),
+                            resource_count=len(resource_refs),
+                            quiz_count=len(quiz_refs),
+                        )
+                    except Exception as e:
                         logger.error(
-                            "workflow_brain_framework_verification_failed",
+                            "workflow_brain_framework_update_failed",
                             roadmap_id=roadmap_id,
-                            message="无法重新读取保存后的元数据",
+                            error=str(e),
+                            error_type=type(e).__name__,
                         )
-                    
-                    logger.info(
-                        "workflow_brain_framework_updated_with_content_refs",
+                        # 重新抛出异常，不要吞掉
+                        raise
+                else:
+                    logger.warning(
+                        "workflow_brain_framework_not_found",
                         roadmap_id=roadmap_id,
-                        tutorial_count=len(tutorial_refs),
-                        resource_count=len(resource_refs),
-                        quiz_count=len(quiz_refs),
+                        message="无法更新 framework_data，元数据不存在",
                     )
-                except Exception as e:
-                    logger.error(
-                        "workflow_brain_framework_update_failed",
-                        roadmap_id=roadmap_id,
-                        error=str(e),
-                        error_type=type(e).__name__,
-                    )
-                    # 重新抛出异常，不要吞掉
-                    raise
-            else:
-                logger.warning(
-                    "workflow_brain_framework_not_found",
-                    roadmap_id=roadmap_id,
-                    message="无法更新 framework_data，元数据不存在",
+                
+                # 更新最终状态
+                # 如果全部成功：status=completed, current_step=completed
+                # 如果部分失败：status=partial_failure, current_step=content_generation（标记失败发生在哪一步）
+                final_status = "partial_failure" if failed_concepts else "completed"
+                final_step = "content_generation" if failed_concepts else "completed"
+                
+                await repo.update_task_status(
+                    task_id=task_id,
+                    status=final_status,
+                    current_step=final_step,
+                    failed_concepts={
+                        "count": len(failed_concepts),
+                        "concept_ids": failed_concepts,
+                    } if failed_concepts else None,
+                    execution_summary={
+                        "tutorial_count": len(tutorial_refs),
+                        "resource_count": len(resource_refs),
+                        "quiz_count": len(quiz_refs),
+                        "failed_count": len(failed_concepts),
+                    },
                 )
-            
-            # 更新最终状态
-            # 如果全部成功：status=completed, current_step=completed
-            # 如果部分失败：status=partial_failure, current_step=content_generation（标记失败发生在哪一步）
-            final_status = "partial_failure" if failed_concepts else "completed"
-            final_step = "content_generation" if failed_concepts else "completed"
-            
-            await repo.update_task_status(
-                task_id=task_id,
-                status=final_status,
-                current_step=final_step,
-                failed_concepts={
-                    "count": len(failed_concepts),
-                    "concept_ids": failed_concepts,
-                } if failed_concepts else None,
-                execution_summary={
-                    "tutorial_count": len(tutorial_refs),
-                    "resource_count": len(resource_refs),
-                    "quiz_count": len(quiz_refs),
-                    "failed_count": len(failed_concepts),
-                },
-            )
-            
-            await session.commit()
-            
-            logger.info(
-                "workflow_brain_content_results_saved",
+                
+                await session.commit()
+                
+                logger.info(
+                    "workflow_brain_content_results_saved",
+                    task_id=task_id,
+                    roadmap_id=roadmap_id,
+                    final_status=final_status,
+                )
+        
+        except GeneratorExit:
+            # 客户端断开连接（SSE 流中断）
+            # 此时不应尝试回滚，因为数据可能已经部分保存
+            # 让会话自然关闭即可
+            logger.warning(
+                "workflow_brain_save_content_client_disconnected",
                 task_id=task_id,
                 roadmap_id=roadmap_id,
-                final_status=final_status,
+                message="客户端断开连接，内容保存操作被中断（数据可能已部分保存）",
             )
+            # 不抛出异常，避免产生 "Task exception was never retrieved" 警告
+            
+        except Exception as e:
+            # 其他异常（业务逻辑错误、数据库错误等）
+            error_msg = str(e).lower()
+            is_connection_error = any(
+                keyword in error_msg
+                for keyword in [
+                    "connection",
+                    "timeout",
+                    "closed",
+                    "does not exist",
+                    "terminated",
+                    "illegalstatechangeerror",
+                ]
+            )
+            
+            if is_connection_error:
+                logger.warning(
+                    "workflow_brain_save_content_connection_error",
+                    task_id=task_id,
+                    roadmap_id=roadmap_id,
+                    error=str(e),
+                    error_type=type(e).__name__,
+                    message="数据库连接异常，内容保存操作被中断",
+                )
+                # 连接错误不抛出异常，因为数据可能已经保存
+            else:
+                # 非连接错误，记录并抛出
+                logger.error(
+                    "workflow_brain_save_content_failed",
+                    task_id=task_id,
+                    roadmap_id=roadmap_id,
+                    error=str(e),
+                    error_type=type(e).__name__,
+                )
+                raise
     
     def _update_framework_with_content_refs(
         self,
