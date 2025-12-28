@@ -198,7 +198,7 @@ case $SERVICE_TYPE in
   api)
     # 只在 API 服务中运行数据库初始化
     python scripts/create_tables.py
-    alembic stamp head
+    alembic upgrade head  # 执行数据库迁移（不是 stamp！）
     python scripts/create_admin_user.py || true
     ;;
   celery_*)
