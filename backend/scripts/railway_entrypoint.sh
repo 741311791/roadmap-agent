@@ -20,10 +20,6 @@ case $SERVICE_TYPE in
     echo "🔧 Creating base tables..."
     python scripts/create_tables.py
     
-    echo "🔍 Checking migration state..."
-    # 检查并修复迁移状态（如果之前使用了 alembic stamp）
-    python scripts/check_and_fix_migration.py || true
-    
     echo "🔄 Running database migrations..."
     alembic upgrade head
     
