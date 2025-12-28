@@ -23,41 +23,27 @@ COPY pyproject.toml uv.lock README.md ./
 RUN mkdir -p /app/app && touch /app/app/__init__.py
 
 # 使用 uv 导出生产环境依赖到 requirements.txt
-# --no-dev: 不包含开发依赖
-# --no-hashes: 不包含哈希值（简化输出）
 RUN uv export --no-dev --no-hashes > requirements.txt
 
 # 使用 uv pip 安装依赖到系统 Python
-# --system: 直接安装到系统 Python，不创建虚拟环境
-# -r requirements.txt: 从文件读取依赖列表
 RUN uv pip install --system -r requirements.txt
 
-# 复制实际的应用代码（覆盖之前的占位符）
+# 复制实际的应用代码
 COPY ./app /app/app
 COPY ./prompts /app/prompts
-
-# 复制 Alembic 迁移配置（Railway 部署时需要运行数据库迁移）
 COPY ./alembic /app/alembic
 COPY ./alembic.ini /app/alembic.ini
-
-# Railway 会自动检测端口，无需显式 EXPOSE
-# EXPOSE 8000
-
-# 复制数据库初始化脚本
 COPY ./scripts /app/scripts
 
-# 启动命令：
-# 1. 创建数据库表（使用 SQLModel，不依赖 ENVIRONMENT）
-# 2. 标记 Alembic 迁移为完成（避免运行 ALTER 迁移）
-# 3. 创建超级管理员（使用环境变量，如果已存在则跳过）
-# 4. 启动 Uvicorn，使用多 Worker 模式提高并发能力
-#    - UVICORN_WORKERS: Worker 数量（默认 4）
-#    - 多 Worker 可以隔离内容生成任务，避免阻塞其他请求
-CMD sh -c "python scripts/create_tables.py && \
-          alembic stamp head && \
-          python scripts/create_admin_user.py \
-            --email ${ADMIN_EMAIL:-admin@example.com} \
-            --password ${ADMIN_PASSWORD:-admin123} \
-            --username ${ADMIN_USERNAME:-admin} || true && \
-          uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${UVICORN_WORKERS:-4}"
+# 复制启动脚本
+COPY ./scripts/railway_entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+# 使用 entrypoint 脚本，根据 SERVICE_TYPE 环境变量决定启动哪个服务
+# SERVICE_TYPE 可选值：api, celery_logs, celery_content
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+
+
+
 
