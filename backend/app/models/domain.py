@@ -121,6 +121,7 @@ class Concept(BaseModel):
         default="pending", 
         description="教程内容生成状态"
     )
+    tutorial_id: Optional[str] = Field(None, description="教程 ID（UUID 格式，关联 tutorial_metadata 表）")
     content_ref: Optional[str] = Field(
         None, 
         description="指向 S3 Key 或内容 API 的 ID，如 's3://bucket/{roadmap_id}/concepts/{concept_id}/v1.md'"

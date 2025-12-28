@@ -265,4 +265,55 @@ class CoverImageService:
             "error": cover_image.error_message,
             "retry_count": cover_image.retry_count
         }
+    
+    async def batch_get_cover_images(self, roadmap_ids: list[str]) -> dict[str, dict]:
+        """
+        批量获取多个路线图的封面图状态
+        
+        Args:
+            roadmap_ids: 路线图ID列表
+        
+        Returns:
+            字典，key为roadmap_id，value为状态信息字典
+        """
+        if not roadmap_ids:
+            return {}
+        
+        if self.is_async:
+            result = await self.db.execute(
+                select(RoadmapCoverImage).where(
+                    RoadmapCoverImage.roadmap_id.in_(roadmap_ids)
+                )
+            )
+            cover_images = result.scalars().all()
+        else:
+            cover_images = self.db.exec(
+                select(RoadmapCoverImage).where(
+                    RoadmapCoverImage.roadmap_id.in_(roadmap_ids)
+                )
+            ).all()
+        
+        # 构建结果字典
+        result_dict: dict[str, dict] = {}
+        
+        # 先处理有记录的路线图
+        for cover_image in cover_images:
+            result_dict[cover_image.roadmap_id] = {
+                "status": cover_image.generation_status,
+                "url": cover_image.cover_image_url,
+                "error": cover_image.error_message,
+                "retry_count": cover_image.retry_count
+            }
+        
+        # 处理没有记录的路线图（返回not_started状态）
+        for roadmap_id in roadmap_ids:
+            if roadmap_id not in result_dict:
+                result_dict[roadmap_id] = {
+                    "status": "not_started",
+                    "url": None,
+                    "error": None,
+                    "retry_count": None
+                }
+        
+        return result_dict
 

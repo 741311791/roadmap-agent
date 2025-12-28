@@ -138,6 +138,12 @@ export interface RoadmapTreeProps {
   /** 节点点击回调 */
   onNodeClick?: (node: TreeNodeData) => void;
   
+  /** 用户学习偏好（用于重试功能） */
+  userPreferences?: any;
+  
+  /** 重试成功回调 */
+  onRetrySuccess?: () => void;
+  
   /** 自定义类名 */
   className?: string;
 }
@@ -156,10 +162,16 @@ export interface TreeNodeProps {
  * NodeDetailPopover Props
  */
 export interface NodeDetailPopoverProps {
-  node: TreeNodeData;
+  node: TreeNodeData | null;
   isOpen: boolean;
   onClose: () => void;
   anchorPosition?: { x: number; y: number };
+  /** 路线图 ID（用于重试功能） */
+  roadmapId?: string | null;
+  /** 用户学习偏好（用于重试功能） */
+  userPreferences?: any;
+  /** 重试成功回调 */
+  onRetrySuccess?: () => void;
 }
 
 /**

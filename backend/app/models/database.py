@@ -100,6 +100,12 @@ class RoadmapTask(SQLModel, table=True):
     concept_id: Optional[str] = Field(default=None)  # 单 Concept 重试时的概念 ID
     content_type: Optional[str] = Field(default=None)  # 'tutorial', 'resources', 'quiz'（单 Concept 重试时）
     
+    # Celery 任务 ID（用于查询内容生成任务状态）
+    celery_task_id: Optional[str] = Field(
+        default=None,
+        description="Celery 任务 ID，用于查询内容生成任务状态或取消任务"
+    )
+    
     # 元数据（所有时间字段使用北京时间）
     created_at: datetime = Field(
         default_factory=beijing_now,

@@ -69,6 +69,10 @@ class RoadmapState(TypedDict):
     # 测验生成相关（A6: 测验生成器）
     quiz_refs: Annotated[dict[str, QuizGenerationOutput], merge_dicts]
     
+    # Celery 异步内容生成状态
+    content_generation_status: str | None  # "queued" 表示已发送到 Celery，"completed" 表示已完成
+    celery_task_id: str | None  # Celery 任务 ID
+    
     # 流程控制
     current_step: str
     modification_count: int

@@ -10,7 +10,15 @@ import structlog
 
 from app.db.session import get_db
 from app.db.repositories.roadmap_repo import RoadmapRepository
-from app.models.database import RoadmapTask, IntentAnalysisMetadata, ExecutionLog
+from app.models.database import (
+    RoadmapTask, 
+    IntentAnalysisMetadata, 
+    ExecutionLog,
+    StructureValidationRecord,
+    RoadmapEditRecord,
+    HumanReviewFeedback,
+    EditPlanRecord,
+)
 
 router = APIRouter(prefix="/roadmaps", tags=["roadmaps"])
 logger = structlog.get_logger()
@@ -105,19 +113,56 @@ async def delete_roadmap(
                 )
             
             # 删除关联的元数据（按依赖顺序删除，避免外键约束冲突）
-            # 1. 删除 intent_analysis_metadata（有外键引用 roadmap_tasks.task_id）
+            # 注意：edit_plan_records 引用 human_review_feedbacks.id，所以必须先删除 edit_plan_records
+            
+            # 1. 删除 edit_plan_records（引用 human_review_feedbacks.id）
+            stmt_edit_plan = delete(EditPlanRecord).where(
+                EditPlanRecord.task_id == actual_task_id
+            )
+            edit_plan_result = await session.execute(stmt_edit_plan)
+            
+            # 2. 删除 human_review_feedbacks（被 edit_plan_records 引用）
+            stmt_review_feedback = delete(HumanReviewFeedback).where(
+                HumanReviewFeedback.task_id == actual_task_id
+            )
+            review_feedback_result = await session.execute(stmt_review_feedback)
+            
+            # 3. 删除 intent_analysis_metadata
             stmt_intent = delete(IntentAnalysisMetadata).where(
                 IntentAnalysisMetadata.task_id == actual_task_id
             )
-            await session.execute(stmt_intent)
+            intent_result = await session.execute(stmt_intent)
             
-            # 2. 删除 execution_logs（无外键约束，但为了数据一致性也删除）
+            # 4. 删除 structure_validation_records
+            stmt_validation = delete(StructureValidationRecord).where(
+                StructureValidationRecord.task_id == actual_task_id
+            )
+            validation_result = await session.execute(stmt_validation)
+            
+            # 5. 删除 roadmap_edit_records
+            stmt_edit_records = delete(RoadmapEditRecord).where(
+                RoadmapEditRecord.task_id == actual_task_id
+            )
+            edit_records_result = await session.execute(stmt_edit_records)
+            
+            # 6. 删除 execution_logs（无外键约束）
             stmt_logs = delete(ExecutionLog).where(
                 ExecutionLog.task_id == actual_task_id
             )
-            await session.execute(stmt_logs)
+            logs_result = await session.execute(stmt_logs)
             
-            # 3. 最后删除任务记录
+            logger.debug(
+                "task_related_records_deleted",
+                task_id=actual_task_id,
+                deleted_edit_plans=edit_plan_result.rowcount,
+                deleted_review_feedbacks=review_feedback_result.rowcount,
+                deleted_intent_analysis=intent_result.rowcount,
+                deleted_validation_records=validation_result.rowcount,
+                deleted_edit_records=edit_records_result.rowcount,
+                deleted_execution_logs=logs_result.rowcount,
+            )
+            
+            # 7. 最后删除任务记录
             stmt_task = delete(RoadmapTask).where(RoadmapTask.task_id == actual_task_id)
             await session.execute(stmt_task)
             
@@ -180,6 +225,56 @@ async def delete_roadmap(
                     detail="Unauthorized to delete this task"
                 )
             
+            # 删除所有关联记录（按依赖顺序，避免外键约束错误）
+            # 注意：edit_plan_records 引用 human_review_feedbacks.id，必须先删除
+            
+            # 1. 删除 edit_plan_records（引用 human_review_feedbacks.id）
+            edit_plan_stmt = delete(EditPlanRecord).where(
+                EditPlanRecord.task_id == task.task_id
+            )
+            edit_plan_result = await session.execute(edit_plan_stmt)
+            
+            # 2. 删除 human_review_feedbacks（被 edit_plan_records 引用）
+            review_feedback_stmt = delete(HumanReviewFeedback).where(
+                HumanReviewFeedback.task_id == task.task_id
+            )
+            review_feedback_result = await session.execute(review_feedback_stmt)
+            
+            # 3. 删除 intent_analysis_metadata
+            intent_stmt = delete(IntentAnalysisMetadata).where(
+                IntentAnalysisMetadata.task_id == task.task_id
+            )
+            intent_result = await session.execute(intent_stmt)
+            
+            # 4. 删除 structure_validation_records
+            validation_stmt = delete(StructureValidationRecord).where(
+                StructureValidationRecord.task_id == task.task_id
+            )
+            validation_result = await session.execute(validation_stmt)
+            
+            # 5. 删除 roadmap_edit_records
+            edit_records_stmt = delete(RoadmapEditRecord).where(
+                RoadmapEditRecord.task_id == task.task_id
+            )
+            edit_records_result = await session.execute(edit_records_stmt)
+            
+            # 6. 删除 execution_logs
+            logs_stmt = delete(ExecutionLog).where(
+                ExecutionLog.task_id == task.task_id
+            )
+            logs_result = await session.execute(logs_stmt)
+            
+            logger.debug(
+                "task_related_records_deleted",
+                task_id=task.task_id,
+                deleted_edit_plans=edit_plan_result.rowcount,
+                deleted_review_feedbacks=review_feedback_result.rowcount,
+                deleted_intent_analysis=intent_result.rowcount,
+                deleted_validation_records=validation_result.rowcount,
+                deleted_edit_records=edit_records_result.rowcount,
+                deleted_execution_logs=logs_result.rowcount,
+            )
+            
             # 删除任务记录
             stmt = delete(RoadmapTask).where(RoadmapTask.task_id == task.task_id)
             await session.execute(stmt)
@@ -190,6 +285,7 @@ async def delete_roadmap(
                 roadmap_id=roadmap_id,
                 task_id=task.task_id,
                 user_id=user_id,
+                deleted_validation_records=deleted_validation_count,
             )
             
             return {

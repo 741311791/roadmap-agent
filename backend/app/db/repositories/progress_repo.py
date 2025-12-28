@@ -48,6 +48,87 @@ class ProgressRepository:
         result = await self.session.execute(statement)
         return list(result.scalars().all())
     
+    async def get_roadmaps_progress_batch(
+        self,
+        user_id: str,
+        roadmap_ids: List[str],
+    ) -> dict[str, List[ConceptProgress]]:
+        """
+        批量获取多个路线图的学习进度（解决 N+1 查询问题）
+        
+        单次查询获取所有路线图的进度，然后按 roadmap_id 分组返回。
+        
+        Args:
+            user_id: 用户 ID
+            roadmap_ids: 路线图 ID 列表
+            
+        Returns:
+            字典，键为 roadmap_id，值为该路线图的进度列表
+        """
+        if not roadmap_ids:
+            return {}
+        
+        statement = select(ConceptProgress).where(
+            ConceptProgress.user_id == user_id,
+            ConceptProgress.roadmap_id.in_(roadmap_ids)
+        )
+        result = await self.session.execute(statement)
+        all_progress = list(result.scalars().all())
+        
+        # 按 roadmap_id 分组
+        progress_by_roadmap: dict[str, List[ConceptProgress]] = {
+            roadmap_id: [] for roadmap_id in roadmap_ids
+        }
+        for progress in all_progress:
+            if progress.roadmap_id in progress_by_roadmap:
+                progress_by_roadmap[progress.roadmap_id].append(progress)
+        
+        return progress_by_roadmap
+    
+    async def get_completed_counts_batch(
+        self,
+        user_id: str,
+        roadmap_ids: List[str],
+    ) -> dict[str, int]:
+        """
+        批量获取多个路线图的已完成概念数量（优化版）
+        
+        使用 COUNT + GROUP BY 直接在数据库中统计，避免加载大量数据到内存。
+        
+        Args:
+            user_id: 用户 ID
+            roadmap_ids: 路线图 ID 列表
+            
+        Returns:
+            字典，键为 roadmap_id，值为已完成的概念数量
+        """
+        if not roadmap_ids:
+            return {}
+        
+        from sqlalchemy import func
+        
+        statement = (
+            select(
+                ConceptProgress.roadmap_id,
+                func.count(ConceptProgress.id).label("completed_count"),
+            )
+            .where(
+                ConceptProgress.user_id == user_id,
+                ConceptProgress.roadmap_id.in_(roadmap_ids),
+                ConceptProgress.is_completed == True,
+            )
+            .group_by(ConceptProgress.roadmap_id)
+        )
+        result = await self.session.execute(statement)
+        rows = result.fetchall()
+        
+        # 初始化所有路线图的计数为 0
+        counts = {roadmap_id: 0 for roadmap_id in roadmap_ids}
+        for row in rows:
+            counts[row[0]] = row[1]
+        
+        return counts
+    
     async def upsert_concept_progress(
         self,
         user_id: str,

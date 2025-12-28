@@ -51,6 +51,7 @@ export interface MyLearningCardProps {
   onDelete?: (id: string) => void;
   showActions?: boolean;
   className?: string;
+  coverImageUrl?: string;  // 可选的封面图 URL（用于批量获取）
   stages?: Array<{
     name: string;
     description?: string;
@@ -98,8 +99,9 @@ function CardFront({
   topic, 
   status, 
   totalConcepts, 
-  completedConcepts 
-}: Pick<MyLearningCardProps, 'id' | 'title' | 'topic' | 'status' | 'totalConcepts' | 'completedConcepts'>) {
+  completedConcepts,
+  coverImageUrl
+}: Pick<MyLearningCardProps, 'id' | 'title' | 'topic' | 'status' | 'totalConcepts' | 'completedConcepts' | 'coverImageUrl'>) {
   const progress = totalConcepts > 0 ? (completedConcepts / totalConcepts) * 100 : 0;
   const isCompleted = status === 'completed';
   const isGenerating = status === 'generating';
@@ -114,6 +116,7 @@ function CardFront({
           topic={topic}
           title={title}
           className="w-full h-full object-cover"
+          coverImageUrl={coverImageUrl}
         />
         
         {/* 渐变遮罩 */}
@@ -374,6 +377,7 @@ export function MyLearningCard(props: MyLearningCardProps) {
     onDelete,
     showActions = true,
     className,
+    coverImageUrl,
     stages,
   } = props;
 
@@ -400,6 +404,7 @@ export function MyLearningCard(props: MyLearningCardProps) {
             status={status}
             totalConcepts={totalConcepts}
             completedConcepts={completedConcepts}
+            coverImageUrl={coverImageUrl}
           />
         }
         backContent={

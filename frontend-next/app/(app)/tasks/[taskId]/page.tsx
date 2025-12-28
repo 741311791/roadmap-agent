@@ -14,20 +14,21 @@
  * - 路线图实时更新和交互
  */
 
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { ArrowLeft, AlertCircle, CheckCircle2, Loader2, Clock, Eye } from 'lucide-react';
+import { ArrowLeft, AlertCircle, CheckCircle2, Loader2, Clock, Eye, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { TaskWebSocket } from '@/lib/api/websocket';
-import { getTaskDetail, getTaskLogs, getRoadmap, getIntentAnalysis } from '@/lib/api/endpoints';
+import { getTaskDetail, getTaskLogs, getRoadmap, getIntentAnalysis, getUserProfile } from '@/lib/api/endpoints';
 import { WorkflowTopology } from '@/components/task/workflow-topology';
 import { CoreDisplayArea } from '@/components/task/core-display-area';
 import { ExecutionLogTimeline } from '@/components/task/execution-log-timeline';
 import { cn } from '@/lib/utils';
 import { limitLogsByStep, getLogStatsByStep } from '@/lib/utils/log-grouping';
-import type { RoadmapFramework } from '@/types/generated/models';
+import { useAuthStore } from '@/lib/store/auth-store';
+import type { RoadmapFramework, LearningPreferences } from '@/types/generated/models';
 
 /**
  * 需求分析输出类型
@@ -81,9 +82,13 @@ export default function TaskDetailPage() {
   const params = useParams();
   const router = useRouter();
   const taskId = params?.taskId as string;
+  const { getUserId } = useAuthStore();
 
   // 任务基本信息
   const [taskInfo, setTaskInfo] = useState<TaskInfo | null>(null);
+
+  // 用户学习偏好（用于重试功能）
+  const [userPreferences, setUserPreferences] = useState<LearningPreferences | undefined>(undefined);
 
   // 执行日志
   const [executionLogs, setExecutionLogs] = useState<ExecutionLog[]>([]);
@@ -111,10 +116,14 @@ export default function TaskDetailPage() {
 
   // 加载状态
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // WebSocket 连接
   const [ws, setWs] = useState<TaskWebSocket | null>(null);
+  
+  // 使用ref存储最新的roadmap_id，确保在WebSocket事件处理器中能获取到最新值
+  const roadmapIdRef = useRef<string | null>(null);
 
   /**
    * 从time_constraint字符串中解析时间信息
@@ -204,69 +213,130 @@ export default function TaskDetailPage() {
   }, []);
 
   /**
-   * 加载任务信息和日志
+   * 加载任务信息和日志（提取为独立函数，供初始加载和刷新使用）
+   */
+  const loadTaskData = useCallback(async (isInitialLoad = false) => {
+    if (!taskId) return;
+
+    try {
+      if (isInitialLoad) {
+        setIsLoading(true);
+      } else {
+        setIsRefreshing(true);
+      }
+      setError(null);
+
+      // 加载任务基本信息
+      const taskData = await getTaskDetail(taskId);
+      setTaskInfo(taskData);
+      // 更新ref中的roadmap_id
+      roadmapIdRef.current = taskData.roadmap_id || null;
+
+      // 加载执行日志（获取大量日志，然后按 step 分组并限制每个阶段最多 100 条）
+      const logsData = await getTaskLogs(taskId, undefined, undefined, 2000);
+      const allLogs = logsData.logs || [];
+      
+      // 按 step 分组，每个 step 最多 100 条
+      const limitedLogs = limitLogsByStep(allLogs, 100);
+      
+      // 打印统计信息（开发调试用）
+      if (process.env.NODE_ENV === 'development') {
+        const stats = getLogStatsByStep(allLogs);
+        console.log('[TaskDetail] Log stats by step:', stats);
+        console.log('[TaskDetail] Total logs:', allLogs.length, '→ Limited to:', limitedLogs.length);
+      }
+      
+      setExecutionLogs(limitedLogs);
+      
+      // 从执行日志中提取最新的 edit_source（用于区分工作流分支）
+      // 优先从 roadmap_edit 或 edit_plan_analysis 日志中读取 edit_source
+      const latestEditSource = allLogs
+        .filter(log => 
+          (log.step === 'roadmap_edit' || log.step === 'edit_plan_analysis') && 
+          log.details?.edit_source
+        )
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        [0]?.details?.edit_source || null;
+      
+      if (latestEditSource) {
+        setEditSource(latestEditSource);
+        console.log('[TaskDetail] Extracted edit_source from logs:', latestEditSource);
+      }
+      
+      // 加载需求分析数据（从数据库获取，内容更丰富）
+      await loadIntentAnalysis(taskId);
+
+      // 如果有 roadmap_id，加载路线图框架
+      if (taskData.roadmap_id) {
+        await loadRoadmapFramework(taskData.roadmap_id);
+      }
+
+    } catch (err: any) {
+      console.error('Failed to load task data:', err);
+      setError(err.message || 'Failed to load task details');
+    } finally {
+      if (isInitialLoad) {
+        setIsLoading(false);
+      } else {
+        setIsRefreshing(false);
+      }
+    }
+  }, [taskId, loadIntentAnalysis, loadRoadmapFramework]);
+
+  /**
+   * 初始加载任务数据
    */
   useEffect(() => {
     if (!taskId) return;
+    loadTaskData(true);
+  }, [taskId, loadTaskData]);
 
-    const loadTaskData = async () => {
+  /**
+   * 加载用户偏好（用于重试功能）
+   */
+  useEffect(() => {
+    const loadUserPreferences = async () => {
+      const userId = getUserId();
+      if (!userId) return;
+      
       try {
-        setIsLoading(true);
-        setError(null);
-
-        // 加载任务基本信息
-        const taskData = await getTaskDetail(taskId);
-        setTaskInfo(taskData);
-
-        // 加载执行日志（获取大量日志，然后按 step 分组并限制每个阶段最多 100 条）
-        const logsData = await getTaskLogs(taskId, undefined, undefined, 2000);
-        const allLogs = logsData.logs || [];
-        
-        // 按 step 分组，每个 step 最多 100 条
-        const limitedLogs = limitLogsByStep(allLogs, 100);
-        
-        // 打印统计信息（开发调试用）
-        if (process.env.NODE_ENV === 'development') {
-          const stats = getLogStatsByStep(allLogs);
-          console.log('[TaskDetail] Log stats by step:', stats);
-          console.log('[TaskDetail] Total logs:', allLogs.length, '→ Limited to:', limitedLogs.length);
-        }
-        
-        setExecutionLogs(limitedLogs);
-        
-        // 从执行日志中提取最新的 edit_source（用于区分工作流分支）
-        // 优先从 roadmap_edit 或 edit_plan_analysis 日志中读取 edit_source
-        const latestEditSource = allLogs
-          .filter(log => 
-            (log.step === 'roadmap_edit' || log.step === 'edit_plan_analysis') && 
-            log.details?.edit_source
-          )
-          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-          [0]?.details?.edit_source || null;
-        
-        if (latestEditSource) {
-          setEditSource(latestEditSource);
-          console.log('[TaskDetail] Extracted edit_source from logs:', latestEditSource);
-        }
-        
-        // 加载需求分析数据（从数据库获取，内容更丰富）
-        await loadIntentAnalysis(taskId);
-
-        // 如果有 roadmap_id，加载路线图框架
-        if (taskData.roadmap_id) {
-          await loadRoadmapFramework(taskData.roadmap_id);
-        }
-
-      } catch (err: any) {
-        console.error('Failed to load task data:', err);
-        setError(err.message || 'Failed to load task details');
-      } finally {
-        setIsLoading(false);
+        const profile = await getUserProfile(userId);
+        // 构建 LearningPreferences 对象
+        setUserPreferences({
+          learning_goal: taskInfo?.title || roadmapFramework?.title || 'Learning',
+          available_hours_per_week: profile.weekly_commitment_hours || 10,
+          current_level: 'intermediate', // 默认值
+          career_background: profile.current_role || 'Not specified',
+          motivation: 'Continue learning',
+          content_preference: (profile.learning_style || ['text', 'visual']) as any,
+          preferred_language: profile.primary_language || 'zh-CN',
+        });
+      } catch (error) {
+        console.error('[TaskDetail] Failed to load user preferences:', error);
       }
     };
+    
+    if (taskInfo || roadmapFramework) {
+      loadUserPreferences();
+    }
+  }, [taskInfo, roadmapFramework, getUserId]);
 
-    loadTaskData();
-  }, [taskId, loadIntentAnalysis, loadRoadmapFramework]);
+  /**
+   * 重试成功回调
+   */
+  const handleRetrySuccess = useCallback(() => {
+    // 刷新任务数据以获取最新状态
+    if (taskId) {
+      loadTaskData(false);
+    }
+  }, [taskId, loadTaskData]);
+
+  /**
+   * 手动刷新任务数据
+   */
+  const handleRefresh = useCallback(() => {
+    loadTaskData(false);
+  }, [loadTaskData]);
 
   /**
    * WebSocket 实时订阅
@@ -284,249 +354,372 @@ export default function TaskDetailPage() {
       return;
     }
 
-    const websocket = new TaskWebSocket(taskId, {
-      onStatus: (event) => {
-        console.log('[TaskDetail] Status update:', event);
-        if (event.current_step) {
-          setTaskInfo((prev) => prev ? { ...prev, current_step: event.current_step } : null);
-        }
-        if (event.status) {
-          setTaskInfo((prev) => prev ? { ...prev, status: event.status } : null);
-        }
-        if (event.roadmap_id) {
-          setTaskInfo((prev) => prev ? { ...prev, roadmap_id: event.roadmap_id } : null);
-        }
-      },
+    // ========================================
+    // 智能轮询兜底机制：仅在 WebSocket 连接失败时启用
+    // ========================================
+    // 策略：
+    // 1. 只在 WebSocket 连接失败或长时间无消息时启用轮询
+    // 2. 使用指数退避策略，减少轮询频率（30秒 -> 60秒 -> 120秒）
+    // 3. 如果 WebSocket 连接成功，立即停止轮询
+    let pollingInterval: NodeJS.Timeout | null = null;
+    let lastWebSocketMessageTime = Date.now();
+    let pollingAttempts = 0;
+    const MAX_POLLING_INTERVAL = 120000; // 最大轮询间隔：2分钟
+    const INITIAL_POLLING_INTERVAL = 30000; // 初始轮询间隔：30秒
+    const WS_SILENCE_THRESHOLD = 180000; // WebSocket 静默阈值：3分钟无消息则启动轮询
+    
+    // 定义原始处理器函数
+    const handleStatus = (event: any) => {
+      console.log('[TaskDetail] Status update:', event);
+      if (event.current_step) {
+        setTaskInfo((prev) => prev ? { ...prev, current_step: event.current_step } : null);
+      }
+      if (event.status) {
+        setTaskInfo((prev) => prev ? { ...prev, status: event.status } : null);
+      }
+      if (event.roadmap_id) {
+        setTaskInfo((prev) => prev ? { ...prev, roadmap_id: event.roadmap_id } : null);
+        roadmapIdRef.current = event.roadmap_id;
+      }
+    };
 
-      onProgress: async (event) => {
-        console.log('[TaskDetail] Progress update:', event);
-        
-        // 添加实时日志
-        const newLog: ExecutionLog = {
-          id: `ws-${Date.now()}`,
-          task_id: taskId,
-          level: event.status === 'completed' ? 'success' : 'info',
-          category: 'workflow',
-          step: event.step || null,
-          agent_name: null,
-          message: event.message || `Step: ${event.step}`,
-          details: event,
-          duration_ms: null,
-          created_at: new Date().toISOString(),
-        };
-        
-        setExecutionLogs((prev) => [...prev, newLog]);
-        
-        // 更新 current_step
-        if (event.step) {
-          setTaskInfo((prev) => prev ? { ...prev, current_step: event.step } : null);
-        }
+    const handleProgress = async (event: any) => {
+      console.log('[TaskDetail] Progress update:', event);
+      
+      // 更新最后消息时间并停止轮询
+      lastWebSocketMessageTime = Date.now();
+      pollingAttempts = 0;
+      if (pollingInterval) {
+        clearInterval(pollingInterval);
+        pollingInterval = null;
+        console.log('[TaskDetail] WebSocket message received, stopped fallback polling');
+      }
+      
+      // 添加实时日志
+      const newLog: ExecutionLog = {
+        id: `ws-${Date.now()}`,
+        task_id: taskId,
+        level: event.status === 'completed' ? 'success' : 'info',
+        category: 'workflow',
+        step: event.step || null,
+        agent_name: null,
+        message: event.message || `Step: ${event.step}`,
+        details: event,
+        duration_ms: null,
+        created_at: new Date().toISOString(),
+      };
+      
+      setExecutionLogs((prev) => [...prev, newLog]);
+      
+      // 更新 current_step
+      if (event.step) {
+        setTaskInfo((prev) => prev ? { ...prev, current_step: event.step } : null);
+      }
 
-        // 更新 edit_source（用于区分分支）
-        if (event.data?.edit_source) {
-          setEditSource(event.data.edit_source);
-        }
-        
-        // 当节点完成时，刷新日志和路线图
-        if (event.status === 'completed' && event.step) {
-          try {
-            const logsData = await getTaskLogs(taskId, undefined, undefined, 2000);
-            const allLogs = logsData.logs || [];
-            const limitedLogs = limitLogsByStep(allLogs, 100);
-            setExecutionLogs(limitedLogs);
-            
-            // 重新加载需求分析数据（使用最新的数据库数据）
-            await loadIntentAnalysis(taskId);
-            
-            // 如果是 curriculum_design 或 roadmap_edit 完成，重新加载路线图
-            if (['curriculum_design', 'roadmap_edit'].includes(event.step)) {
-              const currentRoadmapId = taskInfo.roadmap_id;
-              if (currentRoadmapId) {
-                await loadRoadmapFramework(currentRoadmapId);
-              }
-              
-              // 如果是 roadmap_edit 完成，从事件中提取修改的节点
-              if (event.step === 'roadmap_edit' && event.data?.modified_concept_ids) {
-                setModifiedNodeIds(prev => [
-                  ...prev,
-                  ...(event.data?.modified_concept_ids || []),
-                ]);
-              }
+      // 更新 edit_source（用于区分分支）
+      if (event.data?.edit_source) {
+        setEditSource(event.data.edit_source);
+      }
+      
+      // 当节点完成时，刷新日志和路线图
+      if (event.status === 'completed' && event.step) {
+        try {
+          const logsData = await getTaskLogs(taskId, undefined, undefined, 2000);
+          const allLogs = logsData.logs || [];
+          const limitedLogs = limitLogsByStep(allLogs, 100);
+          setExecutionLogs(limitedLogs);
+          
+          // 重新加载需求分析数据（使用最新的数据库数据）
+          await loadIntentAnalysis(taskId);
+          
+          // 如果是 curriculum_design 或 roadmap_edit 完成，重新加载路线图
+          if (['curriculum_design', 'roadmap_edit'].includes(event.step)) {
+            const currentRoadmapId = taskInfo.roadmap_id;
+            if (currentRoadmapId) {
+              await loadRoadmapFramework(currentRoadmapId);
             }
-          } catch (err) {
-            console.error('Failed to refresh data after node completion:', err);
+            
+            // 如果是 roadmap_edit 完成，从事件中提取修改的节点
+            if (event.step === 'roadmap_edit' && event.data?.modified_concept_ids) {
+              setModifiedNodeIds(prev => [
+                ...prev,
+                ...(event.data?.modified_concept_ids || []),
+              ]);
+            }
           }
+        } catch (err) {
+          console.error('Failed to refresh data after node completion:', err);
         }
-      },
+      }
+    };
 
-      onConceptStart: (event) => {
-        console.log('[TaskDetail] Concept start:', event);
-        setLoadingConceptIds(prev => [...prev, event.concept_id]);
-        
-        const newLog: ExecutionLog = {
-          id: `ws-concept-start-${Date.now()}`,
-          task_id: taskId,
-          level: 'info',
-          category: 'workflow',
-          step: 'content_generation',
-          agent_name: null,
-          message: `Started generating content for: ${event.concept_name}`,
-          details: event,
-          duration_ms: null,
-          created_at: new Date().toISOString(),
-        };
-        setExecutionLogs((prev) => [...prev, newLog]);
-      },
+    const handleConceptStart = (event: any) => {
+      lastWebSocketMessageTime = Date.now();
+      console.log('[TaskDetail] Concept start:', event);
+      setLoadingConceptIds(prev => [...prev, event.concept_id]);
+      
+      const newLog: ExecutionLog = {
+        id: `ws-concept-start-${Date.now()}`,
+        task_id: taskId,
+        level: 'info',
+        category: 'workflow',
+        step: 'content_generation',
+        agent_name: null,
+        message: `Started generating content for: ${event.concept_name}`,
+        details: event,
+        duration_ms: null,
+        created_at: new Date().toISOString(),
+      };
+      setExecutionLogs((prev) => [...prev, newLog]);
+    };
 
-      onConceptComplete: (event) => {
-        console.log('[TaskDetail] Concept complete:', event);
-        setLoadingConceptIds(prev => prev.filter(id => id !== event.concept_id));
-        
-        const newLog: ExecutionLog = {
-          id: `ws-concept-complete-${Date.now()}`,
-          task_id: taskId,
-          level: 'success',
-          category: 'workflow',
-          step: 'content_generation',
-          agent_name: null,
-          message: `Completed: ${event.concept_name}`,
-          details: event,
-          duration_ms: null,
-          created_at: new Date().toISOString(),
-        };
-        setExecutionLogs((prev) => [...prev, newLog]);
-      },
+    const handleConceptComplete = async (event: any) => {
+      lastWebSocketMessageTime = Date.now();
+      console.log('[TaskDetail] Concept complete:', event);
+      setLoadingConceptIds(prev => prev.filter(id => id !== event.concept_id));
+      
+      const newLog: ExecutionLog = {
+        id: `ws-concept-complete-${Date.now()}`,
+        task_id: taskId,
+        level: 'success',
+        category: 'workflow',
+        step: 'content_generation',
+        agent_name: null,
+        message: `Completed: ${event.concept_name}`,
+        details: event,
+        duration_ms: null,
+        created_at: new Date().toISOString(),
+      };
+      setExecutionLogs((prev) => [...prev, newLog]);
+      
+      // 刷新路线图数据以更新concept状态
+      const currentRoadmapId = roadmapIdRef.current;
+      if (currentRoadmapId) {
+        try {
+          await loadRoadmapFramework(currentRoadmapId);
+        } catch (err) {
+          console.error('[TaskDetail] Failed to refresh roadmap after concept complete:', err);
+        }
+      }
+    };
 
-      onConceptFailed: (event) => {
-        console.log('[TaskDetail] Concept failed:', event);
-        setLoadingConceptIds(prev => prev.filter(id => id !== event.concept_id));
-        setFailedConceptIds(prev => [...prev, event.concept_id]);
-        
-        const newLog: ExecutionLog = {
-          id: `ws-concept-failed-${Date.now()}`,
-          task_id: taskId,
-          level: 'error',
-          category: 'workflow',
-          step: 'content_generation',
-          agent_name: null,
-          message: `Failed: ${event.concept_name} - ${event.error}`,
-          details: event,
-          duration_ms: null,
-          created_at: new Date().toISOString(),
-        };
-        setExecutionLogs((prev) => [...prev, newLog]);
-      },
+    const handleConceptFailed = async (event: any) => {
+      lastWebSocketMessageTime = Date.now();
+      console.log('[TaskDetail] Concept failed:', event);
+      setLoadingConceptIds(prev => prev.filter(id => id !== event.concept_id));
+      
+      // 检查是否是部分失败
+      const isPartialFailure = event.partial_failure === true || 
+                                (event.details && event.details.partial_failure === true);
+      
+      if (isPartialFailure) {
+        setPartialFailedConceptIds(prev => {
+          if (!prev.includes(event.concept_id)) {
+            return [...prev, event.concept_id];
+          }
+          return prev;
+        });
+      } else {
+        setFailedConceptIds(prev => {
+          if (!prev.includes(event.concept_id)) {
+            return [...prev, event.concept_id];
+          }
+          return prev;
+        });
+      }
+      
+      const newLog: ExecutionLog = {
+        id: `ws-concept-failed-${Date.now()}`,
+        task_id: taskId,
+        level: isPartialFailure ? 'warning' : 'error',
+        category: 'workflow',
+        step: 'content_generation',
+        agent_name: null,
+        message: isPartialFailure 
+          ? `Partially failed: ${event.concept_name} - ${event.error || 'Some content generation failed'}`
+          : `Failed: ${event.concept_name} - ${event.error}`,
+        details: event,
+        duration_ms: null,
+        created_at: new Date().toISOString(),
+      };
+      setExecutionLogs((prev) => [...prev, newLog]);
+      
+      // 刷新路线图数据以更新concept状态
+      const currentRoadmapId = roadmapIdRef.current;
+      if (currentRoadmapId) {
+        try {
+          await loadRoadmapFramework(currentRoadmapId);
+        } catch (err) {
+          console.error('[TaskDetail] Failed to refresh roadmap after concept failed:', err);
+        }
+      }
+    };
 
-      onHumanReview: (event) => {
-        console.log('[TaskDetail] Human review required:', event);
-        setTaskInfo((prev) => prev ? { 
-          ...prev, 
-          status: 'human_review_pending',
-          current_step: 'human_review',
-        } : null);
-      },
+    const handleHumanReview = (event: any) => {
+      lastWebSocketMessageTime = Date.now();
+      console.log('[TaskDetail] Human review required:', event);
+      setTaskInfo((prev) => prev ? { 
+        ...prev, 
+        status: 'human_review_pending',
+        current_step: 'human_review',
+      } : null);
+    };
 
-      onCompleted: (event) => {
-        console.log('[TaskDetail] Task completed:', event);
-        setTaskInfo((prev) => prev ? { 
-          ...prev, 
-          status: 'completed', 
-          current_step: 'completed' 
-        } : null);
-        
-        const newLog: ExecutionLog = {
-          id: `ws-completed-${Date.now()}`,
-          task_id: taskId,
-          level: 'success',
-          category: 'workflow',
-          step: 'completed',
-          agent_name: null,
-          message: 'Task completed successfully!',
-          details: event,
-          duration_ms: null,
-          created_at: new Date().toISOString(),
-        };
-        setExecutionLogs((prev) => [...prev, newLog]);
-      },
+    const handleCompleted = (event: any) => {
+      lastWebSocketMessageTime = Date.now();
+      if (pollingInterval) {
+        clearInterval(pollingInterval);
+        pollingInterval = null;
+      }
+      console.log('[TaskDetail] Task completed:', event);
+      setTaskInfo((prev) => prev ? { 
+        ...prev, 
+        status: 'completed', 
+        current_step: 'completed' 
+      } : null);
+      
+      const newLog: ExecutionLog = {
+        id: `ws-completed-${Date.now()}`,
+        task_id: taskId,
+        level: 'success',
+        category: 'workflow',
+        step: 'completed',
+        agent_name: null,
+        message: 'Task completed successfully!',
+        details: event,
+        duration_ms: null,
+        created_at: new Date().toISOString(),
+      };
+      setExecutionLogs((prev) => [...prev, newLog]);
+    };
 
-      onFailed: (event) => {
-        console.log('[TaskDetail] Task failed:', event);
-        setTaskInfo((prev) => prev ? { 
-          ...prev, 
-          status: 'failed', 
-          current_step: 'failed',
-          error_message: event.error || 'Task failed'
-        } : null);
-        
-        const newLog: ExecutionLog = {
-          id: `ws-failed-${Date.now()}`,
-          task_id: taskId,
-          level: 'error',
-          category: 'workflow',
-          step: 'failed',
-          agent_name: null,
-          message: event.error || 'Task failed',
-          details: event,
-          duration_ms: null,
-          created_at: new Date().toISOString(),
-        };
-        setExecutionLogs((prev) => [...prev, newLog]);
-      },
+    const handleFailed = (event: any) => {
+      lastWebSocketMessageTime = Date.now();
+      if (pollingInterval) {
+        clearInterval(pollingInterval);
+        pollingInterval = null;
+      }
+      console.log('[TaskDetail] Task failed:', event);
+      setTaskInfo((prev) => prev ? { 
+        ...prev, 
+        status: 'failed', 
+        current_step: 'failed',
+        error_message: event.error || 'Task failed'
+      } : null);
+      
+      const newLog: ExecutionLog = {
+        id: `ws-failed-${Date.now()}`,
+        task_id: taskId,
+        level: 'error',
+        category: 'workflow',
+        step: 'failed',
+        agent_name: null,
+        message: event.error || 'Task failed',
+        details: event,
+        duration_ms: null,
+        created_at: new Date().toISOString(),
+      };
+      setExecutionLogs((prev) => [...prev, newLog]);
+    };
 
-      onError: (event) => {
-        console.error('[TaskDetail] WebSocket error:', event);
+    const handleError = (event: any) => {
+      console.error('[TaskDetail] WebSocket error:', event);
+    };
+
+    // 创建 WebSocket 实例，使用包装后的处理器
+    const websocket = new TaskWebSocket(taskId, {
+      onStatus: handleStatus,
+      onProgress: handleProgress,
+      onConceptStart: handleConceptStart,
+      onConceptComplete: handleConceptComplete,
+      onConceptFailed: handleConceptFailed,
+      onHumanReview: handleHumanReview,
+      onCompleted: handleCompleted,
+      onFailed: handleFailed,
+      onError: handleError,
+      onAnyEvent: (event: any) => {
+        // 更新最后消息时间（任何事件都算作活跃消息）
+        lastWebSocketMessageTime = Date.now();
       },
     });
 
     websocket.connect(true);
     setWs(websocket);
     
-    // ========================================
-    // 轮询兜底机制：防止 WebSocket 通知丢失
-    // ========================================
-    // 在 content_generation 阶段，每 10 秒轮询一次任务状态
-    // 如果发现任务已完成但前端未收到通知，手动更新状态
-    let pollingInterval: NodeJS.Timeout | null = null;
-    
-    const startPollingIfNeeded = () => {
-      // 只在 content_generation 阶段启动轮询（这是最可能出现超时的阶段）
-      if (taskInfo?.current_step === 'content_generation') {
-        console.log('[TaskDetail] Starting fallback polling for content_generation');
-        pollingInterval = setInterval(async () => {
-          try {
-            const latestTask = await getTaskDetail(taskId);
-            if (latestTask.status === 'completed' || latestTask.status === 'partial_failure') {
-              console.log('[TaskDetail] Polling detected task completion:', latestTask.status);
-              setTaskInfo(latestTask);
-              
-              // 刷新日志
-              const logsData = await getTaskLogs(taskId, undefined, undefined, 2000);
-              const allLogs = logsData.logs || [];
-              const limitedLogs = limitLogsByStep(allLogs, 100);
-              setExecutionLogs(limitedLogs);
-              
-              // 停止轮询
-              if (pollingInterval) {
-                clearInterval(pollingInterval);
-                pollingInterval = null;
+    // 检查 WebSocket 连接状态和消息活跃度
+    const checkWebSocketHealth = () => {
+      const isConnected = websocket.isConnected();
+      const timeSinceLastMessage = Date.now() - lastWebSocketMessageTime;
+      
+      // 如果 WebSocket 未连接，或长时间无消息，启动轮询
+      if (!isConnected || timeSinceLastMessage > WS_SILENCE_THRESHOLD) {
+        if (!pollingInterval) {
+          const currentStep = taskInfo?.current_step;
+          // 只在处理中的任务阶段启用轮询
+          if (currentStep && ['content_generation', 'tutorial_generation', 'resource_generation', 'quiz_generation'].includes(currentStep)) {
+            const interval = Math.min(
+              INITIAL_POLLING_INTERVAL * Math.pow(2, pollingAttempts),
+              MAX_POLLING_INTERVAL
+            );
+            console.log(`[TaskDetail] WebSocket ${!isConnected ? 'disconnected' : 'silent'}, starting fallback polling with interval: ${interval}ms`);
+            
+            pollingInterval = setInterval(async () => {
+              try {
+                const latestTask = await getTaskDetail(taskId);
+                
+                // 如果任务已完成，更新状态并停止轮询
+                if (latestTask.status === 'completed' || latestTask.status === 'partial_failure' || latestTask.status === 'failed') {
+                  console.log('[TaskDetail] Polling detected task completion:', latestTask.status);
+                  setTaskInfo(latestTask);
+                  
+                  // 刷新日志
+                  const logsData = await getTaskLogs(taskId, undefined, undefined, 2000);
+                  const allLogs = logsData.logs || [];
+                  const limitedLogs = limitLogsByStep(allLogs, 100);
+                  setExecutionLogs(limitedLogs);
+                  
+                  // 停止轮询
+                  if (pollingInterval) {
+                    clearInterval(pollingInterval);
+                    pollingInterval = null;
+                  }
+                } else {
+                  // 任务仍在进行中，增加轮询尝试次数（下次使用更长的间隔）
+                  pollingAttempts++;
+                }
+              } catch (err) {
+                console.error('[TaskDetail] Polling error:', err);
+                pollingAttempts++;
               }
-            }
-          } catch (err) {
-            console.error('[TaskDetail] Polling error:', err);
+            }, interval);
           }
-        }, 10000); // 每 10 秒轮询一次
+        }
+      } else if (pollingInterval) {
+        // WebSocket 已连接且有活跃消息，停止轮询
+        console.log('[TaskDetail] WebSocket healthy, stopping fallback polling');
+        clearInterval(pollingInterval);
+        pollingInterval = null;
+        pollingAttempts = 0;
       }
     };
     
-    // 延迟启动轮询（给 WebSocket 一些时间建立连接）
-    const pollingStartTimer = setTimeout(startPollingIfNeeded, 5000);
+    // 定期检查 WebSocket 健康状态（每30秒检查一次）
+    const healthCheckInterval = setInterval(checkWebSocketHealth, 30000);
+    
+    // 初始检查（延迟5秒，给 WebSocket 时间建立连接）
+    const initialHealthCheck = setTimeout(() => {
+      checkWebSocketHealth();
+    }, 5000);
 
     return () => {
       websocket.disconnect();
       if (pollingInterval) {
         clearInterval(pollingInterval);
       }
-      clearTimeout(pollingStartTimer);
+      if (healthCheckInterval) {
+        clearInterval(healthCheckInterval);
+      }
+      clearTimeout(initialHealthCheck);
     };
   }, [taskId, taskInfo?.status, taskInfo?.current_step, taskInfo?.roadmap_id, loadIntentAnalysis, loadRoadmapFramework]);
 
@@ -666,15 +859,27 @@ export default function TaskDetailPage() {
         <div className="max-w-7xl mx-auto px-6 py-4">
           <div className="flex items-start justify-between gap-4">
             <div className="flex-1 space-y-1">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => router.push('/tasks')}
-                className="mb-2 -ml-2"
-              >
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                Back to Tasks
-              </Button>
+              <div className="flex items-center gap-2 mb-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => router.push('/tasks')}
+                  className="-ml-2"
+                >
+                  <ArrowLeft className="w-4 h-4 mr-2" />
+                  Back to Tasks
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleRefresh}
+                  disabled={isRefreshing || isLoading}
+                  className="-ml-2"
+                >
+                  <RefreshCw className={cn('w-4 h-4 mr-2', isRefreshing && 'animate-spin')} />
+                  Refresh
+                </Button>
+              </div>
               
               <h1 className="text-2xl font-serif font-semibold">{taskInfo.title}</h1>
               
@@ -716,6 +921,8 @@ export default function TaskDetailPage() {
           loadingConceptIds={loadingConceptIds}
           failedConceptIds={failedConceptIds}
           partialFailedConceptIds={partialFailedConceptIds}
+          userPreferences={userPreferences}
+          onRetrySuccess={handleRetrySuccess}
           maxHeight={500}
         />
 

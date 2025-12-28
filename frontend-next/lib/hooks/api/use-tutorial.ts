@@ -4,24 +4,33 @@
  * 功能:
  * - 获取指定 Concept 的教程内容
  * - 支持版本选择
- * - 自动获取 S3 URL 的 Markdown 内容
+ * - 自动下载完整的 Markdown 内容并缓存
  */
 
 import { useQuery } from '@tanstack/react-query';
-import type { TutorialResponse } from '@/types/generated';
+import { getLatestTutorial, downloadTutorialContent } from '@/lib/api/endpoints';
 
 interface UseTutorialOptions {
   /** 版本号 (可选，默认最新版本) */
   version?: number;
 }
 
-interface TutorialWithContent extends TutorialResponse {
-  /** 完整的 Markdown 内容 */
+export interface TutorialWithContent {
+  /** 教程元数据 */
+  tutorial_id: string;
+  concept_id: string;
+  title?: string;
+  summary?: string;
+  content_status?: 'completed' | 'generating' | 'failed' | 'pending';
+  version?: number;
+  generated_at?: string;
+  
+  /** 完整的 Markdown 内容（从 S3/R2 下载） */
   full_content?: string;
 }
 
 /**
- * 获取教程内容 Hook
+ * 获取教程内容 Hook（带完整 Markdown 内容缓存）
  * @param roadmapId - 路线图 ID
  * @param conceptId - 概念 ID
  * @param options - 查询选项
@@ -42,31 +51,38 @@ export function useTutorial(
       }
 
       // 1. 获取教程元数据
-      const params = version ? `?version=${version}` : '';
-      const response = await fetch(
-        `/api/v1/roadmaps/${roadmapId}/concepts/${conceptId}/tutorial${params}`
-      );
+      const meta = await getLatestTutorial(roadmapId, conceptId);
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || 'Failed to fetch tutorial');
+      // 2. 如果教程状态为 completed，下载完整的 Markdown 内容
+      let fullContent: string | undefined;
+      if (meta && meta.content_status === 'completed') {
+        try {
+          fullContent = await downloadTutorialContent(roadmapId, conceptId);
+        } catch (error) {
+          console.error('Failed to download tutorial content:', error);
+          fullContent = '# Error loading content\n\nPlease try again later.';
+        }
+      } else if (meta?.content_status === 'generating') {
+        fullContent = '# Content is being generated\n\nPlease wait...';
+      } else if (meta?.content_status === 'failed') {
+        fullContent = '# Content generation failed\n\nPlease retry.';
+      } else {
+        fullContent = '# No content available yet\n\nThis concept is still pending generation.';
       }
 
-      const tutorial: TutorialResponse = await response.json();
-
-      // 2. 如果教程状态为 completed，并且有教程数据，返回教程内容
-      if (tutorial.status === 'completed' && tutorial.tutorial) {
-        // 教程内容已经包含在 tutorial 对象中
-        return {
-          ...tutorial,
-          full_content: JSON.stringify(tutorial.tutorial, null, 2), // 或者根据实际结构处理
-        };
-      }
-
-      return tutorial;
+      return {
+        tutorial_id: meta?.tutorial_id || '',
+        concept_id: conceptId,
+        title: meta?.title,
+        summary: meta?.summary,
+        content_status: meta?.content_status,
+        version: meta?.version,
+        generated_at: meta?.generated_at,
+        full_content: fullContent,
+      };
     },
     enabled: !!roadmapId && !!conceptId,
-    staleTime: 10 * 60 * 1000, // 10分钟
-    gcTime: 30 * 60 * 1000, // 30分钟
+    staleTime: 10 * 60 * 1000, // 10分钟缓存
+    gcTime: 30 * 60 * 1000, // 30分钟后垃圾回收
   });
 }

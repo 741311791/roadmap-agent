@@ -96,6 +96,11 @@ class BaseAgent(ABC):
             if response_format:
                 call_params["response_format"] = response_format
             
+            # 使用 custom_llm_provider 让 litellm 将请求转发到 base_url
+            # 而不是尝试匹配内置模型配置
+            if self.base_url:
+                call_params["custom_llm_provider"] = "openai"
+            
             response = await litellm.acompletion(**call_params)
             
             # 追踪成本
@@ -159,6 +164,10 @@ class BaseAgent(ABC):
                 call_params["api_key"] = self.api_key
             if tools:
                 call_params["tools"] = tools
+            
+            # 使用 custom_llm_provider 让 litellm 将请求转发到 base_url
+            if self.base_url:
+                call_params["custom_llm_provider"] = "openai"
             
             # 流式调用
             response_stream = await litellm.acompletion(**call_params)

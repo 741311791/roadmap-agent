@@ -57,7 +57,7 @@ export function HeroSection() {
 
       <div className="max-w-7xl mx-auto w-full relative z-10 grid lg:grid-cols-2 gap-12 items-center">
         {/* 标题区域 - 左侧 */}
-        <div className="text-left">
+        <div className="text-center lg:text-left">
           {/* 主标题 */}
           <motion.h1
             initial={{ opacity: 0, y: 30 }}
@@ -75,7 +75,7 @@ export function HeroSection() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.4 }}
-            className="text-xl text-muted-foreground max-w-xl mb-10 leading-relaxed"
+            className="text-xl text-muted-foreground max-w-xl mx-auto lg:mx-0 mb-10 leading-relaxed"
           >
             AI creates personalized learning roadmaps that adapt to your goals, experience, and learning style.
           </motion.p>
@@ -85,11 +85,11 @@ export function HeroSection() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.6 }}
-            className="max-w-lg"
+            className="max-w-lg mx-auto lg:mx-0"
           >
             <WaitlistForm onSubmit={handleJoin} className="w-full" />
             
-            <p className="text-sm text-muted-foreground mt-4 text-center sm:text-left pl-2">
+            <p className="text-sm text-muted-foreground mt-4 text-center lg:text-left pl-2">
               Join 2,400+ learners building their future
             </p>
           </motion.div>

@@ -50,12 +50,14 @@ COPY ./scripts /app/scripts
 # 1. 创建数据库表（使用 SQLModel，不依赖 ENVIRONMENT）
 # 2. 标记 Alembic 迁移为完成（避免运行 ALTER 迁移）
 # 3. 创建超级管理员（使用环境变量，如果已存在则跳过）
-# 4. 启动 Uvicorn，使用 Railway 提供的 $PORT 环境变量（默认为 8000）
+# 4. 启动 Uvicorn，使用多 Worker 模式提高并发能力
+#    - UVICORN_WORKERS: Worker 数量（默认 4）
+#    - 多 Worker 可以隔离内容生成任务，避免阻塞其他请求
 CMD sh -c "python scripts/create_tables.py && \
           alembic stamp head && \
           python scripts/create_admin_user.py \
             --email ${ADMIN_EMAIL:-admin@example.com} \
             --password ${ADMIN_PASSWORD:-admin123} \
             --username ${ADMIN_USERNAME:-admin} || true && \
-          uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"
+          uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${UVICORN_WORKERS:-4}"
 

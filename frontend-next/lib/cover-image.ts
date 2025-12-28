@@ -155,6 +155,85 @@ export async function fetchCoverImageFromAPI(roadmapId: string): Promise<string 
 }
 
 /**
+ * 批量从后端 API 获取多个路线图的封面图 URL（带缓存）
+ * 
+ * @param roadmapIds - 路线图 ID 列表
+ * @returns 字典，key 为 roadmapId，value 为封面图 URL（如果不存在则为 null）
+ */
+export async function batchFetchCoverImagesFromAPI(
+  roadmapIds: string[]
+): Promise<Map<string, string | null>> {
+  // 过滤掉已缓存的 ID
+  const uncachedIds = roadmapIds.filter(id => !coverImageCache.has(id));
+  
+  // 如果所有 ID 都已缓存，直接返回缓存结果
+  if (uncachedIds.length === 0) {
+    const result = new Map<string, string | null>();
+    for (const id of roadmapIds) {
+      result.set(id, coverImageCache.get(id) || null);
+    }
+    return result;
+  }
+  
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/cover-images/batch-get`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      credentials: 'include',
+      body: JSON.stringify({ roadmap_ids: uncachedIds }),
+      signal: AbortSignal.timeout(10000), // 10秒超时（批量请求可能需要更长时间）
+    });
+    
+    if (!response.ok) {
+      // 批量请求失败，将所有未缓存的 ID 标记为 null
+      for (const id of uncachedIds) {
+        coverImageCache.set(id, null);
+      }
+      return new Map(roadmapIds.map(id => [id, coverImageCache.get(id) || null]));
+    }
+    
+    const data = await response.json();
+    
+    // 构建结果 Map
+    const result = new Map<string, string | null>();
+    
+    // 处理批量获取的结果
+    for (const item of data) {
+      const url = item.status === 'success' && item.cover_image_url 
+        ? item.cover_image_url 
+        : null;
+      coverImageCache.set(item.roadmap_id, url);
+      result.set(item.roadmap_id, url);
+    }
+    
+    // 处理已缓存的 ID
+    for (const id of roadmapIds) {
+      if (!result.has(id)) {
+        result.set(id, coverImageCache.get(id) || null);
+      }
+    }
+    
+    return result;
+  } catch (error) {
+    // 超时或其他错误，不记录到缓存，允许重试
+    if (error instanceof Error && error.name === 'TimeoutError') {
+      console.warn('Batch cover image fetch timeout:', uncachedIds);
+    } else {
+      console.error('Failed to batch fetch cover images from API:', error);
+    }
+    
+    // 返回已缓存的结果，未缓存的返回 null
+    const result = new Map<string, string | null>();
+    for (const id of roadmapIds) {
+      result.set(id, coverImageCache.get(id) || null);
+    }
+    return result;
+  }
+}
+
+/**
  * Get a cover image URL based on the topic
  * Uses Unsplash for high-quality images
  * 

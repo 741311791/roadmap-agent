@@ -23,6 +23,7 @@ import {
   BookOpen,
   Mail,
   Key,
+  Activity,
 } from 'lucide-react';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import { useAuthStore } from '@/lib/store/auth-store';
@@ -254,6 +255,13 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
                 label="API Keys Management"
                 href="/admin/api-keys"
                 active={isActive('/admin/api-keys')}
+                isCollapsed={isCollapsed}
+              />
+              <NavItem
+                icon={Activity}
+                label="Celery Monitor"
+                href="/admin/celery-monitor"
+                active={isActive('/admin/celery-monitor')}
                 isCollapsed={isCollapsed}
               />
             </>

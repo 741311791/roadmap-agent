@@ -65,6 +65,10 @@ interface CoreDisplayAreaProps {
   failedConceptIds?: string[];
   /** 部分失败的 Concept ID 列表 */
   partialFailedConceptIds?: string[];
+  /** 用户学习偏好（用于重试功能） */
+  userPreferences?: any;
+  /** 重试成功回调 */
+  onRetrySuccess?: () => void;
   /** 最大高度 */
   maxHeight?: number;
   /** 自定义类名 */
@@ -398,6 +402,8 @@ export function CoreDisplayArea({
   loadingConceptIds = [],
   failedConceptIds = [],
   partialFailedConceptIds = [],
+  userPreferences,
+  onRetrySuccess,
   maxHeight = 500,
   className,
 }: CoreDisplayAreaProps) {
@@ -427,8 +433,18 @@ export function CoreDisplayArea({
   }
   
   // 判断是否显示"View Roadmap"按钮
+  // ✅ 优化：只要进入内容生成阶段或任务完成，就显示按钮
+  // ✅ 使用明确的步骤枚举，避免字符串模糊匹配
+  const CONTENT_GENERATION_STEPS = [
+    'content_generation',
+    'content_generation_queued',
+    'tutorial_generation',
+    'resource_recommendation',
+    'quiz_generation',
+  ];
+  const isInContentGeneration = currentStep ? CONTENT_GENERATION_STEPS.includes(currentStep) : false;
   const isTaskCompleted = status === 'completed' || status === 'partial_failure';
-  const showViewRoadmapButton = isTaskCompleted && roadmapId;
+  const showViewRoadmapButton = roadmapId && (isInContentGeneration || isTaskCompleted);
 
   return (
     <Card className={cn('', className)}>
@@ -436,7 +452,7 @@ export function CoreDisplayArea({
       <div className="px-6 py-4 border-b flex items-center justify-between">
         <h2 className="text-lg font-serif font-semibold">Learning Path Overview</h2>
         
-        {/* View Roadmap 按钮 - 任务完成时显示 */}
+        {/* View Roadmap 按钮 - 进入内容生成阶段或任务完成时显示 */}
         {showViewRoadmapButton && (
           <Link href={`/roadmap/${roadmapId}`}>
             <Button
@@ -502,6 +518,8 @@ export function CoreDisplayArea({
                  loadingConceptIds={loadingConceptIds}
                  failedConceptIds={failedConceptIds}
                  partialFailedConceptIds={partialFailedConceptIds}
+                 userPreferences={userPreferences}
+                 onRetrySuccess={onRetrySuccess}
                />
              ) : showIntentCard ? (
                // 需求分析已完成但路线图还在生成，传入当前步骤以显示正确的状态文本

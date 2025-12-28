@@ -127,10 +127,27 @@ class ReviewRunner:
             # 第一次执行（暂停前）：只在首次进入时执行
             # ========================================
             if not is_resumed:
+                # 获取路线图框架信息（用于前端展示和 WebSocket 通知）
+                framework = state.get("roadmap_framework")
+                total_concepts = 0
+                total_stages = 0
+                roadmap_title = "Untitled Roadmap"
+                if framework:
+                    total_concepts = sum(
+                        len(module.concepts)
+                        for stage in framework.stages
+                        for module in stage.modules
+                    )
+                    total_stages = len(framework.stages)
+                    roadmap_title = framework.title
+                
                 # 特殊处理：将状态更新为 "human_review_pending"
+                # 同时发送 human_review_required WebSocket 事件通知前端
                 await self.brain.update_task_to_pending_review(
                     task_id=task_id,
                     roadmap_id=roadmap_id,
+                    roadmap_title=roadmap_title,
+                    stages_count=total_stages,
                 )
                 
                 logger.info(
@@ -140,17 +157,6 @@ class ReviewRunner:
                 )
                 
                 # 记录等待审核日志（用于前端展示）
-                framework = state.get("roadmap_framework")
-                total_concepts = 0
-                total_stages = 0
-                if framework:
-                    total_concepts = sum(
-                        len(module.concepts)
-                        for stage in framework.stages
-                        for module in stage.modules
-                    )
-                    total_stages = len(framework.stages)
-                
                 await execution_logger.info(
                     task_id=task_id,
                     category=LogCategory.WORKFLOW,
@@ -159,7 +165,7 @@ class ReviewRunner:
                     message="⏸️ Roadmap ready for review, awaiting your confirmation",
                     details={
                         "log_type": "review_waiting",
-                        "roadmap_title": framework.title if framework else "Untitled Roadmap",
+                        "roadmap_title": roadmap_title,
                         "roadmap_url": f"/roadmap/{roadmap_id}",
                         "summary": {
                             "total_concepts": total_concepts,

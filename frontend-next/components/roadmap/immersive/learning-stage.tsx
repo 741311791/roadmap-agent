@@ -4,8 +4,10 @@ import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import type { Concept, LearningPreferences } from '@/types/generated/models';
 import type { ResourcesResponse, QuizResponse } from '@/types/generated/services';
-import { getConceptResources, getConceptQuiz, updateConceptProgress, submitQuizAttempt } from '@/lib/api/endpoints';
+import { updateConceptProgress, submitQuizAttempt } from '@/lib/api/endpoints';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
+import { useResources } from '@/lib/hooks/api/use-resources';
+import { useQuiz } from '@/lib/hooks/api/use-quiz';
 import { FailedContentAlert } from '@/components/common/retry-content-button';
 import { GeneratingContentLoader } from '@/components/common/generating-content-loader';
 import { 
@@ -922,6 +924,8 @@ interface LearningStageProps {
   className?: string;
   /** 教程 Markdown 内容 */
   tutorialContent?: string;
+  /** 教程加载状态 */
+  tutorialLoading?: boolean;
   /** 路线图 ID (用于获取资源和测验) */
   roadmapId?: string;
   /** 用户学习偏好（用于重试生成） */
@@ -942,22 +946,31 @@ interface LearningStageProps {
  * - 显示测验题目
  * - 提供"标记完成"操作
  */
-export function LearningStage({ concept, className, tutorialContent, roadmapId, userPreferences, onRetrySuccess }: LearningStageProps) {
+export function LearningStage({ concept, className, tutorialContent, tutorialLoading, roadmapId, userPreferences, onRetrySuccess }: LearningStageProps) {
   const [activeFormat, setActiveFormat] = useState<LearningFormat>('immersive-text');
   
   // Learning progress state
   const { conceptProgressMap, updateConceptProgress: updateProgressInStore, updateConceptStatus } = useRoadmapStore();
   const [isTogglingProgress, setIsTogglingProgress] = useState(false);
   
-  // Resources state
-  const [resources, setResources] = useState<ResourcesResponse | null>(null);
-  const [resourcesLoading, setResourcesLoading] = useState(false);
-  const [resourcesError, setResourcesError] = useState<string | null>(null);
+  // 使用 React Query Hooks 获取 resources 和 quiz（带缓存）
+  const { 
+    data: resources, 
+    isLoading: resourcesLoading, 
+    error: resourcesError 
+  } = useResources(
+    roadmapId, 
+    (activeFormat === 'learning-resources' && concept?.resources_id) ? concept.concept_id : undefined
+  );
 
-  // Quiz state
-  const [quiz, setQuiz] = useState<QuizResponse | null>(null);
-  const [quizLoading, setQuizLoading] = useState(false);
-  const [quizError, setQuizError] = useState<string | null>(null);
+  const { 
+    data: quiz, 
+    isLoading: quizLoading, 
+    error: quizError 
+  } = useQuiz(
+    roadmapId,
+    (activeFormat === 'quiz' && concept?.quiz_id) ? concept.concept_id : undefined
+  );
   
   // 检测内容生成状态
   // 注意：不再使用本地重试状态，完全依赖后端状态和WebSocket更新
@@ -985,14 +998,6 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId, 
       element.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }, []);
-
-  // Reset resources and quiz data when concept changes
-  useEffect(() => {
-    setResources(null);
-    setResourcesError(null);
-    setQuiz(null);
-    setQuizError(null);
-  }, [concept?.concept_id]);
 
   // 检查是否有正在进行的重试任务 + 僵尸状态检测
   // 当切换到对应tab或concept变化时，检查backend是否有active task
@@ -1069,48 +1074,6 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId, 
       isMounted = false; // 清理函数：标记组件已卸载
     };
   }, [roadmapId, concept?.concept_id, activeFormat]);
-
-  // Fetch resources when tab is activated or concept changes
-  useEffect(() => {
-    // 只有当 resources_id 存在时才尝试获取资源
-    // 如果 resources_id 为 null，说明资源还未生成或生成失败，应显示重试按钮
-    if (activeFormat === 'learning-resources' && concept && roadmapId && concept.resources_id) {
-      setResourcesLoading(true);
-      setResourcesError(null);
-      
-      getConceptResources(roadmapId, concept.concept_id)
-        .then(data => {
-          setResources(data);
-          setResourcesLoading(false);
-        })
-        .catch(err => {
-          console.error('Failed to load resources:', err);
-          setResourcesError(err.message || 'Failed to load learning resources');
-          setResourcesLoading(false);
-        });
-    }
-  }, [activeFormat, concept?.concept_id, concept?.resources_id, roadmapId]);
-
-  // Fetch quiz when tab is activated or concept changes
-  useEffect(() => {
-    // 只有当 quiz_id 存在时才尝试获取测验
-    // 如果 quiz_id 为 null，说明测验还未生成或生成失败，应显示重试按钮
-    if (activeFormat === 'quiz' && concept && roadmapId && concept.quiz_id) {
-      setQuizLoading(true);
-      setQuizError(null);
-      
-      getConceptQuiz(roadmapId, concept.concept_id)
-        .then(data => {
-          setQuiz(data);
-          setQuizLoading(false);
-        })
-        .catch(err => {
-          console.error('Failed to load quiz:', err);
-          setQuizError(err.message || 'Failed to load quiz');
-          setQuizLoading(false);
-        });
-    }
-  }, [activeFormat, concept?.concept_id, concept?.quiz_id, roadmapId]);
 
   // Compute concept completion status
   const isConceptCompleted = concept ? (conceptProgressMap[concept.concept_id] || false) : false;
@@ -1290,7 +1253,7 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId, 
               <ResourceList 
                 resources={resources?.resources || []}
                 isLoading={resourcesLoading}
-                error={resourcesError}
+                error={resourcesError?.message || null}
                 roadmapId={roadmapId}
                 conceptId={concept?.concept_id}
                 userPreferences={userPreferences}
@@ -1316,7 +1279,7 @@ export function LearningStage({ concept, className, tutorialContent, roadmapId, 
               <QuizList 
                 quiz={quiz}
                 isLoading={quizLoading}
-                error={quizError}
+                error={quizError?.message || null}
                 roadmapId={roadmapId}
                 conceptId={concept?.concept_id}
                 userPreferences={userPreferences}

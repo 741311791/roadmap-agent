@@ -6,23 +6,17 @@
  * 点击节点时显示详细信息
  */
 
-import { useEffect, useRef } from 'react';
-import { X, Clock, BookOpen, Layers, Box } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { X, Clock, BookOpen, Layers, Box, RefreshCw, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { TreeNodeData, TreeNodeType, TreeNodeStatus } from './types';
-import type { Concept, Module, Stage } from '@/types/generated/models';
+import { TreeNodeData, TreeNodeType, TreeNodeStatus, NodeDetailPopoverProps } from './types';
+import type { Concept, Module, Stage, LearningPreferences } from '@/types/generated/models';
+import { retryTutorial, retryResources, retryQuiz, type RetryContentRequest } from '@/lib/api/endpoints';
+import { TaskWebSocket } from '@/lib/api/websocket';
 
-interface NodeDetailPopoverProps {
-  node: TreeNodeData | null;
-  isOpen: boolean;
-  onClose: () => void;
-  /** 锚点位置（节点位置） */
-  anchorPosition?: { x: number; y: number };
-  /** 容器边界（用于计算弹出方向） */
-  containerRect?: DOMRect;
-}
+// Props 类型已在 types.ts 中定义，这里不再重复定义
 
 /**
  * 获取节点类型图标
@@ -82,9 +76,13 @@ export function NodeDetailPopover({
   isOpen,
   onClose,
   anchorPosition,
-  containerRect,
+  roadmapId,
+  userPreferences,
+  onRetrySuccess,
 }: NodeDetailPopoverProps) {
   const popoverRef = useRef<HTMLDivElement>(null);
+  const [isRetrying, setIsRetrying] = useState<string | null>(null); // 正在重试的内容类型
+  const wsRef = useRef<TaskWebSocket | null>(null);
   
   // 点击外部关闭
   useEffect(() => {
@@ -120,6 +118,16 @@ export function NodeDetailPopover({
     document.addEventListener('keydown', handleEsc);
     return () => document.removeEventListener('keydown', handleEsc);
   }, [isOpen, onClose]);
+
+  // 清理 WebSocket 连接
+  useEffect(() => {
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.disconnect();
+        wsRef.current = null;
+      }
+    };
+  }, []);
   
   if (!isOpen || !node) return null;
   
@@ -141,6 +149,93 @@ export function NodeDetailPopover({
   const conceptData = node.type === 'concept' ? originalData as Concept : null;
   const moduleData = node.type === 'module' ? originalData as Module : null;
   const stageData = node.type === 'stage' ? originalData as Stage : null;
+
+  /**
+   * 检查 Concept 是否有失败的内容类型
+   */
+  const getFailedContentTypes = (concept: Concept): Array<'tutorial' | 'resources' | 'quiz'> => {
+    const failed: Array<'tutorial' | 'resources' | 'quiz'> = [];
+    if (concept.content_status === 'failed') failed.push('tutorial');
+    if (concept.resources_status === 'failed') failed.push('resources');
+    if (concept.quiz_status === 'failed') failed.push('quiz');
+    return failed;
+  };
+
+  /**
+   * 处理重试操作
+   */
+  const handleRetry = async (contentType: 'tutorial' | 'resources' | 'quiz') => {
+    if (!conceptData || !roadmapId || !userPreferences) {
+      console.warn('[NodeDetailPopover] Missing required data for retry:', { conceptData, roadmapId, userPreferences });
+      return;
+    }
+
+    setIsRetrying(contentType);
+
+    try {
+      const request: RetryContentRequest = {
+        preferences: userPreferences as LearningPreferences,
+      };
+
+      let response;
+      switch (contentType) {
+        case 'tutorial':
+          response = await retryTutorial(roadmapId, conceptData.concept_id, request);
+          break;
+        case 'resources':
+          response = await retryResources(roadmapId, conceptData.concept_id, request);
+          break;
+        case 'quiz':
+          response = await retryQuiz(roadmapId, conceptData.concept_id, request);
+          break;
+      }
+
+      if (response.success && response.task_id) {
+        // 订阅 WebSocket 以获取实时更新
+        const ws = new TaskWebSocket(response.task_id, {
+          onProgress: (event: any) => {
+            console.log('[NodeDetailPopover] Retry progress:', event);
+            if (event.status === 'completed' || event.status === 'failed') {
+              setIsRetrying(null);
+              onRetrySuccess?.();
+              if (wsRef.current) {
+                wsRef.current.disconnect();
+                wsRef.current = null;
+              }
+            }
+          },
+          onCompleted: () => {
+            setIsRetrying(null);
+            onRetrySuccess?.();
+            if (wsRef.current) {
+              wsRef.current.disconnect();
+              wsRef.current = null;
+            }
+          },
+          onFailed: () => {
+            setIsRetrying(null);
+            if (wsRef.current) {
+              wsRef.current.disconnect();
+              wsRef.current = null;
+            }
+          },
+        });
+
+        ws.connect(true);
+        wsRef.current = ws;
+      } else {
+        setIsRetrying(null);
+        onRetrySuccess?.();
+      }
+    } catch (error) {
+      console.error(`[NodeDetailPopover] Failed to retry ${contentType}:`, error);
+      setIsRetrying(null);
+    }
+  };
+
+  // 检查是否有失败的内容需要重试
+  const failedContentTypes = conceptData ? getFailedContentTypes(conceptData) : [];
+  const canRetry = conceptData && roadmapId && userPreferences && failedContentTypes.length > 0;
   
   return (
     <div
@@ -264,6 +359,42 @@ export function NodeDetailPopover({
             <p className="text-xs text-muted-foreground">
               Contains {node.children.length} {node.type === 'stage' ? 'modules' : 'concepts'}
             </p>
+          </div>
+        )}
+
+        {/* 重试按钮区域 - 仅对失败的 Concept 节点显示 */}
+        {canRetry && (
+          <div className="pt-2 border-t space-y-2">
+            <p className="text-xs font-medium text-muted-foreground">Failed Content:</p>
+            <div className="flex flex-col gap-1.5">
+              {failedContentTypes.map((contentType) => (
+                <Button
+                  key={contentType}
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleRetry(contentType)}
+                  disabled={isRetrying !== null}
+                  className={cn(
+                    'h-7 text-xs justify-start',
+                    contentType === 'tutorial' && 'border-red-200 text-red-700 hover:bg-red-50',
+                    contentType === 'resources' && 'border-red-200 text-red-700 hover:bg-red-50',
+                    contentType === 'quiz' && 'border-red-200 text-red-700 hover:bg-red-50',
+                  )}
+                >
+                  {isRetrying === contentType ? (
+                    <>
+                      <Loader2 className="w-3 h-3 mr-2 animate-spin" />
+                      Retrying...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="w-3 h-3 mr-2" />
+                      Retry {contentType === 'tutorial' ? 'Tutorial' : contentType === 'resources' ? 'Resources' : 'Quiz'}
+                    </>
+                  )}
+                </Button>
+              ))}
+            </div>
           </div>
         )}
       </div>

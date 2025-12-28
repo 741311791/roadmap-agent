@@ -18,20 +18,41 @@ class RedisClient:
         self._client: aioredis.Redis | None = None
     
     async def connect(self):
-        """建立连接"""
+        """
+        建立连接
+        
+        支持标准 Redis 和 Upstash Redis（通过 rediss:// 协议使用 TLS/SSL）
+        """
         if self._client is None:
-            self._client = await aioredis.from_url(
-                settings.REDIS_URL,
-                encoding="utf-8",
-                decode_responses=True,
-                # 添加超时配置和连接池设置
-                socket_timeout=5,  # Socket 操作超时 5 秒
-                socket_connect_timeout=5,  # 连接超时 5 秒
-                socket_keepalive=True,  # 启用 TCP keepalive
-                max_connections=50,  # 连接池最大连接数
-                retry_on_timeout=True,  # 超时时自动重试
+            redis_url = settings.get_redis_url
+            
+            # 检测是否使用 TLS/SSL（rediss:// 协议）
+            use_ssl = redis_url.startswith("rediss://")
+            
+            # 构建连接参数
+            connection_kwargs = {
+                "encoding": "utf-8",
+                "decode_responses": True,
+                # 超时配置和连接池设置
+                "socket_timeout": 5,  # Socket 操作超时 5 秒
+                "socket_connect_timeout": 5,  # 连接超时 5 秒
+                "socket_keepalive": True,  # 启用 TCP keepalive
+                "max_connections": 50,  # 连接池最大连接数
+                "retry_on_timeout": True,  # 超时时自动重试
+            }
+            
+            # SSL/TLS 配置（Upstash 等云服务需要）
+            # 注意：redis-py 5.x 会根据 rediss:// 协议自动启用 SSL
+            # 不需要传递 ssl=True/False 参数
+            if use_ssl:
+                connection_kwargs["ssl_cert_reqs"] = "required"
+            
+            self._client = await aioredis.from_url(redis_url, **connection_kwargs)
+            logger.info(
+                "redis_client_initialized",
+                redis_url=redis_url,
+                ssl_enabled=use_ssl,
             )
-            logger.info("redis_client_initialized", redis_url=settings.REDIS_URL)
     
     async def close(self):
         """关闭连接"""

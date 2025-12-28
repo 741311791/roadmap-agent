@@ -326,6 +326,11 @@ async def get_user_roadmaps(
     # 获取已保存的路线图
     roadmaps = await repo.get_roadmaps_by_user(user_id, limit=limit, offset=offset)
     
+    # 批量获取所有路线图的 Task 和进度（解决 N+1 查询问题）
+    roadmap_ids = [r.roadmap_id for r in roadmaps]
+    tasks_by_roadmap = await repo.get_tasks_by_roadmap_ids_batch(roadmap_ids)
+    completed_counts = await progress_repo.get_completed_counts_batch(user_id, roadmap_ids)
+    
     roadmap_items = []
     
     # 转换已保存的路线图
@@ -351,12 +356,11 @@ async def get_user_roadmaps(
                 order=stage.get("order", 0),
             ))
         
-        # 从 concept_progress 表获取用户完成的概念数
-        user_progress = await progress_repo.get_roadmap_progress(user_id, roadmap.roadmap_id)
-        completed_concepts = len([p for p in user_progress if p.is_completed])
+        # 从批量获取的数据中获取已完成概念数（无需额外查询）
+        completed_concepts = completed_counts.get(roadmap.roadmap_id, 0)
         
-        # 从 user_request 中提取 topic
-        task = await repo.get_task_by_roadmap_id(roadmap.roadmap_id)
+        # 从批量获取的 tasks 中获取 topic（无需额外查询）
+        task = tasks_by_roadmap.get(roadmap.roadmap_id)
         topic = None
         if task and task.user_request:
             learning_goal = task.user_request.get("preferences", {}).get("learning_goal", "")
@@ -433,6 +437,11 @@ async def get_deleted_roadmaps(
     # 获取已删除的路线图
     deleted_roadmaps = await repo.get_deleted_roadmaps(user_id, limit=limit, offset=offset)
     
+    # 批量获取所有路线图的 Task 和进度（解决 N+1 查询问题）
+    roadmap_ids = [r.roadmap_id for r in deleted_roadmaps]
+    tasks_by_roadmap = await repo.get_tasks_by_roadmap_ids_batch(roadmap_ids)
+    completed_counts = await progress_repo.get_completed_counts_batch(user_id, roadmap_ids)
+    
     roadmap_items = []
     
     # 转换已删除的路线图
@@ -450,12 +459,11 @@ async def get_deleted_roadmaps(
                 concepts = module.get("concepts", [])
                 total_concepts += len(concepts)
         
-        # 从 concept_progress 表获取用户完成的概念数
-        user_progress = await progress_repo.get_roadmap_progress(user_id, roadmap.roadmap_id)
-        completed_concepts = len([p for p in user_progress if p.is_completed])
+        # 从批量获取的数据中获取已完成概念数（无需额外查询）
+        completed_concepts = completed_counts.get(roadmap.roadmap_id, 0)
         
-        # 从 user_request 中提取 topic
-        task = await repo.get_task_by_roadmap_id(roadmap.roadmap_id)
+        # 从批量获取的 tasks 中获取 topic（无需额外查询）
+        task = tasks_by_roadmap.get(roadmap.roadmap_id)
         topic = None
         if task and task.user_request:
             learning_goal = task.user_request.get("preferences", {}).get("learning_goal", "")
@@ -511,14 +519,20 @@ async def get_user_tasks(
     Returns:
         任务列表及各状态统计
         
+    状态归类说明：
+        - pending: 仅 pending
+        - processing: processing, running, human_review_pending, human_review_required
+        - completed: completed, partial_failure, approved
+        - failed: failed, rejected
+        
     Example:
         ```json
         {
             "tasks": [
                 {
                     "task_id": "550e8400-e29b-41d4-a716-446655440000",
-                    "status": "processing",
-                    "current_step": "tutorial_generation",
+                    "status": "human_review_pending",
+                    "current_step": "human_review",
                     "title": "Python Web Development",
                     "created_at": "2024-01-01T00:00:00Z",
                     "updated_at": "2024-01-01T00:01:00Z",
@@ -544,11 +558,23 @@ async def get_user_tasks(
     
     # 统计各状态数量（查询全部任务，同样应用task_type过滤）
     all_tasks = await repo.get_tasks_by_user(user_id, task_type=task_type)
+    
+    # 将 human_review_pending、human_review_required、running 等状态归类到 processing
+    # 将 approved、rejected 等状态归类到 completed/failed
     stats = {
         "pending": sum(1 for t in all_tasks if t.status == "pending"),
-        "processing": sum(1 for t in all_tasks if t.status == "processing"),
-        "completed": sum(1 for t in all_tasks if t.status == "completed"),
-        "failed": sum(1 for t in all_tasks if t.status == "failed"),
+        "processing": sum(
+            1 for t in all_tasks 
+            if t.status in ["processing", "running", "human_review_pending", "human_review_required"]
+        ),
+        "completed": sum(
+            1 for t in all_tasks 
+            if t.status in ["completed", "partial_failure", "approved"]
+        ),
+        "failed": sum(
+            1 for t in all_tasks 
+            if t.status in ["failed", "rejected"]
+        ),
     }
     
     task_items = []

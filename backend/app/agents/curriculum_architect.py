@@ -70,6 +70,62 @@ def _try_extract_yaml(content: str) -> str | None:
     return None
 
 
+def _sanitize_yaml_special_chars(yaml_content: str) -> str:
+    """
+    预处理 YAML 内容，修复 LLM 生成的 YAML 中可能存在的特殊字符问题
+    
+    主要处理：
+    1. YAML 数组中未引号包裹的 @ 开头的值（如 @Cacheable）
+    2. 其他 YAML 特殊字符（如 *, &, ! 等）
+    
+    Args:
+        yaml_content: 原始 YAML 字符串
+        
+    Returns:
+        修复后的 YAML 字符串
+    """
+    # 匹配 YAML 数组中以 @ 开头的未引号项：[..., @xxx, ...] 或 [..., @xxx]
+    # 将其转换为引号包裹的形式：[..., "@xxx", ...]
+    
+    def quote_special_array_item(match):
+        """为数组中的特殊字符项添加引号"""
+        prefix = match.group(1)  # 逗号或左括号
+        item = match.group(2)    # 特殊字符开头的项
+        suffix = match.group(3)  # 逗号或右括号
+        return f'{prefix}"{item}"{suffix}'
+    
+    # 处理 @ 开头的数组项（常见于 Java 注解如 @Cacheable）
+    # 模式：匹配 [xxx, @yyy, zzz] 中的 @yyy
+    yaml_content = re.sub(
+        r'(\[|\,\s*)(@[\w\-\.]+)(\s*[\],])',
+        quote_special_array_item,
+        yaml_content
+    )
+    
+    # 处理 * 开头的数组项（如 *args）
+    yaml_content = re.sub(
+        r'(\[|\,\s*)(\*[\w\-\.]+)(\s*[\],])',
+        quote_special_array_item,
+        yaml_content
+    )
+    
+    # 处理 & 开头的数组项（如 &ref）
+    yaml_content = re.sub(
+        r'(\[|\,\s*)(\&[\w\-\.]+)(\s*[\],])',
+        quote_special_array_item,
+        yaml_content
+    )
+    
+    # 处理 ! 开头的数组项（如 !important）
+    yaml_content = re.sub(
+        r'(\[|\,\s*)(\![\w\-\.]+)(\s*[\],])',
+        quote_special_array_item,
+        yaml_content
+    )
+    
+    return yaml_content
+
+
 def _parse_yaml_roadmap(yaml_content: str) -> dict:
     """
     解析 YAML 格式的路线图
@@ -84,7 +140,17 @@ def _parse_yaml_roadmap(yaml_content: str) -> dict:
         ValueError: YAML 解析失败
     """
     try:
-        data = yaml.safe_load(yaml_content)
+        # 预处理 YAML 内容，修复特殊字符问题
+        sanitized_content = _sanitize_yaml_special_chars(yaml_content)
+        
+        if sanitized_content != yaml_content:
+            logger.debug(
+                "yaml_content_sanitized",
+                original_length=len(yaml_content),
+                sanitized_length=len(sanitized_content),
+            )
+        
+        data = yaml.safe_load(sanitized_content)
         
         if not isinstance(data, dict):
             raise ValueError(f"YAML 解析结果不是字典: {type(data)}")
@@ -466,7 +532,7 @@ class CurriculumArchitectAgent(BaseAgent):
             base_url=base_url or settings.ARCHITECT_BASE_URL,
             api_key=api_key or settings.ARCHITECT_API_KEY,
             temperature=0.7,
-            max_tokens=16384,  # 增加 token 限制，避免复杂路线图被截断
+            max_tokens=65536,  # 阿里云 qwen3-max 实际限制: [1, 65536]
         )
     
     async def design(
@@ -538,7 +604,7 @@ class CurriculumArchitectAgent(BaseAgent):
 4. 总时长和推荐完成周数合理
 5. **路线图标题、阶段名称、模块名称和概念描述使用用户的主要语言（{language_prefs.primary_language}）**
 
-**重要**: 请以 YAML 格式返回结果，严格遵循 prompt 中定义的 YAML Schema 和示例格式。
+**重要**: 请以标准 JSON 格式返回结果，严格遵循 prompt 中定义的 JSON Schema 和示例格式。
 """
         
         messages = [
@@ -546,14 +612,18 @@ class CurriculumArchitectAgent(BaseAgent):
             {"role": "user", "content": user_message},
         ]
         
-        # 调用 LLM
+        # 调用 LLM，使用 response_format 强制 JSON 输出
         logger.info(
             "curriculum_design_calling_llm",
             model=self.model_name,
             provider=self.model_provider,
             max_tokens=self.max_tokens,
+            response_format="json_object",
         )
-        response = await self._call_llm(messages)
+        response = await self._call_llm(
+            messages,
+            response_format={"type": "json_object"}
+        )
         
         # 解析输出
         content = response.choices[0].message.content
@@ -572,12 +642,15 @@ class CurriculumArchitectAgent(BaseAgent):
         )
         
         try:
-            # 解析简洁格式的路线图
-            logger.debug("curriculum_design_parsing_compact_format")
-            result_dict = _parse_compact_roadmap(content)
+            # 解析 JSON 格式的路线图
+            logger.debug("curriculum_design_parsing_json_format")
+            result_dict = json.loads(content)
+            
+            # 提取 design_rationale（如果存在）
+            design_rationale = result_dict.pop("design_rationale", "")
             
             # 处理 roadmap_id - 使用传入的roadmap_id
-            framework_dict = result_dict.get("framework", result_dict)
+            framework_dict = result_dict
             framework_dict["roadmap_id"] = roadmap_id
             logger.info(
                 "curriculum_design_using_roadmap_id",
@@ -621,7 +694,6 @@ class CurriculumArchitectAgent(BaseAgent):
                     )
             
             framework = RoadmapFramework.model_validate(framework_dict)
-            design_rationale = result_dict.get("design_rationale", "")
             
             result = CurriculumDesignOutput(
                 framework=framework,

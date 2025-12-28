@@ -5,11 +5,22 @@
 """
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+import structlog
 
 from app.db.session import get_db
 from app.db.repositories.roadmap_repo import RoadmapRepository
 
 router = APIRouter(prefix="/roadmaps", tags=["roadmaps"])
+logger = structlog.get_logger()
+
+# ✅ 内容生成阶段的步骤列表（明确定义，避免字符串模糊匹配）
+CONTENT_GENERATION_STEPS = {
+    "content_generation",
+    "content_generation_queued",
+    "tutorial_generation",
+    "resource_recommendation",
+    "quiz_generation",
+}
 
 
 @router.get("/{roadmap_id}/active-task")
@@ -247,7 +258,43 @@ async def check_status_quick(
     
     # 获取所有活跃任务（包括创建任务和重试任务）
     active_tasks = await repo.get_active_tasks_by_roadmap_id(roadmap_id)
-    has_active_task = len(active_tasks) > 0
+    
+    # ✅ 增强检测：同时检查 Celery 任务状态
+    # 如果任务在内容生成阶段，需要检查 Celery 任务是否还在运行
+    has_active_task = False
+    for task in active_tasks:
+        # ✅ 使用明确的步骤枚举判断，避免字符串模糊匹配
+        is_content_generation = task.current_step in CONTENT_GENERATION_STEPS
+        
+        # 如果不是内容生成阶段，直接认为活跃
+        if not is_content_generation:
+            has_active_task = True
+            break
+        
+        # 如果是内容生成阶段，检查 Celery 任务状态
+        if task.celery_task_id:
+            try:
+                from app.core.celery_app import celery_app
+                celery_result = celery_app.AsyncResult(task.celery_task_id)
+                # Celery 任务状态：PENDING（等待）, STARTED（执行中）, SUCCESS（成功）, FAILURE（失败）, RETRY（重试中）
+                # 只有 PENDING、STARTED、RETRY 认为是活跃状态
+                if celery_result.state in ['PENDING', 'STARTED', 'RETRY']:
+                    has_active_task = True
+                    break
+            except Exception as e:
+                logger.warning(
+                    "failed_to_check_celery_task_status",
+                    task_id=task.task_id,
+                    celery_task_id=task.celery_task_id,
+                    error=str(e),
+                )
+                # 无法检查 Celery 状态时，保守认为任务还活跃
+                has_active_task = True
+                break
+        else:
+            # 内容生成阶段但没有 celery_task_id，认为是活跃的（可能正在发送任务）
+            has_active_task = True
+            break
     
     # 如果有活跃任务，说明正在正常生成，不是僵尸状态
     if has_active_task:

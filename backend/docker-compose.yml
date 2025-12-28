@@ -22,6 +22,8 @@ services:
       - ./app:/app/app
       - ./prompts:/app/prompts
       - ./specs:/app/specs
+    # 注意：开发环境使用 --reload 时不能使用 --workers
+    # 生产环境应使用: gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   # ==================== PostgreSQL ====================
@@ -43,6 +45,68 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+
+  # ==================== Celery Worker (Logs) ====================
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - POSTGRES_HOST=postgres
+      - REDIS_HOST=redis
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ./app:/app/app
+      - ./prompts:/app/prompts
+    command: celery -A app.core.celery_app worker --loglevel=info --queues=logs --concurrency=2 --pool=asyncio --hostname=logs@%h --max-tasks-per-child=1000
+
+  # ==================== Celery Worker (Content Generation) ====================
+  celery_content_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - POSTGRES_HOST=postgres
+      - REDIS_HOST=redis
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ./app:/app/app
+      - ./prompts:/app/prompts
+    command: >
+      celery -A app.core.celery_app worker
+      --loglevel=info
+      --queues=content_generation
+      --concurrency=2
+      --pool=prefork
+      --hostname=content@%h
+      --max-tasks-per-child=50
+
+  # ==================== Celery Flower (可选监控) ====================
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5555:5555"
+    environment:
+      - REDIS_HOST=redis
+    depends_on:
+      - redis
+      - celery_worker
+      - celery_content_worker
+    command: celery -A app.core.celery_app flower --port=5555 --broker=redis://redis:6379/0
 
 volumes:
   postgres_data:

@@ -59,22 +59,27 @@ function formatRelativeTime(dateString: string): string {
 interface RoadmapListItemProps {
   roadmap: MyRoadmap;
   onDelete?: (roadmapId: string) => void;
+  coverImageUrl?: string;  // 可选的封面图 URL（用于批量获取）
 }
 
-export function RoadmapListItem({ roadmap, onDelete }: RoadmapListItemProps) {
+export function RoadmapListItem({ roadmap, onDelete, coverImageUrl }: RoadmapListItemProps) {
   const [imageError, setImageError] = useState(false);
   const [imageUrl, setImageUrl] = useState(getCoverImage(roadmap.topic));
   const gradient = getGradientFallback(roadmap.title);
   const initial = getTopicInitial(roadmap.title);
   
-  // 尝试从 API 获取封面图
+  // 如果提供了 coverImageUrl，直接使用；否则尝试从 API 获取封面图
   useEffect(() => {
-    fetchCoverImageFromAPI(roadmap.id).then((apiUrl) => {
-      if (apiUrl) {
-        setImageUrl(apiUrl);
-      }
-    });
-  }, [roadmap.id]);
+    if (coverImageUrl) {
+      setImageUrl(coverImageUrl);
+    } else {
+      fetchCoverImageFromAPI(roadmap.id).then((apiUrl) => {
+        if (apiUrl) {
+          setImageUrl(apiUrl);
+        }
+      });
+    }
+  }, [roadmap.id, coverImageUrl]);
   
   const progress = roadmap.totalConcepts > 0 
     ? (roadmap.completedConcepts / roadmap.totalConcepts) * 100 

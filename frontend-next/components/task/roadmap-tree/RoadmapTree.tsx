@@ -138,6 +138,8 @@ export function RoadmapTree({
   failedConceptIds = [],
   partialFailedConceptIds = [],
   onNodeClick,
+  userPreferences,
+  onRetrySuccess,
   className,
 }: RoadmapTreeProps) {
   // 展开状态
@@ -650,6 +652,9 @@ export function RoadmapTree({
             x: selectedNode.position.x,
             y: selectedNode.position.y,
           } : undefined}
+          roadmapId={roadmapId}
+          userPreferences={userPreferences}
+          onRetrySuccess={onRetrySuccess}
         />
       </div>
       
@@ -697,6 +702,9 @@ export function RoadmapTree({
               x: selectedNode.position.x + 32, // 补偿 padding
               y: selectedNode.position.y + 32,
             } : undefined}
+            roadmapId={roadmapId}
+            userPreferences={userPreferences}
+            onRetrySuccess={onRetrySuccess}
           />
         </DialogContent>
       </Dialog>

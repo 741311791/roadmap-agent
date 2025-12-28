@@ -62,6 +62,36 @@ export function TaskList({ tasks, isLoading, onRetry, onDelete }: TaskListProps)
         icon: Loader2,
         className: 'border-blue-300 text-blue-600 bg-blue-50 animate-pulse'
       },
+      running: { 
+        variant: 'default' as const, 
+        label: 'Running', 
+        icon: Loader2,
+        className: 'border-blue-300 text-blue-600 bg-blue-50 animate-pulse'
+      },
+      human_review_pending: { 
+        variant: 'secondary' as const, 
+        label: 'Review Pending', 
+        icon: Clock,
+        className: 'border-purple-300 text-purple-600 bg-purple-50'
+      },
+      human_review_required: { 
+        variant: 'secondary' as const, 
+        label: 'Review Required', 
+        icon: Clock,
+        className: 'border-purple-300 text-purple-600 bg-purple-50'
+      },
+      approved: { 
+        variant: 'default' as const, 
+        label: 'Approved', 
+        icon: CheckCircle2,
+        className: 'border-green-300 text-green-600 bg-green-50'
+      },
+      rejected: { 
+        variant: 'secondary' as const, 
+        label: 'Rejected', 
+        icon: AlertCircle,
+        className: 'border-orange-300 text-orange-600 bg-orange-50'
+      },
       completed: { 
         variant: 'default' as const, 
         label: 'Completed', 

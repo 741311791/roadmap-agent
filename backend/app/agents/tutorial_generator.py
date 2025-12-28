@@ -49,7 +49,7 @@ class TutorialGeneratorAgent(BaseAgent):
             base_url=base_url or settings.GENERATOR_BASE_URL,
             api_key=api_key or settings.GENERATOR_API_KEY,
             temperature=0.8,
-            max_tokens=16384,
+            max_tokens=8000,  # 阿里云 qwen 模型实际限制: [1, 8192]
         )
     
     def _get_tools_definition(self) -> List[Dict[str, Any]]:

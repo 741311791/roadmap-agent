@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 import { 
   ResizablePanelGroup, 
   ResizablePanel, 
@@ -12,12 +13,11 @@ import { KnowledgeRail } from '@/components/roadmap/immersive/knowledge-rail';
 import { LearningStage } from '@/components/roadmap/immersive/learning-stage';
 import { MentorSidecar } from '@/components/roadmap/immersive/mentor-sidecar';
 import { useRoadmap } from '@/lib/hooks/api/use-roadmap';
+import { useTutorial } from '@/lib/hooks/api/use-tutorial';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import { useAuthStore } from '@/lib/store/auth-store';
 import { 
   getRoadmapActiveTask, 
-  getLatestTutorial, 
-  downloadTutorialContent,
   getUserProfile,
   getRoadmapProgress
 } from '@/lib/api/endpoints';
@@ -45,6 +45,9 @@ export default function RoadmapDetailPage() {
   // Auth Store
   const { getUserId } = useAuthStore();
 
+  // Query Client (用于缓存失效)
+  const queryClient = useQueryClient();
+
   // Global Store
   const { 
     currentRoadmap, 
@@ -55,7 +58,7 @@ export default function RoadmapDetailPage() {
     setConceptProgressMap
   } = useRoadmapStore();
 
-  // Data Fetching
+  // Data Fetching - 路线图数据
   const { 
     data: roadmapData, 
     isLoading: roadmapLoading, 
@@ -63,8 +66,14 @@ export default function RoadmapDetailPage() {
     refetch: refetchRoadmap
   } = useRoadmap(roadmapId);
 
+  // Data Fetching - 教程内容（带缓存）
+  const { 
+    data: tutorialData,
+    isLoading: tutorialLoading,
+    error: tutorialError
+  } = useTutorial(roadmapId, selectedConceptId || undefined);
+
   // Local State
-  const [tutorialContent, setTutorialContent] = useState<string | undefined>(undefined);
   const [activeTask, setActiveTask] = useState<{ taskId: string; status: string; taskType?: string } | null>(null);
   const [userPreferences, setUserPreferences] = useState<LearningPreferences | undefined>(undefined);
 
@@ -185,55 +194,6 @@ export default function RoadmapDetailPage() {
     checkActiveTask();
   }, [roadmapId, roadmapData]);
 
-
-  // 5. Fetch Tutorial Content when Concept Selected
-  // 提取为独立函数，以便在重试成功后手动触发
-  const loadTutorialContent = useCallback(async (conceptId: string) => {
-    setTutorialContent(undefined); // 先清空显示加载状态
-    try {
-      const meta = await getLatestTutorial(roadmapId, conceptId);
-      if (meta && meta.content_status === 'completed') {
-        // 通过后端代理下载内容（解决 CORS 问题）
-        const text = await downloadTutorialContent(roadmapId, conceptId);
-        setTutorialContent(text);
-      } else {
-        setTutorialContent('# No content available yet\n\nThis concept is still being generated or is pending.');
-      }
-    } catch (err) {
-      console.error('Failed to load tutorial content:', err);
-      setTutorialContent('# Error loading content\n\nPlease try again later.');
-    }
-  }, [roadmapId]);
-
-  useEffect(() => {
-    if (!selectedConceptId) {
-      setTutorialContent(undefined);
-      return;
-    }
-
-    loadTutorialContent(selectedConceptId);
-  }, [selectedConceptId, loadTutorialContent]);
-
-  // 6. 重定向逻辑：只有初始路线图生成任务才重定向到任务详情页
-  // 单内容重试任务（retry_tutorial/retry_resources/retry_quiz）留在当前页面实时更新
-  // 必须放在所有 early return 之前，遵守 Hooks 规则
-  useEffect(() => {
-    const isGenerating = activeTask && 
-      activeTask.status !== 'completed' && 
-      activeTask.status !== 'partial_failure';
-
-    // 只有初始路线图生成任务（task_type === 'creation'）才触发重定向
-    // 单内容重试任务不触发重定向，留在当前页面实时更新
-    const isInitialGeneration = activeTask?.taskType === 'creation' || !activeTask?.taskType;
-
-    if (isGenerating && activeTask?.taskId && isInitialGeneration) {
-      console.log('[RoadmapDetail] Initial roadmap generation task is still processing, redirecting to task detail page');
-      router.push(`/tasks/${activeTask.taskId}`);
-    } else if (isGenerating && activeTask?.taskId && !isInitialGeneration) {
-      console.log('[RoadmapDetail] Content retry task is processing, staying on current page for real-time updates');
-    }
-  }, [activeTask, router]);
-
   // Helper: Find concept object by ID
   const getActiveConcept = useCallback((): Concept | null => {
     return findConceptById(currentRoadmap, selectedConceptId || '');
@@ -347,16 +307,17 @@ export default function RoadmapDetailPage() {
           <ResizablePanel defaultSize={55} className="min-w-[320px]">
             <LearningStage
               concept={getActiveConcept()}
-              tutorialContent={tutorialContent}
+              tutorialContent={tutorialData?.full_content}
+              tutorialLoading={tutorialLoading}
               roadmapId={roadmapId}
               userPreferences={userPreferences}
               onRetrySuccess={async () => {
                 // WebSocket已经通过updateConceptStatus更新了store中的状态为completed
                 // 现在可以安全地refetch以获取最新的content_url等数据
                 await refetchRoadmap();
-                // 重新加载教程内容
+                // 使缓存失效，强制重新获取教程内容
                 if (selectedConceptId) {
-                  loadTutorialContent(selectedConceptId);
+                  queryClient.invalidateQueries(['tutorial', roadmapId, selectedConceptId]);
                 }
               }}
             />

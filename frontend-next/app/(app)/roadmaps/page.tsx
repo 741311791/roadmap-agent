@@ -20,6 +20,7 @@ import { ChevronLeft, BookOpen, Plus, LayoutGrid, List } from 'lucide-react';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import { useAuthStore } from '@/lib/store/auth-store';
 import { getUserRoadmaps, deleteRoadmap } from '@/lib/api/endpoints';
+import { batchFetchCoverImagesFromAPI } from '@/lib/cover-image';
 import { cn } from '@/lib/utils';
 
 type ViewMode = 'grid' | 'list';
@@ -32,6 +33,7 @@ export default function MyRoadmapsPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [roadmapToDelete, setRoadmapToDelete] = useState<string | null>(null);
+  const [coverImageMap, setCoverImageMap] = useState<Map<string, string | null>>(new Map());
   
   const itemsPerPage = viewMode === 'grid' ? 12 : 20;
   
@@ -57,6 +59,13 @@ export default function MyRoadmapsPage() {
           status: item.status || 'completed',
         }));
         setHistory(historyData as any);
+        
+        // 批量获取封面图
+        const roadmapIds = historyData.map(item => item.roadmap_id);
+        if (roadmapIds.length > 0) {
+          const coverImages = await batchFetchCoverImagesFromAPI(roadmapIds);
+          setCoverImageMap(coverImages);
+        }
       } catch (error) {
         console.error('Failed to fetch roadmaps:', error);
       } finally {
@@ -224,6 +233,7 @@ export default function MyRoadmapsPage() {
                       type="my"
                       onDelete={handleDeleteClick}
                       showActions={true}
+                      coverImageUrl={coverImageMap.get(roadmap.id) || undefined}
                     />
                   </div>
                 ))}
@@ -238,6 +248,7 @@ export default function MyRoadmapsPage() {
                     key={roadmap.id}
                     roadmap={roadmap}
                     onDelete={handleDeleteClick}
+                    coverImageUrl={coverImageMap.get(roadmap.id) || undefined}
                   />
                 ))}
               </div>

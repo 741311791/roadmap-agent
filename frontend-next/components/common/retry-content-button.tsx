@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { RefreshCw, Loader2, AlertCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -76,6 +77,7 @@ export function RetryContentButton({
 }: RetryContentButtonProps) {
   const [isRetrying, setIsRetrying] = useState(false);
   const { updateConceptStatus } = useRoadmapStore();
+  const queryClient = useQueryClient();
   const wsRef = useRef<TaskWebSocket | null>(null);
 
   // 清理 WebSocket 连接
@@ -134,6 +136,8 @@ export function RetryContentButton({
               if (event.status === 'completed') {
                 // 任务已完成，更新状态
                 updateConceptStatus(conceptId, { [statusKey]: 'completed' });
+                // 使缓存失效
+                queryClient.invalidateQueries([contentType, roadmapId, conceptId]);
                 onSuccess?.(response);
                 ws.disconnect();
                 setIsRetrying(false);
@@ -156,6 +160,8 @@ export function RetryContentButton({
               console.log(`[RetryContentButton] 收到 concept_complete 事件:`, event);
               // 更新状态为 'completed'
               updateConceptStatus(conceptId, { [statusKey]: 'completed' });
+              // 使缓存失效，强制重新获取最新内容
+              queryClient.invalidateQueries([contentType, roadmapId, conceptId]);
               // 触发成功回调
               onSuccess?.(response);
               // 断开 WebSocket

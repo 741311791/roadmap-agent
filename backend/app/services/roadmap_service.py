@@ -225,37 +225,31 @@ class RoadmapService:
             # ============================================================
             # 工作流正常完成
             # ============================================================
-            # 注意：内容元数据（tutorial/resource/quiz）已由 ContentRunner 
-            # 通过 brain.save_content_results() 保存，此处只保存非内容类元数据
+            # 注意：
+            # - 内容元数据（tutorial/resource/quiz）已由 ContentRunner 
+            #   通过 brain.save_content_results() 保存
+            # - 任务状态已由 brain.save_content_results() 更新
+            # - 完成通知已由 brain.save_content_results() 发布
+            # - 此处只处理 framework 不存在的异常情况
             # ============================================================
             async with self.repo_factory.create_session() as session:
                 if final_state.get("roadmap_framework"):
                     framework: RoadmapFramework = final_state["roadmap_framework"]
                     
-                    # 注意：需求分析元数据已由 brain.save_intent_analysis() 在 intent_runner 中保存
-                    # 不需要在此重复保存
-                    
-                    # 从 final_state 获取内容生成结果（用于日志和通知）
+                    # 获取内容生成结果（用于日志）
                     tutorial_refs = final_state.get("tutorial_refs", {})
                     failed_concept_ids = final_state.get("failed_concepts", [])
                     
-                    await session.commit()
-                    
                     logger.info(
-                        "roadmap_service_metadata_saved",
+                        "roadmap_service_workflow_completed",
                         task_id=task_id,
                         roadmap_id=framework.roadmap_id,
-                        intent_analysis_saved=intent_analysis is not None,
-                    )
-                    
-                    # 发布完成通知（触发前端跳转）
-                    # 注意：任务状态已由 brain.save_content_results() 更新
-                    await notification_service.publish_completed(
-                        task_id=task_id,
-                        roadmap_id=framework.roadmap_id,
-                        tutorials_count=len(tutorial_refs),
+                        tutorial_count=len(tutorial_refs),
                         failed_count=len(failed_concept_ids),
                     )
+                    
+                    # 注意：完成通知已在 brain.save_content_results() 中发布
+                    # 不再重复发布，避免前端收到多次完成事件
                 else:
                     # 如果没有生成框架，标记为失败
                     task_repo = self.repo_factory.create_task_repo(session)
@@ -462,12 +456,37 @@ class RoadmapService:
                     if final_state.get("roadmap_framework"):
                         framework: RoadmapFramework = final_state["roadmap_framework"]
                         
-                        # 注意：需求分析元数据已由 brain.save_intent_analysis() 在 intent_runner 中保存
-                        # 不需要在此重复保存
+                        # 注意：
+                        # - 需求分析元数据已由 brain.save_intent_analysis() 在 intent_runner 中保存
+                        # - 此处需要判断内容生成是否已启动
                         
-                        # 注意：任务状态已由 brain.save_content_results() 更新
-                        # 如果工作流未到达 ContentRunner（例如跳过内容生成），则需要在此更新
-                        if not final_state.get("tutorial_refs"):
+                        # 检查内容生成状态
+                        content_generation_status = final_state.get("content_generation_status")
+                        celery_task_id = final_state.get("celery_task_id")
+                        
+                        # 调试：输出 final_state 的关键字段
+                        logger.info(
+                            "human_review_checking_content_generation_status",
+                            task_id=task_id,
+                            roadmap_id=framework.roadmap_id,
+                            content_generation_status=content_generation_status,
+                            celery_task_id=celery_task_id,
+                            has_tutorial_refs=bool(final_state.get("tutorial_refs")),
+                            current_step=final_state.get("current_step"),
+                        )
+                        
+                        if content_generation_status == "queued" and celery_task_id:
+                            # 内容生成任务已发送到 Celery，正在异步执行中
+                            # 不要标记为 completed，等待 Celery 任务完成后更新状态
+                            logger.info(
+                                "human_review_content_generation_queued",
+                                task_id=task_id,
+                                roadmap_id=framework.roadmap_id,
+                                celery_task_id=celery_task_id,
+                            )
+                            # 任务状态会由 Celery 任务完成后更新，此处不做任何操作
+                        elif not final_state.get("tutorial_refs"):
+                            # 工作流未执行内容生成（可能是跳过了），需要手动更新状态
                             task_repo = self.repo_factory.create_task_repo(session)
                             await task_repo.update_task_status(
                                 task_id=task_id,
@@ -475,31 +494,33 @@ class RoadmapService:
                                 current_step="completed",
                                 roadmap_id=framework.roadmap_id,
                             )
-                        
-                        await session.commit()
-                        
-                        # ============================================================
-                        # 发布完成通知（触发前端状态更新）
-                        # ============================================================
-                        # 即使 brain.save_content_results() 已经更新了状态，
-                        # 也需要发布通知让前端通过 WebSocket 收到完成事件
-                        tutorial_refs = final_state.get("tutorial_refs", {})
-                        failed_concepts = final_state.get("failed_concepts", [])
-                        
-                        await notification_service.publish_completed(
-                            task_id=task_id,
-                            roadmap_id=framework.roadmap_id,
-                            tutorials_count=len(tutorial_refs),
-                            failed_count=len(failed_concepts),
-                        )
-                        
-                        logger.info(
-                            "human_review_completion_notified",
-                            task_id=task_id,
-                            roadmap_id=framework.roadmap_id,
-                            tutorials_count=len(tutorial_refs),
-                            failed_count=len(failed_concepts),
-                        )
+                            await session.commit()
+                            
+                            # 手动发布完成通知（因为 ContentRunner 未执行）
+                            await notification_service.publish_completed(
+                                task_id=task_id,
+                                roadmap_id=framework.roadmap_id,
+                                tutorials_count=0,
+                                failed_count=0,
+                            )
+                            
+                            logger.info(
+                                "human_review_completed_without_content",
+                                task_id=task_id,
+                                roadmap_id=framework.roadmap_id,
+                            )
+                        else:
+                            # 正常情况：完成通知已在 brain.save_content_results() 中发布
+                            tutorial_refs = final_state.get("tutorial_refs", {})
+                            failed_concepts = final_state.get("failed_concepts", [])
+                            
+                            logger.info(
+                                "human_review_workflow_completed",
+                                task_id=task_id,
+                                roadmap_id=framework.roadmap_id,
+                                tutorials_count=len(tutorial_refs),
+                                failed_count=len(failed_concepts),
+                            )
                     else:
                         # 如果没有生成框架，标记为失败
                         task_repo = self.repo_factory.create_task_repo(session)

@@ -240,13 +240,6 @@ const WaitlistForm: React.FC<WaitlistFormProps> = ({
           </button>
         </div>
       </motion.form>
-
-      <motion.p 
-        className="mt-4 text-xs md:text-sm text-muted-foreground/80 text-center"
-        variants={childVariants}
-      >
-        Be the first to experience the future of learning. No spam, ever.
-      </motion.p>
     </motion.div>
   );
 

@@ -201,7 +201,7 @@ class OrchestratorFactory:
         validation_runner = ValidationRunner(brain, agent_factory)  # ← 已迁移
         editor_runner = EditorRunner(brain, agent_factory)  # ← 已迁移
         review_runner = ReviewRunner(brain)  # ← 已迁移
-        content_runner = ContentRunner(brain, config, agent_factory)  # ← 已迁移
+        content_runner = ContentRunner(brain)  # ← 已迁移到 Celery
         edit_plan_runner = EditPlanRunner(brain, agent_factory)  # 修改计划分析节点（人工审核触发）
         validation_edit_plan_runner = ValidationEditPlanRunner(brain, agent_factory)  # 验证结果修改计划分析节点（验证失败触发）
         

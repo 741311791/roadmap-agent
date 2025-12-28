@@ -41,6 +41,11 @@ dependencies = [
     "python-jose[cryptography]>=3.3.0",
     "passlib[bcrypt]>=1.7.4",
     "resend>=2.0.0",
+    # Celery 异步任务队列
+    "celery>=5.4.0",
+    "celery-pool-asyncio>=0.2.0",
+    "kombu>=5.4.0",
+    "flower>=2.0.0",
 ]
 
 [project.optional-dependencies]

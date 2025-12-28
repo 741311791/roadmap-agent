@@ -122,7 +122,7 @@ class QuizRepository(BaseRepository[QuizMetadata]):
         roadmap_id: str,
     ) -> QuizMetadata:
         """
-        保存测验元数据（如果已存在则替换）
+        保存测验元数据（幂等操作）
         
         Args:
             quiz_output: 测验生成输出
@@ -131,7 +131,36 @@ class QuizRepository(BaseRepository[QuizMetadata]):
         Returns:
             保存的元数据记录
         """
-        # 删除旧的测验记录（如果存在）
+        # 统计难度分布
+        easy_count = sum(1 for q in quiz_output.questions if q.difficulty == "easy")
+        medium_count = sum(1 for q in quiz_output.questions if q.difficulty == "medium")
+        hard_count = sum(1 for q in quiz_output.questions if q.difficulty == "hard")
+        
+        # 先检查是否已存在（通过主键 quiz_id）
+        existing = await self.get_by_id(quiz_output.quiz_id)
+        
+        if existing:
+            # 更新现有记录
+            existing.questions = [q.model_dump() for q in quiz_output.questions]
+            existing.total_questions = quiz_output.total_questions
+            existing.easy_count = easy_count
+            existing.medium_count = medium_count
+            existing.hard_count = hard_count
+            existing.generated_at = quiz_output.generated_at
+            
+            await self.session.flush()
+            await self.session.refresh(existing)
+            
+            logger.info(
+                "quiz_metadata_updated",
+                quiz_id=quiz_output.quiz_id,
+                concept_id=quiz_output.concept_id,
+                roadmap_id=roadmap_id,
+                total_questions=quiz_output.total_questions,
+            )
+            return existing
+        
+        # 删除该概念的旧测验记录（通过 concept_id，清理可能的孤儿记录）
         await self.session.execute(
             delete(QuizMetadata)
             .where(
@@ -139,11 +168,6 @@ class QuizRepository(BaseRepository[QuizMetadata]):
                 QuizMetadata.concept_id == quiz_output.concept_id,
             )
         )
-        
-        # 统计难度分布
-        easy_count = sum(1 for q in quiz_output.questions if q.difficulty == "easy")
-        medium_count = sum(1 for q in quiz_output.questions if q.difficulty == "medium")
-        hard_count = sum(1 for q in quiz_output.questions if q.difficulty == "hard")
         
         # 创建新记录
         metadata = QuizMetadata(
@@ -161,7 +185,7 @@ class QuizRepository(BaseRepository[QuizMetadata]):
         await self.create(metadata, flush=True)
         
         logger.info(
-            "quiz_metadata_saved",
+            "quiz_metadata_created",
             quiz_id=quiz_output.quiz_id,
             concept_id=quiz_output.concept_id,
             roadmap_id=roadmap_id,

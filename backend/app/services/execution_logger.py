@@ -1,10 +1,16 @@
 """
-执行日志服务 (ExecutionLogger)
+执行日志服务 (ExecutionLogger) - Celery 异步队列版本
 
 提供结构化日志记录功能，用于：
 - 通过 task_id 追踪请求完整生命周期
 - 聚合错误报告
 - 性能分析和问题定位
+
+重构版本特点：
+- 使用 Celery 异步任务处理日志写入
+- 完全解耦主流程和数据库操作
+- 本地缓冲区减少 Celery 任务数量
+- API 兼容性：所有方法签名保持不变
 
 使用示例：
     ```python
@@ -18,7 +24,7 @@
     )
 
     # 记录 Agent 执行
-    await execution_logger.log_agent_execution(
+    await execution_logger.log_agent_complete(
         task_id="abc-123",
         agent_name="IntentAnalyzer",
         message="需求分析完成",
@@ -27,7 +33,7 @@
     )
 
     # 记录错误
-    await execution_logger.log_error(
+    await execution_logger.error(
         task_id="abc-123",
         category="agent",
         message="教程生成失败",
@@ -36,12 +42,11 @@
     ```
 """
 from typing import Optional
-from datetime import datetime
-from contextlib import asynccontextmanager
 import time
+import asyncio
+from contextlib import asynccontextmanager
 import structlog
 
-from app.db.session import AsyncSessionLocal
 from app.models.database import ExecutionLog, beijing_now
 
 logger = structlog.get_logger()
@@ -67,18 +72,25 @@ class LogCategory:
 
 class ExecutionLogger:
     """
-    执行日志服务
+    执行日志服务（Celery 异步队列版本）
     
-    提供异步日志记录，支持：
-    - 多级别日志 (debug, info, warning, error)
-    - 多分类日志 (workflow, agent, tool, database)
-    - 性能计时
-    - 批量写入优化
+    所有日志写入都通过 Celery 异步任务处理，完全解耦主流程和数据库操作。
+    支持所有工作流节点和重试场景。
+    
+    架构：
+    - 本地缓冲区：减少 Celery 任务数量
+    - 批量发送：达到阈值或超时时发送
+    - 异步处理：不阻塞主流程
+    - 降级保护：发送失败时重新入队
     """
     
     def __init__(self):
-        self._batch: list[ExecutionLog] = []
-        self._batch_size = 10  # 批量写入阈值
+        # 本地缓冲区：减少 Celery 任务数量
+        self._log_buffer: list[dict] = []
+        self._buffer_size = 50  # 本地缓冲区大小
+        self._flush_interval = 2.0  # 2 秒刷新一次
+        self._last_flush_time = time.time()
+        self._flush_lock = asyncio.Lock()  # 防止并发刷新
     
     async def log(
         self,
@@ -94,7 +106,17 @@ class ExecutionLogger:
         duration_ms: Optional[int] = None,
     ) -> ExecutionLog:
         """
-        写入执行日志
+        写入执行日志（异步，非阻塞）
+        
+        将日志数据放入本地缓冲区，达到批量大小或超时时，
+        发送到 Celery 任务队列。
+        
+        支持所有场景：
+        - 工作流节点日志（IntentAnalysis, CurriculumDesign, Validation 等）
+        - Agent 执行日志（开始、完成、错误）
+        - 工具调用日志
+        - 重试场景日志
+        - 错误处理日志
         
         Args:
             task_id: 任务 ID
@@ -109,40 +131,83 @@ class ExecutionLogger:
             duration_ms: 执行耗时毫秒（可选）
             
         Returns:
-            创建的日志记录
+            创建的日志记录（注意：实际写入是异步的，返回的对象可能还没有 ID）
         """
-        log_entry = ExecutionLog(
-            task_id=task_id,
-            level=level,
-            category=category,
-            message=message,
-            step=step,
-            agent_name=agent_name,
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            details=details,
-            duration_ms=duration_ms,
-            created_at=beijing_now(),
-        )
+        # 构建日志数据字典
+        log_data = {
+            "task_id": task_id,
+            "level": level,
+            "category": category,
+            "message": message,
+            "step": step,
+            "agent_name": agent_name,
+            "roadmap_id": roadmap_id,
+            "concept_id": concept_id,
+            "details": details,
+            "duration_ms": duration_ms,
+            "created_at": beijing_now(),
+        }
         
-        # 写入数据库
-        try:
-            async with AsyncSessionLocal() as session:
-                session.add(log_entry)
-                await session.commit()
-                await session.refresh(log_entry)
-        except Exception as e:
-            # 日志写入失败不应影响主流程
-            logger.warning(
-                "execution_log_write_failed",
-                task_id=task_id,
-                error=str(e),
+        # 添加到本地缓冲区
+        async with self._flush_lock:
+            self._log_buffer.append(log_data)
+            
+            # 检查是否需要刷新
+            current_time = time.time()
+            should_flush = (
+                len(self._log_buffer) >= self._buffer_size or
+                (current_time - self._last_flush_time) >= self._flush_interval
             )
+            
+            if should_flush:
+                await self._flush_to_celery()
         
-        return log_entry
+        # 返回模拟的 ExecutionLog 对象（保持 API 兼容性）
+        # 注意：实际写入是异步的，这个对象可能还没有数据库 ID
+        return ExecutionLog(**log_data)
+    
+    async def _flush_to_celery(self):
+        """将缓冲区中的日志发送到 Celery"""
+        if not self._log_buffer:
+            return
+        
+        batch = self._log_buffer.copy()
+        self._log_buffer.clear()
+        self._last_flush_time = time.time()
+        
+        # 发送到 Celery（非阻塞）
+        try:
+            # 延迟导入避免循环依赖
+            from app.tasks.log_tasks import batch_write_logs
+            
+            # 使用 apply_async 异步发送，不等待结果
+            batch_write_logs.apply_async(
+                args=[batch],
+                queue="logs",
+            )
+        except Exception as e:
+            logger.warning(
+                "execution_logger_celery_send_failed",
+                error=str(e),
+                batch_size=len(batch),
+                error_type=type(e).__name__,
+            )
+            # 发送失败时的降级方案：重新放入缓冲区
+            # 这样不会丢失日志，但可能导致内存增长
+            self._log_buffer.extend(batch)
+    
+    async def flush(self):
+        """
+        立即刷新所有待发送的日志
+        
+        用于应用关闭时确保所有日志都被发送。
+        """
+        async with self._flush_lock:
+            if self._log_buffer:
+                await self._flush_to_celery()
     
     # ============================================================
-    # 便捷方法：按日志级别
+    # 便捷方法：按日志级别（保持不变，内部调用 log()）
     # ============================================================
     
     async def debug(
@@ -186,7 +251,7 @@ class ExecutionLogger:
         return await self.log(task_id, LogLevel.ERROR, category, message, **kwargs)
     
     # ============================================================
-    # 便捷方法：按使用场景
+    # 便捷方法：按使用场景（保持不变，内部调用 log()）
     # ============================================================
     
     async def log_workflow_start(
@@ -346,7 +411,7 @@ class ExecutionLogger:
         )
     
     # ============================================================
-    # 上下文管理器：自动计时
+    # 上下文管理器：自动计时（保持不变）
     # ============================================================
     
     @asynccontextmanager
@@ -435,4 +500,3 @@ class _TimerContext:
 
 # 全局单例
 execution_logger = ExecutionLogger()
-

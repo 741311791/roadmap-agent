@@ -1,10 +1,18 @@
 /**
  * useTaskStatus - 查询任务状态的 Hook (轮询)
  * 
+ * ⚠️ 已弃用：此 Hook 使用轮询机制，对长时间运行的任务（5-10分钟）会产生大量不必要的请求。
+ * 
+ * 推荐替代方案：
+ * - 使用 WebSocket 实时订阅：`TaskWebSocket` (见 @/lib/api/websocket)
+ * - 任务详情页已实现完整的 WebSocket 支持，无需轮询
+ * 
  * 功能:
  * - 轮询查询任务状态 (默认 2秒间隔)
  * - 任务完成或失败时自动停止轮询
  * - 支持手动控制是否启用
+ * 
+ * @deprecated 请使用 WebSocket 替代轮询机制
  */
 
 import { useQuery } from '@tanstack/react-query';
@@ -23,6 +31,9 @@ interface UseTaskStatusOptions {
 
 /**
  * 查询任务状态 Hook
+ * 
+ * @deprecated 请使用 WebSocket (`TaskWebSocket`) 替代轮询机制
+ * 
  * @param taskId - 任务 ID
  * @param options - 查询选项
  * @returns TanStack Query 查询结果
@@ -31,6 +42,13 @@ export function useTaskStatus(
   taskId: string | undefined,
   options: UseTaskStatusOptions = {}
 ) {
+  // 开发环境下警告
+  if (process.env.NODE_ENV === 'development') {
+    console.warn(
+      '[useTaskStatus] ⚠️ 此 Hook 已弃用。请使用 WebSocket (TaskWebSocket) 替代轮询机制。' +
+      '轮询对长时间运行的任务会产生大量不必要的请求。'
+    );
+  }
   const {
     enabled = true,
     refetchInterval = 2000,

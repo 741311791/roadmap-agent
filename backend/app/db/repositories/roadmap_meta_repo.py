@@ -162,18 +162,21 @@ class RoadmapMetadataRepository(BaseRepository[RoadmapMetadata]):
         existing = await self.get_by_roadmap_id(roadmap_id)
         
         if existing:
-            # 更新现有记录
-            await self.update_by_id(
-                roadmap_id,
-                user_id=user_id,
-                title=framework.title,
-                total_estimated_hours=framework.total_estimated_hours,
-                recommended_completion_weeks=framework.recommended_completion_weeks,
-                framework_data=framework.model_dump(),
-            )
+            # 更新现有记录（使用 ORM 对象更新以确保 JSON 字段变更被追踪）
+            from sqlalchemy.orm.attributes import flag_modified
             
-            # 重新获取更新后的记录
-            updated = await self.get_by_roadmap_id(roadmap_id)
+            existing.user_id = user_id
+            existing.title = framework.title
+            existing.total_estimated_hours = framework.total_estimated_hours
+            existing.recommended_completion_weeks = framework.recommended_completion_weeks
+            existing.framework_data = framework.model_dump()
+            
+            # 关键修复：显式标记 JSON 字段已修改
+            # SQLAlchemy 默认无法检测 JSON 列的变更，需要手动标记
+            flag_modified(existing, "framework_data")
+            
+            await self.session.flush()
+            await self.session.refresh(existing)
             
             logger.info(
                 "roadmap_metadata_updated",
@@ -181,7 +184,7 @@ class RoadmapMetadataRepository(BaseRepository[RoadmapMetadata]):
                 user_id=user_id,
             )
             
-            return updated
+            return existing
         else:
             # 创建新记录
             metadata = RoadmapMetadata(
@@ -218,13 +221,32 @@ class RoadmapMetadataRepository(BaseRepository[RoadmapMetadata]):
         Returns:
             True 如果更新成功，False 如果路线图不存在
         """
-        return await self.update_by_id(
-            roadmap_id,
-            title=framework.title,
-            total_estimated_hours=framework.total_estimated_hours,
-            recommended_completion_weeks=framework.recommended_completion_weeks,
-            framework_data=framework.model_dump(),
+        from sqlalchemy.orm.attributes import flag_modified
+        
+        # 获取现有记录
+        existing = await self.get_by_roadmap_id(roadmap_id)
+        
+        if not existing:
+            return False
+        
+        # 更新字段
+        existing.title = framework.title
+        existing.total_estimated_hours = framework.total_estimated_hours
+        existing.recommended_completion_weeks = framework.recommended_completion_weeks
+        existing.framework_data = framework.model_dump()
+        
+        # 关键修复：显式标记 JSON 字段已修改
+        # SQLAlchemy 默认无法检测 JSON 列的变更，需要手动标记
+        flag_modified(existing, "framework_data")
+        
+        await self.session.flush()
+        
+        logger.info(
+            "roadmap_framework_data_updated",
+            roadmap_id=roadmap_id,
         )
+        
+        return True
     
     # ============================================================
     # 删除方法

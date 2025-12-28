@@ -8,6 +8,7 @@ import { EmptyState } from '@/components/common/empty-state';
 import { FeaturedRoadmapCard, type FeaturedRoadmap } from '@/components/roadmap';
 import { ChevronLeft, TrendingUp, LayoutGrid, List } from 'lucide-react';
 import { getFeaturedRoadmaps } from '@/lib/api/endpoints';
+import { batchFetchCoverImagesFromAPI } from '@/lib/cover-image';
 import { cn } from '@/lib/utils';
 
 type ViewMode = 'grid' | 'list';
@@ -22,6 +23,7 @@ export default function ExplorePage() {
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [currentPage, setCurrentPage] = useState(1);
   const [featuredRoadmaps, setFeaturedRoadmaps] = useState<FeaturedRoadmap[]>([]);
+  const [coverImageMap, setCoverImageMap] = useState<Map<string, string | null>>(new Map());
   
   const itemsPerPage = viewMode === 'grid' ? 12 : 20;
   
@@ -48,6 +50,13 @@ export default function ExplorePage() {
             })),
           }));
         setFeaturedRoadmaps(featuredData);
+        
+        // 批量获取封面图
+        const roadmapIds = featuredData.map(item => item.id);
+        if (roadmapIds.length > 0) {
+          const coverImages = await batchFetchCoverImagesFromAPI(roadmapIds);
+          setCoverImageMap(coverImages);
+        }
       } catch (error) {
         console.error('Failed to fetch featured roadmaps:', error);
         setFeaturedRoadmaps([]);
@@ -150,6 +159,7 @@ export default function ExplorePage() {
                   <FeaturedRoadmapCard
                     key={roadmap.id}
                     roadmap={roadmap}
+                    coverImageUrl={coverImageMap.get(roadmap.id) || undefined}
                   />
                 ))}
               </div>

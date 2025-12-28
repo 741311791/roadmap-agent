@@ -120,6 +120,52 @@ class RoadmapRepository:
         )
         return result.scalar_one_or_none()
     
+    async def get_tasks_by_roadmap_ids_batch(
+        self,
+        roadmap_ids: List[str],
+    ) -> dict[str, RoadmapTask]:
+        """
+        批量获取多个路线图的最新任务（解决 N+1 查询问题）
+        
+        使用窗口函数获取每个 roadmap_id 的最新任务，避免循环中逐个查询。
+        
+        Args:
+            roadmap_ids: 路线图 ID 列表
+            
+        Returns:
+            字典，键为 roadmap_id，值为对应的最新任务（如果存在）
+        """
+        if not roadmap_ids:
+            return {}
+        
+        from sqlalchemy import func
+        from sqlalchemy.orm import aliased
+        
+        # 使用子查询获取每个 roadmap_id 的最新任务
+        # 子查询：按 roadmap_id 分组，获取最新的 created_at
+        subquery = (
+            select(
+                RoadmapTask.roadmap_id,
+                func.max(RoadmapTask.created_at).label("max_created_at"),
+            )
+            .where(RoadmapTask.roadmap_id.in_(roadmap_ids))
+            .group_by(RoadmapTask.roadmap_id)
+            .subquery()
+        )
+        
+        # 主查询：关联子查询获取完整任务记录
+        result = await self.session.execute(
+            select(RoadmapTask)
+            .join(
+                subquery,
+                (RoadmapTask.roadmap_id == subquery.c.roadmap_id) &
+                (RoadmapTask.created_at == subquery.c.max_created_at)
+            )
+        )
+        
+        tasks = result.scalars().all()
+        return {task.roadmap_id: task for task in tasks}
+    
     async def get_active_task_by_roadmap_id(self, roadmap_id: str) -> Optional[RoadmapTask]:
         """
         通过 roadmap_id 获取活跃任务
@@ -306,6 +352,41 @@ class RoadmapRepository:
             current_step=current_step,
             has_failed_concepts=failed_concepts is not None,
             has_execution_summary=execution_summary is not None,
+        )
+        return task
+    
+    async def update_task_celery_id(
+        self,
+        task_id: str,
+        celery_task_id: str,
+    ) -> Optional[RoadmapTask]:
+        """
+        更新任务的 Celery 任务 ID
+        
+        用于记录内容生成任务的 Celery task ID，
+        以便后续查询任务状态或取消任务。
+        
+        Args:
+            task_id: 追踪 ID
+            celery_task_id: Celery 任务 ID
+            
+        Returns:
+            更新后的任务记录
+        """
+        task = await self.get_task(task_id)
+        if not task:
+            return None
+        
+        task.celery_task_id = celery_task_id
+        task.updated_at = beijing_now()
+        
+        await self.session.commit()
+        await self.session.refresh(task)
+        
+        logger.info(
+            "roadmap_task_celery_id_updated",
+            task_id=task_id,
+            celery_task_id=celery_task_id,
         )
         return task
     
@@ -590,7 +671,7 @@ class RoadmapRepository:
         roadmap_id: str,
     ) -> TutorialMetadata:
         """
-        保存教程元数据（支持版本管理）
+        保存教程元数据（支持版本管理和幂等性）
         
         Args:
             tutorial_output: 教程生成输出
@@ -602,13 +683,46 @@ class RoadmapRepository:
         注意：
         - 新保存的教程默认为最新版本（is_latest=True）
         - 保存前会将该概念的旧版本标记为非最新
+        - 使用 flush 而非 commit，由调用者控制事务提交
+        - 如果 tutorial_id 已存在，则更新而不是插入（幂等性保证）
         """
+        # 检查是否已存在相同的 tutorial_id
+        stmt = select(TutorialMetadata).where(
+            TutorialMetadata.tutorial_id == tutorial_output.tutorial_id
+        )
+        result = await self.session.execute(stmt)
+        existing = result.scalar_one_or_none()
+        
+        if existing:
+            # 如果已存在，更新现有记录（幂等性）
+            existing.title = tutorial_output.title
+            existing.summary = tutorial_output.summary
+            existing.content_url = tutorial_output.content_url
+            existing.content_status = tutorial_output.content_status
+            existing.content_version = tutorial_output.content_version
+            existing.is_latest = True
+            existing.estimated_completion_time = tutorial_output.estimated_completion_time
+            existing.generated_at = tutorial_output.generated_at
+            
+            await self.session.flush()
+            await self.session.refresh(existing)
+            
+            logger.debug(
+                "tutorial_metadata_updated",
+                tutorial_id=tutorial_output.tutorial_id,
+                concept_id=tutorial_output.concept_id,
+                roadmap_id=roadmap_id,
+                content_version=tutorial_output.content_version,
+            )
+            return existing
+        
         # 将该概念的旧版本标记为非最新
         await self._mark_concept_tutorials_not_latest(
             roadmap_id=roadmap_id,
             concept_id=tutorial_output.concept_id,
         )
         
+        # 创建新记录
         metadata = TutorialMetadata(
             tutorial_id=tutorial_output.tutorial_id,
             concept_id=tutorial_output.concept_id,
@@ -623,16 +737,17 @@ class RoadmapRepository:
             generated_at=tutorial_output.generated_at,
         )
         self.session.add(metadata)
-        await self.session.commit()
+        # 使用 flush 而非 commit，让调用者控制事务提交
+        # 这样可以在批量保存时减少数据库往返次数
+        await self.session.flush()
         await self.session.refresh(metadata)
         
-        logger.info(
-            "tutorial_metadata_saved",
+        logger.debug(
+            "tutorial_metadata_created",
             tutorial_id=tutorial_output.tutorial_id,
             concept_id=tutorial_output.concept_id,
             roadmap_id=roadmap_id,
             content_version=tutorial_output.content_version,
-            is_latest=True,
         )
         return metadata
     
@@ -920,6 +1035,9 @@ class RoadmapRepository:
             
         Returns:
             保存的元数据记录
+            
+        注意：
+        - 使用 flush 而非 commit，由调用者控制事务提交
         """
         # 删除旧的资源推荐记录（如果存在）
         from sqlalchemy import delete
@@ -940,11 +1058,12 @@ class RoadmapRepository:
             generated_at=resource_output.generated_at,
         )
         self.session.add(metadata)
-        await self.session.commit()
+        # 使用 flush 而非 commit，让调用者控制事务提交
+        await self.session.flush()
         await self.session.refresh(metadata)
         
-        logger.info(
-            "resource_recommendation_metadata_saved",
+        logger.debug(
+            "resource_recommendation_metadata_flushed",
             concept_id=resource_output.concept_id,
             roadmap_id=roadmap_id,
             resources_count=len(resource_output.resources),
@@ -1041,6 +1160,9 @@ class RoadmapRepository:
             
         Returns:
             保存的元数据记录
+            
+        注意：
+        - 使用 flush 而非 commit，由调用者控制事务提交
         """
         # 删除旧的测验记录（如果存在）
         from sqlalchemy import delete
@@ -1068,11 +1190,12 @@ class RoadmapRepository:
             generated_at=quiz_output.generated_at,
         )
         self.session.add(metadata)
-        await self.session.commit()
+        # 使用 flush 而非 commit，让调用者控制事务提交
+        await self.session.flush()
         await self.session.refresh(metadata)
         
-        logger.info(
-            "quiz_metadata_saved",
+        logger.debug(
+            "quiz_metadata_flushed",
             quiz_id=quiz_output.quiz_id,
             concept_id=quiz_output.concept_id,
             roadmap_id=roadmap_id,

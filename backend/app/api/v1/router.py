@@ -29,6 +29,7 @@ from .endpoints import (
     intent,
     trace,
     cover_image,
+    celery_monitor,
 )
 from app.core.auth import fastapi_users, auth_backend
 from app.core.auth.schemas import UserRead, UserCreate, UserUpdate
@@ -121,3 +122,6 @@ router.include_router(
 
 # 管理员路由
 router.include_router(admin.router)
+
+# Celery 监控路由
+router.include_router(celery_monitor.router)

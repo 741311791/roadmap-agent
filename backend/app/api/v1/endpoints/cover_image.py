@@ -183,3 +183,47 @@ async def batch_generate_cover_images(
         "roadmap_ids": roadmap_ids
     }
 
+
+class BatchGetCoverImagesRequest(BaseModel):
+    """批量获取封面图请求模型"""
+    roadmap_ids: list[str]
+
+
+class BatchCoverImageResponse(BaseModel):
+    """批量封面图响应模型"""
+    roadmap_id: str
+    cover_image_url: Optional[str] = None
+    status: str  # not_started, pending, generating, success, failed
+    error: Optional[str] = None
+    retry_count: Optional[int] = None
+
+
+@router.post("/cover-images/batch-get", response_model=list[BatchCoverImageResponse])
+async def batch_get_cover_images(
+    request: BatchGetCoverImagesRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    批量获取路线图封面图信息（公开接口，无需认证）
+    
+    Args:
+        request: 包含路线图ID列表的请求
+        db: 数据库会话
+    
+    Returns:
+        封面图信息列表
+    """
+    service = CoverImageService(db)
+    results = await service.batch_get_cover_images(request.roadmap_ids)
+    
+    return [
+        BatchCoverImageResponse(
+            roadmap_id=roadmap_id,
+            cover_image_url=status_info["url"],
+            status=status_info["status"],
+            error=status_info.get("error"),
+            retry_count=status_info.get("retry_count")
+        )
+        for roadmap_id, status_info in results.items()
+    ]
+

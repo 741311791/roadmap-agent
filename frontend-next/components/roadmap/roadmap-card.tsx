@@ -95,6 +95,7 @@ interface RoadmapCardProps {
   type: 'my' | 'community';
   onDelete?: (roadmapId: string) => void;
   showActions?: boolean;
+  coverImageUrl?: string;  // 可选的封面图 URL（用于批量获取）
 }
 
 export function RoadmapCard({
@@ -102,6 +103,7 @@ export function RoadmapCard({
   type,
   onDelete,
   showActions = true,
+  coverImageUrl,
 }: RoadmapCardProps) {
   const [avatarError, setAvatarError] = useState(false);
   
@@ -184,6 +186,7 @@ export function RoadmapCard({
               topic={roadmap.topic}
               title={roadmap.title}
               className="rounded-t-xl"
+              coverImageUrl={coverImageUrl}
             />
             <CardContent className="p-4 bg-white/95 backdrop-blur-sm">
             <div className="flex items-start gap-2 mb-2">

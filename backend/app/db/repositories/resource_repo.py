@@ -109,7 +109,7 @@ class ResourceRepository(BaseRepository[ResourceRecommendationMetadata]):
         roadmap_id: str,
     ) -> ResourceRecommendationMetadata:
         """
-        保存资源推荐元数据（如果已存在则替换）
+        保存资源推荐元数据（幂等操作）
         
         Args:
             resource_output: 资源推荐输出
@@ -118,7 +118,29 @@ class ResourceRepository(BaseRepository[ResourceRecommendationMetadata]):
         Returns:
             保存的元数据记录
         """
-        # 删除旧的资源推荐记录（如果存在）
+        # 先检查是否已存在（通过主键 id）
+        existing = await self.get_by_id(resource_output.id)
+        
+        if existing:
+            # 更新现有记录
+            existing.resources = [r.model_dump() for r in resource_output.resources]
+            existing.resources_count = len(resource_output.resources)
+            existing.search_queries_used = resource_output.search_queries_used
+            existing.generated_at = resource_output.generated_at
+            
+            await self.session.flush()
+            await self.session.refresh(existing)
+            
+            logger.info(
+                "resource_recommendation_metadata_updated",
+                id=resource_output.id,
+                concept_id=resource_output.concept_id,
+                roadmap_id=roadmap_id,
+                resources_count=len(resource_output.resources),
+            )
+            return existing
+        
+        # 删除该概念的旧资源推荐记录（通过 concept_id，清理可能的孤儿记录）
         await self.session.execute(
             delete(ResourceRecommendationMetadata)
             .where(
@@ -141,7 +163,8 @@ class ResourceRepository(BaseRepository[ResourceRecommendationMetadata]):
         await self.create(metadata, flush=True)
         
         logger.info(
-            "resource_recommendation_metadata_saved",
+            "resource_recommendation_metadata_created",
+            id=resource_output.id,
             concept_id=resource_output.concept_id,
             roadmap_id=roadmap_id,
             resources_count=len(resource_output.resources),

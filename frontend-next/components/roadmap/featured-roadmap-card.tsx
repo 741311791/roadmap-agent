@@ -52,6 +52,7 @@ export interface FeaturedRoadmap {
 interface FeaturedRoadmapCardProps {
   roadmap: FeaturedRoadmap;
   className?: string;
+  coverImageUrl?: string;  // 可选的封面图 URL（用于批量获取）
 }
 
 // 难度级别配置
@@ -91,7 +92,7 @@ function formatRelativeTime(dateString?: string): string {
 /**
  * 卡片正面内容
  */
-function CardFront({ roadmap }: { roadmap: FeaturedRoadmap }) {
+function CardFront({ roadmap, coverImageUrl }: { roadmap: FeaturedRoadmap; coverImageUrl?: string }) {
   const [imageUrl, setImageUrl] = useState(getCoverImage(roadmap.topic, 400, 300));
   const [imageLoading, setImageLoading] = useState(true);
   const difficulty = roadmap.difficulty || 'intermediate';
@@ -100,16 +101,24 @@ function CardFront({ roadmap }: { roadmap: FeaturedRoadmap }) {
   // 检测是否为 R2.dev 图片
   const isR2Image = imageUrl.includes('r2.dev');
   
-  // 尝试从 API 获取封面图
+  // 如果提供了 coverImageUrl，直接使用；否则尝试从 API 获取封面图
   useEffect(() => {
-    if (roadmap.id) {
+    if (coverImageUrl) {
+      setImageUrl(coverImageUrl);
+      setImageLoading(false);
+    } else if (roadmap.id) {
       fetchCoverImageFromAPI(roadmap.id).then((apiUrl) => {
         if (apiUrl) {
           setImageUrl(apiUrl);
         }
+        setImageLoading(false);
+      }).catch(() => {
+        setImageLoading(false);
       });
+    } else {
+      setImageLoading(false);
     }
-  }, [roadmap.id]);
+  }, [roadmap.id, coverImageUrl]);
 
   return (
     <div className="flex flex-col h-full w-full">
@@ -311,13 +320,13 @@ function CardBack({ roadmap }: { roadmap: FeaturedRoadmap }) {
   );
 }
 
-export function FeaturedRoadmapCard({ roadmap, className }: FeaturedRoadmapCardProps) {
+export function FeaturedRoadmapCard({ roadmap, className, coverImageUrl }: FeaturedRoadmapCardProps) {
   return (
     <Link href={`/roadmap/${roadmap.id}`} className={cn('block', className)}>
       <FlippingCard
         width={280}
         height={350}
-        frontContent={<CardFront roadmap={roadmap} />}
+        frontContent={<CardFront roadmap={roadmap} coverImageUrl={coverImageUrl} />}
         backContent={<CardBack roadmap={roadmap} />}
         className="w-full"
       />

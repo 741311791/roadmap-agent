@@ -26,6 +26,7 @@ import {
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import { getUserRoadmaps, getFeaturedRoadmaps } from '@/lib/api/endpoints';
 import { useAuthStore } from '@/lib/store/auth-store';
+import { batchFetchCoverImagesFromAPI } from '@/lib/cover-image';
 
 // Section Header Component
 function SectionHeader({
@@ -78,6 +79,8 @@ export default function HomePage() {
   const [isLoading, setIsLoading] = useState(true);
   const [featuredRoadmaps, setFeaturedRoadmaps] = useState<FeaturedRoadmap[]>([]);
   const [isFeaturedLoading, setIsFeaturedLoading] = useState(true);
+  const [coverImageMap, setCoverImageMap] = useState<Map<string, string | null>>(new Map());
+  const [featuredCoverImageMap, setFeaturedCoverImageMap] = useState<Map<string, string | null>>(new Map());
   
   // Fetch user roadmaps on mount
   useEffect(() => {
@@ -111,6 +114,15 @@ export default function HomePage() {
           };
         });
         setHistory(historyData as any);
+        
+        // 批量获取封面图
+        const roadmapIds = historyData
+          .filter(item => item.status !== 'generating')
+          .map(item => item.roadmap_id);
+        if (roadmapIds.length > 0) {
+          const coverImages = await batchFetchCoverImagesFromAPI(roadmapIds);
+          setCoverImageMap(coverImages);
+        }
       } catch (error) {
         console.error('Failed to fetch roadmaps:', error);
       } finally {
@@ -156,6 +168,13 @@ export default function HomePage() {
             })),
           }));
         setFeaturedRoadmaps(featuredData);
+        
+        // 批量获取精选路线图的封面图
+        const roadmapIds = featuredData.map(item => item.id);
+        if (roadmapIds.length > 0) {
+          const coverImages = await batchFetchCoverImagesFromAPI(roadmapIds);
+          setFeaturedCoverImageMap(coverImages);
+        }
       } catch (error) {
         console.error('Failed to fetch featured roadmaps:', error);
         setFeaturedRoadmaps([]);
@@ -254,6 +273,7 @@ export default function HomePage() {
                         currentStep={roadmap.currentStep}
                         showActions={false}
                         stages={roadmap.stages}
+                        coverImageUrl={coverImageMap.get(roadmap.id) || undefined}
                       />
                     </div>
                   ))}
@@ -308,7 +328,10 @@ export default function HomePage() {
                 <div className="flex gap-4 min-w-max sm:min-w-0 sm:grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                   {displayedFeatured.map((roadmap) => (
                     <div key={roadmap.id} className="w-[280px] sm:w-auto flex-shrink-0">
-                      <FeaturedRoadmapCard roadmap={roadmap} />
+                      <FeaturedRoadmapCard 
+                        roadmap={roadmap}
+                        coverImageUrl={featuredCoverImageMap.get(roadmap.id) || undefined}
+                      />
                     </div>
                   ))}
                 </div>

@@ -113,6 +113,16 @@ const config: Config = {
           '0%, 100%': { opacity: '1' },
           '50%': { opacity: '0.7' },
         },
+        'pulse-slow': {
+          '0%, 100%': { 
+            opacity: '1',
+            transform: 'scale(1)',
+          },
+          '50%': { 
+            opacity: '0.85',
+            transform: 'scale(1.02)',
+          },
+        },
         'shine': {
           '0%': { 'background-position': '0% 0%' },
           '50%': { 'background-position': '100% 100%' },
@@ -126,6 +136,7 @@ const config: Config = {
         'slide-in-right': 'slide-in-from-right 0.3s ease-out',
         'slide-in-left': 'slide-in-from-left 0.3s ease-out',
         'pulse-subtle': 'pulse-subtle 2s ease-in-out infinite',
+        'pulse-slow': 'pulse-slow 2.5s ease-in-out infinite',
         'shine': 'shine var(--duration) infinite linear',
       },
     },

@@ -309,21 +309,51 @@ export function WorkflowTopology({
    * 跟踪上一次的 Human Review 状态，用于检测状态变化
    */
   const prevHumanReviewActiveRef = useRef<boolean>(false);
+  
+  /**
+   * 跟踪上一次离开 human_review 的时间，用于防止快速循环时的状态丢失
+   */
+  const lastExitTimeRef = useRef<number>(0);
 
   /**
    * 当任务重新进入 Human Review 状态时，重置审核状态
    * 场景：用户reject后，编辑完成，工作流再次回到review节点
+   * 
+   * 修复逻辑：
+   * 1. 当进入 human_review 状态时，如果 reviewStatus 是 approved/rejected，重置为 waiting
+   * 2. 增加时间窗口检测：如果最近 1 秒内离开过 human_review，且现在又进入，则强制重置
+   *    这可以处理快速循环的情况（后端执行很快）
    */
   useEffect(() => {
+    const now = Date.now();
+    
     // 检测：从非human_review状态 → 进入human_review状态
     const isReenteringHumanReview = !prevHumanReviewActiveRef.current && isHumanReviewActive;
     
-    // 当重新进入human_review状态，且当前处于已完成的审核状态时，重置为waiting
-    if (isReenteringHumanReview && (reviewStatus === 'approved' || reviewStatus === 'rejected')) {
+    // 检测：是否在短时间内（1秒）重新进入
+    // 这处理了后端快速执行导致状态变化几乎同时发生的情况
+    const isQuickReentry = isHumanReviewActive && (now - lastExitTimeRef.current < 1000);
+    
+    // 当重新进入 human_review 状态时，重置审核状态（如果已经完成审核）
+    // 条件：正常重新进入 或 快速重新进入（且已完成审核）
+    if ((isReenteringHumanReview || isQuickReentry) && 
+        (reviewStatus === 'approved' || reviewStatus === 'rejected')) {
+      console.log('[WorkflowTopology] Resetting reviewStatus to waiting', {
+        isReenteringHumanReview,
+        isQuickReentry,
+        prevActive: prevHumanReviewActiveRef.current,
+        currentActive: isHumanReviewActive,
+        reviewStatus,
+      });
       setReviewStatus('waiting');
       setFeedback('');
       setShowFeedback(false);
       setReviewError(null);
+    }
+    
+    // 当离开 human_review 状态时，记录时间
+    if (prevHumanReviewActiveRef.current && !isHumanReviewActive) {
+      lastExitTimeRef.current = now;
     }
     
     // 更新上一次的状态

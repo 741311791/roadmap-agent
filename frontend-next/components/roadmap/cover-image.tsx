@@ -11,13 +11,14 @@ import Image from 'next/image';
 import { getCoverImage, getGradientFallback, getTopicInitial, fetchCoverImageFromAPI } from '@/lib/cover-image';
 
 interface CoverImageProps {
-  roadmapId?: string;  // 新增：路线图 ID
+  roadmapId?: string;  // 路线图 ID
   topic: string;
   title: string;
   className?: string;
+  coverImageUrl?: string;  // 可选的封面图 URL（如果提供，则跳过 API 调用）
 }
 
-export function CoverImage({ roadmapId, topic, title, className = '' }: CoverImageProps) {
+export function CoverImage({ roadmapId, topic, title, className = '', coverImageUrl }: CoverImageProps) {
   const [imageError, setImageError] = useState(false);
   const [imageLoading, setImageLoading] = useState(true);
   const [imageUrl, setImageUrl] = useState(getCoverImage(topic));
@@ -27,8 +28,22 @@ export function CoverImage({ roadmapId, topic, title, className = '' }: CoverIma
   // 检查是否为 R2.dev 的图片（不使用 Next.js 图片优化）
   const isR2Image = imageUrl.includes('r2.dev');
   
-  // 尝试从 API 获取封面图
+  // 如果提供了 coverImageUrl（包括 null），直接使用，跳过 API 调用
   useEffect(() => {
+    // coverImageUrl 可能是 string（有封面图）、null（已查询但没有封面图）或 undefined（未查询）
+    if (coverImageUrl !== undefined) {
+      // 如果 coverImageUrl 是 null，表示已查询过但没有封面图，使用默认的 Unsplash 图片
+      // 如果 coverImageUrl 是 string，使用提供的封面图 URL
+      if (coverImageUrl) {
+        setImageUrl(coverImageUrl);
+      }
+      // 否则保持默认的 Unsplash 图片（已在 useState 中设置）
+      setImageLoading(false);
+      return;
+    }
+    
+    // 只有在 coverImageUrl 为 undefined 时才尝试从 API 获取封面图
+    // 这表示父组件没有批量获取，需要单个调用
     if (roadmapId) {
       setImageLoading(true);
       fetchCoverImageFromAPI(roadmapId).then((apiUrl) => {
@@ -42,7 +57,7 @@ export function CoverImage({ roadmapId, topic, title, className = '' }: CoverIma
     } else {
       setImageLoading(false);
     }
-  }, [roadmapId]);
+  }, [roadmapId, coverImageUrl]);
 
   const handleError = useCallback(() => {
     setImageError(true);

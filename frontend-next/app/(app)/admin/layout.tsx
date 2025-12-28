@@ -5,7 +5,7 @@
  */
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/lib/store/auth-store';
 import { Loader2 } from 'lucide-react';
@@ -25,8 +25,16 @@ interface AdminLayoutProps {
 export default function AdminLayout({ children }: AdminLayoutProps) {
   const router = useRouter();
   const { user, isAuthenticated, isAdmin } = useAuthStore();
+  const [mounted, setMounted] = useState(false);
+
+  // 确保只在客户端挂载后才进行权限检查（避免 hydration 错误）
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
+    if (!mounted) return;
+
     // 检查登录状态
     if (!isAuthenticated || !user) {
       console.log('[AdminLayout] Not authenticated, redirecting to login');
@@ -42,7 +50,19 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
     }
 
     console.log('[AdminLayout] Access granted for superuser:', user.email);
-  }, [isAuthenticated, user, router, isAdmin]);
+  }, [mounted, isAuthenticated, user, router, isAdmin]);
+
+  // 在客户端挂载前显示加载状态（避免 hydration 错误）
+  if (!mounted) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-center">
+          <Loader2 className="w-12 h-12 animate-spin text-sage-600 mx-auto mb-4" />
+          <p className="text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   // 显示加载状态
   if (!isAuthenticated || !user || !isAdmin()) {

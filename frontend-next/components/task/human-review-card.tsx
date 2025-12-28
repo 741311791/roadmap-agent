@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -42,6 +42,29 @@ export function HumanReviewCard({
   const [feedback, setFeedback] = useState('');
   const [showFeedback, setShowFeedback] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // 跟踪上一次的 isActive 状态，用于检测重新激活
+  const prevIsActiveRef = useRef<boolean>(false);
+  
+  /**
+   * 当卡片重新激活时，重置审核状态
+   * 场景：用户reject后，编辑完成，工作流再次回到review节点
+   */
+  useEffect(() => {
+    // 检测：从非激活状态 → 激活状态
+    const isReactivating = !prevIsActiveRef.current && isActive;
+    
+    // 当重新激活且已完成审核时，重置为 waiting
+    if (isReactivating && (status === 'approved' || status === 'rejected')) {
+      console.log('[HumanReviewCard] Resetting status to waiting on reactivation');
+      setStatus('waiting');
+      setFeedback('');
+      setShowFeedback(false);
+      setError(null);
+    }
+    
+    prevIsActiveRef.current = isActive;
+  }, [isActive, status]);
 
   const handleApprove = async () => {
     try {

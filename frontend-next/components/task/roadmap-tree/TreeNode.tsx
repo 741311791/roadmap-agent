@@ -14,56 +14,75 @@ import { TreeNodeData, TreeNodeProps, TreeNodeStatus, TreeNodeType, calculateNod
 
 /**
  * 获取节点状态样式配置
+ * 
+ * 四种主要状态的视觉设计：
+ * - 初始态 (pending): 灰色虚线边框，无特殊效果
+ * - 加载态 (loading): 蓝色边框 + 脉冲动画 + 渐变背景
+ * - 成功态 (completed): 绿色边框 + 微妙发光效果
+ * - 失败态 (failed/partial_failure): 红色/橙色 + 警告标识
  */
 function getStatusStyles(status: TreeNodeStatus): {
   border: string;
   bg: string;
   text: string;
   icon: React.ReactNode;
+  extraClasses?: string;
 } {
   switch (status) {
     case 'completed':
+      // ✅ 成功态：绿色边框 + 微妙的成功发光效果
       return {
-        border: 'border-sage-500',
-        bg: 'bg-sage-50',
-        text: 'text-sage-700',
-        icon: <Check className="w-3.5 h-3.5 text-sage-600" />,
+        border: 'border-emerald-500',
+        bg: 'bg-gradient-to-br from-emerald-50 to-emerald-100/50',
+        text: 'text-emerald-800',
+        icon: <Check className="w-3.5 h-3.5 text-emerald-600" />,
+        extraClasses: 'shadow-emerald-100/50 shadow-md',
       };
     case 'loading':
+      // 🔄 加载态：蓝色边框 + 脉冲动画 + 渐变背景
       return {
-        border: 'border-sage-400 animate-pulse',
-        bg: 'bg-sage-50/50',
-        text: 'text-sage-600',
-        icon: <Loader2 className="w-3.5 h-3.5 text-sage-500 animate-spin" />,
+        border: 'border-blue-400',
+        bg: 'bg-gradient-to-br from-blue-50 to-sky-100/50',
+        text: 'text-blue-700',
+        icon: <Loader2 className="w-3.5 h-3.5 text-blue-600 animate-spin" />,
+        extraClasses: 'animate-pulse-slow shadow-blue-200/60 shadow-lg',
       };
     case 'failed':
+      // ❌ 失败态：红色边框 + 错误标识
       return {
-        border: 'border-red-400',
-        bg: 'bg-red-50',
-        text: 'text-red-700',
-        icon: <XCircle className="w-3.5 h-3.5 text-red-500" />,
+        border: 'border-red-500',
+        bg: 'bg-gradient-to-br from-red-50 to-red-100/50',
+        text: 'text-red-800',
+        icon: <XCircle className="w-3.5 h-3.5 text-red-600" />,
+        extraClasses: 'shadow-red-100/50 shadow-md',
       };
     case 'partial_failure':
+      // ⚠️ 部分失败态：橙色边框 + 警告标识
       return {
-        border: 'border-amber-400',
-        bg: 'bg-amber-50',
-        text: 'text-amber-700',
-        icon: <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />,
+        border: 'border-amber-500',
+        bg: 'bg-gradient-to-br from-amber-50 to-amber-100/50',
+        text: 'text-amber-800',
+        icon: <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />,
+        extraClasses: 'shadow-amber-100/50 shadow-md',
       };
     case 'modified':
+      // ✨ 已修改态：青色边框 + 闪亮标识
       return {
-        border: 'border-cyan-400',
-        bg: 'bg-cyan-50',
-        text: 'text-cyan-700',
-        icon: <Sparkles className="w-3.5 h-3.5 text-cyan-500" />,
+        border: 'border-cyan-500',
+        bg: 'bg-gradient-to-br from-cyan-50 to-cyan-100/50',
+        text: 'text-cyan-800',
+        icon: <Sparkles className="w-3.5 h-3.5 text-cyan-600" />,
+        extraClasses: 'shadow-cyan-100/50 shadow-md',
       };
     case 'pending':
     default:
+      // ⏸️ 初始态：灰色虚线边框，无特殊效果
       return {
-        border: 'border-gray-300',
-        bg: 'bg-gray-50',
+        border: 'border-gray-300 border-dashed',
+        bg: 'bg-gray-50/80',
         text: 'text-gray-600',
         icon: null,
+        extraClasses: 'opacity-80',
       };
   }
 }
@@ -136,19 +155,20 @@ export function TreeNode({
             className={cn(
               // 基础样式 - 胶囊形状
               'absolute flex items-center gap-1.5 rounded-full border-2 cursor-pointer',
-              'transition-all duration-200 ease-out',
-              'hover:shadow-md hover:scale-105',
+              'transition-all duration-300 ease-out',
+              'hover:shadow-lg hover:scale-105',
               'select-none whitespace-nowrap',
               // 状态样式
               statusStyles.border,
               statusStyles.bg,
               statusStyles.text,
+              statusStyles.extraClasses,
               // 类型样式
               typeStyles.fontSize,
               typeStyles.fontWeight,
               typeStyles.padding,
-              // 选中样式
-              isSelected && 'ring-2 ring-sage-400 ring-offset-2',
+              // 选中样式（使用emerald颜色以匹配已完成节点的成功意义）
+              isSelected && 'ring-2 ring-emerald-400 ring-offset-2',
             )}
             style={{
               left: node.position?.x ?? 0,

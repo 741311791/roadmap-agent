@@ -125,9 +125,13 @@ async def get_featured_roadmaps(
         offset=offset
     )
     
+    # 3. 批量获取所有路线图的 Task（解决 N+1 查询问题）
+    roadmap_ids = [r.roadmap_id for r in roadmaps]
+    tasks_by_roadmap = await repo.get_tasks_by_roadmap_ids_batch(roadmap_ids)
+    
     roadmap_items = []
     
-    # 3. 转换路线图数据
+    # 4. 转换路线图数据
     for roadmap in roadmaps:
         # 从 framework_data 中提取概念信息
         framework_data = roadmap.framework_data or {}
@@ -142,8 +146,8 @@ async def get_featured_roadmaps(
                 concepts = module.get("concepts", [])
                 total_concepts += len(concepts)
         
-        # 从 user_request 中提取 topic
-        task = await repo.get_task_by_roadmap_id(roadmap.roadmap_id)
+        # 从批量获取的 tasks 中获取 topic（无需额外查询）
+        task = tasks_by_roadmap.get(roadmap.roadmap_id)
         topic = None
         if task and task.user_request:
             learning_goal = task.user_request.get("preferences", {}).get("learning_goal", "")

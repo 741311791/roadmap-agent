@@ -50,7 +50,7 @@ class TutorialModifierAgent(BaseAgent):
             base_url=base_url or settings.TUTORIAL_MODIFIER_BASE_URL,
             api_key=api_key or settings.get_tutorial_modifier_api_key,
             temperature=0.7,
-            max_tokens=16384,
+            max_tokens=32768,  # deepseek-v3.2 支持更大输出
         )
     
     async def modify(

@@ -238,6 +238,87 @@ async def get_generation_status(
     return status
 
 
+@router.get("/{task_id}/content-status")
+async def get_content_generation_status(
+    task_id: str,
+    repo_factory: RepositoryFactory = Depends(get_repository_factory),
+):
+    """
+    查询内容生成进度（Celery 任务状态）
+    
+    当路线图框架生成完成后，内容生成（教程、资源、测验）会在独立的 Celery Worker 中执行。
+    该接口用于查询内容生成的实时进度。
+    
+    Args:
+        task_id: 任务 ID
+        
+    Returns:
+        内容生成状态信息
+        
+    Raises:
+        HTTPException: 404 - 任务不存在或内容生成未启动
+        
+    Example:
+        ```json
+        {
+            "task_id": "550e8400-e29b-41d4-a716-446655440000",
+            "celery_task_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+            "status": "PROGRESS",
+            "progress": {
+                "current": 15,
+                "total": 30,
+                "percentage": 50.0
+            },
+            "result": null
+        }
+        ```
+    """
+    from celery.result import AsyncResult
+    
+    # 从数据库获取任务和 Celery task ID
+    async with repo_factory.create_session() as session:
+        task_repo = repo_factory.create_task_repo(session)
+        task = await task_repo.get_by_task_id(task_id)
+    
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    if not task.celery_task_id:
+        # 内容生成尚未启动
+        return {
+            "task_id": task_id,
+            "celery_task_id": None,
+            "status": "NOT_STARTED",
+            "message": "Content generation has not been queued yet",
+        }
+    
+    # 查询 Celery 任务状态
+    result = AsyncResult(task.celery_task_id)
+    
+    response = {
+        "task_id": task_id,
+        "celery_task_id": task.celery_task_id,
+        "status": result.status,
+    }
+    
+    # 根据任务状态添加额外信息
+    if result.status == "PENDING":
+        response["message"] = "Content generation task is queued"
+    elif result.status == "PROGRESS":
+        response["progress"] = result.info
+    elif result.status == "SUCCESS":
+        response["result"] = result.result
+        response["message"] = "Content generation completed successfully"
+    elif result.status == "FAILURE":
+        response["error"] = str(result.info)
+        response["message"] = "Content generation failed"
+    elif result.status == "RETRY":
+        response["message"] = "Content generation task is being retried"
+        response["retry_count"] = result.info.get("retry_count") if result.info else 0
+    
+    return response
+
+
 @router.post("/{roadmap_id}/retry-failed")
 async def retry_failed_concepts(
     roadmap_id: str,
@@ -386,11 +467,12 @@ async def _update_concept_status_in_framework(
                         # 找到后直接退出循环
                         break
         
-        # 保存更新后的框架
+        # 保存更新后的框架（使用 save_roadmap 确保 flag_modified 被调用）
         from app.models.domain import RoadmapFramework
         updated_framework = RoadmapFramework.model_validate(framework_data)
-        await roadmap_repo.update_framework_data(
+        await roadmap_repo.save_roadmap(
             roadmap_id=roadmap_id,
+            user_id=roadmap_metadata.user_id,
             framework=updated_framework,
         )
         await session.commit()
@@ -407,10 +489,10 @@ async def retry_tutorial(
     repo_factory: RepositoryFactory = Depends(get_repository_factory),
 ):
     """
-    重试单个概念的教程生成
+    重试单个概念的教程生成（异步 Celery 任务）
     
     当教程生成失败时，用户可以调用此接口重新生成教程内容。
-    支持实时 WebSocket 推送生成状态。
+    任务将提交到 Celery 队列异步执行，支持实时 WebSocket 推送生成状态。
     
     Args:
         roadmap_id: 路线图 ID
@@ -418,8 +500,10 @@ async def retry_tutorial(
         request: 包含用户学习偏好的请求
         
     Returns:
-        重试结果，包含是否成功和生成的数据
+        任务 ID，前端可通过 WebSocket 订阅进度
     """
+    from app.tasks.content_generation_tasks import retry_tutorial_task
+    
     # 生成任务 ID 用于 WebSocket 推送
     task_id = _generate_retry_task_id(roadmap_id, concept_id, "tutorial")
     
@@ -462,148 +546,33 @@ async def retry_tutorial(
         )
         await session.commit()
     
-    try:
-        # 1. 立即更新状态为 'generating'
-        await _update_concept_status_in_framework(
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            content_type="tutorial",
-            status="generating",
-            result=None,
-            repo_factory=repo_factory,
-        )
-        
-        # 2. 发送 WebSocket 事件：开始生成
-        await notification_service.publish_concept_start(
-            task_id=task_id,
-            concept_id=concept_id,
-            concept_name=concept.name,
-            current=1,
-            total=1,
-            content_type="tutorial",
-        )
-        
-        # 3. 初始化教程生成器并执行
-        tutorial_generator = TutorialGeneratorAgent()
-        input_data = TutorialGenerationInput(
-            concept=concept,
-            context=context,
-            user_preferences=request.preferences,
-        )
-        result = await tutorial_generator.execute(input_data)
-        
-        # 4. 更新状态为 'completed' 并保存结果数据
-        await _update_concept_status_in_framework(
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            content_type="tutorial",
-            status="completed",
-            result={
-                "content_url": result.content_url,
-                "summary": result.summary,
-            },
-            repo_factory=repo_factory,
-        )
-        
-        # 5. 保存教程元数据
-        async with repo_factory.create_session() as session:
-            tutorial_repo = repo_factory.create_tutorial_repo(session)
-            await tutorial_repo.save_tutorial(result, roadmap_id)
-            await session.commit()
-        
-        # 6. 发送 WebSocket 事件：生成完成
-        await notification_service.publish_concept_complete(
-            task_id=task_id,
-            concept_id=concept_id,
-            concept_name=concept.name,
-            content_type="tutorial",
-            data={
-                "tutorial_id": result.tutorial_id,
-                "title": result.title,
-                "content_url": result.content_url,
-            },
-        )
-        
-        # 7. 更新任务状态为 completed
-        async with repo_factory.create_session() as session:
-            task_repo = repo_factory.create_task_repo(session)
-            await task_repo.update_task_status(
-                task_id=task_id,
-                status="completed",
-                current_step="completed",
-            )
-            await session.commit()
-        
-        logger.info(
-            "retry_tutorial_success",
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            tutorial_id=result.tutorial_id,
-            task_id=task_id,
-        )
-        
-        return RetryContentResponse(
-            success=True,
-            concept_id=concept_id,
-            content_type="tutorial",
-            message="教程重新生成成功",
-            data={
-                "task_id": task_id,
-                "tutorial_id": result.tutorial_id,
-                "title": result.title,
-                "summary": result.summary,
-                "content_url": result.content_url,
-                "content_version": result.content_version,
-            },
-        )
-        
-    except Exception as e:
-        logger.error(
-            "retry_tutorial_failed",
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            task_id=task_id,
-            error=str(e),
-            traceback=traceback.format_exc(),
-        )
-        
-        # 7. 更新状态为 'failed'
-        await _update_concept_status_in_framework(
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            content_type="tutorial",
-            status="failed",
-            result=None,
-            repo_factory=repo_factory,
-        )
-        
-        # 8. 发送 WebSocket 事件：生成失败
-        await notification_service.publish_concept_failed(
-            task_id=task_id,
-            concept_id=concept_id,
-            concept_name=concept.name,
-            error=str(e),
-            content_type="tutorial",
-        )
-        
-        # 9. 更新任务状态为 failed
-        async with repo_factory.create_session() as session:
-            task_repo = repo_factory.create_task_repo(session)
-            await task_repo.update_task_status(
-                task_id=task_id,
-                status="failed",
-                current_step="failed",
-                error_message=str(e)[:500],
-            )
-            await session.commit()
-        
-        return RetryContentResponse(
-            success=False,
-            concept_id=concept_id,
-            content_type="tutorial",
-            message=f"教程重新生成失败: {str(e)}",
-            data={"task_id": task_id},
-        )
+    # 提交 Celery 任务（异步执行）
+    retry_tutorial_task.apply_async(
+        args=[
+            task_id,
+            roadmap_id,
+            concept_id,
+            concept.model_dump(mode='json'),
+            context,
+            request.preferences.model_dump(mode='json'),
+        ],
+        task_id=task_id,  # 使用相同的 task_id
+    )
+    
+    logger.info(
+        "retry_tutorial_task_submitted",
+        roadmap_id=roadmap_id,
+        concept_id=concept_id,
+        task_id=task_id,
+    )
+    
+    return RetryContentResponse(
+        success=True,
+        concept_id=concept_id,
+        content_type="tutorial",
+        message="Tutorial regeneration task submitted",
+        data={"task_id": task_id},
+    )
 
 
 @router.post(
@@ -617,10 +586,10 @@ async def retry_resources(
     repo_factory: RepositoryFactory = Depends(get_repository_factory),
 ):
     """
-    重试单个概念的资源推荐生成
+    重试单个概念的资源推荐生成（异步 Celery 任务）
     
     当资源推荐生成失败时，用户可以调用此接口重新生成资源列表。
-    支持实时 WebSocket 推送生成状态。
+    任务将提交到 Celery 队列异步执行，支持实时 WebSocket 推送生成状态。
     
     Args:
         roadmap_id: 路线图 ID
@@ -628,8 +597,10 @@ async def retry_resources(
         request: 包含用户学习偏好的请求
         
     Returns:
-        重试结果，包含是否成功和生成的数据
+        任务 ID，前端可通过 WebSocket 订阅进度
     """
+    from app.tasks.content_generation_tasks import retry_resources_task
+    
     # 生成任务 ID 用于 WebSocket 推送
     task_id = _generate_retry_task_id(roadmap_id, concept_id, "resources")
     
@@ -672,146 +643,33 @@ async def retry_resources(
         )
         await session.commit()
     
-    try:
-        # 1. 立即更新状态为 'generating'
-        await _update_concept_status_in_framework(
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            content_type="resources",
-            status="generating",
-            result=None,
-            repo_factory=repo_factory,
-        )
-        
-        # 2. 发送 WebSocket 事件：开始生成
-        await notification_service.publish_concept_start(
-            task_id=task_id,
-            concept_id=concept_id,
-            concept_name=concept.name,
-            current=1,
-            total=1,
-            content_type="resources",
-        )
-        
-        # 3. 初始化资源推荐器并执行
-        resource_recommender = ResourceRecommenderAgent()
-        input_data = ResourceRecommendationInput(
-            concept=concept,
-            context=context,
-            user_preferences=request.preferences,
-        )
-        result = await resource_recommender.execute(input_data)
-        
-        # 4. 更新状态为 'completed' 并保存结果数据
-        await _update_concept_status_in_framework(
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            content_type="resources",
-            status="completed",
-            result={
-                "resources_id": result.id,
-                "resources_count": len(result.resources),
-            },
-            repo_factory=repo_factory,
-        )
-        
-        # 5. 保存资源推荐元数据
-        async with repo_factory.create_session() as session:
-            resource_repo = repo_factory.create_resource_repo(session)
-            await resource_repo.save_resource_recommendation(result, roadmap_id)
-            await session.commit()
-        
-        # 6. 发送 WebSocket 事件：生成完成
-        await notification_service.publish_concept_complete(
-            task_id=task_id,
-            concept_id=concept_id,
-            concept_name=concept.name,
-            content_type="resources",
-            data={
-                "resources_id": result.id,
-                "resources_count": len(result.resources),
-            },
-        )
-        
-        # 7. 更新任务状态为 completed
-        async with repo_factory.create_session() as session:
-            task_repo = repo_factory.create_task_repo(session)
-            await task_repo.update_task_status(
-                task_id=task_id,
-                status="completed",
-                current_step="completed",
-            )
-            await session.commit()
-        
-        logger.info(
-            "retry_resources_success",
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            resources_id=result.id,
-            resources_count=len(result.resources),
-            task_id=task_id,
-        )
-        
-        return RetryContentResponse(
-            success=True,
-            concept_id=concept_id,
-            content_type="resources",
-            message="资源推荐重新生成成功",
-            data={
-                "task_id": task_id,
-                "resources_id": result.id,
-                "resources_count": len(result.resources),
-                "resources": [r.model_dump() for r in result.resources],
-            },
-        )
-        
-    except Exception as e:
-        logger.error(
-            "retry_resources_failed",
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            task_id=task_id,
-            error=str(e),
-            traceback=traceback.format_exc(),
-        )
-        
-        # 7. 更新状态为 'failed'
-        await _update_concept_status_in_framework(
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            content_type="resources",
-            status="failed",
-            result=None,
-            repo_factory=repo_factory,
-        )
-        
-        # 8. 发送 WebSocket 事件：生成失败
-        await notification_service.publish_concept_failed(
-            task_id=task_id,
-            concept_id=concept_id,
-            concept_name=concept.name,
-            error=str(e),
-            content_type="resources",
-        )
-        
-        # 9. 更新任务状态为 failed
-        async with repo_factory.create_session() as session:
-            task_repo = repo_factory.create_task_repo(session)
-            await task_repo.update_task_status(
-                task_id=task_id,
-                status="failed",
-                current_step="failed",
-                error_message=str(e)[:500],
-            )
-            await session.commit()
-        
-        return RetryContentResponse(
-            success=False,
-            concept_id=concept_id,
-            content_type="resources",
-            message=f"资源推荐重新生成失败: {str(e)}",
-            data={"task_id": task_id},
-        )
+    # 提交 Celery 任务（异步执行）
+    retry_resources_task.apply_async(
+        args=[
+            task_id,
+            roadmap_id,
+            concept_id,
+            concept.model_dump(mode='json'),
+            context,
+            request.preferences.model_dump(mode='json'),
+        ],
+        task_id=task_id,  # 使用相同的 task_id
+    )
+    
+    logger.info(
+        "retry_resources_task_submitted",
+        roadmap_id=roadmap_id,
+        concept_id=concept_id,
+        task_id=task_id,
+    )
+    
+    return RetryContentResponse(
+        success=True,
+        concept_id=concept_id,
+        content_type="resources",
+        message="Resources regeneration task submitted",
+        data={"task_id": task_id},
+    )
 
 
 @router.post(
@@ -825,10 +683,10 @@ async def retry_quiz(
     repo_factory: RepositoryFactory = Depends(get_repository_factory),
 ):
     """
-    重试单个概念的测验生成
+    重试单个概念的测验生成（异步 Celery 任务）
     
     当测验生成失败时，用户可以调用此接口重新生成测验题目。
-    支持实时 WebSocket 推送生成状态。
+    任务将提交到 Celery 队列异步执行，支持实时 WebSocket 推送生成状态。
     
     Args:
         roadmap_id: 路线图 ID
@@ -836,7 +694,7 @@ async def retry_quiz(
         request: 包含用户学习偏好的请求
         
     Returns:
-        重试结果，包含是否成功和生成的数据
+        任务 ID，前端可通过 WebSocket 订阅进度
     """
     # 生成任务 ID 用于 WebSocket 推送
     task_id = _generate_retry_task_id(roadmap_id, concept_id, "quiz")
@@ -880,143 +738,32 @@ async def retry_quiz(
         )
         await session.commit()
     
-    try:
-        # 1. 立即更新状态为 'generating'
-        await _update_concept_status_in_framework(
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            content_type="quiz",
-            status="generating",
-            result=None,
-            repo_factory=repo_factory,
-        )
-        
-        # 2. 发送 WebSocket 事件：开始生成
-        await notification_service.publish_concept_start(
-            task_id=task_id,
-            concept_id=concept_id,
-            concept_name=concept.name,
-            current=1,
-            total=1,
-            content_type="quiz",
-        )
-        
-        # 3. 初始化测验生成器并执行
-        quiz_generator = QuizGeneratorAgent()
-        input_data = QuizGenerationInput(
-            concept=concept,
-            context=context,
-            user_preferences=request.preferences,
-        )
-        result = await quiz_generator.execute(input_data)
-        
-        # 4. 更新状态为 'completed' 并保存结果数据
-        await _update_concept_status_in_framework(
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            content_type="quiz",
-            status="completed",
-            result={
-                "quiz_id": result.quiz_id,
-                "questions_count": result.total_questions,
-            },
-            repo_factory=repo_factory,
-        )
-        
-        # 5. 保存测验元数据
-        async with repo_factory.create_session() as session:
-            quiz_repo = repo_factory.create_quiz_repo(session)
-            await quiz_repo.save_quiz(result, roadmap_id)
-            await session.commit()
-        
-        # 6. 发送 WebSocket 事件：生成完成
-        await notification_service.publish_concept_complete(
-            task_id=task_id,
-            concept_id=concept_id,
-            concept_name=concept.name,
-            content_type="quiz",
-            data={
-                "quiz_id": result.quiz_id,
-                "total_questions": result.total_questions,
-            },
-        )
-        
-        # 7. 更新任务状态为 completed
-        async with repo_factory.create_session() as session:
-            task_repo = repo_factory.create_task_repo(session)
-            await task_repo.update_task_status(
-                task_id=task_id,
-                status="completed",
-                current_step="completed",
-            )
-            await session.commit()
-        
-        logger.info(
-            "retry_quiz_success",
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            quiz_id=result.quiz_id,
-            questions_count=result.total_questions,
-            task_id=task_id,
-        )
-        
-        return RetryContentResponse(
-            success=True,
-            concept_id=concept_id,
-            content_type="quiz",
-            message="测验重新生成成功",
-            data={
-                "task_id": task_id,
-                "quiz_id": result.quiz_id,
-                "total_questions": result.total_questions,
-                "questions": [q.model_dump() for q in result.questions],
-            },
-        )
-        
-    except Exception as e:
-        logger.error(
-            "retry_quiz_failed",
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            task_id=task_id,
-            error=str(e),
-            traceback=traceback.format_exc(),
-        )
-        
-        # 7. 更新状态为 'failed'
-        await _update_concept_status_in_framework(
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            content_type="quiz",
-            status="failed",
-            result=None,
-            repo_factory=repo_factory,
-        )
-        
-        # 8. 发送 WebSocket 事件：生成失败
-        await notification_service.publish_concept_failed(
-            task_id=task_id,
-            concept_id=concept_id,
-            concept_name=concept.name,
-            error=str(e),
-            content_type="quiz",
-        )
-        
-        # 9. 更新任务状态为 failed
-        async with repo_factory.create_session() as session:
-            task_repo = repo_factory.create_task_repo(session)
-            await task_repo.update_task_status(
-                task_id=task_id,
-                status="failed",
-                current_step="failed",
-                error_message=str(e)[:500],
-            )
-            await session.commit()
-        
-        return RetryContentResponse(
-            success=False,
-            concept_id=concept_id,
-            content_type="quiz",
-            message=f"测验重新生成失败: {str(e)}",
-            data={"task_id": task_id},
-        )
+    # 提交 Celery 任务（异步执行）
+    from app.tasks.content_generation_tasks import retry_quiz_task
+    
+    retry_quiz_task.apply_async(
+        args=[
+            task_id,
+            roadmap_id,
+            concept_id,
+            concept.model_dump(mode='json'),
+            context,
+            request.preferences.model_dump(mode='json'),
+        ],
+        task_id=task_id,  # 使用相同的 task_id
+    )
+    
+    logger.info(
+        "retry_quiz_task_submitted",
+        roadmap_id=roadmap_id,
+        concept_id=concept_id,
+        task_id=task_id,
+    )
+    
+    return RetryContentResponse(
+        success=True,
+        concept_id=concept_id,
+        content_type="quiz",
+        message="Quiz regeneration task submitted",
+        data={"task_id": task_id},
+    )

@@ -250,3 +250,28 @@ class TechAssessmentRepository(BaseRepository[TechStackAssessment]):
         
         return technologies
 
+    async def get_existing_combinations(self) -> set[tuple[str, str]]:
+        """
+        批量获取所有已存在的 (technology, proficiency_level) 组合
+        
+        用于启动时一次性检查哪些测验已存在，避免 N+1 查询问题。
+        
+        Returns:
+            已存在的 (technology, proficiency_level) 元组集合
+        """
+        result = await self.session.execute(
+            select(
+                TechStackAssessment.technology,
+                TechStackAssessment.proficiency_level,
+            )
+        )
+        
+        combinations = {(row[0], row[1]) for row in result.all()}
+        
+        logger.debug(
+            "existing_combinations_retrieved",
+            count=len(combinations),
+        )
+        
+        return combinations
+

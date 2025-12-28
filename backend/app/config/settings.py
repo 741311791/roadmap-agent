@@ -200,17 +200,46 @@ class Settings(BaseSettings):
         return self.QUIZ_MODIFIER_API_KEY or self.QUIZ_API_KEY
     
     # ==================== Redis 配置 ====================
-    REDIS_HOST: str = Field("localhost", description="Redis 主机")
-    REDIS_PORT: int = Field(6379, description="Redis 端口")
-    REDIS_PASSWORD: str | None = Field(None, description="Redis 密码（可选）")
-    REDIS_DB: int = Field(0, description="Redis 数据库编号")
+    # 优先使用 REDIS_URL（支持 Upstash 等云服务提供的完整连接字符串）
+    REDIS_URL_ENV: str | None = Field(
+        None,
+        alias="REDIS_URL",
+        description="Redis 完整连接 URL（优先，支持 redis:// 和 rediss://）"
+    )
+    REDIS_HOST: str = Field("localhost", description="Redis 主机（当 REDIS_URL 未设置时使用）")
+    REDIS_PORT: int = Field(6379, description="Redis 端口（当 REDIS_URL 未设置时使用）")
+    REDIS_PASSWORD: str | None = Field(None, description="Redis 密码（可选，当 REDIS_URL 未设置时使用）")
+    REDIS_DB: int = Field(0, description="Redis 数据库编号（当 REDIS_URL 未设置时使用）")
+    
+    @property
+    def get_redis_url(self) -> str:
+        """
+        获取 Redis 连接 URL
+        
+        优先级：
+        1. REDIS_URL 环境变量（直接使用，支持 Upstash 等云服务的完整 URL）
+        2. 根据 REDIS_HOST、REDIS_PORT 等配置构建
+        
+        Returns:
+            Redis 连接 URL（支持 redis:// 和 rediss:// 协议）
+        """
+        # 如果提供了完整的 REDIS_URL，直接使用（适用于 Upstash 等云服务）
+        if self.REDIS_URL_ENV:
+            return self.REDIS_URL_ENV
+        
+        # 否则根据传统配置构建 URL
+        if self.REDIS_PASSWORD:
+            return f"redis://default:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
     
     @property
     def REDIS_URL(self) -> str:
-        """构建 Redis 连接 URL"""
-        if self.REDIS_PASSWORD:
-            return f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
-        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+        """
+        获取 Redis 连接 URL（向后兼容属性）
+        
+        注意：此属性调用 get_redis_url，保留以保持向后兼容
+        """
+        return self.get_redis_url
     
     @property
     def get_tavily_api_keys(self) -> list[str]:
@@ -254,7 +283,7 @@ class Settings(BaseSettings):
     # ==================== 业务配置 ====================
     MAX_FRAMEWORK_RETRY: int = Field(3, description="路线图结构验证最大重试次数")
     HUMAN_REVIEW_TIMEOUT_HOURS: int = Field(24, description="人工审核超时时间（小时）")
-    PARALLEL_TUTORIAL_LIMIT: int = Field(10, description="并发生成教程的最大数量（非流式模式）")
+    PARALLEL_TUTORIAL_LIMIT: int = Field(5, description="并发生成教程的最大数量（降低以减少数据库连接压力）")
     
     # 流式教程生成配置
     TUTORIAL_STREAM_BATCH_SIZE: int = Field(1, description="流式教程生成每批次并发数量（建议设置为1避免MinIO超时）")
