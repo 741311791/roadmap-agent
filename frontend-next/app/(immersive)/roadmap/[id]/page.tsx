@@ -317,7 +317,9 @@ export default function RoadmapDetailPage() {
                 await refetchRoadmap();
                 // 使缓存失效，强制重新获取教程内容
                 if (selectedConceptId) {
-                  queryClient.invalidateQueries(['tutorial', roadmapId, selectedConceptId]);
+                  queryClient.invalidateQueries({ 
+                    queryKey: ['tutorial', roadmapId, selectedConceptId] 
+                  });
                 }
               }}
             />

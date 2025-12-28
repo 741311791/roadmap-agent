@@ -1277,7 +1277,7 @@ export function LearningStage({ concept, className, tutorialContent, tutorialLoa
               />
             ) : (
               <QuizList 
-                quiz={quiz}
+                quiz={quiz ?? null}
                 isLoading={quizLoading}
                 error={quizError?.message || null}
                 roadmapId={roadmapId}

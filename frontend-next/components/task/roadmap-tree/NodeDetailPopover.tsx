@@ -190,9 +190,9 @@ export function NodeDetailPopover({
           break;
       }
 
-      if (response.success && response.task_id) {
+      if (response.success && response.data?.task_id) {
         // 订阅 WebSocket 以获取实时更新
-        const ws = new TaskWebSocket(response.task_id, {
+        const ws = new TaskWebSocket(response.data.task_id, {
           onProgress: (event: any) => {
             console.log('[NodeDetailPopover] Retry progress:', event);
             if (event.status === 'completed' || event.status === 'failed') {

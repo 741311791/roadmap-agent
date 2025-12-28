@@ -137,7 +137,9 @@ export function RetryContentButton({
                 // 任务已完成，更新状态
                 updateConceptStatus(conceptId, { [statusKey]: 'completed' });
                 // 使缓存失效
-                queryClient.invalidateQueries([contentType, roadmapId, conceptId]);
+                queryClient.invalidateQueries({ 
+                  queryKey: [contentType, roadmapId, conceptId] 
+                });
                 onSuccess?.(response);
                 ws.disconnect();
                 setIsRetrying(false);
@@ -161,7 +163,9 @@ export function RetryContentButton({
               // 更新状态为 'completed'
               updateConceptStatus(conceptId, { [statusKey]: 'completed' });
               // 使缓存失效，强制重新获取最新内容
-              queryClient.invalidateQueries([contentType, roadmapId, conceptId]);
+              queryClient.invalidateQueries({ 
+                queryKey: [contentType, roadmapId, conceptId] 
+              });
               // 触发成功回调
               onSuccess?.(response);
               // 断开 WebSocket

@@ -257,7 +257,10 @@ export interface RetryContentResponse {
   concept_id: string;
   content_type: 'tutorial' | 'resources' | 'quiz';
   message: string;
-  data?: Record<string, unknown>;
+  data?: {
+    task_id?: string;
+    [key: string]: unknown;
+  };
 }
 
 /**
