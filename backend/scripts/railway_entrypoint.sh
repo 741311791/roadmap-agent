@@ -17,19 +17,12 @@ case $SERVICE_TYPE in
   api)
     echo "📡 Starting FastAPI API server..."
     # 运行数据库初始化（只在 API 服务中运行）
-    echo "🔧 Creating base tables..."
     python scripts/create_tables.py
-    
-    echo "🔄 Running database migrations..."
-    alembic upgrade head
-    
-    echo "👤 Creating admin user..."
+    alembic stamp head
     python scripts/create_admin_user.py \
       --email ${ADMIN_EMAIL:-admin@example.com} \
       --password ${ADMIN_PASSWORD:-admin123} \
       --username ${ADMIN_USERNAME:-admin} || true
-    
-    echo "✅ Database initialization complete!"
     
     # 启动 FastAPI 应用
     exec uvicorn app.main:app \

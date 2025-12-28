@@ -61,7 +61,7 @@
 ```dockerfile
 # Dockerfile
 CMD sh -c "python scripts/create_tables.py && \
-          alembic upgrade head && \
+          alembic stamp head && \
           python scripts/create_admin_user.py || true && \
           uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4"
 ```
