@@ -246,15 +246,15 @@ async def safe_session_with_retry(
     base_backoff: float = 0.5,
 ):
     """
-    带重试机制的安全会话上下文管理器（增强版 - 防止连接泄漏）
+    带重试机制的安全会话上下文管理器（修复版 - 正确处理异步生成器）
     
-    在连接池压力大时，自动重试获取连接。
-    使用指数退避策略，避免同时大量重试导致更大压力。
+    ⚠️ 关键设计原则：
+    @asynccontextmanager 装饰的函数只能 yield 一次。
+    因此重试逻辑只应用于**获取连接阶段**，yield 后的异常直接向上抛出。
     
-    ✨ 连接泄漏防护：
-    - 确保在所有路径（正常、异常、重试）下都关闭会话
-    - 在会话关闭前等待所有挂起的异步操作完成
-    - 使用强制清理机制，防止连接被垃圾回收时还未归还
+    重试策略：
+    - 只在创建/获取数据库会话时重试（连接池超时等场景）
+    - 一旦 yield 成功，后续异常不再重试，由调用方处理
     
     Args:
         max_retries: 最大重试次数（默认 3 次）
@@ -264,57 +264,32 @@ async def safe_session_with_retry(
         async with safe_session_with_retry() as session:
             result = await session.execute(query)
             await session.commit()
-    
-    重试策略:
-        - 第 1 次失败: 等待 0.5 秒后重试
-        - 第 2 次失败: 等待 1.0 秒后重试
-        - 第 3 次失败: 抛出异常
     """
+    session = None
     last_error = None
-    session = None  # ✅ 在外层初始化，确保 finally 中可访问
     
+    # ============================================================
+    # Phase 1: 带重试的连接获取（只有这个阶段可以重试）
+    # ============================================================
     for attempt in range(max_retries):
         try:
             session = AsyncSessionLocal()
-            try:
-                yield session
-                return  # 成功执行，直接返回
-            except (GeneratorExit, IllegalStateChangeError):
-                # SSE 流中断或并发状态冲突，静默处理
-                return
-            finally:
-                # ✅ 增强的清理逻辑：确保连接归还到池
-                if session is not None:
-                    try:
-                        # 等待所有挂起的异步操作完成
-                        await asyncio.sleep(0)
-                        
-                        # 关闭会话（归还连接到池）
-                        await session.close()
-                    except IllegalStateChangeError:
-                        # 并发状态冲突，静默处理
-                        pass
-                    except Exception as e:
-                        logger.debug(
-                            "db_session_close_error",
-                            error=str(e),
-                            error_type=type(e).__name__,
-                        )
-                    finally:
-                        # ✅ 防止会话被意外重用
-                        session = None
+            # 验证连接是否有效（触发实际的连接获取）
+            # 注意：AsyncSessionLocal() 只是创建会话对象，
+            # 实际的数据库连接在第一次操作时才会获取
+            break  # 成功创建会话对象，跳出重试循环
         except Exception as e:
             last_error = e
             error_msg = str(e).lower()
             
-            # 只有连接池超时等可重试错误才进行重试
+            # 判断是否是可重试的连接错误
             is_pool_timeout = "pool timeout" in error_msg or "timeout" in error_msg
-            is_connection_error = _is_connection_error(e)
+            is_conn_error = _is_connection_error(e)
             
-            if (is_pool_timeout or is_connection_error) and attempt < max_retries - 1:
+            if (is_pool_timeout or is_conn_error) and attempt < max_retries - 1:
                 wait_time = base_backoff * (attempt + 1)
                 logger.warning(
-                    "db_session_retry",
+                    "db_session_create_retry",
                     attempt=attempt + 1,
                     max_retries=max_retries,
                     wait_seconds=wait_time,
@@ -324,18 +299,47 @@ async def safe_session_with_retry(
                 await asyncio.sleep(wait_time)
                 continue
             else:
-                # 非连接相关错误或已达最大重试次数，直接抛出
+                # 非连接错误或达到最大重试次数，直接抛出
+                logger.error(
+                    "db_session_create_failed",
+                    attempt=attempt + 1,
+                    max_retries=max_retries,
+                    error=str(e),
+                    error_type=type(e).__name__,
+                )
                 raise
     
-    # 达到最大重试次数仍失败
-    if last_error:
-        logger.error(
-            "db_session_retry_exhausted",
-            max_retries=max_retries,
-            error=str(last_error),
-            error_type=type(last_error).__name__,
-        )
-        raise last_error
+    # 如果循环结束但 session 仍为 None（理论上不应发生）
+    if session is None:
+        if last_error:
+            raise last_error
+        raise RuntimeError("Failed to create database session after retries")
+    
+    # ============================================================
+    # Phase 2: yield 会话（只执行一次，符合 asynccontextmanager 规范）
+    # ============================================================
+    try:
+        yield session
+    except (GeneratorExit, IllegalStateChangeError):
+        # SSE 流中断或并发状态冲突，静默处理
+        pass
+    finally:
+        # ✅ 确保连接归还到池
+        if session is not None:
+            try:
+                # 等待所有挂起的异步操作完成
+                await asyncio.sleep(0)
+                # 关闭会话（归还连接到池）
+                await session.close()
+            except IllegalStateChangeError:
+                # 并发状态冲突，静默处理
+                pass
+            except Exception as e:
+                logger.debug(
+                    "db_session_close_error",
+                    error=str(e),
+                    error_type=type(e).__name__,
+                )
 
 
 @asynccontextmanager

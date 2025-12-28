@@ -542,7 +542,11 @@ async def _save_incremental_batch(
     quiz_refs: dict[str, Any],
 ):
     """
-    增量保存一批已完成的 Concept 内容到数据库
+    增量保存一批已完成的 Concept 内容到数据库（优化版 - 单会话）
+    
+    ⚠️ 性能优化：
+    合并为单个数据库事务，减少连接池压力。
+    原先使用两个独立会话，在高并发时容易耗尽连接池。
     
     每完成 3 个 Concept 就调用一次，实现增量写入，
     让前端可以更及时地看到状态更新。
@@ -585,28 +589,21 @@ async def _save_incremental_batch(
         quiz_count=len(batch_quiz_refs),
     )
     
-    # 分批保存元数据（单个数据库事务）
+    # ✅ 优化：合并为单个数据库事务，减少连接占用
     async with safe_session_with_retry() as session:
         repo = RoadmapRepository(session)
         
-        # 保存教程
+        # Step 1: 保存内容元数据
         if batch_tutorial_refs:
             await repo.save_tutorials_batch(batch_tutorial_refs, roadmap_id)
         
-        # 保存资源
         if batch_resource_refs:
             await repo.save_resources_batch(batch_resource_refs, roadmap_id)
         
-        # 保存测验
         if batch_quiz_refs:
             await repo.save_quizzes_batch(batch_quiz_refs, roadmap_id)
         
-        await session.commit()
-    
-    # 更新 framework_data 中的状态（让前端可以立即看到更新）
-    # ✅ 使用累积的 refs（tutorial_refs 等），确保 framework 包含所有已完成的状态
-    async with safe_session_with_retry() as session:
-        repo = RoadmapRepository(session)
+        # Step 2: 更新 framework_data 中的状态（在同一事务中）
         roadmap_metadata = await repo.get_roadmap_metadata(roadmap_id)
         
         if roadmap_metadata and roadmap_metadata.framework_data:
@@ -625,7 +622,9 @@ async def _save_incremental_batch(
                 user_id=roadmap_metadata.user_id,
                 framework=framework_obj,
             )
-            await session.commit()
+        
+        # Step 3: 一次性提交所有更改
+        await session.commit()
     
     logger.info(
         "incremental_batch_save_completed",
