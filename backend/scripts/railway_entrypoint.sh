@@ -37,11 +37,13 @@ case $SERVICE_TYPE in
     sleep 5
     
     # 启动 Celery Worker 处理日志队列
+    # 使用 prefork pool（标准 Celery 支持），每个 worker 进程独立运行
+    # 任务内部可以创建事件循环来执行异步数据库操作
     exec celery -A app.core.celery_app worker \
       --loglevel=${CELERY_LOG_LEVEL:-info} \
       --queues=logs \
       --concurrency=${CELERY_LOGS_CONCURRENCY:-2} \
-      --pool=asyncio \
+      --pool=prefork \
       --hostname=logs@%h \
       --max-tasks-per-child=1000
     ;;

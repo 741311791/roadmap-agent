@@ -292,7 +292,7 @@ docker run -p 5432:5432 -e POSTGRES_PASSWORD=roadmap_pass postgres:15
 uvicorn app.main:app --reload
 
 # Terminal 4: Celery Worker (Logs)
-celery -A app.core.celery_app worker --queues=logs --pool=asyncio
+celery -A app.core.celery_app worker --queues=logs --pool=prefork
 
 # Terminal 5: Celery Worker (Content)
 celery -A app.core.celery_app worker --queues=content_generation --pool=prefork

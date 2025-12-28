@@ -64,7 +64,7 @@ services:
     volumes:
       - ./app:/app/app
       - ./prompts:/app/prompts
-    command: celery -A app.core.celery_app worker --loglevel=info --queues=logs --concurrency=2 --pool=asyncio --hostname=logs@%h --max-tasks-per-child=1000
+    command: celery -A app.core.celery_app worker --loglevel=info --queues=logs --concurrency=2 --pool=prefork --hostname=logs@%h --max-tasks-per-child=1000
 
   # ==================== Celery Worker (Content Generation) ====================
   celery_content_worker:
