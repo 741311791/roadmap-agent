@@ -50,11 +50,32 @@ alembic upgrade head
 # 1. 创建基础表结构（如果是全新数据库）
 python scripts/create_tables.py
 
-# 2. 执行 Alembic 迁移（添加新列、修改结构等）
+# 2. 检查并修复迁移状态（自动检测 stamp 导致的问题）
+python scripts/check_and_fix_migration.py
+
+# 3. 执行 Alembic 迁移（添加新列、修改结构等）
 alembic upgrade head
 
-# 3. 创建管理员账户
+# 4. 创建管理员账户
 python scripts/create_admin_user.py || true
+```
+
+### 自动修复脚本
+
+为了处理已经使用 `alembic stamp` 标记但未实际执行迁移的情况，我们添加了 `check_and_fix_migration.py` 脚本：
+
+**功能**：
+- 检查关键列是否存在（如 `roadmap_tasks.celery_task_id`）
+- 检查 `alembic_version` 表中的版本标记
+- 如果版本已标记但列不存在，自动清除版本标记
+- 允许 `alembic upgrade head` 重新执行迁移
+
+**使用**：
+```bash
+# 手动运行
+python scripts/check_and_fix_migration.py
+
+# 启动脚本会自动调用
 ```
 
 ---
