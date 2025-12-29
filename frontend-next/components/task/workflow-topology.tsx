@@ -33,6 +33,7 @@ import {
 import { cn } from '@/lib/utils';
 import { approveRoadmap } from '@/lib/api/endpoints';
 import { NodeDetailPanel } from './node-detail-panel';
+import type { ExecutionLog } from '@/types/content-generation';
 
 // ============================================================================
 // 类型定义
@@ -242,16 +243,6 @@ function getMainStageIndex(stageId: string): number {
 // ============================================================================
 // 组件 Props
 // ============================================================================
-
-/** 执行日志类型（简化版） */
-interface ExecutionLog {
-  step: string | null;
-  details?: {
-    edit_source?: EditSource;
-    [key: string]: any;
-  };
-  [key: string]: any;
-}
 
 interface WorkflowTopologyProps {
   /** 当前步骤 */

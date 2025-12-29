@@ -31,22 +31,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-
-/**
- * 执行日志类型
- */
-interface ExecutionLog {
-  id: string;
-  task_id: string;
-  level: 'debug' | 'info' | 'success' | 'warning' | 'error';
-  category: string;
-  step: string | null;
-  agent_name: string | null;
-  message: string;
-  details: any;
-  duration_ms: number | null;
-  created_at: string;
-}
+import type { ExecutionLog } from '@/types/content-generation';
 
 interface NodeDetailPanelProps {
   /** 当前选中的节点ID */
