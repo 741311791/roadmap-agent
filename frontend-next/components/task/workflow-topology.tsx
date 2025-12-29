@@ -11,14 +11,16 @@
  * - 支持实时状态更新
  * - 已完成路径显示电流脉冲动画
  * - 虚线连接主路和分支节点
+ * 
+ * 优化：使用动态导入减少初始加载体积
  */
 
 import { useState, useEffect, useRef } from 'react';
+import dynamic from 'next/dynamic';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { GradientTracing } from '@/components/ui/gradient-tracing';
 import {
   CheckCircle2,
   Loader2,
@@ -34,6 +36,17 @@ import { cn } from '@/lib/utils';
 import { approveRoadmap } from '@/lib/api/endpoints';
 import { NodeDetailPanel } from './node-detail-panel';
 import type { ExecutionLog } from '@/types/content-generation';
+
+// ========================================
+// 优化：动态导入 GradientTracing 组件
+// ========================================
+const GradientTracing = dynamic(
+  () => import('@/components/ui/gradient-tracing').then(mod => ({ default: mod.GradientTracing })),
+  { 
+    ssr: false,  // 动画组件不需要SSR
+    loading: () => <div className="w-full h-1 bg-sage-600 rounded-full" />
+  }
+);
 
 // ============================================================================
 // 类型定义

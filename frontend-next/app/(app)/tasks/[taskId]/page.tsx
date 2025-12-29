@@ -16,10 +16,12 @@
 
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, AlertCircle, CheckCircle2, Loader2, Clock, Eye, RefreshCw, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 import { TaskWebSocket } from '@/lib/api/websocket';
 import { getTaskDetail, getTaskLogs, getRoadmap, getIntentAnalysis, getUserProfile, cancelTask } from '@/lib/api/endpoints';
 import { WorkflowTopology } from '@/components/task/workflow-topology';
@@ -83,6 +85,9 @@ export default function TaskDetailPage() {
   const router = useRouter();
   const taskId = params?.taskId as string;
   const { getUserId } = useAuthStore();
+  
+  // TanStack Query Client - 用于预填充路线图缓存，加速页面跳转
+  const queryClient = useQueryClient();
 
   // 任务基本信息
   const [taskInfo, setTaskInfo] = useState<TaskInfo | null>(null);
@@ -171,10 +176,11 @@ export default function TaskDetailPage() {
 
   /**
    * 加载需求分析数据（从数据库获取，而不是从日志中提取）
+   * 优化：返回 Promise 以支持并行调用，支持请求取消
    */
-  const loadIntentAnalysis = useCallback(async (taskId: string) => {
+  const loadIntentAnalysis = useCallback(async (taskId: string, signal?: AbortSignal) => {
     try {
-      const intentData = await getIntentAnalysis(taskId);
+      const intentData = await getIntentAnalysis(taskId, signal);
       
       // 从 time_constraint 解析时间信息
       const { weeks, hoursPerWeek } = parseTimeConstraint(intentData.time_constraint || '');
@@ -195,9 +201,16 @@ export default function TaskDetailPage() {
       };
       
       setIntentAnalysis(intentOutput);
-    } catch (err) {
+      return intentOutput;
+    } catch (err: any) {
+      // 如果是取消请求，不记录错误
+      if (err.name === 'AbortError' || err.name === 'CanceledError') {
+        console.log('[TaskDetail] Intent analysis request cancelled');
+        return null;
+      }
       console.error('Failed to load intent analysis:', err);
       // 如果获取失败，不设置数据（保持为 null）
+      return null;
     }
   }, []);
 
@@ -248,12 +261,23 @@ export default function TaskDetailPage() {
 
   /**
    * 加载路线图框架
+   * 
+   * 优化策略:
+   * - 支持请求取消
+   * - 预填充 TanStack Query 缓存，加速跳转到路线图详情页
+   *   原理：当用户点击 "View Roadmap" 时，路线图详情页使用 useRoadmap hook
+   *   该 hook 基于 TanStack Query，预填充缓存后可实现近乎瞬时的页面加载
    */
-  const loadRoadmapFramework = useCallback(async (roadmapId: string, updateConceptStates = false) => {
+  const loadRoadmapFramework = useCallback(async (roadmapId: string, updateConceptStates = false, signal?: AbortSignal) => {
     try {
-      const roadmapData = await getRoadmap(roadmapId);
+      const roadmapData = await getRoadmap(roadmapId, signal);
       if (roadmapData) {
         setRoadmapFramework(roadmapData);
+        
+        // 🚀 关键优化：预填充 TanStack Query 缓存
+        // 这样跳转到 /roadmap/[id] 时可以直接使用缓存数据，无需重新请求
+        queryClient.setQueryData(['roadmap', roadmapId], roadmapData);
+        console.log('[TaskDetail] Prefilled roadmap cache for instant navigation');
         
         // 如果需要更新概念状态（刷新时使用）
         if (updateConceptStates) {
@@ -264,15 +288,21 @@ export default function TaskDetailPage() {
           console.log('[TaskDetail] Updated concept states from roadmap:', { loading, failed, partialFailed });
         }
       }
-    } catch (err) {
+    } catch (err: any) {
+      // 如果是取消请求，不记录错误
+      if (err.name === 'AbortError' || err.name === 'CanceledError') {
+        console.log('[TaskDetail] Roadmap framework request cancelled');
+        return;
+      }
       console.error('Failed to load roadmap framework:', err);
     }
-  }, [extractConceptStates]);
+  }, [extractConceptStates, queryClient]);
 
   /**
    * 加载任务信息和日志（提取为独立函数，供初始加载和刷新使用）
+   * 优化：并行化所有独立的数据请求，减少日志数量，支持请求取消
    */
-  const loadTaskData = useCallback(async (isInitialLoad = false) => {
+  const loadTaskData = useCallback(async (isInitialLoad = false, signal?: AbortSignal) => {
     if (!taskId) return;
 
     try {
@@ -283,18 +313,20 @@ export default function TaskDetailPage() {
       }
       setError(null);
 
-      // 加载任务基本信息
-      const taskData = await getTaskDetail(taskId);
+      // ========================================
+      // 优化：并行化所有独立请求，减少总加载时间
+      // ========================================
+      const [taskData, agentLogsData, workflowLogsData, intentData] = await Promise.all([
+        getTaskDetail(taskId, signal),
+        getTaskLogs(taskId, undefined, 'agent', 200, 0, signal),   // 从 1000 降至 200
+        getTaskLogs(taskId, undefined, 'workflow', 200, 0, signal), // 从 1000 降至 200
+        loadIntentAnalysis(taskId, signal).catch(() => null), // 允许失败，不阻塞主流程
+      ]);
+      
       setTaskInfo(taskData);
       // 更新ref中的roadmap_id
       roadmapIdRef.current = taskData.roadmap_id || null;
-
-      // 加载执行日志（只获取 agent 和 workflow 类型，排除 concept 日志以提升性能）
-      // Concept 日志通常量大且 details 字段庞大，会严重影响加载速度
-      const [agentLogsData, workflowLogsData] = await Promise.all([
-        getTaskLogs(taskId, undefined, 'agent', 1000),
-        getTaskLogs(taskId, undefined, 'workflow', 1000),
-      ]);
+      
       const allLogs = [
         ...(agentLogsData.logs || []),
         ...(workflowLogsData.logs || []),
@@ -313,7 +345,6 @@ export default function TaskDetailPage() {
       setExecutionLogs(limitedLogs);
       
       // 从执行日志中提取最新的 edit_source（用于区分工作流分支）
-      // 优先从 roadmap_edit 或 edit_plan_analysis 日志中读取 edit_source
       const latestEditSource = allLogs
         .filter(log => 
           (log.step === 'roadmap_edit' || log.step === 'edit_plan_analysis') && 
@@ -326,44 +357,50 @@ export default function TaskDetailPage() {
         setEditSource(latestEditSource);
         console.log('[TaskDetail] Extracted edit_source from logs:', latestEditSource);
       }
-      
-      // 加载需求分析数据（从数据库获取，内容更丰富）
-      await loadIntentAnalysis(taskId);
 
-      // 如果有 roadmap_id，加载路线图框架
+      // 如果有 roadmap_id，并行加载路线图框架和编辑记录
       if (taskData.roadmap_id) {
-        // 刷新时更新概念状态（从路线图数据中提取）
-        await loadRoadmapFramework(taskData.roadmap_id, !isInitialLoad);
+        const loadRoadmapPromise = loadRoadmapFramework(taskData.roadmap_id, !isInitialLoad, signal);
         
         // 刷新时也重新加载修改记录
-        if (!isInitialLoad) {
-          // 需要先等 taskInfo 更新后再加载 modifiedNodeIds
-          // 这里使用 taskData 而不是 taskInfo state
-          const shouldFetchEditRecord = taskData.current_step && [
-            'structure_validation',
-            'human_review',
-            'human_review_pending',
-            'content_generation',
-            'completed',
-            'partial_failure'
-          ].includes(taskData.current_step);
-          
-          if (shouldFetchEditRecord) {
-            try {
-              const { getLatestEdit } = await import('@/lib/api/endpoints');
-              const editData = await getLatestEdit(taskId);
-              if (editData?.modified_node_ids) {
-                setModifiedNodeIds(editData.modified_node_ids);
-                console.log('[TaskDetail] Refreshed modified_node_ids:', editData.modified_node_ids);
+        const loadEditRecordPromise = !isInitialLoad && taskData.current_step && [
+          'structure_validation',
+          'human_review',
+          'human_review_pending',
+          'content_generation',
+          'completed',
+          'partial_failure'
+        ].includes(taskData.current_step)
+          ? (async () => {
+              try {
+                const { getLatestEdit } = await import('@/lib/api/endpoints');
+                const editData = await getLatestEdit(taskId);
+                if (editData?.modified_node_ids) {
+                  setModifiedNodeIds(editData.modified_node_ids);
+                  console.log('[TaskDetail] Refreshed modified_node_ids:', editData.modified_node_ids);
+                }
+              } catch (err) {
+                console.log('[TaskDetail] No edit record found:', err);
               }
-            } catch (err) {
-              console.log('[TaskDetail] No edit record found:', err);
-            }
-          }
-        }
+            })()
+          : Promise.resolve();
+        
+        // 并行等待路线图和编辑记录加载
+        await Promise.all([loadRoadmapPromise, loadEditRecordPromise]);
       }
 
     } catch (err: any) {
+      // 如果是取消请求，不设置错误状态
+      if (err.name === 'AbortError' || err.name === 'CanceledError') {
+        console.log('[TaskDetail] Request cancelled');
+        // 仍需重置加载状态
+        if (isInitialLoad) {
+          setIsLoading(false);
+        } else {
+          setIsRefreshing(false);
+        }
+        return;
+      }
       console.error('Failed to load task data:', err);
       setError(err.message || 'Failed to load task details');
     } finally {
@@ -377,10 +414,17 @@ export default function TaskDetailPage() {
 
   /**
    * 初始加载任务数据
+   * 优化：添加请求取消机制，在组件卸载或taskId变化时取消请求
    */
   useEffect(() => {
     if (!taskId) return;
-    loadTaskData(true);
+    
+    const controller = new AbortController();
+    loadTaskData(true, controller.signal);
+    
+    return () => {
+      controller.abort();
+    };
   }, [taskId, loadTaskData]);
 
   /**
@@ -951,13 +995,93 @@ export default function TaskDetailPage() {
     return taskInfo?.current_step === 'roadmap_edit';
   }, [taskInfo?.current_step]);
 
-  // 加载状态
+  // ========================================
+  // 优化：分区域骨架屏加载，提供更好的加载体验
+  // ========================================
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center space-y-4">
-          <div className="w-16 h-16 border-4 border-sage-200 border-t-sage-600 rounded-full animate-spin mx-auto" />
-          <p className="text-sm text-muted-foreground">Loading task details...</p>
+      <div className="min-h-screen bg-background">
+        {/* Header Skeleton */}
+        <div className="border-b bg-card/50 backdrop-blur-sm sticky top-0 z-10">
+          <div className="max-w-7xl mx-auto px-6 py-4">
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Skeleton className="h-8 w-32" />
+                <Skeleton className="h-8 w-24" />
+              </div>
+              <Skeleton className="h-8 w-96" />
+              <div className="flex items-center gap-3">
+                <Skeleton className="h-4 w-48" />
+                <Skeleton className="h-4 w-32" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Main Content Skeleton */}
+        <div className="max-w-7xl mx-auto px-6 py-8 space-y-6">
+          {/* Workflow Progress Skeleton */}
+          <Card className="p-6">
+            <div className="space-y-4">
+              <Skeleton className="h-6 w-48" />
+              <div className="flex items-center justify-between gap-4">
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <div key={i} className="flex flex-col items-center space-y-2">
+                    <Skeleton className="w-12 h-12 rounded-full" />
+                    <Skeleton className="h-4 w-16" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </Card>
+
+          {/* Core Display Area Skeleton */}
+          <Card className="p-6">
+            <Skeleton className="h-6 w-56 mb-4" />
+            <div className="flex gap-6">
+              {/* Intent Analysis Skeleton */}
+              <div className="w-[280px] space-y-4">
+                <Skeleton className="h-5 w-32" />
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-3/4" />
+                <div className="flex gap-2">
+                  <Skeleton className="h-6 w-16 rounded-full" />
+                  <Skeleton className="h-6 w-16 rounded-full" />
+                  <Skeleton className="h-6 w-16 rounded-full" />
+                </div>
+                <div className="grid grid-cols-2 gap-4 pt-3">
+                  <Skeleton className="h-16 rounded" />
+                  <Skeleton className="h-16 rounded" />
+                </div>
+              </div>
+              
+              {/* Roadmap Skeleton */}
+              <div className="flex-1 space-y-4">
+                <Skeleton className="h-5 w-40" />
+                <div className="space-y-3">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="flex items-center gap-4">
+                      <Skeleton className="h-8 w-24 rounded-full" />
+                      <div className="flex gap-2">
+                        <Skeleton className="h-7 w-20 rounded-full" />
+                        <Skeleton className="h-7 w-20 rounded-full" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          {/* Execution Log Skeleton */}
+          <Card className="p-6">
+            <Skeleton className="h-6 w-40 mb-4" />
+            <div className="space-y-2">
+              {[1, 2, 3, 4].map((i) => (
+                <Skeleton key={i} className="h-12 w-full" />
+              ))}
+            </div>
+          </Card>
         </div>
       </div>
     );

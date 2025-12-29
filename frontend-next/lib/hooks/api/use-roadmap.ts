@@ -3,9 +3,11 @@
  * 
  * 功能:
  * - 使用 TanStack Query 获取路线图详情
- * - 5分钟缓存策略
+ * - 优化的缓存策略
  * - 自动同步到 Zustand Store
  * - 错误处理
+ * 
+ * 优化：增强缓存时间和预取策略
  */
 
 import { useQuery } from '@tanstack/react-query';
@@ -43,9 +45,12 @@ export function useRoadmap(roadmapId: string | undefined) {
       return data;
     },
     enabled: !!roadmapId,
-    staleTime: 5 * 60 * 1000, // 5分钟
-    gcTime: 10 * 60 * 1000, // 10分钟 (原 cacheTime)
-    retry: 3,
+    // ========================================
+    // 优化：增强缓存配置
+    // ========================================
+    staleTime: 10 * 60 * 1000, // 10分钟（从5分钟增加）
+    gcTime: 30 * 60 * 1000,    // 30分钟（从10分钟增加）
+    retry: 1,                   // 减少重试次数（从3降到1）
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
     meta: {
       onError: (error: Error) => {

@@ -4,8 +4,10 @@
  * TreeNode - 树节点组件
  * 
  * 胶囊/徽章样式的节点，支持不同类型和状态
+ * 优化：使用 React.memo 避免不必要的重渲染
  */
 
+import { memo } from 'react';
 import { ChevronRight, ChevronDown, Check, Loader2, AlertTriangle, XCircle, Sparkles } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
 import { Badge } from '@/components/ui/badge';
@@ -123,7 +125,11 @@ function getTypeStyles(type: TreeNodeType): {
   }
 }
 
-export function TreeNode({
+/**
+ * TreeNode 组件 - 使用 memo 优化，避免不必要的重渲染
+ * 只有当 node、isSelected 或回调函数变化时才重新渲染
+ */
+export const TreeNode = memo(function TreeNode({
   node,
   onToggleExpand,
   onClick,
@@ -247,5 +253,5 @@ export function TreeNode({
       </Tooltip>
     </TooltipProvider>
   );
-}
+});
 

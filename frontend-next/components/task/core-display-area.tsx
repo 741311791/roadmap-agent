@@ -12,18 +12,35 @@
  * 2. intent_analysis 完成：显示需求分析卡片
  * 3. curriculum_design 完成：显示路线图
  * 4. roadmap_edit 时：路线图显示蒙版加载动画
+ * 
+ * 优化：使用动态导入减少初始加载体积
  */
 
 import { useMemo, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Target, Clock, TrendingUp, Lightbulb, Loader2, ChevronLeft, ChevronRight, ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { RoadmapTree } from './roadmap-tree';
 import type { Stage, RoadmapFramework } from '@/types/generated/models';
 import Link from 'next/link';
+
+// ========================================
+// 优化：动态导入 RoadmapTree 组件
+// ========================================
+const RoadmapTree = dynamic(
+  () => import('./roadmap-tree').then(mod => mod.RoadmapTree),
+  { 
+    loading: () => (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="w-8 h-8 text-sage-500 animate-spin" />
+      </div>
+    ),
+    ssr: true
+  }
+);
 
 /**
  * 需求分析输出数据类型

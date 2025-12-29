@@ -19,9 +19,19 @@ interface ErrorResponse {
  * 错误拦截器
  * 
  * 处理 API 错误，特别是 401 未授权错误时自动登出并跳转到登录页。
+ * 优化：正确处理请求取消（AbortError），避免误报网络错误
  */
 export function errorInterceptor(error: AxiosError<ErrorResponse>) {
   const { response, config } = error;
+  
+  // ========================================
+  // 优化：检查是否为取消请求（AbortError）
+  // ========================================
+  if (error.name === 'AbortError' || error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
+    // 请求被取消，不作为错误处理
+    logger.debug('[API] Request cancelled');
+    return Promise.reject(error); // 直接返回原始错误，让调用方处理
+  }
   
   if (!response) {
     // 网络错误

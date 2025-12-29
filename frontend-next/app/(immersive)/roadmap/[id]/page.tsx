@@ -124,75 +124,69 @@ export default function RoadmapDetailPage() {
     router.push(newUrl, { scroll: false });
   }, [roadmapId, router]);
 
-  // 2. Load User Preferences for Retry Functionality
+  // 2. 并行加载用户偏好、学习进度和活跃任务
+  // 优化：将三个独立请求合并为并行执行
   useEffect(() => {
-    const loadUserPreferences = async () => {
+    if (!roadmapData || !roadmapId) return;
+    
+    const loadAllData = async () => {
       const userId = getUserId();
       if (!userId) return;
       
       try {
-        const profile = await getUserProfile(userId);
-        // 构建 LearningPreferences 对象
-        setUserPreferences({
-          learning_goal: roadmapData?.title || 'Learning',
-          available_hours_per_week: profile.weekly_commitment_hours || 10,
-          current_level: 'intermediate', // 默认值
-          career_background: profile.current_role || 'Not specified',
-          motivation: 'Continue learning',
-          content_preference: (profile.learning_style || ['text', 'visual']) as any,
-          preferred_language: profile.primary_language || 'zh-CN',
-        });
-      } catch (error) {
-        console.error('[RoadmapDetail] Failed to load user preferences:', error);
-      }
-    };
-    
-    if (roadmapData) {
-      loadUserPreferences();
-    }
-  }, [roadmapData, getUserId]);
-
-  // 2.5. Load Learning Progress
-  useEffect(() => {
-    if (!roadmapData || !roadmapId) return;
-    
-    const loadProgress = async () => {
-      try {
-        const progressList = await getRoadmapProgress(roadmapId);
-        const progressMap: Record<string, boolean> = {};
-        progressList.forEach(p => {
-          progressMap[p.concept_id] = p.is_completed;
-        });
-        setConceptProgressMap(progressMap);
-      } catch (error) {
-        console.error('[RoadmapDetail] Failed to load progress:', error);
-      }
-    };
-    
-    loadProgress();
-  }, [roadmapData, roadmapId, setConceptProgressMap]);
-
-  // 3. Check for Active Task on Mount
-  useEffect(() => {
-    if (!roadmapData) return;
-    
-    const checkActiveTask = async () => {
-      try {
-        const task = await getRoadmapActiveTask(roadmapId);
-        if (task.has_active_task && task.task_id) {
-          setActiveTask({ 
-            taskId: task.task_id, 
-            status: task.status ?? 'pending',
-            taskType: task.task_type ?? undefined
+        // 并行加载所有数据
+        const [profile, progressList, activeTask] = await Promise.all([
+          getUserProfile(userId).catch(err => {
+            console.error('[RoadmapDetail] Failed to load user preferences:', err);
+            return null;
+          }),
+          getRoadmapProgress(roadmapId).catch(err => {
+            console.error('[RoadmapDetail] Failed to load progress:', err);
+            return [];
+          }),
+          getRoadmapActiveTask(roadmapId).catch(err => {
+            console.error('[RoadmapDetail] Failed to check active task:', err);
+            return null;
+          }),
+        ]);
+        
+        // 设置用户偏好
+        if (profile) {
+          setUserPreferences({
+            learning_goal: roadmapData?.title || 'Learning',
+            available_hours_per_week: profile.weekly_commitment_hours || 10,
+            current_level: 'intermediate', // 默认值
+            career_background: profile.current_role || 'Not specified',
+            motivation: 'Continue learning',
+            content_preference: (profile.learning_style || ['text', 'visual']) as any,
+            preferred_language: profile.primary_language || 'zh-CN',
           });
         }
-      } catch (e) {
-        console.error('Failed to check active task:', e);
+        
+        // 设置学习进度
+        if (progressList.length > 0) {
+          const progressMap: Record<string, boolean> = {};
+          progressList.forEach(p => {
+            progressMap[p.concept_id] = p.is_completed;
+          });
+          setConceptProgressMap(progressMap);
+        }
+        
+        // 设置活跃任务
+        if (activeTask?.has_active_task && activeTask.task_id) {
+          setActiveTask({ 
+            taskId: activeTask.task_id, 
+            status: activeTask.status ?? 'pending',
+            taskType: activeTask.task_type ?? undefined
+          });
+        }
+      } catch (error) {
+        console.error('[RoadmapDetail] Failed to load data:', error);
       }
     };
     
-    checkActiveTask();
-  }, [roadmapId, roadmapData]);
+    loadAllData();
+  }, [roadmapData, roadmapId, getUserId, setConceptProgressMap]);
 
   // Helper: Find concept object by ID
   const getActiveConcept = useCallback((): Concept | null => {

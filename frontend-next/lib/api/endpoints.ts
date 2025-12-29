@@ -80,10 +80,13 @@ export async function getRoadmapStatus(taskId: string): Promise<TaskStatus> {
 
 /**
  * Get complete roadmap by ID
+ * @param roadmapId - 路线图 ID
+ * @param signal - AbortSignal for request cancellation
  */
-export async function getRoadmap(roadmapId: string): Promise<RoadmapFramework> {
+export async function getRoadmap(roadmapId: string, signal?: AbortSignal): Promise<RoadmapFramework> {
   const response = await apiClient.get<RoadmapFramework>(
-    `/roadmaps/${roadmapId}`
+    `/roadmaps/${roadmapId}`,
+    { signal }
   );
   return response.data;
 }
@@ -1232,9 +1235,12 @@ export async function deleteTask(
  * 获取任务详情
  * 
  * 通过任务ID获取任务的详细信息
+ * @param taskId - 任务 ID
+ * @param signal - AbortSignal for request cancellation
  */
 export async function getTaskDetail(
-  taskId: string
+  taskId: string,
+  signal?: AbortSignal
 ): Promise<{
   task_id: string;
   title: string;
@@ -1247,7 +1253,8 @@ export async function getTaskDetail(
   roadmap_id?: string | null;
 }> {
   const response = await apiClient.get(
-    `/roadmaps/${taskId}/status`
+    `/roadmaps/${taskId}/status`,
+    { signal }
   );
   return response.data;
 }
@@ -1284,18 +1291,26 @@ export interface ExecutionLogListResponse {
  * 获取任务执行日志
  * 
  * 获取指定任务的详细执行日志，支持按级别和分类过滤
+ * @param taskId - 任务 ID
+ * @param level - 日志级别过滤
+ * @param category - 日志分类过滤
+ * @param limit - 返回数量限制
+ * @param offset - 分页偏移
+ * @param signal - AbortSignal for request cancellation
  */
 export async function getTaskLogs(
   taskId: string,
   level?: string,
   category?: string,
   limit: number = 100,
-  offset: number = 0
+  offset: number = 0,
+  signal?: AbortSignal
 ): Promise<ExecutionLogListResponse> {
   const response = await apiClient.get<ExecutionLogListResponse>(
     `/trace/${taskId}/logs`,
     {
       params: { level, category, limit, offset },
+      signal,
     }
   );
   return response.data;
@@ -1360,13 +1375,16 @@ export interface IntentAnalysisResponse {
  * 比从日志中提取的数据更加丰富和结构化。
  * 
  * @param taskId - 任务 ID
+ * @param signal - AbortSignal for request cancellation
  * @returns 需求分析元数据
  */
 export async function getIntentAnalysis(
-  taskId: string
+  taskId: string,
+  signal?: AbortSignal
 ): Promise<IntentAnalysisResponse> {
   const response = await apiClient.get<IntentAnalysisResponse>(
-    `/intent-analysis/${taskId}`
+    `/intent-analysis/${taskId}`,
+    { signal }
   );
   return response.data;
 }

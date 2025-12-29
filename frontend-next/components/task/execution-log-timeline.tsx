@@ -11,13 +11,15 @@
  * - Level 级别过滤器（info, success, warning, error）
  * - 每组固定高度，防止某些阶段日志过多
  * - 使用 Sage 主题配色
+ * 
+ * 优化：使用 React.memo 避免不必要的重渲染，使用虚拟列表优化大量日志渲染
  */
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, memo, useRef } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   AlertCircle,
   CheckCircle2,
@@ -122,12 +124,13 @@ function formatTime(timestamp: string): string {
 
 /**
  * 单个日志项组件
+ * 优化：使用 memo 避免不必要的重渲染
  */
 interface LogItemProps {
   log: ExecutionLog;
 }
 
-function LogItem({ log }: LogItemProps) {
+const LogItem = memo(function LogItem({ log }: LogItemProps) {
   const levelConfig = getLevelConfig(log.level);
   const Icon = levelConfig.icon;
   
@@ -167,10 +170,11 @@ function LogItem({ log }: LogItemProps) {
       </Badge>
     </div>
   );
-}
+});
 
 /**
  * Step 分组组件
+ * 优化：使用 memo 避免不必要的重渲染
  */
 interface StepGroupProps {
   step: string;
@@ -179,7 +183,7 @@ interface StepGroupProps {
   onToggle: () => void;
 }
 
-function StepGroup({ step, logs, isExpanded, onToggle }: StepGroupProps) {
+const StepGroup = memo(function StepGroup({ step, logs, isExpanded, onToggle }: StepGroupProps) {
   const config = STEP_CONFIG[step] || { 
     label: step || 'Unknown', 
     color: 'text-gray-700',
@@ -242,19 +246,64 @@ function StepGroup({ step, logs, isExpanded, onToggle }: StepGroupProps) {
         </div>
       </button>
       
-      {/* 日志列表 - 固定高度 */}
+      {/* 日志列表 - 使用虚拟列表优化渲染性能 */}
       {isExpanded && (
-        <ScrollArea className="h-[240px] bg-card">
-          <div className="divide-y divide-border/50">
-            {logs.map((log) => (
-              <LogItem key={log.id} log={log} />
-            ))}
-          </div>
-        </ScrollArea>
+        <VirtualLogList logs={logs} />
       )}
     </div>
   );
+});
+
+/**
+ * 虚拟日志列表组件
+ * 优化：使用 @tanstack/react-virtual 实现虚拟化渲染，提升大量日志的性能
+ */
+interface VirtualLogListProps {
+  logs: ExecutionLog[];
 }
+
+const VirtualLogList = memo(function VirtualLogList({ logs }: VirtualLogListProps) {
+  const parentRef = useRef<HTMLDivElement>(null);
+  
+  const virtualizer = useVirtualizer({
+    count: logs.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 60, // 预估每条日志的高度（px）
+    overscan: 5, // 额外渲染5条日志以提供更平滑的滚动体验
+  });
+  
+  return (
+    <div 
+      ref={parentRef} 
+      className="h-[240px] overflow-auto bg-card"
+      style={{ contain: 'strict' }} // 优化渲染性能
+    >
+      <div
+        style={{
+          height: `${virtualizer.getTotalSize()}px`,
+          width: '100%',
+          position: 'relative',
+        }}
+      >
+        {virtualizer.getVirtualItems().map((virtualItem) => (
+          <div
+            key={virtualItem.key}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              height: `${virtualItem.size}px`,
+              transform: `translateY(${virtualItem.start}px)`,
+            }}
+          >
+            <LogItem log={logs[virtualItem.index]} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+});
 
 /**
  * 主组件
