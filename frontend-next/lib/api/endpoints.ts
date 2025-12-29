@@ -34,7 +34,7 @@ function encodeConceptId(conceptId: string): string {
 
 export interface TaskStatus {
   task_id: string;
-  status: 'pending' | 'processing' | 'completed' | 'partial_failure' | 'failed' | 'human_review_pending' | 'human_review_required';
+  status: 'pending' | 'processing' | 'completed' | 'partial_failure' | 'failed' | 'human_review_pending' | 'human_review_required' | 'cancelled';
   current_step?: string;
   progress?: number;
   error_message?: string;
@@ -155,6 +155,34 @@ export async function approveRoadmap(
   const response = await apiClient.post(`/roadmaps/${taskId}/approve`, null, {
     params: { approved, feedback },
   });
+  return response.data;
+}
+
+/**
+ * Cancel Task Response
+ */
+export interface CancelTaskResponse {
+  success: boolean;
+  task_id: string;
+  message: string;
+  previous_status?: string;
+}
+
+/**
+ * Cancel a running task
+ * 
+ * Cancels a task that is currently processing. The task status will be set to 'cancelled'.
+ * If the task has a Celery background job, it will be terminated.
+ * 
+ * @param taskId - The task ID to cancel
+ * @returns Cancellation result
+ */
+export async function cancelTask(
+  taskId: string
+): Promise<CancelTaskResponse> {
+  const response = await apiClient.post<CancelTaskResponse>(
+    `/roadmaps/tasks/${taskId}/cancel`
+  );
   return response.data;
 }
 

@@ -52,9 +52,9 @@ export function ValidationResultCard({ logType, details }: ValidationResultCardP
             <div className="space-y-2">
               <div className="text-xs text-muted-foreground font-medium">Checks Performed</div>
               <div className="flex flex-wrap gap-1.5">
-                {details.checks_performed.map((check: string, index: number) => (
+                {details.checks_performed.map((check: any, index: number) => (
                   <Badge key={index} variant="outline" className="text-xs bg-white">
-                    ✓ {check.replace(/_/g, ' ')}
+                    ✓ {typeof check === 'string' ? check.replace(/_/g, ' ') : check.name}
                   </Badge>
                 ))}
               </div>
@@ -62,18 +62,38 @@ export function ValidationResultCard({ logType, details }: ValidationResultCardP
           )}
 
           {/* 统计信息 */}
-          <div className="flex items-center gap-4 text-xs text-muted-foreground">
-            {details.issues_fixed > 0 && (
-              <span>
-                <strong className="text-foreground">{details.issues_fixed}</strong> issues fixed
-              </span>
-            )}
-            {details.warnings > 0 && (
-              <span>
-                <strong className="text-amber-600">{details.warnings}</strong> warnings
-              </span>
-            )}
-          </div>
+          {details.structure_summary && (
+            <div className="grid grid-cols-3 gap-2 text-xs">
+              <div className="p-2 bg-white rounded border border-sage-200">
+                <div className="text-muted-foreground">Stages</div>
+                <div className="text-lg font-bold text-sage-700">{details.structure_summary.total_stages}</div>
+              </div>
+              <div className="p-2 bg-white rounded border border-sage-200">
+                <div className="text-muted-foreground">Modules</div>
+                <div className="text-lg font-bold text-sage-700">{details.structure_summary.total_modules}</div>
+              </div>
+              <div className="p-2 bg-white rounded border border-sage-200">
+                <div className="text-muted-foreground">Concepts</div>
+                <div className="text-lg font-bold text-sage-700">{details.structure_summary.total_concepts}</div>
+              </div>
+            </div>
+          )}
+          
+          {/* 问题统计 */}
+          {details.issues_summary && (
+            <div className="flex items-center gap-4 text-xs text-muted-foreground">
+              {details.issues_summary.warnings > 0 && (
+                <span>
+                  <strong className="text-amber-600">{details.issues_summary.warnings}</strong> warnings
+                </span>
+              )}
+              {details.issues_summary.suggestions > 0 && (
+                <span>
+                  <strong className="text-blue-600">{details.issues_summary.suggestions}</strong> suggestions
+                </span>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
     );
@@ -91,9 +111,27 @@ export function ValidationResultCard({ logType, details }: ValidationResultCardP
         </CardHeader>
         <CardContent className="space-y-3 text-sm">
           <p className="text-foreground">
-            Found {details.total_critical_issues || details.critical_issues?.length || 0} critical
+            Found {details.issues_breakdown?.critical || details.critical_issues?.length || 0} critical
             issues that need attention
           </p>
+
+          {/* 问题统计 */}
+          {details.issues_breakdown && (
+            <div className="grid grid-cols-3 gap-2 text-xs">
+              <div className="p-2 bg-white rounded border border-red-200">
+                <div className="text-muted-foreground">Critical</div>
+                <div className="text-lg font-bold text-red-700">{details.issues_breakdown.critical}</div>
+              </div>
+              <div className="p-2 bg-white rounded border border-amber-200">
+                <div className="text-muted-foreground">Warnings</div>
+                <div className="text-lg font-bold text-amber-700">{details.issues_breakdown.warnings}</div>
+              </div>
+              <div className="p-2 bg-white rounded border border-blue-200">
+                <div className="text-muted-foreground">Suggestions</div>
+                <div className="text-lg font-bold text-blue-700">{details.issues_breakdown.suggestions}</div>
+              </div>
+            </div>
+          )}
 
           {/* 关键问题列表 */}
           {details.critical_issues && details.critical_issues.length > 0 && (
@@ -109,20 +147,14 @@ export function ValidationResultCard({ logType, details }: ValidationResultCardP
                       <AlertTriangle className="w-3 h-3 text-red-600 shrink-0 mt-0.5" />
                       <div className="flex-1">
                         <div className="flex items-center gap-2 mb-1">
-                          <Badge
-                            variant="outline"
-                            className="h-4 text-[10px] bg-red-100 text-red-700 border-red-300"
-                          >
-                            {issue.severity}
-                          </Badge>
                           <Badge variant="outline" className="h-4 text-[10px]">
-                            {issue.category}
+                            {issue.location}
                           </Badge>
                         </div>
-                        <p className="text-foreground">{issue.description}</p>
-                        {issue.affected_concepts && issue.affected_concepts.length > 0 && (
-                          <p className="text-muted-foreground mt-1">
-                            Affects: {issue.affected_concepts.join(', ')}
+                        <p className="text-foreground font-medium mb-1">{issue.issue}</p>
+                        {issue.suggestion && (
+                          <p className="text-muted-foreground">
+                            💡 {issue.suggestion}
                           </p>
                         )}
                       </div>

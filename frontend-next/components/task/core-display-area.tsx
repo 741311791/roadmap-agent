@@ -89,7 +89,8 @@ function shouldShowIntentCard(currentStep: string | null, intentAnalysis?: Inten
     'curriculum_design',
     'framework_generation',
     'structure_validation',
-    'edit_plan',                    // 添加：用户审核后的修改计划分析
+    'edit_plan_analysis',           // 添加：用户审核后的修改计划分析
+    'edit_plan',                    // 添加：修改计划（已废弃但保留兼容）
     'validation_edit_plan',         // 添加：验证失败后的修改计划分析
     'roadmap_edit',
     'human_review',
@@ -116,7 +117,8 @@ function shouldShowRoadmap(currentStep: string | null, roadmapFramework?: Roadma
   // curriculum_design 完成后的任何阶段都显示
   const stepsAfterDesign = [
     'structure_validation',
-    'edit_plan',                    // 添加：用户审核后的修改计划分析
+    'edit_plan_analysis',           // 添加：用户审核后的修改计划分析
+    'edit_plan',                    // 添加：修改计划（已废弃但保留兼容）
     'validation_edit_plan',         // 添加：验证失败后的修改计划分析
     'roadmap_edit',
     'human_review',
@@ -361,6 +363,7 @@ function getWaitingStatusText(currentStep: string): string {
     'curriculum_design': 'Designing roadmap structure...',
     'framework_generation': 'Generating curriculum framework...',
     'structure_validation': 'Validating roadmap structure...',
+    'edit_plan_analysis': 'Analyzing your feedback...',
     'roadmap_edit': 'Applying modifications...',
     'human_review': 'Awaiting your review...',
     'human_review_pending': 'Awaiting your review...',
@@ -445,6 +448,14 @@ export function CoreDisplayArea({
   const isInContentGeneration = currentStep ? CONTENT_GENERATION_STEPS.includes(currentStep) : false;
   const isTaskCompleted = status === 'completed' || status === 'partial_failure';
   const showViewRoadmapButton = roadmapId && (isInContentGeneration || isTaskCompleted);
+  
+  /**
+   * 在 content 生成阶段及之后，清空 modifiedNodeIds
+   * 原因：进入 content 生成阶段后，所有节点的样式应该统一，不应再区分"新旧"节点
+   * 节点状态应该完全基于实际的内容生成状态（loading/completed/failed等）
+   */
+  const shouldClearModifiedStatus = isInContentGeneration || isTaskCompleted;
+  const effectiveModifiedNodeIds = shouldClearModifiedStatus ? [] : modifiedNodeIds;
 
   return (
     <Card className={cn('', className)}>
@@ -514,7 +525,7 @@ export function CoreDisplayArea({
                  taskId={taskId}
                  roadmapId={roadmapId}  // 传递 roadmapId
                  showHistoryButton={true}  // 启用历史版本按钮
-                 modifiedNodeIds={modifiedNodeIds}
+                 modifiedNodeIds={effectiveModifiedNodeIds}  // 在 content 生成阶段后清空，统一节点样式
                  loadingConceptIds={loadingConceptIds}
                  failedConceptIds={failedConceptIds}
                  partialFailedConceptIds={partialFailedConceptIds}

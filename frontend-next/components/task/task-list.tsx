@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { EmptyState } from '@/components/common/empty-state';
 import { TaskItem } from '@/lib/api/endpoints';
-import { ListTodo, RefreshCw, Eye, AlertCircle, Clock, CheckCircle2, Loader2, FileText, Trash2 } from 'lucide-react';
+import { ListTodo, RefreshCw, Eye, AlertCircle, Clock, CheckCircle2, Loader2, FileText, Trash2, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -28,9 +28,10 @@ interface TaskListProps {
   isLoading: boolean;
   onRetry: (taskId: string) => void;
   onDelete?: (taskId: string) => void;
+  onCancel?: (taskId: string) => void;
 }
 
-export function TaskList({ tasks, isLoading, onRetry, onDelete }: TaskListProps) {
+export function TaskList({ tasks, isLoading, onRetry, onDelete, onCancel }: TaskListProps) {
   const [selectedErrorLog, setSelectedErrorLog] = useState<{
     title: string;
     message: string;
@@ -217,6 +218,25 @@ export function TaskList({ tasks, isLoading, onRetry, onDelete }: TaskListProps)
                   {/* Actions */}
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-1">
+                      {/* Cancel Button - 正在处理时显示 */}
+                      {task.status === 'processing' && onCancel && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={() => onCancel(task.task_id)}
+                              className="h-8 w-8 text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+                            >
+                              <XCircle className="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>Cancel task</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+
                       {/* View Logs Button - 失败和部分失败时显示 */}
                       {(task.status === 'failed' || task.status === 'partial_failure') && task.error_message && (
                         <Tooltip>

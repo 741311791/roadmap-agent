@@ -313,50 +313,70 @@ export function TutorialDialog({
                     </div>
                   ) : (
                     <div className="space-y-6">
-                      {quiz.questions.map((question: any, idx: number) => (
-                        <div key={idx} className="border rounded-lg p-4">
-                          <div className="flex items-start gap-3 mb-3">
-                            <Badge variant="outline">{idx + 1}</Badge>
-                            <div className="flex-1">
-                              <p className="font-medium mb-2">{question.question}</p>
-                              <Badge variant="secondary" className="text-xs">
-                                {question.difficulty}
-                              </Badge>
-                            </div>
-                          </div>
+                      {quiz.questions.map((question: any, idx: number) => {
+                        /**
+                         * 生成正确答案声明
+                         * 根据题目类型和正确答案索引，生成用于展示的正确答案声明字符串
+                         */
+                        const getCorrectAnswerStatement = (): string => {
+                          const correctOptions = question.correct_answer.map((idx: number) => question.options[idx]);
+                          
+                          if (correctOptions.length === 0) return '';
+                          
+                          if (correctOptions.length === 1) {
+                            return `The correct answer is "${correctOptions[0]}". `;
+                          } else {
+                            const formattedOptions = correctOptions.map((opt: string) => `"${opt}"`).join(', ');
+                            return `The correct answers are ${formattedOptions}. `;
+                          }
+                        };
 
-                          <div className="space-y-2 ml-10">
-                            {question.options.map((option: string, optIdx: number) => (
-                              <div
-                                key={optIdx}
-                                className={`p-2 rounded border ${
-                                  question.correct_answer.includes(optIdx)
-                                    ? 'bg-green-50 border-green-200 dark:bg-green-950 dark:border-green-800'
-                                    : 'bg-gray-50 dark:bg-gray-900'
-                                }`}
-                              >
-                                <div className="flex items-center gap-2">
-                                  {question.correct_answer.includes(optIdx) && (
-                                    <CheckCircle2 className="h-4 w-4 text-green-600" />
-                                  )}
-                                  <span className="text-sm">{option}</span>
-                                </div>
+                        return (
+                          <div key={idx} className="border rounded-lg p-4">
+                            <div className="flex items-start gap-3 mb-3">
+                              <Badge variant="outline">{idx + 1}</Badge>
+                              <div className="flex-1">
+                                <p className="font-medium mb-2">{question.question}</p>
+                                <Badge variant="secondary" className="text-xs">
+                                  {question.difficulty}
+                                </Badge>
                               </div>
-                            ))}
-                          </div>
-
-                          {question.explanation && (
-                            <div className="mt-3 ml-10 p-3 bg-blue-50 dark:bg-blue-950 rounded text-sm">
-                              <p className="font-medium text-blue-900 dark:text-blue-100 mb-1">
-                                解析:
-                              </p>
-                              <p className="text-blue-800 dark:text-blue-200">
-                                {question.explanation}
-                              </p>
                             </div>
-                          )}
-                        </div>
-                      ))}
+
+                            <div className="space-y-2 ml-10">
+                              {question.options.map((option: string, optIdx: number) => (
+                                <div
+                                  key={optIdx}
+                                  className={`p-2 rounded border ${
+                                    question.correct_answer.includes(optIdx)
+                                      ? 'bg-green-50 border-green-200 dark:bg-green-950 dark:border-green-800'
+                                      : 'bg-gray-50 dark:bg-gray-900'
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2">
+                                    {question.correct_answer.includes(optIdx) && (
+                                      <CheckCircle2 className="h-4 w-4 text-green-600" />
+                                    )}
+                                    <span className="text-sm">{option}</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+
+                            {question.explanation && (
+                              <div className="mt-3 ml-10 p-3 bg-blue-50 dark:bg-blue-950 rounded text-sm">
+                                <p className="font-medium text-blue-900 dark:text-blue-100 mb-1">
+                                  Explanation:
+                                </p>
+                                <p className="text-blue-800 dark:text-blue-200">
+                                  {getCorrectAnswerStatement()}
+                                  {question.explanation}
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </ScrollArea>

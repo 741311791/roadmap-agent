@@ -3,12 +3,17 @@
  * 
  * 显示路线图封面图片，支持降级显示为渐变色背景
  * 优先使用后端生成的封面图，降级到 Unsplash
+ * 支持手动重试失败的封面图生成
  */
 'use client';
 
 import { useState, useCallback, useEffect } from 'react';
 import Image from 'next/image';
+import { Button } from '@/components/ui/button';
+import { RefreshCw } from 'lucide-react';
 import { getCoverImage, getGradientFallback, getTopicInitial, fetchCoverImageFromAPI } from '@/lib/cover-image';
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 interface CoverImageProps {
   roadmapId?: string;  // 路线图 ID
@@ -22,46 +27,133 @@ export function CoverImage({ roadmapId, topic, title, className = '', coverImage
   const [imageError, setImageError] = useState(false);
   const [imageLoading, setImageLoading] = useState(true);
   const [imageUrl, setImageUrl] = useState(getCoverImage(topic));
+  const [coverStatus, setCoverStatus] = useState<'pending' | 'generating' | 'success' | 'failed' | null>(null);
+  const [isRetrying, setIsRetrying] = useState(false);
   const gradient = getGradientFallback(title);
   const initial = getTopicInitial(title);
   
   // 检查是否为 R2.dev 的图片（不使用 Next.js 图片优化）
   const isR2Image = imageUrl.includes('r2.dev');
   
-  // 如果提供了 coverImageUrl（包括 null），直接使用，跳过 API 调用
+  // 获取封面图状态
   useEffect(() => {
-    // coverImageUrl 可能是 string（有封面图）、null（已查询但没有封面图）或 undefined（未查询）
+    const fetchCoverStatus = async () => {
+      if (!roadmapId) {
+        setImageLoading(false);
+        return;
+      }
+      
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/v1/roadmap/${roadmapId}/cover-image`, {
+          credentials: 'include',
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          setCoverStatus(data.status);
+          
+          // 如果状态为 success 且有 URL，更新图片
+          if (data.status === 'success' && data.cover_image_url) {
+            setImageUrl(data.cover_image_url);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to fetch cover status:', error);
+      } finally {
+        setImageLoading(false);
+      }
+    };
+    
+    // 如果提供了 coverImageUrl（包括 null），直接使用，跳过 API 调用
     if (coverImageUrl !== undefined) {
-      // 如果 coverImageUrl 是 null，表示已查询过但没有封面图，使用默认的 Unsplash 图片
-      // 如果 coverImageUrl 是 string，使用提供的封面图 URL
       if (coverImageUrl) {
         setImageUrl(coverImageUrl);
+        setCoverStatus('success');
       }
-      // 否则保持默认的 Unsplash 图片（已在 useState 中设置）
       setImageLoading(false);
       return;
     }
     
-    // 只有在 coverImageUrl 为 undefined 时才尝试从 API 获取封面图
-    // 这表示父组件没有批量获取，需要单个调用
-    if (roadmapId) {
-      setImageLoading(true);
-      fetchCoverImageFromAPI(roadmapId).then((apiUrl) => {
-        if (apiUrl) {
-          setImageUrl(apiUrl);
-        }
-        setImageLoading(false);
-      }).catch(() => {
-        setImageLoading(false);
-      });
-    } else {
-      setImageLoading(false);
-    }
+    // 否则从 API 获取状态
+    fetchCoverStatus();
   }, [roadmapId, coverImageUrl]);
 
   const handleError = useCallback(() => {
     setImageError(true);
   }, []);
+
+  // 手动重试封面图生成
+  const handleRetry = useCallback(async () => {
+    if (!roadmapId) return;
+    
+    setIsRetrying(true);
+    setCoverStatus('generating');
+    
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/v1/roadmap/${roadmapId}/cover-image/generate`,
+        {
+          method: 'POST',
+          credentials: 'include',
+        }
+      );
+      
+      if (!response.ok) {
+        throw new Error('Failed to trigger cover generation');
+      }
+      
+      // 轮询状态，等待生成完成
+      let attempts = 0;
+      const maxAttempts = 30; // 最多轮询 30 次（30 秒）
+      
+      const pollStatus = async () => {
+        attempts++;
+        if (attempts > maxAttempts) {
+          setCoverStatus('failed');
+          setIsRetrying(false);
+          return;
+        }
+        
+        try {
+          const statusResponse = await fetch(
+            `${API_BASE_URL}/api/v1/roadmap/${roadmapId}/cover-image`,
+            { credentials: 'include' }
+          );
+          
+          if (statusResponse.ok) {
+            const statusData = await statusResponse.json();
+            
+            if (statusData.status === 'success' && statusData.cover_image_url) {
+              setImageUrl(statusData.cover_image_url);
+              setCoverStatus('success');
+              setIsRetrying(false);
+            } else if (statusData.status === 'failed') {
+              setCoverStatus('failed');
+              setIsRetrying(false);
+            } else {
+              // 继续轮询
+              setTimeout(pollStatus, 1000);
+            }
+          } else {
+            setCoverStatus('failed');
+            setIsRetrying(false);
+          }
+        } catch (error) {
+          console.error('Failed to poll cover status:', error);
+          setCoverStatus('failed');
+          setIsRetrying(false);
+        }
+      };
+      
+      // 开始轮询
+      setTimeout(pollStatus, 1000);
+      
+    } catch (error) {
+      console.error('Failed to retry cover generation:', error);
+      setCoverStatus('failed');
+      setIsRetrying(false);
+    }
+  }, [roadmapId]);
 
   if (imageError) {
     return (
@@ -117,6 +209,22 @@ export function CoverImage({ roadmapId, topic, title, className = '', coverImage
       <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-black/10 to-transparent" />
       {/* 悬停时的光晕效果 */}
       <div className="absolute inset-0 bg-gradient-to-br from-sage-400/0 via-sage-300/0 to-sage-500/0 group-hover:from-sage-400/20 group-hover:via-sage-300/10 group-hover:to-sage-500/20 transition-all duration-700" />
+      
+      {/* 失败时显示重试按钮 */}
+      {coverStatus === 'failed' && roadmapId && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <Button 
+            size="sm" 
+            variant="outline"
+            onClick={handleRetry}
+            disabled={isRetrying}
+            className="bg-white/90 hover:bg-white text-foreground shadow-lg gap-2"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRetrying ? 'animate-spin' : ''}`} />
+            {isRetrying ? 'Generating...' : 'Retry Cover Generation'}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

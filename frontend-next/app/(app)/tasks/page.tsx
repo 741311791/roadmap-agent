@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ChevronLeft, ListTodo, RefreshCw } from 'lucide-react';
-import { getUserTasks, retryTask, deleteTask, TaskItem } from '@/lib/api/endpoints';
+import { getUserTasks, retryTask, deleteTask, cancelTask, TaskItem } from '@/lib/api/endpoints';
 import { TaskList } from '@/components/task';
 import { useAuthStore } from '@/lib/store/auth-store';
 import { cn } from '@/lib/utils';
@@ -110,6 +110,55 @@ export default function TasksPage() {
         ...prevStats,
         failed: prevStats.failed + 1,
         processing: Math.max(0, prevStats.processing - 1),
+      }));
+    }
+  };
+
+  const handleCancel = async (taskId: string) => {
+    if (!confirm('Are you sure you want to cancel this task? The task will be stopped immediately.')) {
+      return;
+    }
+    
+    try {
+      // 乐观更新：立即将任务状态更新为 cancelled
+      setTasks(prevTasks => 
+        prevTasks.map(task => 
+          task.task_id === taskId 
+            ? { ...task, status: 'cancelled', current_step: 'Cancelled' }
+            : task
+        )
+      );
+      
+      // 更新统计数据
+      setStats(prevStats => ({
+        ...prevStats,
+        processing: Math.max(0, prevStats.processing - 1),
+      }));
+      
+      // 调用取消 API
+      await cancelTask(taskId);
+      
+      // 成功后刷新任务列表以获取最新状态
+      setTimeout(() => {
+        fetchTasks(activeFilter);
+      }, 1000);
+      
+    } catch (error: any) {
+      console.error('Failed to cancel task:', error);
+      alert('Failed to cancel task. Please try again later.');
+      
+      // 取消失败，恢复原状态
+      setTasks(prevTasks => 
+        prevTasks.map(task => 
+          task.task_id === taskId 
+            ? { ...task, status: 'processing' }
+            : task
+        )
+      );
+      
+      setStats(prevStats => ({
+        ...prevStats,
+        processing: prevStats.processing + 1,
       }));
     }
   };
@@ -243,6 +292,7 @@ export default function TasksPage() {
           isLoading={isLoading}
           onRetry={handleRetry}
           onDelete={handleDelete}
+          onCancel={handleCancel}
         />
       </div>
     </ScrollArea>

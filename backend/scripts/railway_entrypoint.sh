@@ -74,9 +74,18 @@ case $SERVICE_TYPE in
       --broker=${REDIS_URL:-redis://redis:6379/0}
     ;;
     
+  tavily_quota_updater)
+    echo "⏰ Starting Tavily Quota Updater..."
+    # 等待 PostgreSQL 就绪
+    sleep 5
+    
+    # 启动定时任务脚本
+    exec python scripts/update_tavily_quota.py
+    ;;
+    
   *)
     echo "❌ Unknown SERVICE_TYPE: $SERVICE_TYPE"
-    echo "Valid options: api, celery_logs, celery_content, flower"
+    echo "Valid options: api, celery_logs, celery_content, flower, tavily_quota_updater"
     exit 1
     ;;
 esac

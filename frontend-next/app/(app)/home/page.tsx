@@ -11,7 +11,7 @@
  * - 响应式设计：支持 horizontal scroll
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { EmptyState } from '@/components/common/empty-state';
@@ -26,7 +26,7 @@ import {
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import { getUserRoadmaps, getFeaturedRoadmaps } from '@/lib/api/endpoints';
 import { useAuthStore } from '@/lib/store/auth-store';
-import { batchFetchCoverImagesFromAPI } from '@/lib/cover-image';
+import { batchFetchCoverImagesFromAPI, batchGenerateCoverImages } from '@/lib/cover-image';
 
 // Section Header Component
 function SectionHeader({
@@ -82,6 +82,9 @@ export default function HomePage() {
   const [coverImageMap, setCoverImageMap] = useState<Map<string, string | null>>(new Map());
   const [featuredCoverImageMap, setFeaturedCoverImageMap] = useState<Map<string, string | null>>(new Map());
   
+  // 使用 ref 标记避免重复触发生成
+  const hasTriggeredCoverGenerationRef = useRef(false);
+  
   // Fetch user roadmaps on mount
   useEffect(() => {
     const fetchRoadmaps = async () => {
@@ -122,6 +125,26 @@ export default function HomePage() {
         if (roadmapIds.length > 0) {
           const coverImages = await batchFetchCoverImagesFromAPI(roadmapIds);
           setCoverImageMap(coverImages);
+          
+          // 自动触发缺失封面图的生成（仅首次加载）
+          if (!hasTriggeredCoverGenerationRef.current) {
+            const missingCoverIds = roadmapIds.filter(id => {
+              const coverUrl = coverImages.get(id);
+              return coverUrl === null; // null 表示 pending 或 failed
+            });
+            
+            if (missingCoverIds.length > 0) {
+              console.log('[Home] Auto-triggering cover generation for:', missingCoverIds);
+              hasTriggeredCoverGenerationRef.current = true;
+              
+              try {
+                await batchGenerateCoverImages(missingCoverIds);
+                console.log('[Home] Cover generation triggered successfully');
+              } catch (error) {
+                console.error('[Home] Failed to trigger cover generation:', error);
+              }
+            }
+          }
         }
       } catch (error) {
         console.error('Failed to fetch roadmaps:', error);

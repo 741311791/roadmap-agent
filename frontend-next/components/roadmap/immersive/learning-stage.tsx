@@ -546,6 +546,23 @@ function QuizQuestionCard({
     return 'Choose One';
   };
 
+  /**
+   * 生成正确答案声明
+   * 根据题目类型和正确答案索引，生成用于展示的正确答案声明字符串
+   */
+  const getCorrectAnswerStatement = (): string => {
+    const correctOptions = question.correct_answer.map(idx => question.options[idx]);
+    
+    if (correctOptions.length === 0) return '';
+    
+    if (correctOptions.length === 1) {
+      return `The correct answer is "${correctOptions[0]}". `;
+    } else {
+      const formattedOptions = correctOptions.map(opt => `"${opt}"`).join(', ');
+      return `The correct answers are ${formattedOptions}. `;
+    }
+  };
+
   return (
     <div className="p-6 rounded-2xl border border-sage-100 bg-gradient-to-br from-white to-sage-50/30 shadow-sm hover:shadow-md transition-shadow duration-300">
       {/* Question Header */}
@@ -649,6 +666,7 @@ function QuizQuestionCard({
                 {isCorrect ? "Excellent!" : "Keep Learning"}
               </p>
               <p className="text-sm text-stone-600 leading-relaxed">
+                {getCorrectAnswerStatement()}
                 {question.explanation}
               </p>
             </div>

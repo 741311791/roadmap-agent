@@ -21,6 +21,8 @@ from app.models.domain import (
     ResourceRecommendationInput,
     QuizGenerationInput,
 )
+from app.models.database import User
+from app.core.auth.deps import current_active_user
 from app.services.roadmap_service import RoadmapService
 from app.services.notification_service import notification_service
 from app.core.dependencies import get_workflow_executor
@@ -29,6 +31,8 @@ from app.db.repository_factory import get_repository_factory, RepositoryFactory
 from app.agents.tutorial_generator import TutorialGeneratorAgent
 from app.agents.resource_recommender import ResourceRecommenderAgent
 from app.agents.quiz_generator import QuizGeneratorAgent
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.db.session import get_db
 
 router = APIRouter(prefix="/roadmaps", tags=["generation"])
 logger = structlog.get_logger()
@@ -50,6 +54,14 @@ class RetryContentResponse(BaseModel):
     content_type: Literal["tutorial", "resources", "quiz"] = Field(..., description="内容类型")
     message: str = Field(..., description="结果消息")
     data: Optional[dict] = Field(None, description="重试成功时返回的数据")
+
+
+class CancelTaskResponse(BaseModel):
+    """任务取消响应"""
+    success: bool = Field(..., description="是否成功")
+    task_id: str = Field(..., description="任务 ID")
+    message: str = Field(..., description="结果消息")
+    previous_status: Optional[str] = Field(None, description="取消前的任务状态")
 
 
 async def _execute_roadmap_generation_task(
@@ -236,6 +248,180 @@ async def get_generation_status(
         raise HTTPException(status_code=404, detail="任务不存在")
     
     return status
+
+
+@router.post("/tasks/{task_id}/cancel", response_model=CancelTaskResponse)
+async def cancel_task(
+    task_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(current_active_user),
+    repo_factory: RepositoryFactory = Depends(get_repository_factory),
+):
+    """
+    取消路线图生成任务
+    
+    支持取消正在运行的路线图生成任务。取消后，任务状态将变为 "cancelled"，
+    用户可以稍后重新生成路线图（会从断点继续）。
+    
+    流程：
+    1. 验证任务存在且属于当前用户
+    2. 检查任务状态（仅支持取消 processing 状态）
+    3. 如果有 celery_task_id，调用 Celery revoke 终止后台任务
+    4. 更新数据库状态为 "cancelled"
+    5. 发送 WebSocket 通知
+    
+    Args:
+        task_id: 任务 ID
+        db: 数据库会话
+        current_user: 当前登录用户
+        repo_factory: Repository 工厂
+        
+    Returns:
+        取消结果
+        
+    Raises:
+        HTTPException: 404 - 任务不存在
+        HTTPException: 403 - 无权限取消此任务
+        HTTPException: 400 - 任务状态不允许取消
+        
+    Example:
+        ```json
+        {
+            "success": true,
+            "task_id": "550e8400-e29b-41d4-a716-446655440000",
+            "message": "Task cancelled successfully",
+            "previous_status": "processing"
+        }
+        ```
+    """
+    logger.info(
+        "cancel_task_requested",
+        task_id=task_id,
+        user_id=current_user.id,
+    )
+    
+    # 1. 获取任务记录
+    async with repo_factory.create_session() as session:
+        task_repo = repo_factory.create_task_repo(session)
+        task = await task_repo.get_by_task_id(task_id)
+    
+    if not task:
+        logger.warning(
+            "cancel_task_not_found",
+            task_id=task_id,
+            user_id=current_user.id,
+        )
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    # 2. 验证用户权限
+    if task.user_id != current_user.id:
+        logger.warning(
+            "cancel_task_forbidden",
+            task_id=task_id,
+            task_user_id=task.user_id,
+            current_user_id=current_user.id,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="You don't have permission to cancel this task"
+        )
+    
+    # 3. 检查任务状态（仅支持取消 processing 状态）
+    if task.status != "processing":
+        logger.warning(
+            "cancel_task_invalid_status",
+            task_id=task_id,
+            current_status=task.status,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot cancel task with status '{task.status}'. Only 'processing' tasks can be cancelled."
+        )
+    
+    previous_status = task.status
+    
+    # 4. 如果有 Celery 任务，尝试终止
+    if task.celery_task_id:
+        try:
+            from celery.result import AsyncResult
+            from app.core.celery_app import celery_app
+            
+            result = AsyncResult(task.celery_task_id, app=celery_app)
+            # 使用 terminate=True 强制终止，signal='SIGKILL' 确保立即停止
+            result.revoke(terminate=True, signal='SIGKILL')
+            
+            logger.info(
+                "celery_task_revoked",
+                task_id=task_id,
+                celery_task_id=task.celery_task_id,
+            )
+        except Exception as e:
+            # Celery 取消失败不影响数据库状态更新
+            logger.error(
+                "celery_task_revoke_failed",
+                task_id=task_id,
+                celery_task_id=task.celery_task_id,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+    
+    # 5. 更新数据库状态为 cancelled
+    try:
+        async with repo_factory.create_session() as session:
+            task_repo = repo_factory.create_task_repo(session)
+            await task_repo.update_task_status(
+                task_id=task_id,
+                status="cancelled",
+                current_step="cancelled",
+                error_message="Task cancelled by user",
+            )
+            await session.commit()
+        
+        logger.info(
+            "task_status_updated_to_cancelled",
+            task_id=task_id,
+            previous_status=previous_status,
+        )
+    except Exception as e:
+        logger.error(
+            "cancel_task_db_update_failed",
+            task_id=task_id,
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to update task status: {str(e)}"
+        )
+    
+    # 6. 发送 WebSocket 取消通知
+    try:
+        await notification_service.publish_failed(
+            task_id=task_id,
+            error="Task cancelled by user",
+            step=task.current_step,
+            roadmap_id=task.roadmap_id,
+        )
+        
+        logger.info(
+            "cancel_notification_sent",
+            task_id=task_id,
+        )
+    except Exception as e:
+        # WebSocket 通知失败不影响取消操作
+        logger.error(
+            "cancel_notification_failed",
+            task_id=task_id,
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+    
+    return CancelTaskResponse(
+        success=True,
+        task_id=task_id,
+        message="Task cancelled successfully",
+        previous_status=previous_status,
+    )
 
 
 @router.get("/{task_id}/content-status")

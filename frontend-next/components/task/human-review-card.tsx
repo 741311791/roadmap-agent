@@ -99,7 +99,11 @@ export function HumanReviewCard({
       
       await approveRoadmap(taskId, false, feedback);
       
-      setStatus('rejected');
+      // 反馈提交成功后，重置为 waiting 状态，让工作流自然过渡
+      // 不显示 'rejected' 状态的确认卡片
+      setStatus('waiting');
+      setShowFeedback(false);
+      setFeedback('');
       onReviewComplete?.();
     } catch (err: any) {
       console.error('Failed to reject roadmap:', err);
@@ -117,15 +121,15 @@ export function HumanReviewCard({
   // 已批准状态
   if (status === 'approved') {
     return (
-      <Card className="border-2 border-green-200 bg-green-50/50">
+      <Card className="border-2 border-accent/30 bg-accent/5">
         <CardContent className="py-6">
           <div className="flex items-start gap-4">
-            <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
-              <Check className="w-5 h-5 text-green-600" />
+            <div className="w-10 h-10 rounded-full bg-accent/20 flex items-center justify-center flex-shrink-0">
+              <Check className="w-5 h-5 text-accent" />
             </div>
             <div className="flex-1 space-y-1">
-              <h3 className="font-medium text-green-900">Roadmap Approved</h3>
-              <p className="text-sm text-green-700">
+              <h3 className="font-medium text-foreground">Roadmap Approved</h3>
+              <p className="text-sm text-accent/80">
                 The roadmap framework has been approved. Content generation will continue automatically.
               </p>
             </div>
@@ -135,44 +139,20 @@ export function HumanReviewCard({
     );
   }
 
-  // 已拒绝状态
-  if (status === 'rejected') {
-    return (
-      <Card className="border-2 border-amber-200 bg-amber-50/50">
-        <CardContent className="py-6">
-          <div className="flex items-start gap-4">
-            <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
-              <AlertCircle className="w-5 h-5 text-amber-600" />
-            </div>
-            <div className="flex-1 space-y-1">
-              <h3 className="font-medium text-amber-900">Changes Requested</h3>
-              <p className="text-sm text-amber-700">
-                Your feedback has been submitted. The roadmap will be regenerated based on your input.
-              </p>
-              {feedback && (
-                <div className="mt-3 p-3 bg-white/50 rounded-md border border-amber-200">
-                  <p className="text-xs text-amber-600 font-medium mb-1">Your feedback:</p>
-                  <p className="text-sm text-amber-900">{feedback}</p>
-                </div>
-              )}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
+  // 移除 rejected 状态的显示
+  // 用户提交反馈后，直接让工作流过渡到下一步，不显示中间确认卡片
 
   // 等待审核状态（激活状态）
   return (
     <Card
       className={cn(
         'border-2 transition-all',
-        isActive ? 'border-blue-500 bg-blue-50/30 shadow-lg' : 'border-gray-200 bg-card',
+        isActive ? 'border-accent bg-accent/5 shadow-lg' : 'border-border bg-card',
       )}
     >
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <BookOpen className="w-5 h-5 text-blue-600" />
+          <BookOpen className="w-5 h-5 text-accent" />
           Human Review Required
         </CardTitle>
         <CardDescription>
@@ -260,7 +240,7 @@ export function HumanReviewCard({
               <Button
                 onClick={handleApprove}
                 disabled={status === 'submitting'}
-                className="bg-green-600 hover:bg-green-700"
+                className="bg-accent hover:bg-accent/90 text-accent-foreground"
               >
                 {status === 'submitting' ? (
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />

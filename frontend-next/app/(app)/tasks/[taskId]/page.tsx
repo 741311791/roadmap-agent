@@ -16,12 +16,12 @@
 
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { ArrowLeft, AlertCircle, CheckCircle2, Loader2, Clock, Eye, RefreshCw } from 'lucide-react';
+import { ArrowLeft, AlertCircle, CheckCircle2, Loader2, Clock, Eye, RefreshCw, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { TaskWebSocket } from '@/lib/api/websocket';
-import { getTaskDetail, getTaskLogs, getRoadmap, getIntentAnalysis, getUserProfile } from '@/lib/api/endpoints';
+import { getTaskDetail, getTaskLogs, getRoadmap, getIntentAnalysis, getUserProfile, cancelTask } from '@/lib/api/endpoints';
 import { WorkflowTopology } from '@/components/task/workflow-topology';
 import { CoreDisplayArea } from '@/components/task/core-display-area';
 import { ExecutionLogTimeline } from '@/components/task/execution-log-timeline';
@@ -119,6 +119,9 @@ export default function TaskDetailPage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // 节点选中状态（用于侧边面板）
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+
   // WebSocket 连接
   const [ws, setWs] = useState<TaskWebSocket | null>(null);
   
@@ -199,18 +202,72 @@ export default function TaskDetailPage() {
   }, []);
 
   /**
+   * 从路线图框架中提取概念的加载/失败状态
+   * 
+   * 用于在刷新时从最新的路线图数据中重建状态，而不依赖 WebSocket 事件
+   */
+  const extractConceptStates = useCallback((roadmap: RoadmapFramework) => {
+    const loading: string[] = [];
+    const failed: string[] = [];
+    const partialFailed: string[] = [];
+    
+    roadmap.stages.forEach(stage => {
+      stage.modules.forEach(module => {
+        module.concepts.forEach(concept => {
+          const conceptId = concept.concept_id;
+          const statuses = [
+            concept.content_status,
+            concept.resources_status,
+            concept.quiz_status,
+          ];
+          
+          // 判断是否有任何内容正在生成
+          const isGenerating = statuses.some(s => s === 'generating');
+          if (isGenerating) {
+            loading.push(conceptId);
+            return;
+          }
+          
+          // 判断失败状态
+          const failedCount = statuses.filter(s => s === 'failed').length;
+          const completedCount = statuses.filter(s => s === 'completed').length;
+          
+          if (failedCount === 3) {
+            // 全部失败
+            failed.push(conceptId);
+          } else if (failedCount > 0 && completedCount > 0) {
+            // 部分失败（有成功有失败）
+            partialFailed.push(conceptId);
+          }
+        });
+      });
+    });
+    
+    return { loading, failed, partialFailed };
+  }, []);
+
+  /**
    * 加载路线图框架
    */
-  const loadRoadmapFramework = useCallback(async (roadmapId: string) => {
+  const loadRoadmapFramework = useCallback(async (roadmapId: string, updateConceptStates = false) => {
     try {
       const roadmapData = await getRoadmap(roadmapId);
       if (roadmapData) {
         setRoadmapFramework(roadmapData);
+        
+        // 如果需要更新概念状态（刷新时使用）
+        if (updateConceptStates) {
+          const { loading, failed, partialFailed } = extractConceptStates(roadmapData);
+          setLoadingConceptIds(loading);
+          setFailedConceptIds(failed);
+          setPartialFailedConceptIds(partialFailed);
+          console.log('[TaskDetail] Updated concept states from roadmap:', { loading, failed, partialFailed });
+        }
       }
     } catch (err) {
       console.error('Failed to load roadmap framework:', err);
     }
-  }, []);
+  }, [extractConceptStates]);
 
   /**
    * 加载任务信息和日志（提取为独立函数，供初始加载和刷新使用）
@@ -232,9 +289,16 @@ export default function TaskDetailPage() {
       // 更新ref中的roadmap_id
       roadmapIdRef.current = taskData.roadmap_id || null;
 
-      // 加载执行日志（获取大量日志，然后按 step 分组并限制每个阶段最多 100 条）
-      const logsData = await getTaskLogs(taskId, undefined, undefined, 2000);
-      const allLogs = logsData.logs || [];
+      // 加载执行日志（只获取 agent 和 workflow 类型，排除 concept 日志以提升性能）
+      // Concept 日志通常量大且 details 字段庞大，会严重影响加载速度
+      const [agentLogsData, workflowLogsData] = await Promise.all([
+        getTaskLogs(taskId, undefined, 'agent', 1000),
+        getTaskLogs(taskId, undefined, 'workflow', 1000),
+      ]);
+      const allLogs = [
+        ...(agentLogsData.logs || []),
+        ...(workflowLogsData.logs || []),
+      ];
       
       // 按 step 分组，每个 step 最多 100 条
       const limitedLogs = limitLogsByStep(allLogs, 100);
@@ -268,7 +332,35 @@ export default function TaskDetailPage() {
 
       // 如果有 roadmap_id，加载路线图框架
       if (taskData.roadmap_id) {
-        await loadRoadmapFramework(taskData.roadmap_id);
+        // 刷新时更新概念状态（从路线图数据中提取）
+        await loadRoadmapFramework(taskData.roadmap_id, !isInitialLoad);
+        
+        // 刷新时也重新加载修改记录
+        if (!isInitialLoad) {
+          // 需要先等 taskInfo 更新后再加载 modifiedNodeIds
+          // 这里使用 taskData 而不是 taskInfo state
+          const shouldFetchEditRecord = taskData.current_step && [
+            'structure_validation',
+            'human_review',
+            'human_review_pending',
+            'content_generation',
+            'completed',
+            'partial_failure'
+          ].includes(taskData.current_step);
+          
+          if (shouldFetchEditRecord) {
+            try {
+              const { getLatestEdit } = await import('@/lib/api/endpoints');
+              const editData = await getLatestEdit(taskId);
+              if (editData?.modified_node_ids) {
+                setModifiedNodeIds(editData.modified_node_ids);
+                console.log('[TaskDetail] Refreshed modified_node_ids:', editData.modified_node_ids);
+              }
+            } catch (err) {
+              console.log('[TaskDetail] No edit record found:', err);
+            }
+          }
+        }
       }
 
     } catch (err: any) {
@@ -337,6 +429,38 @@ export default function TaskDetailPage() {
   const handleRefresh = useCallback(() => {
     loadTaskData(false);
   }, [loadTaskData]);
+
+  /**
+   * 取消任务
+   */
+  const handleCancel = useCallback(async () => {
+    if (!confirm('Are you sure you want to cancel this task? The task will be stopped immediately.')) {
+      return;
+    }
+    
+    try {
+      await cancelTask(taskId);
+      
+      // 更新本地状态
+      setTaskInfo((prev) => prev ? {
+        ...prev,
+        status: 'cancelled',
+        current_step: 'cancelled',
+      } : null);
+      
+      // 断开 WebSocket 连接
+      ws?.disconnect();
+      
+      // 刷新任务数据
+      setTimeout(() => {
+        loadTaskData(false);
+      }, 1000);
+      
+    } catch (error: any) {
+      console.error('Failed to cancel task:', error);
+      alert('Failed to cancel task. Please try again later.');
+    }
+  }, [taskId, ws, loadTaskData]);
 
   /**
    * WebSocket 实时订阅
@@ -424,8 +548,15 @@ export default function TaskDetailPage() {
       // 当节点完成时，刷新日志和路线图
       if (event.status === 'completed' && event.step) {
         try {
-          const logsData = await getTaskLogs(taskId, undefined, undefined, 2000);
-          const allLogs = logsData.logs || [];
+          // 只获取 agent 和 workflow 类型的日志，排除 concept 日志
+          const [agentLogsData, workflowLogsData] = await Promise.all([
+            getTaskLogs(taskId, undefined, 'agent', 1000),
+            getTaskLogs(taskId, undefined, 'workflow', 1000),
+          ]);
+          const allLogs = [
+            ...(agentLogsData.logs || []),
+            ...(workflowLogsData.logs || []),
+          ];
           const limitedLogs = limitLogsByStep(allLogs, 100);
           setExecutionLogs(limitedLogs);
           
@@ -672,9 +803,15 @@ export default function TaskDetailPage() {
                   console.log('[TaskDetail] Polling detected task completion:', latestTask.status);
                   setTaskInfo(latestTask);
                   
-                  // 刷新日志
-                  const logsData = await getTaskLogs(taskId, undefined, undefined, 2000);
-                  const allLogs = logsData.logs || [];
+                  // 刷新日志（只获取 agent 和 workflow 类型）
+                  const [agentLogsData, workflowLogsData] = await Promise.all([
+                    getTaskLogs(taskId, undefined, 'agent', 1000),
+                    getTaskLogs(taskId, undefined, 'workflow', 1000),
+                  ]);
+                  const allLogs = [
+                    ...(agentLogsData.logs || []),
+                    ...(workflowLogsData.logs || []),
+                  ];
                   const limitedLogs = limitLogsByStep(allLogs, 100);
                   setExecutionLogs(limitedLogs);
                   
@@ -879,6 +1016,17 @@ export default function TaskDetailPage() {
                   <RefreshCw className={cn('w-4 h-4 mr-2', isRefreshing && 'animate-spin')} />
                   Refresh
                 </Button>
+                {taskInfo.status === 'processing' && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleCancel}
+                    className="-ml-2 text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+                  >
+                    <XCircle className="w-4 h-4 mr-2" />
+                    Cancel Task
+                  </Button>
+                )}
               </div>
               
               <h1 className="text-2xl font-serif font-semibold">{taskInfo.title}</h1>
@@ -906,6 +1054,8 @@ export default function TaskDetailPage() {
           stagesCount={roadmapFramework?.stages?.length || 0}
           executionLogs={executionLogs}
           onHumanReviewComplete={handleHumanReviewComplete}
+          selectedNodeId={selectedNodeId}
+          onNodeSelect={setSelectedNodeId}
         />
 
         {/* 2. Core Display Area（需求分析 + 路线图） */}

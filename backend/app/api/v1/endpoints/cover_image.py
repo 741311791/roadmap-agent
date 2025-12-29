@@ -150,9 +150,14 @@ async def generate_roadmap_cover_image_sync(
         )
 
 
+class BatchGenerateRequest(BaseModel):
+    """批量生成封面图请求模型"""
+    roadmap_ids: list[str]
+
+
 @router.post("/cover-images/batch-generate")
 async def batch_generate_cover_images(
-    roadmap_ids: list[str],
+    request: BatchGenerateRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(current_active_user)
@@ -160,27 +165,47 @@ async def batch_generate_cover_images(
     """
     批量生成封面图（异步）
     
+    仅触发 pending/failed 状态的封面图生成，跳过已成功生成的。
+    
     Args:
-        roadmap_ids: 路线图ID列表
+        request: 包含路线图ID列表的请求
         background_tasks: 后台任务
         db: 数据库会话
         current_user: 当前用户
     
     Returns:
-        批量生成状态
+        批量生成状态，包含触发数量和跳过数量
     """
     service = CoverImageService(db)
     
-    # 为每个路线图添加后台任务
-    for roadmap_id in roadmap_ids:
+    # 获取当前封面图状态
+    status_map = await service.batch_get_cover_images(request.roadmap_ids)
+    
+    triggered = []
+    skipped = []
+    
+    # 只为 pending/failed 状态的路线图触发生成
+    for roadmap_id in request.roadmap_ids:
+        status_info = status_map.get(roadmap_id, {"status": "not_started"})
+        status = status_info["status"]
+        
+        # 跳过已成功生成的
+        if status == "success":
+            skipped.append(roadmap_id)
+            continue
+        
+        # 触发生成（not_started, pending, failed 状态）
+        triggered.append(roadmap_id)
         background_tasks.add_task(
             service.generate_cover_image,
             roadmap_id=roadmap_id
         )
     
     return {
-        "message": f"已提交 {len(roadmap_ids)} 个封面图生成任务",
-        "roadmap_ids": roadmap_ids
+        "triggered": len(triggered),
+        "skipped": len(skipped),
+        "roadmap_ids": triggered,
+        "message": f"Triggered {len(triggered)} cover image generation tasks, skipped {len(skipped)} already successful"
     }
 
 

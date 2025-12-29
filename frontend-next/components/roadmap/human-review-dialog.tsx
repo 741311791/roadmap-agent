@@ -73,7 +73,7 @@ export function HumanReviewDialog({
       <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <BookOpen className="w-5 h-5 text-blue-500" />
+            <BookOpen className="w-5 h-5 text-accent" />
             Human Review
           </DialogTitle>
           <DialogDescription>
@@ -152,13 +152,14 @@ export function HumanReviewDialog({
               <Button
                 onClick={handleApprove}
                 disabled={isSubmitting}
-                className="bg-green-600 hover:bg-green-700"
+                className="bg-accent hover:bg-accent/90 text-accent-foreground"
               >
                 {isSubmitting ? (
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                 ) : (
                   <Check className="w-4 h-4 mr-2" />
                 )}
+                Approve
               </Button>
             </>
           )}

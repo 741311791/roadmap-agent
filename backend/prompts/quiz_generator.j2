@@ -24,6 +24,12 @@
 4. 每道题必须包含详细的答案解析
 5. 题目应覆盖概念的核心知识点
 6. 选项设计应避免明显错误，干扰项应具有一定迷惑性
+7. **[强制] 选项质量检查**：
+   - 所有选项内容必须唯一，严禁出现重复选项
+   - correct_answer 索引必须指向有效的选项（索引范围 0 到 options.length-1）
+   - 单选题的 correct_answer 必须只有 1 个元素
+   - 多选题的 correct_answer 必须有 2 个或以上元素
+   - 判断题必须使用选项 ["正确", "错误"]
 
 [4. Output Format]
 **重要：请直接返回纯 JSON 对象，不要使用 markdown 代码块包裹（不要使用 ```json 或 ```）**
@@ -163,3 +169,8 @@
 4. total_questions 必须与 questions 数组长度一致
 5. 每道题必须有详细的 explanation
 6. 仅使用 single_choice、multiple_choice、true_false 三种题型
+7. **[重要]** 生成后请自查：
+   - 每道题的所有选项是否完全不重复
+   - correct_answer 索引是否在有效范围内（0 到选项数量-1）
+   - 单选题 correct_answer 是否只有 1 个元素
+   - 多选题 correct_answer 是否有 2 个以上元素

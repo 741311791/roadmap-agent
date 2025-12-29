@@ -234,6 +234,49 @@ export async function batchFetchCoverImagesFromAPI(
 }
 
 /**
+ * 批量触发封面图生成（仅针对 pending/failed 状态）
+ * 
+ * @param roadmapIds - 路线图 ID 列表
+ * @returns 批量生成结果
+ */
+export async function batchGenerateCoverImages(
+  roadmapIds: string[]
+): Promise<{
+  triggered: number;
+  skipped: number;
+  roadmap_ids: string[];
+  message: string;
+}> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/cover-images/batch-generate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      credentials: 'include',
+      body: JSON.stringify({ roadmap_ids: roadmapIds }),
+      signal: AbortSignal.timeout(10000),
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to batch generate cover images: ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    
+    // 清除相关缓存，强制下次重新获取
+    for (const id of roadmapIds) {
+      coverImageCache.delete(id);
+    }
+    
+    return data;
+  } catch (error) {
+    console.error('Failed to batch generate cover images:', error);
+    throw error;
+  }
+}
+
+/**
  * Get a cover image URL based on the topic
  * Uses Unsplash for high-quality images
  * 

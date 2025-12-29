@@ -54,6 +54,12 @@
 3. **题目质量**: 每道题必须有清晰的题干、正确的选项和详细的解析
 4. **知识覆盖**: 确保题目覆盖概念的核心知识点
 5. **用户水平**: 考虑用户当前水平 ({{ user_preferences.current_level }})
+6. **[强制] 选项质量检查**：
+   - 所有选项内容必须唯一，严禁出现重复选项
+   - correct_answer 索引必须指向有效的选项（索引范围 0 到 options.length-1）
+   - 单选题的 correct_answer 必须只有 1 个元素
+   - 多选题的 correct_answer 必须有 2 个或以上元素
+   - 判断题必须使用选项 ["正确", "错误"]
 
 [7. Difficulty Guidelines]
 难度调整指南：
@@ -111,3 +117,8 @@
 6. 对于保留的题目，如果没有修改需求，可以原样保留
 7. changes_made 应该清晰记录每项修改，便于用户了解调整内容
 8. 仅使用 single_choice、multiple_choice、true_false 三种题型
+9. **[重要]** 修改后请自查：
+   - 每道题的所有选项是否完全不重复
+   - correct_answer 索引是否在有效范围内（0 到选项数量-1）
+   - 单选题 correct_answer 是否只有 1 个元素
+   - 多选题 correct_answer 是否有 2 个以上元素

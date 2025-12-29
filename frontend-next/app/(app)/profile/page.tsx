@@ -177,6 +177,10 @@ export default function ProfilePage() {
     technology: string;
     proficiency: string;
   } | null>(null);
+  
+  // Custom input states for "other" options
+  const [customIndustry, setCustomIndustry] = React.useState('');
+  const [customRole, setCustomRole] = React.useState('');
 
   // 加载用户画像
   useEffect(() => {
@@ -206,6 +210,29 @@ export default function ProfilePage() {
     loadData();
   }, [userId, loadProfile]);
   
+  // 检查并处理自定义的 industry 和 current_role
+  useEffect(() => {
+    if (!profile) return;
+    
+    // 检查 industry 是否为自定义值
+    if (profile.industry && profile.industry !== 'other') {
+      const isIndustryPredefined = INDUSTRIES.some(ind => ind.value === profile.industry);
+      if (!isIndustryPredefined) {
+        // 保存自定义值到 state（但不更新 profile，避免循环）
+        setCustomIndustry(profile.industry);
+      }
+    }
+    
+    // 检查 current_role 是否为自定义值
+    if (profile.current_role && profile.current_role !== 'other') {
+      const isRolePredefined = ROLES.some(role => role.value === profile.current_role);
+      if (!isRolePredefined) {
+        // 保存自定义值到 state（但不更新 profile，避免循环）
+        setCustomRole(profile.current_role);
+      }
+    }
+  }, [profile?.industry, profile?.current_role]);
+  
   // 将tech_stack转换为带id的格式（用于UI）
   const techStackWithIds: TechStackRowItem[] = React.useMemo(() => {
     if (!profile?.tech_stack) return [];
@@ -214,6 +241,20 @@ export default function ProfilePage() {
       id: `tech-${item.technology}-${index}`,
     }));
   }, [profile?.tech_stack]);
+  
+  // 计算 Industry Select 的显示值
+  const industrySelectValue = React.useMemo(() => {
+    if (!profile?.industry) return '';
+    const isIndustryPredefined = INDUSTRIES.some(ind => ind.value === profile.industry);
+    return isIndustryPredefined ? profile.industry : 'other';
+  }, [profile?.industry]);
+  
+  // 计算 Current Role Select 的显示值
+  const roleSelectValue = React.useMemo(() => {
+    if (!profile?.current_role) return '';
+    const isRolePredefined = ROLES.some(role => role.value === profile.current_role);
+    return isRolePredefined ? profile.current_role : 'other';
+  }, [profile?.current_role]);
 
   const addTechnology = () => {
     const newItem: TechStackItem = {
@@ -358,8 +399,18 @@ export default function ProfilePage() {
                   Industry
                 </Label>
                 <Select 
-                  value={profile.industry || ''} 
-                  onValueChange={(value) => updateProfile({ industry: value })}
+                  value={industrySelectValue} 
+                  onValueChange={(value) => {
+                    if (value === 'other') {
+                      // 选择 "other" 时，清空输入框，等待用户输入
+                      setCustomIndustry('');
+                      updateProfile({ industry: 'other' });
+                    } else {
+                      // 选择预定义选项时，清空自定义输入，更新为预定义值
+                      setCustomIndustry('');
+                      updateProfile({ industry: value });
+                    }
+                  }}
                 >
                   <SelectTrigger className="bg-white">
                     <SelectValue placeholder="Select option" />
@@ -372,14 +423,44 @@ export default function ProfilePage() {
                     ))}
                   </SelectContent>
                 </Select>
+                {industrySelectValue === 'other' && (
+                  <input
+                    type="text"
+                    value={customIndustry}
+                    onChange={(e) => setCustomIndustry(e.target.value)}
+                    onBlur={() => {
+                      if (customIndustry.trim()) {
+                        updateProfile({ industry: customIndustry.trim() });
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && customIndustry.trim()) {
+                        updateProfile({ industry: customIndustry.trim() });
+                        e.currentTarget.blur();
+                      }
+                    }}
+                    placeholder="Please specify your industry"
+                    className="flex h-9 w-full rounded-md border border-input bg-white px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sage-500"
+                  />
+                )}
               </div>
               <div className="space-y-2">
                 <Label className="text-xs uppercase tracking-wider text-muted-foreground">
                   Current Role
                 </Label>
                 <Select 
-                  value={profile.current_role || ''} 
-                  onValueChange={(value) => updateProfile({ current_role: value })}
+                  value={roleSelectValue} 
+                  onValueChange={(value) => {
+                    if (value === 'other') {
+                      // 选择 "other" 时，清空输入框，等待用户输入
+                      setCustomRole('');
+                      updateProfile({ current_role: 'other' });
+                    } else {
+                      // 选择预定义选项时，清空自定义输入，更新为预定义值
+                      setCustomRole('');
+                      updateProfile({ current_role: value });
+                    }
+                  }}
                 >
                   <SelectTrigger className="bg-white">
                     <SelectValue placeholder="Select option" />
@@ -392,6 +473,26 @@ export default function ProfilePage() {
                     ))}
                   </SelectContent>
                 </Select>
+                {roleSelectValue === 'other' && (
+                  <input
+                    type="text"
+                    value={customRole}
+                    onChange={(e) => setCustomRole(e.target.value)}
+                    onBlur={() => {
+                      if (customRole.trim()) {
+                        updateProfile({ current_role: customRole.trim() });
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && customRole.trim()) {
+                        updateProfile({ current_role: customRole.trim() });
+                        e.currentTarget.blur();
+                      }
+                    }}
+                    placeholder="Please specify your role"
+                    className="flex h-9 w-full rounded-md border border-input bg-white px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sage-500"
+                  />
+                )}
               </div>
             </div>
           </section>
@@ -671,7 +772,7 @@ function TechStackRow({
                 }}
               >
                 <SelectTrigger className="bg-white">
-                  <SelectValue placeholder="Select technology" />
+                  <SelectValue placeholder="Select" />
                 </SelectTrigger>
                 <SelectContent>
                   {displayOptions.map((tech) => {

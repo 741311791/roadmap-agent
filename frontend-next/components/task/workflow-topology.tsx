@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { approveRoadmap } from '@/lib/api/endpoints';
+import { NodeDetailPanel } from './node-detail-panel';
 
 // ============================================================================
 // 类型定义
@@ -271,6 +272,10 @@ interface WorkflowTopologyProps {
   executionLogs?: ExecutionLog[];
   /** Human Review 完成回调 */
   onHumanReviewComplete?: () => void;
+  /** 当前选中的节点ID */
+  selectedNodeId?: string | null;
+  /** 节点选择回调 */
+  onNodeSelect?: (nodeId: string | null) => void;
 }
 
 // ============================================================================
@@ -287,6 +292,8 @@ export function WorkflowTopology({
   stagesCount = 0,
   executionLogs = [],
   onHumanReviewComplete,
+  selectedNodeId = null,
+  onNodeSelect,
 }: WorkflowTopologyProps) {
   // Human Review 状态
   const [reviewStatus, setReviewStatus] = useState<'waiting' | 'submitting' | 'approved' | 'rejected'>('waiting');
@@ -518,7 +525,11 @@ export function WorkflowTopology({
       setReviewStatus('submitting');
       setReviewError(null);
       await approveRoadmap(taskId, false, feedback);
-      setReviewStatus('rejected');
+      // 反馈提交成功后，重置为 waiting 状态，让工作流自然过渡
+      // 不显示 'rejected' 状态的确认面板
+      setReviewStatus('waiting');
+      setShowFeedback(false);
+      setFeedback('');
       onHumanReviewComplete?.();
     } catch (err: any) {
       console.error('Failed to reject roadmap:', err);
@@ -534,8 +545,9 @@ export function WorkflowTopology({
   };
 
   return (
-    <Card className="p-6">
-      <div className="space-y-6">
+    <>
+      <Card className="p-6">
+        <div className="space-y-6">
         {/* 标题栏 */}
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-serif font-semibold">Workflow Progress</h2>
@@ -655,24 +667,28 @@ export function WorkflowTopology({
                           isActive={isReviewBranchActive}
                           getNodeStatus={(idx, id) => getBranchNodeStatus('review', idx, id)}
                           getNodeIcon={getNodeIcon}
+                          selectedNodeId={selectedNodeId}
+                          onNodeSelect={onNodeSelect}
                         />
                       </div>
                     )}
 
                     {/* 主路节点 */}
                     <div className="flex flex-col items-center relative z-20">
-                      <div
+                      <button
+                        onClick={() => onNodeSelect?.(stage.id)}
                         className={cn(
-                          'relative flex items-center justify-center w-12 h-12 rounded-full border-4 transition-all duration-300',
+                          'relative flex items-center justify-center w-12 h-12 rounded-full border-4 transition-all duration-300 cursor-pointer hover:scale-105',
                           isCompleteNode && 'bg-sage-600 border-sage-600 text-white shadow-md shadow-sage-600/30',
                           isActive && 'bg-sage-500 border-sage-500 text-white shadow-lg shadow-sage-500/50 scale-110',
                           isFailedNode && 'bg-red-500 border-red-500 text-white shadow-md shadow-red-500/30',
                           isPending && !isNextUp && 'bg-white border-gray-300 text-gray-400',
-                          isNextUp && 'bg-sage-50 border-sage-400 text-sage-600 animate-pulse'
+                          isNextUp && 'bg-sage-50 border-sage-400 text-sage-600 animate-pulse',
+                          selectedNodeId === stage.id && 'ring-4 ring-sage-400/50 border-sage-500 shadow-xl shadow-sage-500/40'
                         )}
                       >
                         {getNodeIcon(nodeStatus, stage.id)}
-                      </div>
+                      </button>
 
                       <div className="mt-3 text-center space-y-1 max-w-[90px]">
                         <p
@@ -711,6 +727,8 @@ export function WorkflowTopology({
                           isActive={isValidationBranchActive}
                           getNodeStatus={(idx, id) => getBranchNodeStatus('validation', idx, id)}
                           getNodeIcon={getNodeIcon}
+                          selectedNodeId={selectedNodeId}
+                          onNodeSelect={onNodeSelect}
                         />
                       </div>
                     )}
@@ -755,8 +773,18 @@ export function WorkflowTopology({
             </div>
           </div>
         )}
-      </div>
-    </Card>
+        </div>
+      </Card>
+      
+      {/* 节点详情侧边面板 */}
+      {selectedNodeId && (
+        <NodeDetailPanel
+          selectedNodeId={selectedNodeId}
+          executionLogs={executionLogs}
+          onClose={() => onNodeSelect?.(null)}
+        />
+      )}
+    </>
   );
 }
 
@@ -770,9 +798,11 @@ interface BranchNodesProps {
   isActive: boolean;
   getNodeStatus: (index: number, nodeId: string) => NodeStatus;
   getNodeIcon: (status: NodeStatus, nodeId: string) => React.ReactNode;
+  selectedNodeId?: string | null;
+  onNodeSelect?: (nodeId: string | null) => void;
 }
 
-function BranchNodes({ branch, branchType, isActive, getNodeStatus, getNodeIcon }: BranchNodesProps) {
+function BranchNodes({ branch, branchType, isActive, getNodeStatus, getNodeIcon, selectedNodeId, onNodeSelect }: BranchNodesProps) {
   const isTopBranch = branch.position === 'top';
   
   return (
@@ -829,17 +859,19 @@ function BranchNodes({ branch, branchType, isActive, getNodeStatus, getNodeIcon 
               
               {/* 节点 */}
               <div className="flex flex-col items-center gap-1">
-                <div
+                <button
+                  onClick={() => onNodeSelect?.(node.id)}
                   className={cn(
-                    'flex items-center justify-center w-10 h-10 rounded-full border-2 transition-all duration-300',
+                    'flex items-center justify-center w-10 h-10 rounded-full border-2 transition-all duration-300 cursor-pointer hover:scale-105',
                     isCompleteNode && 'bg-sage-600 border-sage-600 text-white shadow-md shadow-sage-600/30',
                     isCurrentNode && 'bg-sage-500 border-sage-500 text-white shadow-lg shadow-sage-500/50 scale-110',
                     isFailedNode && 'bg-red-500 border-red-500 text-white shadow-md shadow-red-500/30',
-                    !isCompleteNode && !isCurrentNode && !isFailedNode && 'bg-white border-gray-300 text-gray-400'
+                    !isCompleteNode && !isCurrentNode && !isFailedNode && 'bg-white border-gray-300 text-gray-400',
+                    selectedNodeId === node.id && 'ring-3 ring-sage-400/50 border-sage-500 shadow-lg shadow-sage-500/40'
                   )}
                 >
                   {getNodeIcon(nodeStatus, node.id)}
-                </div>
+                </button>
                 <span className={cn(
                   'text-[10px] font-medium transition-colors duration-300',
                   isCurrentNode && 'text-sage-700',
@@ -899,42 +931,31 @@ function HumanReviewInlinePanel({
 }: HumanReviewInlinePanelProps) {
   if (reviewStatus === 'approved') {
     return (
-      <div className="p-4 bg-green-50 border-2 border-green-300 rounded-xl shadow-md">
-        <div className="flex items-center gap-2 text-green-700">
+      <div className="p-4 bg-accent/5 border-2 border-accent/30 rounded-xl shadow-md">
+        <div className="flex items-center gap-2 text-accent">
           <CheckCircle2 className="w-4 h-4" />
           <span className="text-sm font-medium">Approved</span>
         </div>
-        <p className="text-xs text-green-600 mt-1">
+        <p className="text-xs text-accent/80 mt-1">
           Content generation will begin shortly.
         </p>
       </div>
     );
   }
 
-  if (reviewStatus === 'rejected') {
-    return (
-      <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-xl shadow-md">
-        <div className="flex items-center gap-2 text-amber-700">
-          <AlertCircle className="w-4 h-4" />
-          <span className="text-sm font-medium">Changes Requested</span>
-        </div>
-        <p className="text-xs text-amber-600 mt-1">
-          Roadmap will be updated based on your feedback.
-        </p>
-      </div>
-    );
-  }
+  // 移除 rejected 状态的显示
+  // 用户提交反馈后，直接让工作流过渡到下一步，不显示中间确认面板
 
   return (
-    <div className="p-4 bg-blue-50 border-2 border-blue-400 rounded-xl shadow-md space-y-3">
+    <div className="p-4 bg-accent/5 border-2 border-accent rounded-xl shadow-md space-y-3">
       <div className="text-center">
-        <p className="text-xs text-blue-600 font-medium">Review Required</p>
+        <p className="text-xs text-accent/80 font-medium">Review Required</p>
         {roadmapTitle && (
-          <p className="text-sm font-semibold text-blue-900 truncate" title={roadmapTitle}>
+          <p className="text-sm font-semibold text-foreground truncate" title={roadmapTitle}>
             {roadmapTitle}
           </p>
         )}
-        <p className="text-[10px] text-blue-500">{stagesCount} stages</p>
+        <p className="text-[10px] text-accent/70">{stagesCount} stages</p>
       </div>
 
       {reviewError && (
@@ -999,7 +1020,7 @@ function HumanReviewInlinePanel({
               size="sm"
               onClick={onApprove}
               disabled={reviewStatus === 'submitting'}
-              className="h-7 text-xs bg-green-600 hover:bg-green-700"
+              className="h-7 text-xs bg-accent hover:bg-accent/90 text-accent-foreground"
             >
               {reviewStatus === 'submitting' ? (
                 <Loader2 className="w-3 h-3 mr-1 animate-spin" />

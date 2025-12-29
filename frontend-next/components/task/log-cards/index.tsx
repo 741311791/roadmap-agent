@@ -103,7 +103,7 @@ export function LogCardRouter({ log }: LogCardRouterProps) {
   return null;
 }
 
-// 导出所有卡片组件
+// 导出所有卡片组件（LogCardRouter已在函数定义处导出）
 export { IntentAnalysisCard } from './intent-analysis-card';
 export { CurriculumDesignCard } from './curriculum-design-card';
 export { ValidationResultCard } from './validation-result-card';

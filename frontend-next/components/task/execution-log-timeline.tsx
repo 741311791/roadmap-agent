@@ -131,6 +131,7 @@ function LogItem({ log }: LogItemProps) {
   const levelConfig = getLevelConfig(log.level);
   const Icon = levelConfig.icon;
   
+  // 统一使用纯文本日志格式
   return (
     <div className="flex items-start gap-3 px-4 py-2.5 hover:bg-sage-50/30 transition-colors group">
       {/* 左侧：时间 */}

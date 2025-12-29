@@ -88,7 +88,7 @@ class RoadmapTask(SQLModel, table=True):
     user_id: str = Field(index=True)
     
     # 状态跟踪
-    status: str = Field(default="pending")  # pending, processing, completed, failed
+    status: str = Field(default="pending")  # pending, processing, completed, failed, partial_failure, cancelled
     current_step: str = Field(default="init")
     
     # 输入/输出
