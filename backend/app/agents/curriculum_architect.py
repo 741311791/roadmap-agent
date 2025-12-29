@@ -532,7 +532,7 @@ class CurriculumArchitectAgent(BaseAgent):
             base_url=base_url or settings.ARCHITECT_BASE_URL,
             api_key=api_key or settings.ARCHITECT_API_KEY,
             temperature=0.7,
-            max_tokens=65536,  # 阿里云 qwen3-max 实际限制: [1, 65536]
+            max_tokens=32768, 
         )
     
     async def design(

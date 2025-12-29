@@ -242,7 +242,11 @@ export function getStepLocation(
     }
   }
 
-  // 默认返回第一个主路节点
+  // 防御性处理：未识别的步骤
+  // 如果步骤名称未在预定义列表中，尝试智能推断位置
+  console.warn(`[WorkflowTopology] Unrecognized currentStep: "${currentStep}", falling back to first node`);
+  
+  // 默认返回第一个主路节点（用于兜底，防止显示错误）
   return { stageId: 'analysis', isOnBranch: false };
 }
 

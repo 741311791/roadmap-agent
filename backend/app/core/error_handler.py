@@ -156,7 +156,7 @@ class WorkflowErrorHandler:
                 await repo.update_task_status(
                     task_id=task_id,
                     status="failed",
-                    current_step="failed",
+                    current_step=node_name,  # 修复：保留实际出错的节点名称，而不是写死为 "failed"
                     error_message=str(error)[:500],
                 )
                 await session.commit()
