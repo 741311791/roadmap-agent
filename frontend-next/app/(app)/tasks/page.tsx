@@ -89,10 +89,9 @@ export default function TasksPage() {
       // 调用智能重试 API
       await retryTask(taskId, userId);
       
-      // 成功后刷新任务列表以获取最新状态
-      setTimeout(() => {
-        fetchTasks(activeFilter);
-      }, 1000);
+      // ✅ 修复：立即刷新任务列表以获取最新状态（移除延迟）
+      // 这样用户点击进入详情页时，能看到最新的 processing 状态
+      await fetchTasks(activeFilter);
       
     } catch (error: any) {
       console.error('Failed to retry task:', error);

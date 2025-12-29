@@ -518,8 +518,20 @@ export default function TaskDetailPage() {
       taskInfo.status === 'pending' ||
       taskInfo.status === 'human_review_pending';
     
-    if (!isActiveTask) {
+    // 防御性处理：如果任务是 failed 但最近更新（10秒内），可能是刚刚 retry 的
+    // 尝试建立 WebSocket 连接以接收最新状态（retry 后状态会变为 processing）
+    const isRecentlyUpdated = taskInfo.updated_at 
+      ? (Date.now() - new Date(taskInfo.updated_at).getTime()) < 10000 
+      : false;
+    const mightBeRetrying = taskInfo.status === 'failed' && isRecentlyUpdated;
+    
+    if (!isActiveTask && !mightBeRetrying) {
       return;
+    }
+    
+    // 如果是可能正在 retry 的任务，记录日志
+    if (mightBeRetrying) {
+      console.log('[TaskDetail] Task might be retrying, establishing WebSocket to check for updates');
     }
 
     // ========================================
