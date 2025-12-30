@@ -212,15 +212,14 @@ async def retry_task(
     task_id: str,
     user_id: str = Query(..., description="用户ID"),
     force_checkpoint: bool = Query(False, description="强制使用 checkpoint 恢复"),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    智能重试失败的任务
+    智能重试失败的任务（Celery 异步）
     
     两种重试策略：
     1. **Checkpoint 恢复**（粗粒度）：
-       - 适用于工作流早期阶段失败（intent_analysis, curriculum_design, roadmap_edit等）
+       - 适用于工作流早期阶段失败（intent_analysis, curriculum_design, validation, edit等）
        - 从 LangGraph checkpoint 恢复，继续执行工作流
        - 保留所有中间状态
     
@@ -238,7 +237,6 @@ async def retry_task(
         task_id: 任务 ID
         user_id: 用户 ID
         force_checkpoint: 强制使用 checkpoint 恢复
-        background_tasks: FastAPI 后台任务
         db: 数据库会话
         
     Returns:
@@ -248,6 +246,9 @@ async def retry_task(
         HTTPException: 404 - 任务不存在
         HTTPException: 400 - 无法重试（没有 checkpoint 也没有失败内容）
     """
+    from app.tasks.workflow_resume_tasks import resume_from_checkpoint
+    from app.tasks.content_generation_tasks import retry_failed_content_task
+    
     logger.info(
         "retry_task_requested",
         task_id=task_id,
@@ -300,75 +301,54 @@ async def retry_task(
         "structure_validation", "roadmap_edit", "human_review"
     ]
     
+    # content_generation_queued 是一个特殊状态：
+    # - Celery 任务已提交，但内容生成在独立进程中进行
+    # - 从 checkpoint 恢复时，LangGraph 不会重新执行 ContentRunner
+    # - 因此不应该使用 checkpoint 恢复，而应该走内容重试逻辑
+    CONTENT_GENERATION_STEPS = ["content_generation_queued"]
+    
     is_early_stage_failure = (
         task.current_step in EARLY_STAGE_STEPS or
         (checkpoint_step and checkpoint_step in EARLY_STAGE_STEPS)
     )
     
+    is_content_generation_stage = (
+        task.current_step in CONTENT_GENERATION_STEPS or
+        (checkpoint_step and checkpoint_step in CONTENT_GENERATION_STEPS)
+    )
+    
+    # 特殊处理：cancelled 状态的任务
+    # 如果任务被手动取消，应该优先尝试从 checkpoint 恢复（如果存在）
+    # 但如果停在 content_generation_queued，不使用 checkpoint 恢复
+    is_cancelled = task.status == "cancelled"
+    
     # 策略决策
     use_checkpoint_recovery = (
-        force_checkpoint or
-        (checkpoint_exists and is_early_stage_failure)
+        checkpoint_exists and (
+            force_checkpoint or
+            (is_early_stage_failure and not is_content_generation_stage) or
+            (is_cancelled and not is_content_generation_stage)  # cancelled 但不在内容生成阶段
+        )
     )
     
     # ============================================================
-    # 策略 1：从 Checkpoint 恢复（粗粒度）
+    # 策略 1：从 Checkpoint 恢复（粗粒度）- 使用 Celery
     # ============================================================
     if use_checkpoint_recovery:
-        if not checkpoint_exists:
-            raise HTTPException(
-                status_code=400,
-                detail="无法从 checkpoint 恢复：checkpoint 不存在或已被清理"
-            )
-        
         logger.info(
             "using_checkpoint_recovery",
             task_id=task_id,
             checkpoint_step=checkpoint_step,
         )
         
-        # 使用 WorkflowExecutor 从 checkpoint 恢复
-        executor = OrchestratorFactory.create_workflow_executor()
+        # 分发 Celery 任务从 checkpoint 恢复
+        celery_task = resume_from_checkpoint.delay(task_id=task_id)
         
-        # 在后台执行恢复
-        async def _execute_checkpoint_recovery():
-            try:
-                config = {"configurable": {"thread_id": task_id}}
-                
-                # 发送恢复通知
-                from app.services.notification_service import notification_service
-                await notification_service.notify_task_recovering(
-                    task_id=task_id,
-                    roadmap_id=task.roadmap_id,
-                    current_step=checkpoint_step,
-                )
-                
-                # 从 checkpoint 恢复执行
-                final_state = await executor.graph.ainvoke(None, config=config)
-                
-                logger.info(
-                    "checkpoint_recovery_completed",
-                    task_id=task_id,
-                    final_step=final_state.get("current_step"),
-                )
-                
-            except Exception as e:
-                logger.error(
-                    "checkpoint_recovery_failed",
-                    task_id=task_id,
-                    error=str(e),
-                )
-                
-                # 标记任务失败
-                await task_repo.update_task_status(
-                    task_id=task_id,
-                    status="failed",
-                    current_step="recovery_failed",
-                    error_message=f"Checkpoint 恢复失败: {str(e)}",
-                )
-                await db.commit()
-        
-        background_tasks.add_task(_execute_checkpoint_recovery)
+        logger.info(
+            "checkpoint_recovery_dispatched",
+            task_id=task_id,
+            celery_task_id=celery_task.id,
+        )
         
         return {
             "success": True,
@@ -381,7 +361,7 @@ async def retry_task(
         }
     
     # ============================================================
-    # 策略 2：内容重试（细粒度）
+    # 策略 2：内容重试（细粒度）- 使用 Celery
     # ============================================================
     
     # 检查是否有 roadmap_id
@@ -401,7 +381,7 @@ async def retry_task(
             detail=f"路线图 {roadmap_id} 不存在"
         )
     
-    # 获取失败的内容项目
+    # 获取失败的内容项目（从 framework_data）
     failed_items = get_failed_content_items(roadmap_metadata.framework_data)
     
     # 筛选要重试的类型
@@ -413,7 +393,174 @@ async def retry_task(
             items_to_retry[content_type] = failed_items[content_type]
             total_items += len(failed_items[content_type])
     
+    # 如果 framework_data 中没有失败的项目，尝试从数据库查询
+    # 这处理了 framework_data 未更新的情况
     if total_items == 0:
+        logger.info(
+            "no_failed_items_in_framework_checking_database",
+            task_id=task_id,
+            roadmap_id=roadmap_id,
+        )
+        
+        # 获取所有概念
+        all_concept_ids = []
+        for stage in roadmap_metadata.framework_data.get("stages", []):
+            for module in stage.get("modules", []):
+                for concept in module.get("concepts", []):
+                    all_concept_ids.append(concept.get("concept_id"))
+        
+        # 查询已完成的教程
+        completed_tutorials = await roadmap_repo.get_tutorials_by_roadmap(
+            roadmap_id=roadmap_id,
+            latest_only=True,
+        )
+        completed_concept_ids = {
+            tutorial.concept_id 
+            for tutorial in completed_tutorials 
+            if tutorial.content_status == "completed"
+        }
+        
+        # 找出缺失的概念
+        missing_concept_ids = set(all_concept_ids) - completed_concept_ids
+        
+        if missing_concept_ids:
+            logger.info(
+                "found_missing_concepts_in_database",
+                task_id=task_id,
+                roadmap_id=roadmap_id,
+                missing_count=len(missing_concept_ids),
+                missing_concepts=list(missing_concept_ids)[:10],
+            )
+            
+            # 构造重试项目列表
+            items_to_retry["tutorial"] = []
+            for stage in roadmap_metadata.framework_data.get("stages", []):
+                for module in stage.get("modules", []):
+                    for concept in module.get("concepts", []):
+                        concept_id = concept.get("concept_id")
+                        if concept_id in missing_concept_ids:
+                            items_to_retry["tutorial"].append({
+                                "concept_id": concept_id,
+                                "concept_data": concept,
+                                "context": {
+                                    "roadmap_id": roadmap_id,
+                                    "stage_id": stage.get("stage_id"),
+                                    "stage_name": stage.get("name"),
+                                    "module_id": module.get("module_id"),
+                                    "module_name": module.get("name"),
+                                },
+                            })
+            
+            total_items = len(items_to_retry.get("tutorial", []))
+    
+    if total_items == 0:
+        # 特殊处理：cancelled 状态的任务，即使没有失败内容
+        if is_cancelled:
+            # 如果任务在 content_generation 阶段被取消，且已有路线图框架
+            # 应该直接重新触发内容生成，复用已审核/编辑的框架
+            # 而不是从头创建新任务（这会导致丢失用户的编辑）
+            if roadmap_metadata and roadmap_metadata.framework_data:
+                logger.info(
+                    "cancelled_task_retry_content_generation",
+                    task_id=task_id,
+                    roadmap_id=roadmap_id,
+                )
+                
+                # 提取所有概念（作为待生成内容）
+                framework_data = roadmap_metadata.framework_data
+                all_concepts = []
+                
+                for stage in framework_data.get("stages", []):
+                    for module in stage.get("modules", []):
+                        for concept in module.get("concepts", []):
+                            all_concepts.append({
+                                "concept_id": concept.get("concept_id"),
+                                "concept_data": concept,
+                            })
+                
+                if not all_concepts:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="路线图框架中没有概念，无法生成内容"
+                    )
+                
+                logger.info(
+                    "restarting_content_generation_for_cancelled_task",
+                    task_id=task_id,
+                    roadmap_id=roadmap_id,
+                    total_concepts=len(all_concepts),
+                )
+                
+                # 从原任务提取 user_request
+                user_request_dict = task.user_request or {}
+                preferences_dict = user_request_dict.get("preferences", {})
+                
+                try:
+                    preferences = LearningPreferences.model_validate(preferences_dict)
+                except Exception as e:
+                    logger.warning(
+                        "failed_to_parse_preferences_using_defaults",
+                        task_id=task_id,
+                        error=str(e),
+                    )
+                    preferences = LearningPreferences(
+                        learning_goal="Complete the roadmap",
+                        time_commitment="1-2 hours per day",
+                        difficulty_level="intermediate",
+                        preferred_languages=["en"],
+                    )
+                
+                # 更新任务状态为 processing，并确保 roadmap_id 被设置
+                await task_repo.update_task_status(
+                    task_id=task_id,
+                    status="processing",
+                    current_step="content_generation_queued",
+                    roadmap_id=roadmap_id,  # ✅ 传递 roadmap_id，确保前端能获取到
+                )
+                await db.commit()
+                
+                # 发送 WebSocket 通知，告知前端任务已重新开始
+                from app.services.notification_service import notification_service
+                await notification_service.publish_progress(
+                    task_id=task_id,
+                    step="content_generation_queued",
+                    status="processing",
+                    message=f"Restarting content generation with existing framework ({len(all_concepts)} concepts)",
+                    extra_data={
+                        "roadmap_id": roadmap_id,
+                        "total_concepts": len(all_concepts),
+                        "recovery_type": "restart_content_generation",
+                    },
+                )
+                
+                # 直接调用内容生成 Celery 任务，复用现有框架
+                from app.tasks.content_generation_tasks import generate_roadmap_content
+                
+                celery_task = generate_roadmap_content.delay(
+                    task_id=task_id,
+                    roadmap_id=roadmap_id,
+                    roadmap_framework_data=framework_data,
+                    user_preferences_data=preferences.model_dump(mode='json'),
+                )
+                
+                logger.info(
+                    "content_generation_restarted_for_cancelled_task",
+                    task_id=task_id,
+                    roadmap_id=roadmap_id,
+                    celery_task_id=celery_task.id,
+                    total_concepts=len(all_concepts),
+                )
+                
+                return {
+                    "success": True,
+                    "recovery_type": "restart_content_generation",
+                    "task_id": task_id,
+                    "roadmap_id": roadmap_id,
+                    "status": "processing",
+                    "total_concepts": len(all_concepts),
+                    "message": f"已重新开始内容生成（复用现有框架，共 {len(all_concepts)} 个概念）",
+                }
+        
         # 没有失败的内容，也没有可用的 checkpoint
         logger.warning(
             "no_retry_option_available",
@@ -437,10 +584,7 @@ async def retry_task(
         total_items=total_items,
     )
     
-    # 创建新的重试任务 ID
-    new_task_id = str(uuid.uuid4())
-    
-    # 7. 从原任务的 user_request 中提取 preferences（如果有）
+    # 从原任务的 user_request 中提取 preferences（如果有）
     user_request = task.user_request or {}
     preferences_dict = user_request.get("preferences", {})
     
@@ -461,53 +605,27 @@ async def retry_task(
             preferred_languages=["en"]
         )
     
-    # 8. 创建 RoadmapTask 数据库记录（支持用户切换 tab 返回时查询状态）
-    await task_repo.create_task(
-        task_id=new_task_id,
-        user_id=user_id,
-        user_request={
-            "type": "retry_from_task",
-            "original_task_id": task_id,
-            "roadmap_id": roadmap_id,
-            "items_to_retry": {
-                content_type: len(items) for content_type, items in items_to_retry.items()
-            },
-            "preferences": preferences.model_dump(mode='json'),
-        },
-        task_type="retry_batch",
-    )
-    await task_repo.update_task_status(
-        task_id=new_task_id,
-        status="processing",
-        current_step="retry_started",
+    # 分发 Celery 任务进行内容重试
+    celery_task = retry_failed_content_task.delay(
         roadmap_id=roadmap_id,
-    )
-    await db.commit()
-    
-    # 9. 启动后台重试任务
-    from app.services.retry_service import execute_retry_failed_task
-    background_tasks.add_task(
-        execute_retry_failed_task,
-        retry_task_id=new_task_id,
-        roadmap_id=roadmap_id,
-        items_to_retry=items_to_retry,
-        user_preferences=preferences,
+        task_id=task_id,
         user_id=user_id,
+        preferences=preferences.model_dump(mode='json'),
+        content_types=content_types,
     )
     
     logger.info(
-        "retry_task_started",
-        old_task_id=task_id,
-        new_task_id=new_task_id,
+        "content_retry_dispatched",
+        task_id=task_id,
         roadmap_id=roadmap_id,
-        total_items=total_items
+        celery_task_id=celery_task.id,
+        total_items=total_items,
     )
     
     return {
         "success": True,
         "recovery_type": "content_retry",
-        "new_task_id": new_task_id,
-        "old_task_id": task_id,
+        "task_id": task_id,
         "roadmap_id": roadmap_id,
         "status": "processing",
         "items_to_retry": {

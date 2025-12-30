@@ -26,6 +26,7 @@ import { Target, Clock, TrendingUp, Lightbulb, Loader2, ChevronLeft, ChevronRigh
 import { cn } from '@/lib/utils';
 import type { Stage, RoadmapFramework } from '@/types/generated/models';
 import Link from 'next/link';
+import { isAfterIntentAnalysis, isAfterCurriculumDesign, getStepDescription } from '@/lib/constants/workflow-steps';
 
 // ========================================
 // 优化：动态导入 RoadmapTree 组件
@@ -95,60 +96,30 @@ interface CoreDisplayAreaProps {
 /**
  * 判断是否应该显示需求分析卡片
  * 
- * 只有在 intentAnalysis 数据存在时才显示，避免在 intent_analysis 阶段未完成时显示加载状态
+ * 使用统一的常量函数判断
+ * @see lib/constants/workflow-steps.ts
  */
 function shouldShowIntentCard(currentStep: string | null, intentAnalysis?: IntentAnalysisOutput | null): boolean {
   // 必须有数据才显示
-  if (!intentAnalysis || !currentStep) return false;
+  if (!intentAnalysis) return false;
   
-  // intent_analysis 完成后的任何阶段都显示（不包括 intent_analysis 阶段本身，因为此时数据可能还未完成）
-  const stepsAfterIntent = [
-    'curriculum_design',
-    'framework_generation',
-    'structure_validation',
-    'edit_plan_analysis',           // 添加：用户审核后的修改计划分析
-    'edit_plan',                    // 添加：修改计划（已废弃但保留兼容）
-    'validation_edit_plan',         // 添加：验证失败后的修改计划分析
-    'roadmap_edit',
-    'human_review',
-    'human_review_pending',
-    'content_generation',
-    'tutorial_generation',
-    'resource_recommendation',
-    'quiz_generation',
-    'finalizing',
-    'completed',
-  ];
-  
-  return stepsAfterIntent.includes(currentStep);
+  // 使用统一的常量函数判断
+  return isAfterIntentAnalysis(currentStep);
 }
 
 /**
  * 判断是否应该显示路线图
+ * 
+ * 使用统一的常量函数判断
+ * @see lib/constants/workflow-steps.ts
  */
 function shouldShowRoadmap(currentStep: string | null, roadmapFramework?: RoadmapFramework | null): boolean {
-  if (!roadmapFramework || !roadmapFramework.stages || roadmapFramework.stages.length === 0 || !currentStep) {
+  if (!roadmapFramework || !roadmapFramework.stages || roadmapFramework.stages.length === 0) {
     return false;
   }
   
-  // curriculum_design 完成后的任何阶段都显示
-  const stepsAfterDesign = [
-    'structure_validation',
-    'edit_plan_analysis',           // 添加：用户审核后的修改计划分析
-    'edit_plan',                    // 添加：修改计划（已废弃但保留兼容）
-    'validation_edit_plan',         // 添加：验证失败后的修改计划分析
-    'roadmap_edit',
-    'human_review',
-    'human_review_pending',
-    'content_generation',
-    'tutorial_generation',
-    'resource_recommendation',
-    'quiz_generation',
-    'finalizing',
-    'completed',
-  ];
-  
-  return stepsAfterDesign.includes(currentStep);
+  // 使用统一的常量函数判断
+  return isAfterCurriculumDesign(currentStep);
 }
 
 /**
@@ -371,27 +342,14 @@ function IntentAnalysisCardInline({ data }: { data: IntentAnalysisOutput }) {
 /**
  * 获取当前步骤的等待状态文本
  * 
+ * 使用统一的常量函数获取
+ * @see lib/constants/workflow-steps.ts
+ * 
  * @param currentStep 当前工作流步骤
  * @returns 等待状态的描述文本
  */
 function getWaitingStatusText(currentStep: string): string {
-  const statusMap: Record<string, string> = {
-    'intent_analysis': 'Analyzing your learning goals...',
-    'curriculum_design': 'Designing roadmap structure...',
-    'framework_generation': 'Generating curriculum framework...',
-    'structure_validation': 'Validating roadmap structure...',
-    'edit_plan_analysis': 'Analyzing your feedback...',
-    'roadmap_edit': 'Applying modifications...',
-    'human_review': 'Awaiting your review...',
-    'human_review_pending': 'Awaiting your review...',
-    'content_generation': 'Generating learning content...',
-    'tutorial_generation': 'Generating tutorials...',
-    'resource_recommendation': 'Finding learning resources...',
-    'quiz_generation': 'Creating quiz questions...',
-    'finalizing': 'Finalizing your roadmap...',
-  };
-  
-  return statusMap[currentStep] || 'Preparing your roadmap...';
+  return getStepDescription(currentStep);
 }
 
 /**

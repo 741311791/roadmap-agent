@@ -99,33 +99,22 @@ class WorkflowConfig(BaseModel):
     工作流配置
     
     支持通过环境变量跳过特定节点：
-    - skip_structure_validation: 跳过结构验证和编辑循环
     - skip_human_review: 跳过人工审核
-    - skip_tutorial_generation: 跳过教程生成
-    - skip_resource_recommendation: 跳过资源推荐
-    - skip_quiz_generation: 跳过测验生成
+    
+    注意：其他节点（Intent、Curriculum、Validation、Content Generation）始终执行
     """
-    skip_structure_validation: bool = False
     skip_human_review: bool = False
-    skip_tutorial_generation: bool = False
-    skip_resource_recommendation: bool = False
-    skip_quiz_generation: bool = False
     
     max_framework_retry: int = 3
-    parallel_tutorial_limit: int = 5
+    # parallel_tutorial_limit 已移除：改用 Celery --concurrency 参数控制全局并发
     
     @classmethod
     def from_settings(cls) -> "WorkflowConfig":
         """从全局settings创建配置"""
         from app.config.settings import settings
         return cls(
-            skip_structure_validation=settings.SKIP_STRUCTURE_VALIDATION,
             skip_human_review=settings.SKIP_HUMAN_REVIEW,
-            skip_tutorial_generation=settings.SKIP_TUTORIAL_GENERATION,
-            skip_resource_recommendation=settings.SKIP_RESOURCE_RECOMMENDATION,
-            skip_quiz_generation=settings.SKIP_QUIZ_GENERATION,
             max_framework_retry=settings.MAX_FRAMEWORK_RETRY,
-            parallel_tutorial_limit=settings.PARALLEL_TUTORIAL_LIMIT,
         )
 
 

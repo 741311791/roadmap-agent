@@ -21,19 +21,18 @@ async def approve_roadmap(
     approved: bool,
     feedback: str | None = None,
     repo_factory: RepositoryFactory = Depends(get_repository_factory),
-    orchestrator: WorkflowExecutor = Depends(get_workflow_executor),
 ):
     """
     人工审核端点（Human-in-the-Loop）
     
-    在路线图框架生成后，允许用户审核并决定是否继续生成详细内容
+    在路线图框架生成后，允许用户审核并决定是否继续生成详细内容。
+    审核结果保存后，分发 Celery 任务恢复工作流。
     
     Args:
         task_id: 任务 ID
         approved: 是否批准（True=批准继续生成，False=拒绝需要修改）
         feedback: 用户反馈（如果未批准，说明需要修改的内容）
-        db: 数据库会话
-        orchestrator: 工作流执行器
+        repo_factory: Repository 工厂
         
     Returns:
         审核处理结果
@@ -55,7 +54,7 @@ async def approve_roadmap(
         ```json
         {
             "status": "approved",
-            "message": "审核通过，继续生成详细内容",
+            "message": "审核通过，正在恢复工作流生成详细内容",
             "task_id": "550e8400-e29b-41d4-a716-446655440000"
         }
         ```
@@ -64,23 +63,52 @@ async def approve_roadmap(
         ```json
         {
             "status": "rejected",
-            "message": "审核未通过，将根据反馈修改路线图",
+            "message": "审核未通过，正在根据反馈修改路线图",
             "task_id": "550e8400-e29b-41d4-a716-446655440000",
             "feedback": "需要增加更多实战项目"
         }
         ```
     """
-    service = RoadmapService(repo_factory, orchestrator)
+    from app.tasks.workflow_resume_tasks import resume_after_review
     
     try:
-        result = await service.handle_human_review(
+        # 验证任务状态
+        async with repo_factory.create_session() as session:
+            task_repo = repo_factory.create_task_repo(session)
+            task = await task_repo.get_task(task_id)
+            
+            if not task:
+                raise HTTPException(status_code=404, detail="任务不存在")
+            
+            if task.status != "human_review_pending":
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"任务状态不正确，当前状态：{task.status}，期望状态：human_review_pending"
+                )
+        
+        # 分发 Celery 任务恢复工作流
+        celery_task = resume_after_review.delay(
             task_id=task_id,
             approved=approved,
             feedback=feedback,
         )
-        return result
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        
+        logger.info(
+            "human_review_submitted",
+            task_id=task_id,
+            approved=approved,
+            celery_task_id=celery_task.id,
+        )
+        
+        return {
+            "status": "approved" if approved else "rejected",
+            "message": "审核通过，正在恢复工作流生成详细内容" if approved else "审核未通过，正在根据反馈修改路线图",
+            "task_id": task_id,
+            "feedback": feedback,
+        }
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error("approve_roadmap_error", task_id=task_id, error=str(e))
+        logger.error("approve_roadmap_error", task_id=task_id, error=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail="处理审核结果时发生错误")

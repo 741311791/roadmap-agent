@@ -438,9 +438,10 @@ class WorkflowBrain:
         """
         保存需求分析结果（事务性操作）
         
-        在同一事务中执行:
-        1. 保存 IntentAnalysisMetadata
-        2. 更新 task 的 roadmap_id
+        注意：由于 Repository 方法内部已经 commit，这里实际上是两个独立的事务。
+        虽然不是严格的原子操作，但对于这个场景是可接受的，因为：
+        1. save_intent_analysis_metadata 先执行，即使后续失败，数据也已保存
+        2. update_task_status 更新任务状态，标记 roadmap_id
         
         Args:
             task_id: 任务 ID
@@ -453,25 +454,31 @@ class WorkflowBrain:
             roadmap_id=unique_roadmap_id,
         )
         
+        # 第一步：保存 Intent Analysis 元数据
+        # 注意：repo 方法只调用 flush()，需要手动 commit
         async with AsyncSessionLocal() as session:
             repo = RoadmapRepository(session)
-            
-            # 同一事务中执行所有操作
             await repo.save_intent_analysis_metadata(task_id, intent_analysis)
+            await session.commit()  # ✅ 必须手动 commit 才能持久化
+        
+        # 第二步：更新任务状态和 roadmap_id
+        async with AsyncSessionLocal() as session:
+            repo = RoadmapRepository(session)
             await repo.update_task_status(
                 task_id=task_id,
                 status="processing",
                 current_step="intent_analysis",
                 roadmap_id=unique_roadmap_id,
             )
-            
             await session.commit()
-            
-            logger.info(
-                "workflow_brain_intent_analysis_saved",
-                task_id=task_id,
-                roadmap_id=unique_roadmap_id,
-            )
+        
+        logger.info(
+            "workflow_brain_intent_analysis_saved",
+            task_id=task_id,
+            roadmap_id=unique_roadmap_id,
+            intent_analysis_committed=True,
+            task_status_updated=True,
+        )
     
     async def save_roadmap_framework(
         self,
@@ -483,10 +490,7 @@ class WorkflowBrain:
         """
         保存路线图框架（事务性操作）
         
-        在同一事务中执行:
-        1. 保存 RoadmapMetadata
-        2. 更新 task 状态
-        3. 触发封面图生成（异步，不阻塞主流程）
+        注意：由于 Repository 方法内部已经 commit，这里实际上是两个独立的事务。
         
         Args:
             task_id: 任务 ID
@@ -501,24 +505,30 @@ class WorkflowBrain:
             stages_count=len(framework.stages) if framework else 0,
         )
         
+        # 第一步：保存路线图框架
+        # 注意：repo 方法只调用 flush()，需要手动 commit
         async with AsyncSessionLocal() as session:
             repo = RoadmapRepository(session)
-            
-            # 同一事务中执行所有操作
             await repo.save_roadmap_metadata(roadmap_id, user_id, framework)
+            await session.commit()  # ✅ 必须手动 commit 才能持久化
+        
+        # 第二步：更新任务状态
+        async with AsyncSessionLocal() as session:
+            repo = RoadmapRepository(session)
             await repo.update_task_status(
                 task_id=task_id,
                 status="processing",
                 current_step="curriculum_design",
             )
-            
             await session.commit()
-            
-            logger.info(
-                "workflow_brain_roadmap_framework_saved",
-                task_id=task_id,
-                roadmap_id=roadmap_id,
-            )
+        
+        logger.info(
+            "workflow_brain_roadmap_framework_saved",
+            task_id=task_id,
+            roadmap_id=roadmap_id,
+            framework_committed=True,
+            task_status_updated=True,
+        )
         
         # 异步触发封面图生成（不阻塞主流程）
         try:
@@ -738,61 +748,49 @@ class WorkflowBrain:
             failed_count=len(failed_concepts),
         )
         
-        # 分块大小：每批保存的概念数量
-        BATCH_SIZE = 10
-        
         try:
             # ============================================================
-            # Phase 1: 分批保存元数据（每批独立事务，快速释放连接）
+            # Phase 1: 按内容类型批量保存元数据（每种类型一个事务）
             # ============================================================
+            # 性能优化：将分散的小事务合并为更少的大事务
+            # - 30 个概念原来需要 9 个事务 -> 现在只需 3 个事务（减少 67%）
+            # - 批量操作已在 Repository 层实现，无需在此处分批
             
-            # 1.1 分批保存教程元数据
+            # 1.1 一次性保存所有教程（单个事务）
             if tutorial_refs:
-                tutorial_items = list(tutorial_refs.items())
-                for i in range(0, len(tutorial_items), BATCH_SIZE):
-                    batch = dict(tutorial_items[i:i + BATCH_SIZE])
-                    async with safe_session_with_retry() as session:
-                        repo = RoadmapRepository(session)
-                        await repo.save_tutorials_batch(batch, roadmap_id)
-                        await session.commit()
-                    logger.debug(
-                        "workflow_brain_tutorials_batch_saved",
-                        roadmap_id=roadmap_id,
-                        batch_start=i,
-                        batch_size=len(batch),
-                    )
+                async with safe_session_with_retry() as session:
+                    repo = RoadmapRepository(session)
+                    await repo.save_tutorials_batch(tutorial_refs, roadmap_id)
+                    await session.commit()
+                logger.debug(
+                    "workflow_brain_tutorials_saved",
+                    roadmap_id=roadmap_id,
+                    count=len(tutorial_refs),
+                )
             
-            # 1.2 分批保存资源元数据
+            # 1.2 一次性保存所有资源（单个事务）
             if resource_refs:
-                resource_items = list(resource_refs.items())
-                for i in range(0, len(resource_items), BATCH_SIZE):
-                    batch = dict(resource_items[i:i + BATCH_SIZE])
-                    async with safe_session_with_retry() as session:
-                        repo = RoadmapRepository(session)
-                        await repo.save_resources_batch(batch, roadmap_id)
-                        await session.commit()
-                    logger.debug(
-                        "workflow_brain_resources_batch_saved",
-                        roadmap_id=roadmap_id,
-                        batch_start=i,
-                        batch_size=len(batch),
-                    )
+                async with safe_session_with_retry() as session:
+                    repo = RoadmapRepository(session)
+                    await repo.save_resources_batch(resource_refs, roadmap_id)
+                    await session.commit()
+                logger.debug(
+                    "workflow_brain_resources_saved",
+                    roadmap_id=roadmap_id,
+                    count=len(resource_refs),
+                )
             
-            # 1.3 分批保存测验元数据
+            # 1.3 一次性保存所有测验（单个事务）
             if quiz_refs:
-                quiz_items = list(quiz_refs.items())
-                for i in range(0, len(quiz_items), BATCH_SIZE):
-                    batch = dict(quiz_items[i:i + BATCH_SIZE])
-                    async with safe_session_with_retry() as session:
-                        repo = RoadmapRepository(session)
-                        await repo.save_quizzes_batch(batch, roadmap_id)
-                        await session.commit()
-                    logger.debug(
-                        "workflow_brain_quizzes_batch_saved",
-                        roadmap_id=roadmap_id,
-                        batch_start=i,
-                        batch_size=len(batch),
-                    )
+                async with safe_session_with_retry() as session:
+                    repo = RoadmapRepository(session)
+                    await repo.save_quizzes_batch(quiz_refs, roadmap_id)
+                    await session.commit()
+                logger.debug(
+                    "workflow_brain_quizzes_saved",
+                    roadmap_id=roadmap_id,
+                    count=len(quiz_refs),
+                )
             
             logger.info(
                 "workflow_brain_metadata_batches_saved",

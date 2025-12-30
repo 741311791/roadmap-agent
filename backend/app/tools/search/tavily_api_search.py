@@ -1,11 +1,11 @@
 """
-Tavily API Search Tool（简化版）
+Tavily API Search Tool（使用全局速率限制器）
 
 职责：
 - 使用官方 TavilyClient（同步客户端）
 - 从数据库读取配额信息，选择最优 Key
 - 支持完整的 API 参数（search_depth, time_range, include_domains 等）
-- 速率控制
+- 全局速率控制（每分钟 100 次，基于 Redis）
 - 结果格式化
 
 不负责：
@@ -18,7 +18,6 @@ import asyncio
 import time
 import structlog
 from typing import Dict, Optional
-from collections import deque
 
 from tavily import TavilyClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,18 +25,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.tools.base import BaseTool
 from app.models.domain import SearchQuery, SearchResult
 from app.db.repositories.tavily_key_repo import TavilyKeyRepository
+from app.utils.rate_limiter import get_tavily_rate_limiter
 
 logger = structlog.get_logger()
 
 
 class TavilyAPISearchTool(BaseTool[SearchQuery, SearchResult]):
     """
-    Tavily API 搜索工具（简化版）
+    Tavily API 搜索工具（使用全局速率限制器）
     
     特性：
     - 使用官方 TavilyClient（按照官方示例调用）
     - 从数据库读取配额信息（由外部项目维护）
-    - 内置速率控制（最多3个并发，最少500ms间隔）
+    - 全局速率控制（每分钟 100 次，基于 Redis，多进程共享）
     - 支持高级搜索参数（search_depth, time_range, include_domains 等）
     """
     
@@ -56,15 +56,8 @@ class TavilyAPISearchTool(BaseTool[SearchQuery, SearchResult]):
         # TavilyClient 缓存（按 API Key 索引）
         self._clients: Dict[str, TavilyClient] = {}
         
-        # 速率控制 - 多层次限制
+        # 局部并发控制（防止单个实例过度并发）
         self._search_semaphore = asyncio.Semaphore(3)  # 最多3个并发请求
-        self._last_request_time = 0
-        self._min_request_interval = 0.5  # 最小请求间隔500ms
-        
-        # 滑动窗口速率限制器（每分钟最多100次）
-        self._request_timestamps = deque()
-        self._max_requests_per_minute = 100
-        self._rate_limit_window = 60.0
     
     def _get_client(self, api_key: str) -> TavilyClient:
         """
@@ -86,69 +79,38 @@ class TavilyAPISearchTool(BaseTool[SearchQuery, SearchResult]):
     
     async def _rate_limited_request(self, func, *args, **kwargs):
         """
-        带速率限制的请求包装器
+        带全局速率限制的请求包装器
         
         功能：
-        - 限制并发数量（最多3个）
-        - 确保请求间隔（最少500ms）
-        - 滑动窗口速率限制（每分钟最多100次）
-        - 避免触发API限流
+        - 局部并发控制（最多3个并发，防止单实例过载）
+        - 全局速率限制（每分钟100次，基于 Redis，多进程共享）
+        - 避免触发 API 限流
         - 使用 asyncio.to_thread 包装同步调用
         """
+        # 获取全局速率限制器
+        rate_limiter = await get_tavily_rate_limiter()
+        
+        # 局部并发控制
         async with self._search_semaphore:
-            now = time.time()
-            
-            # 第一层：确保最小请求间隔（500ms）
-            elapsed = now - self._last_request_time
-            if elapsed < self._min_request_interval:
-                wait_time = self._min_request_interval - elapsed
-                logger.debug(
-                    "tavily_api_rate_limit_min_interval",
-                    wait_time=wait_time,
-                    elapsed=elapsed
+            # 全局速率限制（会自动等待直到有配额）
+            try:
+                await rate_limiter.acquire(timeout=30.0)  # 最多等待 30 秒
+            except TimeoutError as e:
+                logger.error(
+                    "tavily_api_rate_limit_timeout",
+                    message=str(e),
                 )
-                await asyncio.sleep(wait_time)
-                now = time.time()
-            
-            # 第二层：滑动窗口速率限制（每分钟最多100次）
-            # 清理过期的时间戳（超过60秒的）
-            cutoff_time = now - self._rate_limit_window
-            while self._request_timestamps and self._request_timestamps[0] < cutoff_time:
-                self._request_timestamps.popleft()
-            
-            # 检查是否超过速率限制
-            if len(self._request_timestamps) >= self._max_requests_per_minute:
-                # 计算需要等待的时间（直到最旧的请求过期）
-                oldest_timestamp = self._request_timestamps[0]
-                wait_time = oldest_timestamp + self._rate_limit_window - now
-                
-                if wait_time > 0:
-                    logger.warning(
-                        "tavily_api_rate_limit_per_minute_throttle",
-                        wait_time=wait_time,
-                        requests_in_window=len(self._request_timestamps),
-                        max_requests=self._max_requests_per_minute,
-                        message=f"达到每分钟{self._max_requests_per_minute}次限制，等待 {wait_time:.2f}秒"
-                    )
-                    await asyncio.sleep(wait_time)
-                    now = time.time()
-                    
-                    # 再次清理过期的时间戳
-                    cutoff_time = now - self._rate_limit_window
-                    while self._request_timestamps and self._request_timestamps[0] < cutoff_time:
-                        self._request_timestamps.popleft()
+                raise ValueError("Tavily API rate limit exceeded, please try again later")
             
             # 使用 asyncio.to_thread 在线程中执行同步调用
             result = await asyncio.to_thread(func, *args, **kwargs)
             
-            # 记录请求时间
-            self._last_request_time = time.time()
-            self._request_timestamps.append(self._last_request_time)
-            
+            # 记录请求执行（用于监控）
+            current_count = await rate_limiter.get_current_count()
             logger.debug(
                 "tavily_api_request_executed",
-                requests_in_last_minute=len(self._request_timestamps),
-                max_requests=self._max_requests_per_minute
+                requests_in_last_minute=current_count,
+                max_requests=100,
             )
             
             return result

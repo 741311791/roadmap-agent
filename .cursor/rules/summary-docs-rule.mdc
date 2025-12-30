@@ -1,0 +1,30 @@
+---
+alwaysApply: true
+---
+小任务（不需要拆分阶段就可以完成的任务）无需生成Markdown总结文档，只需要生成总结文字即可；
+大任务（需要拆分阶段才可以完成的任务）生成Markdown格式的总结文档时均需严格遵循以下规范：
+## 1. 命名规范 (Naming Convention)
+格式要求： [当前日期]_[中文文档名称].md
+日期格式： 必须使用 8 位数字的 YYYYMMDD 形式（例如：20231027）。
+名称要求： 下划线后接准确描述文档内容的纯中文名称。
+示例： 20231027_用户登录逻辑优化.md
+
+## 2. 存储路径规则 (Storage Path Rules) 在确定保存位置前，必须先分析文档涉及的技术领域：
+仅限前端 (Frontend Only)： 涉及 UI、组件、Next.js 逻辑、样式等。
+存储路径：frontend-next/docs/
+仅限后端 (Backend Only)： 涉及 API 实现、数据库、中间件、业务逻辑等。
+存储路径：backend/docs/
+前后端均涉及 (Full Stack/Mixed)： 涉及接口定义、联调说明、架构图等。
+存储路径：doc/
+
+## 3. 最终路径示例 (Full Path Examples)
+前端文档： frontend-next/docs/20231027_页面性能优化方案.md
+后端文档： backend/docs/20231027_数据库索引调整指南.md
+全栈文档： backend/docs/20231027_支付接口联调文档.md
+
+## 4. 内容规则
+言简意赅，简明扼要，切忌长篇大论
+
+## 5. 执行检查清单 (Pre-save Checklist) 在执行保存操作前，请按以下顺序自检：
+[ ] 是否获取了当前正确的 YYYYMMDD 日期？
+[ ] 文档名是否为中文且使用了下划线连接？

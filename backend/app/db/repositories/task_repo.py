@@ -49,6 +49,18 @@ class TaskRepository(BaseRepository[RoadmapTask]):
         """
         return await self.get_by_id(task_id)
     
+    async def get_task(self, task_id: str) -> Optional[RoadmapTask]:
+        """
+        根据 task_id 查询任务（get_by_task_id 的别名，保持与 RoadmapRepository 的兼容性）
+        
+        Args:
+            task_id: 任务 ID
+            
+        Returns:
+            任务记录，如果不存在则返回 None
+        """
+        return await self.get_by_task_id(task_id)
+    
     async def get_active_task_by_roadmap(
         self,
         roadmap_id: str,
@@ -253,8 +265,8 @@ class TaskRepository(BaseRepository[RoadmapTask]):
         if execution_summary is not None:
             update_data["execution_summary"] = execution_summary
         
-        # 任务完成时设置 completed_at
-        if status in ("completed", "partial_failure", "failed"):
+        # 任务完成时设置 completed_at（包括取消状态）
+        if status in ("completed", "partial_failure", "failed", "cancelled"):
             update_data["completed_at"] = beijing_now()
         
         updated = await self.update_by_id(task_id, **update_data)

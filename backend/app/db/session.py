@@ -6,6 +6,8 @@
 - 连接健康检查（pool_pre_ping）
 - 连接回收策略防止僵死连接
 - 详细的连接池状态监控
+- Prometheus 指标暴露
+- 慢查询追踪
 """
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
@@ -18,6 +20,57 @@ import time
 from app.config.settings import settings
 
 logger = structlog.get_logger()
+
+# ============================================================
+# Prometheus 指标定义
+# ============================================================
+try:
+    from prometheus_client import Histogram, Gauge, Counter
+    
+    # 连接持有时间直方图
+    db_connection_hold_time = Histogram(
+        'db_connection_hold_seconds',
+        'Duration a connection is held before return to pool',
+        buckets=[0.1, 0.5, 1, 2, 5, 10, 30, 60, 120]
+    )
+    
+    # 连接池使用中的连接数
+    db_pool_connections_in_use = Gauge(
+        'db_pool_connections_in_use',
+        'Number of database connections currently checked out'
+    )
+    
+    # 连接池大小
+    db_pool_size_gauge = Gauge(
+        'db_pool_size',
+        'Current size of the connection pool'
+    )
+    
+    # 连接池超时次数
+    db_pool_connection_timeouts = Counter(
+        'db_pool_connection_timeouts_total',
+        'Number of connection pool timeout errors'
+    )
+    
+    # 查询执行时间直方图
+    db_query_duration = Histogram(
+        'db_query_duration_seconds',
+        'Database query execution time',
+        labelnames=['operation'],
+        buckets=[0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10]
+    )
+    
+    # 慢查询计数器
+    db_slow_query_count = Counter(
+        'db_slow_query_total',
+        'Number of slow queries detected',
+        labelnames=['operation']
+    )
+    
+    PROMETHEUS_ENABLED = True
+except ImportError:
+    logger.warning("prometheus_client_not_installed", message="Prometheus 指标将被禁用")
+    PROMETHEUS_ENABLED = False
 
 # ============================================================
 # 连接池配置（优化版 - 减少连接占用，增加超时容忍度）
@@ -83,6 +136,16 @@ def on_connect(dbapi_connection, connection_record):
 def on_checkout(dbapi_connection, connection_record, connection_proxy):
     """从连接池获取连接时触发"""
     connection_record.info["checkout_time"] = time.time()
+    
+    # Prometheus 指标：增加使用中的连接数
+    if PROMETHEUS_ENABLED:
+        db_pool_connections_in_use.inc()
+        # 更新连接池大小
+        try:
+            pool = engine.pool
+            db_pool_size_gauge.set(pool.size())
+        except Exception:
+            pass
 
 
 @event.listens_for(engine.sync_engine, "checkin")
@@ -91,11 +154,26 @@ def on_checkin(dbapi_connection, connection_record):
     checkout_time = connection_record.info.get("checkout_time")
     if checkout_time:
         duration = time.time() - checkout_time
+        
+        # Prometheus 指标：记录连接持有时间
+        if PROMETHEUS_ENABLED:
+            db_connection_hold_time.observe(duration)
+            db_pool_connections_in_use.dec()
+        
         # 只记录长时间持有连接的情况（超过 5 秒）
         if duration > 5:
             logger.warning(
                 "db_connection_long_hold",
                 duration_seconds=round(duration, 2),
+                connection_id=id(dbapi_connection),
+            )
+        
+        # 超过 10 秒的连接持有视为异常（可能导致连接池耗尽）
+        if duration > 10:
+            logger.error(
+                "db_connection_held_too_long",
+                duration_seconds=round(duration, 2),
+                threshold_seconds=10,
                 connection_id=id(dbapi_connection),
             )
 
@@ -109,6 +187,79 @@ def on_invalidate(dbapi_connection, connection_record, exception):
         exception=str(exception) if exception else None,
         exception_type=type(exception).__name__ if exception else None,
     )
+
+
+# ============================================================
+# 慢查询追踪
+# ============================================================
+
+@event.listens_for(engine.sync_engine, "before_cursor_execute")
+def before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+    """SQL 执行前记录时间"""
+    conn.info.setdefault("query_start_time", []).append(time.time())
+    conn.info.setdefault("query_statement", []).append(statement)
+
+
+@event.listens_for(engine.sync_engine, "after_cursor_execute")
+def after_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+    """SQL 执行后计算耗时并记录慢查询"""
+    try:
+        start_time = conn.info.get("query_start_time", [None]).pop() if conn.info.get("query_start_time") else None
+        statement_cached = conn.info.get("query_statement", [None]).pop() if conn.info.get("query_statement") else None
+        
+        if start_time is None:
+            return
+        
+        duration = time.time() - start_time
+        
+        # 提取操作类型（SELECT, INSERT, UPDATE, DELETE）
+        operation = "UNKNOWN"
+        if statement_cached:
+            stmt_upper = statement_cached.strip().upper()
+            if stmt_upper.startswith("SELECT"):
+                operation = "SELECT"
+            elif stmt_upper.startswith("INSERT"):
+                operation = "INSERT"
+            elif stmt_upper.startswith("UPDATE"):
+                operation = "UPDATE"
+            elif stmt_upper.startswith("DELETE"):
+                operation = "DELETE"
+            elif stmt_upper.startswith("BEGIN"):
+                operation = "BEGIN"
+            elif stmt_upper.startswith("COMMIT"):
+                operation = "COMMIT"
+            elif stmt_upper.startswith("ROLLBACK"):
+                operation = "ROLLBACK"
+        
+        # Prometheus 指标：记录查询执行时间
+        if PROMETHEUS_ENABLED:
+            db_query_duration.labels(operation=operation).observe(duration)
+        
+        # 慢查询阈值：100ms
+        SLOW_QUERY_THRESHOLD = 0.1
+        
+        if duration > SLOW_QUERY_THRESHOLD:
+            # 记录慢查询
+            logger.warning(
+                "slow_query_detected",
+                duration_ms=round(duration * 1000, 2),
+                duration_seconds=round(duration, 3),
+                operation=operation,
+                statement=statement_cached[:500] if statement_cached else "N/A",  # 只记录前 500 个字符
+                threshold_ms=round(SLOW_QUERY_THRESHOLD * 1000, 2),
+            )
+            
+            # Prometheus 指标：增加慢查询计数
+            if PROMETHEUS_ENABLED:
+                db_slow_query_count.labels(operation=operation).inc()
+    
+    except Exception as e:
+        # 追踪逻辑不应影响正常查询执行
+        logger.debug(
+            "query_tracking_error",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
 
 # 创建异步会话工厂
 AsyncSessionLocal = async_sessionmaker(
@@ -324,22 +475,28 @@ async def safe_session_with_retry(
         # SSE 流中断或并发状态冲突，静默处理
         pass
     finally:
-        # ✅ 确保连接归还到池
+        # ✅ 强制确保连接归还到池（防止泄漏）
         if session is not None:
             try:
                 # 等待所有挂起的异步操作完成
                 await asyncio.sleep(0)
                 # 关闭会话（归还连接到池）
                 await session.close()
+                logger.debug("db_session_closed_successfully")
             except IllegalStateChangeError:
-                # 并发状态冲突，静默处理
+                # 并发状态冲突，静默处理但仍尝试释放
+                logger.debug("db_session_close_illegal_state")
                 pass
             except Exception as e:
-                logger.debug(
+                # 强制记录所有关闭错误
+                logger.warning(
                     "db_session_close_error",
                     error=str(e),
                     error_type=type(e).__name__,
                 )
+            finally:
+                # ✅ 防止悬挂引用
+                session = None
 
 
 @asynccontextmanager

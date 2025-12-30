@@ -9,12 +9,11 @@
 - Celery Worker：独立进程执行内容生成（30+ 概念并发，90+ LLM 调用）
 - Redis Queue：解耦两个进程，确保可靠性
 
-工作流分离：
-1. Framework 生成阶段（FastAPI 进程）：
-   - IntentAnalysis → CurriculumDesign → Validation → Review
-   
-2. Content 生成阶段（Celery Worker 进程）：
-   - Tutorial + Resource + Quiz 并行生成
+模块拆分：
+- content_generation_tasks.py: 主任务入口和并行生成逻辑
+- concept_generator.py: 单概念内容生成
+- content_retry_tasks.py: 重试任务
+- content_utils.py: 工具函数
 """
 import asyncio
 import structlog
@@ -25,57 +24,26 @@ from app.models.domain import RoadmapFramework, LearningPreferences, Concept
 from app.db.repository_factory import RepositoryFactory
 from app.services.notification_service import notification_service
 
+# 从工具模块导入
+from app.tasks.content_utils import (
+    run_async,
+    update_framework_with_content_refs,
+)
+
+# 从概念生成器导入
+from app.tasks.concept_generator import generate_single_concept
+
 logger = structlog.get_logger()
-
-# 每个 Worker 进程的事件循环（懒加载）
-_worker_loop = None
-
-
-def get_worker_loop():
-    """
-    获取或创建 Worker 进程的事件循环
-    
-    每个 Worker 进程维护一个独立的事件循环，
-    不在任务结束时关闭，避免连接清理问题。
-    
-    Returns:
-        asyncio.AbstractEventLoop: Worker 进程的事件循环
-    """
-    global _worker_loop
-    
-    if _worker_loop is None or _worker_loop.is_closed():
-        # 创建新的事件循环
-        _worker_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(_worker_loop)
-        logger.debug("celery_worker_loop_created", loop_id=id(_worker_loop))
-    
-    return _worker_loop
-
-
-def run_async(coro):
-    """
-    在同步上下文中运行异步协程
-    
-    使用 Worker 进程级别的事件循环，避免频繁创建/销毁循环。
-    
-    Args:
-        coro: 异步协程对象
-        
-    Returns:
-        协程的返回值
-    """
-    loop = get_worker_loop()
-    return loop.run_until_complete(coro)
 
 
 @celery_app.task(
     name="app.tasks.content_generation_tasks.generate_roadmap_content",
     queue="content_generation",
     bind=True,
-    max_retries=0,  # ✅ 禁用自动重试，失败后通过手动重试解决
-    time_limit=1800,  # 30分钟硬超时
-    soft_time_limit=1500,  # 25分钟软超时
-    acks_late=True,  # 任务完成后才确认，确保不丢失任务
+    max_retries=0,
+    time_limit=1800,
+    soft_time_limit=1500,
+    acks_late=True,
 )
 def generate_roadmap_content(
     self,
@@ -90,36 +58,21 @@ def generate_roadmap_content(
     该任务在独立的 Celery Worker 进程中执行，不会阻塞 FastAPI 主进程。
     
     执行流程：
-    1. 反序列化输入数据（RoadmapFramework、LearningPreferences）
-    2. 从数据库查询已完成的 Concept（支持断点续传）
+    1. 反序列化输入数据
+    2. 查询已完成的 Concept（断点续传）
     3. 过滤出未完成的 Concept
-    4. 并行生成教程、资源、测验（只生成未完成的）
-    5. 批量保存结果到数据库
-    6. 更新 roadmap_metadata 的 framework_data
-    7. 通过 WebSocket 推送进度通知
-    
-    ✨ 断点续传：
-    - Worker 重启后自动跳过已完成的 Concept
-    - 只生成未完成的内容，避免重复调用 LLM
-    - 节省成本和时间
-    
-    ❌ 不再自动重试：
-    - 任务失败后不会自动重试
-    - 需要通过 API 手动触发重试（`/retry-failed` 或单个 Concept 重试）
-    - 避免重复失败浪费资源
+    4. 并行生成内容
+    5. 保存结果到数据库
+    6. 推送进度通知
     
     Args:
-        self: Celery 任务实例（bind=True）
         task_id: 追踪 ID
         roadmap_id: 路线图 ID
-        roadmap_framework_data: 路线图框架数据（JSON 序列化）
-        user_preferences_data: 用户偏好数据（JSON 序列化）
+        roadmap_framework_data: 路线图框架数据
+        user_preferences_data: 用户偏好数据
         
     Returns:
         生成结果摘要
-        
-    Raises:
-        Exception: 内容生成失败（不会自动重试）
     """
     logger.info(
         "celery_content_generation_task_started",
@@ -129,7 +82,6 @@ def generate_roadmap_content(
     )
     
     try:
-        # 运行异步生成逻辑
         result = run_async(
             _async_generate_content(
                 task_id=task_id,
@@ -158,7 +110,7 @@ def generate_roadmap_content(
             error_type=type(e).__name__,
         )
         
-        # ✅ 更新任务状态为 failed（确保 Worker 重启后状态正确）
+        # 更新任务状态为 failed
         try:
             from app.db.session import safe_session_with_retry
             from app.db.repositories.task_repo import TaskRepository
@@ -175,21 +127,9 @@ def generate_roadmap_content(
                     await session.commit()
             
             run_async(_update_failed_status())
-            
-            logger.info(
-                "task_status_updated_to_failed",
-                task_id=task_id,
-                roadmap_id=roadmap_id,
-            )
         except Exception as update_error:
-            logger.error(
-                "failed_to_update_task_status",
-                task_id=task_id,
-                error=str(update_error),
-            )
+            logger.error("failed_to_update_task_status", task_id=task_id, error=str(update_error))
         
-        # ❌ 不再自动重试，直接抛出异常
-        # 用户可以通过 API 手动触发重试
         raise
 
 
@@ -202,34 +142,18 @@ async def _async_generate_content(
     """
     内容生成核心逻辑（异步）
     
-    该函数执行实际的内容生成工作，包括：
-    1. 反序列化数据
-    2. 创建必要的服务和工具
-    3. 并行生成内容
-    4. 保存结果
-    
     Args:
         task_id: 任务 ID
         roadmap_id: 路线图 ID
-        roadmap_framework_data: 路线图框架数据（字典）
-        user_preferences_data: 用户偏好数据（字典）
+        roadmap_framework_data: 路线图框架数据
+        user_preferences_data: 用户偏好数据
         
     Returns:
         生成结果摘要
     """
     from app.agents.factory import get_agent_factory
     from app.core.orchestrator.base import WorkflowConfig
-    from app.core.orchestrator.workflow_brain import WorkflowBrain
-    from app.core.orchestrator.state_manager import StateManager
     from app.services.execution_logger import execution_logger
-    from app.models.domain import (
-        TutorialGenerationInput,
-        ResourceRecommendationInput,
-        QuizGenerationInput,
-        TutorialGenerationOutput,
-        ResourceRecommendationOutput,
-        QuizGenerationOutput,
-    )
     
     logger.info(
         "async_content_generation_started",
@@ -258,15 +182,13 @@ async def _async_generate_content(
         total_concepts=total_concepts,
     )
     
-    # 3. ✅ 断点续传：查询数据库中已完成的 Concept
+    # 3. 断点续传：查询已完成的 Concept
     from app.db.session import safe_session_with_retry
     from app.db.repositories.roadmap_repo import RoadmapRepository
     
     completed_concept_ids = set()
     async with safe_session_with_retry() as session:
         repo = RoadmapRepository(session)
-        
-        # 查询所有已完成的教程（以教程完成为准，因为它是核心内容）
         completed_tutorials = await repo.get_tutorials_by_roadmap(
             roadmap_id=roadmap_id,
             latest_only=True,
@@ -277,7 +199,7 @@ async def _async_generate_content(
             if tutorial.content_status == "completed"
         }
     
-    # 4. ✅ 过滤：只生成未完成的 Concept
+    # 4. 过滤：只生成未完成的 Concept
     pending_concepts = [
         concept 
         for concept in all_concepts 
@@ -292,18 +214,12 @@ async def _async_generate_content(
         total_concepts=len(all_concepts),
         completed_concepts=len(completed_concept_ids),
         pending_concepts=len(pending_concepts),
-        skipped_count=skipped_count,
     )
     
     # 如果所有概念都已完成，直接返回
     if not pending_concepts:
-        logger.info(
-            "all_concepts_already_completed",
-            task_id=task_id,
-            roadmap_id=roadmap_id,
-        )
+        logger.info("all_concepts_already_completed", task_id=task_id, roadmap_id=roadmap_id)
         
-        # 发布完成通知
         await notification_service.publish_completed(
             task_id=task_id,
             roadmap_id=roadmap_id,
@@ -322,23 +238,22 @@ async def _async_generate_content(
     
     # 5. 创建服务和工具
     repo_factory = RepositoryFactory()
-    agent_factory = get_agent_factory()  # ✅ 使用全局单例，自动注入 settings
+    agent_factory = get_agent_factory()
     config = WorkflowConfig()
     
-    # 6. 并行生成内容（只生成未完成的 Concept）
+    # 6. 并行生成内容
     tutorial_refs, resource_refs, quiz_refs, failed_concepts = await _generate_content_parallel(
         task_id=task_id,
         roadmap_id=roadmap_id,
-        concepts=pending_concepts,  # ✅ 使用过滤后的列表
+        concepts=pending_concepts,
         concept_map=concept_map,
         preferences=preferences,
         agent_factory=agent_factory,
-        config=config,
     )
     
-    # 7. 检查失败率（基于本次需要生成的 Concept 数量）
+    # 7. 检查失败率
     failed_count = len(failed_concepts)
-    attempted_concepts = len(pending_concepts)  # ✅ 本次尝试生成的数量
+    attempted_concepts = len(pending_concepts)
     success_count = attempted_concepts - failed_count
     failure_rate = failed_count / attempted_concepts if attempted_concepts > 0 else 0
     
@@ -350,7 +265,6 @@ async def _async_generate_content(
             f"(failure rate: {failure_rate:.1%}). Threshold: {FAILURE_THRESHOLD:.1%}"
         )
         
-        # 记录致命错误
         await execution_logger.error(
             task_id=task_id,
             category="workflow",
@@ -360,12 +274,9 @@ async def _async_generate_content(
             details={
                 "log_type": "content_generation_aborted",
                 "total_concepts": len(all_concepts),
-                "skipped_concepts": skipped_count,
                 "attempted_concepts": attempted_concepts,
                 "failed_concepts": failed_count,
-                "success_concepts": success_count,
                 "failure_rate": failure_rate,
-                "threshold": FAILURE_THRESHOLD,
                 "failed_concept_ids": failed_concepts,
             },
         )
@@ -395,12 +306,7 @@ async def _async_generate_content(
         "async_content_generation_completed",
         task_id=task_id,
         roadmap_id=roadmap_id,
-        total_concepts=len(all_concepts),
-        skipped_count=skipped_count,
-        attempted_count=attempted_concepts,
         tutorial_count=len(tutorial_refs),
-        resource_count=len(resource_refs),
-        quiz_count=len(quiz_refs),
         failed_count=failed_count,
     )
     
@@ -422,103 +328,55 @@ async def _generate_content_parallel(
     concept_map: dict[str, Concept],
     preferences: LearningPreferences,
     agent_factory: Any,
-    config: Any,
-) -> tuple[
-    dict[str, Any],
-    dict[str, Any],
-    dict[str, Any],
-    list[str],
-]:
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], list[str]]:
     """
-    并行生成教程、资源、测验（增量写入数据库优化版）
+    并行生成所有概念的内容
     
-    优化策略：
-    - 每完成 3 个 Concept 就写入数据库一次
-    - 前端可以更及时地看到进度更新
-    - 最后不满 3 个的批次也会被写入
+    每个概念独立生成（Tutorial → Resource → Quiz），完成后立即写入数据库。
     
     Args:
         task_id: 任务 ID
         roadmap_id: 路线图 ID
         concepts: 概念列表
-        concept_map: 概念ID到概念对象的映射
-        preferences: 用户学习偏好
+        concept_map: 概念映射
+        preferences: 用户偏好
         agent_factory: Agent 工厂
-        config: 工作流配置
         
     Returns:
         (tutorial_refs, resource_refs, quiz_refs, failed_concepts)
     """
-    from app.models.domain import (
-        TutorialGenerationInput,
-        ResourceRecommendationInput,
-        QuizGenerationInput,
-    )
-    from app.db.session import safe_session_with_retry
-    from app.db.repositories.roadmap_repo import RoadmapRepository
-    
-    # 创建信号量（控制并发数）
-    max_concurrent = config.parallel_tutorial_limit
-    semaphore = asyncio.Semaphore(max_concurrent)
-    
-    # 创建共享数据结构（线程安全）
     total_concepts = len(concepts)
     progress_counter = {"current": 0}
+    progress_lock = asyncio.Lock()
     
-    # 增量写入配置
-    INCREMENTAL_BATCH_SIZE = 3  # 每完成 3 个就写数据库
-    completed_buffer: dict[str, tuple[Any, Any, Any]] = {}  # 待写入缓冲区
-    buffer_lock = asyncio.Lock()  # 保护缓冲区的锁
-    
-    # 最终结果累积
     tutorial_refs: dict[str, Any] = {}
     resource_refs: dict[str, Any] = {}
     quiz_refs: dict[str, Any] = {}
     failed_concepts: list[str] = []
+    results_lock = asyncio.Lock()
     
     # 并发执行所有概念的内容生成
     tasks = [
-        _generate_single_concept_with_incremental_save(
+        generate_single_concept(
             task_id=task_id,
             roadmap_id=roadmap_id,
             concept=concept,
             concept_map=concept_map,
             preferences=preferences,
             agent_factory=agent_factory,
-            semaphore=semaphore,
             total_concepts=total_concepts,
             progress_counter=progress_counter,
-            completed_buffer=completed_buffer,
-            buffer_lock=buffer_lock,
-            batch_size=INCREMENTAL_BATCH_SIZE,
+            progress_lock=progress_lock,
             tutorial_refs=tutorial_refs,
             resource_refs=resource_refs,
             quiz_refs=quiz_refs,
             failed_concepts=failed_concepts,
+            results_lock=results_lock,
         )
         for concept in concepts
     ]
     
-    await asyncio.gather(*tasks, return_exceptions=False)
-    
-    # 处理最后不满 3 个的剩余批次
-    async with buffer_lock:
-        if completed_buffer:
-            logger.info(
-                "incremental_save_final_batch",
-                task_id=task_id,
-                roadmap_id=roadmap_id,
-                remaining_count=len(completed_buffer),
-            )
-            await _save_incremental_batch(
-                task_id=task_id,
-                roadmap_id=roadmap_id,
-                completed_buffer=completed_buffer,
-                tutorial_refs=tutorial_refs,
-                resource_refs=resource_refs,
-                quiz_refs=quiz_refs,
-            )
-            completed_buffer.clear()
+    await asyncio.gather(*tasks, return_exceptions=True)
     
     logger.info(
         "content_generation_parallel_completed",
@@ -533,363 +391,6 @@ async def _generate_content_parallel(
     return tutorial_refs, resource_refs, quiz_refs, failed_concepts
 
 
-async def _save_incremental_batch(
-    task_id: str,
-    roadmap_id: str,
-    completed_buffer: dict[str, tuple[Any, Any, Any]],
-    tutorial_refs: dict[str, Any],
-    resource_refs: dict[str, Any],
-    quiz_refs: dict[str, Any],
-):
-    """
-    增量保存一批已完成的 Concept 内容到数据库（优化版 - 单会话）
-    
-    ⚠️ 性能优化：
-    合并为单个数据库事务，减少连接池压力。
-    原先使用两个独立会话，在高并发时容易耗尽连接池。
-    
-    每完成 3 个 Concept 就调用一次，实现增量写入，
-    让前端可以更及时地看到状态更新。
-    
-    Args:
-        task_id: 任务 ID
-        roadmap_id: 路线图 ID
-        completed_buffer: 待写入的 Concept 缓冲区 {concept_id: (tutorial, resource, quiz)}
-        tutorial_refs: 教程引用累积字典
-        resource_refs: 资源引用累积字典
-        quiz_refs: 测验引用累积字典
-    """
-    from app.db.session import safe_session_with_retry
-    from app.db.repositories.roadmap_repo import RoadmapRepository
-    from app.models.domain import RoadmapFramework
-    
-    if not completed_buffer:
-        return
-    
-    # 提取本批次的内容
-    batch_tutorial_refs: dict[str, Any] = {}
-    batch_resource_refs: dict[str, Any] = {}
-    batch_quiz_refs: dict[str, Any] = {}
-    
-    for concept_id, (tutorial, resource, quiz) in completed_buffer.items():
-        if tutorial:
-            batch_tutorial_refs[concept_id] = tutorial
-        if resource:
-            batch_resource_refs[concept_id] = resource
-        if quiz:
-            batch_quiz_refs[concept_id] = quiz
-    
-    logger.info(
-        "incremental_batch_save_started",
-        task_id=task_id,
-        roadmap_id=roadmap_id,
-        batch_size=len(completed_buffer),
-        tutorial_count=len(batch_tutorial_refs),
-        resource_count=len(batch_resource_refs),
-        quiz_count=len(batch_quiz_refs),
-    )
-    
-    # ✅ 优化：合并为单个数据库事务，减少连接占用
-    async with safe_session_with_retry() as session:
-        repo = RoadmapRepository(session)
-        
-        # Step 1: 保存内容元数据
-        if batch_tutorial_refs:
-            await repo.save_tutorials_batch(batch_tutorial_refs, roadmap_id)
-        
-        if batch_resource_refs:
-            await repo.save_resources_batch(batch_resource_refs, roadmap_id)
-        
-        if batch_quiz_refs:
-            await repo.save_quizzes_batch(batch_quiz_refs, roadmap_id)
-        
-        # Step 2: 更新 framework_data 中的状态（在同一事务中）
-        roadmap_metadata = await repo.get_roadmap_metadata(roadmap_id)
-        
-        if roadmap_metadata and roadmap_metadata.framework_data:
-            # 使用累积字典更新 framework（包含所有已完成的 Concept 状态）
-            updated_framework = _update_framework_with_content_refs(
-                framework_data=roadmap_metadata.framework_data,
-                tutorial_refs=tutorial_refs,  # 累积字典，包含所有已完成的
-                resource_refs=resource_refs,
-                quiz_refs=quiz_refs,
-                failed_concepts=[],  # 增量更新时不处理失败（失败会在最后统一处理）
-            )
-            
-            framework_obj = RoadmapFramework.model_validate(updated_framework)
-            await repo.save_roadmap_metadata(
-                roadmap_id=roadmap_id,
-                user_id=roadmap_metadata.user_id,
-                framework=framework_obj,
-            )
-        
-        # Step 3: 一次性提交所有更改
-        await session.commit()
-    
-    logger.info(
-        "incremental_batch_save_completed",
-        task_id=task_id,
-        roadmap_id=roadmap_id,
-        batch_size=len(completed_buffer),
-    )
-
-
-async def _generate_single_concept_with_incremental_save(
-    task_id: str,
-    roadmap_id: str,
-    concept: Concept,
-    concept_map: dict[str, Concept],
-    preferences: LearningPreferences,
-    agent_factory: Any,
-    semaphore: asyncio.Semaphore,
-    total_concepts: int,
-    progress_counter: dict[str, int],
-    completed_buffer: dict[str, tuple[Any, Any, Any]],
-    buffer_lock: asyncio.Lock,
-    batch_size: int,
-    tutorial_refs: dict[str, Any],
-    resource_refs: dict[str, Any],
-    quiz_refs: dict[str, Any],
-    failed_concepts: list[str],
-) -> None:
-    """
-    为单个概念生成教程、资源、测验（增量保存版）
-    
-    每完成一个 Concept，就添加到缓冲区。
-    当缓冲区达到 batch_size（3个）时，触发数据库写入。
-    
-    Args:
-        task_id: 任务 ID
-        roadmap_id: 路线图 ID
-        concept: 概念
-        concept_map: 概念ID到概念对象的映射
-        preferences: 用户学习偏好
-        agent_factory: Agent 工厂
-        semaphore: 信号量（控制并发）
-        total_concepts: 总概念数
-        progress_counter: 共享进度计数器
-        completed_buffer: 已完成概念缓冲区（待写入）
-        buffer_lock: 缓冲区保护锁
-        batch_size: 批次大小（每达到该数量就写数据库）
-        tutorial_refs: 教程引用累积字典
-        resource_refs: 资源引用累积字典
-        quiz_refs: 测验引用累积字典
-        failed_concepts: 失败概念累积列表
-    """
-    from app.models.domain import (
-        TutorialGenerationInput,
-        ResourceRecommendationInput,
-        QuizGenerationInput,
-    )
-    from app.services.execution_logger import execution_logger, LogCategory
-    
-    async with semaphore:
-        # 主动让出事件循环时间片
-        await asyncio.sleep(0)
-        
-        concept_id = concept.concept_id
-        concept_name = concept.name
-        
-        # 更新进度计数器
-        progress_counter["current"] += 1
-        current_progress = progress_counter["current"]
-        
-        # 每处理 5 个概念后，额外让出
-        if current_progress % 5 == 0:
-            await asyncio.sleep(0.05)
-        
-        # 发送 WebSocket 事件：概念开始生成
-        await notification_service.publish_concept_start(
-            task_id=task_id,
-            concept_id=concept_id,
-            concept_name=concept_name,
-            current=current_progress,
-            total=total_concepts,
-            content_type="tutorial",
-        )
-        
-        try:
-            # 创建三个 Agent
-            tutorial_agent = agent_factory.create_tutorial_generator()
-            resource_agent = agent_factory.create_resource_recommender()
-            quiz_agent = agent_factory.create_quiz_generator()
-            
-            # 构建前置概念详情列表
-            prerequisite_details = []
-            if concept.prerequisites:
-                from urllib.parse import quote
-                for prereq_id in concept.prerequisites:
-                    prereq_concept = concept_map.get(prereq_id)
-                    if prereq_concept:
-                        prereq_url = f"/roadmap/{roadmap_id}?concept={quote(prereq_id)}"
-                        prerequisite_details.append({
-                            "concept_id": prereq_id,
-                            "name": prereq_concept.name,
-                            "url": prereq_url,
-                        })
-            
-            # 准备输入
-            tutorial_input = TutorialGenerationInput(
-                concept=concept,
-                user_preferences=preferences,
-                context={
-                    "roadmap_id": roadmap_id,
-                    "prerequisite_details": prerequisite_details,
-                },
-            )
-            resource_input = ResourceRecommendationInput(
-                concept=concept,
-                user_preferences=preferences,
-                context={
-                    "roadmap_id": roadmap_id,
-                },
-            )
-            quiz_input = QuizGenerationInput(
-                concept=concept,
-                user_preferences=preferences,
-                context={
-                    "roadmap_id": roadmap_id,
-                },
-            )
-            
-            # 记录开始生成日志
-            await execution_logger.info(
-                task_id=task_id,
-                category=LogCategory.WORKFLOW,
-                step="content_generation",
-                roadmap_id=roadmap_id,
-                concept_id=concept_id,
-                message=f"🚀 Generating content for concept: {concept_name}",
-                details={
-                    "log_type": "content_generation_start",
-                    "concept": {
-                        "id": concept_id,
-                        "name": concept_name,
-                        "difficulty": concept.difficulty,
-                    },
-                },
-            )
-            
-            # 并行执行三个 Agent
-            tutorial, resource, quiz = await asyncio.gather(
-                tutorial_agent.execute(tutorial_input),
-                resource_agent.execute(resource_input),
-                quiz_agent.execute(quiz_input),
-                return_exceptions=False,
-            )
-            
-            # 记录概念完成日志
-            await execution_logger.info(
-                task_id=task_id,
-                category=LogCategory.WORKFLOW,
-                step="content_generation",
-                roadmap_id=roadmap_id,
-                concept_id=concept_id,
-                message=f"🎉 All content generated for concept: {concept_name}",
-                details={
-                    "log_type": "concept_completed",
-                    "concept_id": concept_id,
-                    "concept_name": concept_name,
-                    "completed_content": [
-                        "tutorial" if tutorial else None,
-                        "resources" if resource else None,
-                        "quiz" if quiz else None,
-                    ],
-                },
-            )
-            
-            # 发送 WebSocket 事件：概念生成完成
-            await notification_service.publish_concept_complete(
-                task_id=task_id,
-                concept_id=concept_id,
-                concept_name=concept_name,
-                data={
-                    "tutorial_id": tutorial.tutorial_id if tutorial and hasattr(tutorial, 'tutorial_id') else None,
-                    "resources_count": len(resource.resources) if resource and hasattr(resource, 'resources') else 0,
-                    "quiz_questions": len(quiz.questions) if quiz and hasattr(quiz, 'questions') else 0,
-                },
-                content_type="tutorial",
-            )
-            
-            # ✅ 增量保存逻辑：添加到缓冲区，达到批次大小时触发写入
-            async with buffer_lock:
-                # 1. 添加到缓冲区
-                completed_buffer[concept_id] = (tutorial, resource, quiz)
-                
-                # 2. 累积到最终结果
-                if tutorial:
-                    tutorial_refs[concept_id] = tutorial
-                if resource:
-                    resource_refs[concept_id] = resource
-                if quiz:
-                    quiz_refs[concept_id] = quiz
-                
-                # 3. 检查是否达到批次大小
-                if len(completed_buffer) >= batch_size:
-                    logger.info(
-                        "incremental_batch_trigger",
-                        task_id=task_id,
-                        roadmap_id=roadmap_id,
-                        buffer_size=len(completed_buffer),
-                        batch_size=batch_size,
-                    )
-                    
-                    # 触发增量保存
-                    await _save_incremental_batch(
-                        task_id=task_id,
-                        roadmap_id=roadmap_id,
-                        completed_buffer=completed_buffer,
-                        tutorial_refs=tutorial_refs,
-                        resource_refs=resource_refs,
-                        quiz_refs=quiz_refs,
-                    )
-                    
-                    # 清空缓冲区（已写入数据库）
-                    completed_buffer.clear()
-            
-        except Exception as e:
-            logger.error(
-                "content_generation_concept_failed_exception",
-                task_id=task_id,
-                concept_id=concept_id,
-                error=str(e),
-            )
-            
-            # 记录失败日志
-            await execution_logger.error(
-                task_id=task_id,
-                category=LogCategory.AGENT,
-                step="content_generation",
-                roadmap_id=roadmap_id,
-                concept_id=concept_id,
-                message=f"❌ Content generation failed for concept: {concept_name}",
-                details={
-                    "log_type": "content_generation_failed",
-                    "concept_id": concept_id,
-                    "concept_name": concept_name,
-                    "error": str(e)[:500],
-                    "error_type": type(e).__name__,
-                },
-            )
-            
-            # 发送 WebSocket 事件：概念生成失败
-            await notification_service.publish_concept_failed(
-                task_id=task_id,
-                concept_id=concept_id,
-                concept_name=concept_name,
-                error=str(e)[:200],
-                content_type="tutorial",
-            )
-            
-            # ✅ 添加到失败列表
-            async with buffer_lock:
-                if concept_id not in failed_concepts:
-                    failed_concepts.append(concept_id)
-            
-            # 不要 raise，让其他 Concept 继续执行
-            # raise
-
-
 async def _save_content_results(
     task_id: str,
     roadmap_id: str,
@@ -900,7 +401,12 @@ async def _save_content_results(
     repo_factory: Any,
 ):
     """
-    保存内容生成结果（分批事务操作）
+    保存内容生成结果（分批事务操作，带容错机制）
+    
+    改进：
+    - 捕获数据库错误，将失败的批次记录到 failed_concepts
+    - 即使部分批次失败，也保存成功的部分
+    - 确保 framework_data 和 task 状态始终被更新
     
     Args:
         task_id: 任务 ID
@@ -908,903 +414,344 @@ async def _save_content_results(
         tutorial_refs: 教程引用字典
         resource_refs: 资源引用字典
         quiz_refs: 测验引用字典
-        failed_concepts: 失败的概念 ID 列表
+        failed_concepts: 失败的概念 ID 列表（会被修改）
         repo_factory: Repository 工厂
     """
     from app.db.session import safe_session_with_retry
     from app.db.repositories.roadmap_repo import RoadmapRepository
-    from app.models.domain import RoadmapFramework
+    from sqlalchemy.exc import IntegrityError, DBAPIError
     
     logger.info(
         "save_content_results_started",
         task_id=task_id,
         roadmap_id=roadmap_id,
         tutorial_count=len(tutorial_refs),
-        resource_count=len(resource_refs),
-        quiz_count=len(quiz_refs),
         failed_count=len(failed_concepts),
     )
     
     BATCH_SIZE = 3
     
-    # Phase 1: 分批保存元数据
-    # 1.1 分批保存教程元数据
+    # 用于跟踪保存失败的 concept_id
+    save_failed_concepts = []
+    
+    # Phase 1: 分批保存元数据（带容错机制）
     if tutorial_refs:
         tutorial_items = list(tutorial_refs.items())
         for i in range(0, len(tutorial_items), BATCH_SIZE):
             batch = dict(tutorial_items[i:i + BATCH_SIZE])
-            async with safe_session_with_retry() as session:
-                repo = RoadmapRepository(session)
-                await repo.save_tutorials_batch(batch, roadmap_id)
-                await session.commit()
+            try:
+                async with safe_session_with_retry() as session:
+                    repo = RoadmapRepository(session)
+                    await repo.save_tutorials_batch(batch, roadmap_id)
+                    await session.commit()
+            except (IntegrityError, DBAPIError) as e:
+                logger.error(
+                    "tutorial_batch_save_failed",
+                    task_id=task_id,
+                    roadmap_id=roadmap_id,
+                    batch_index=i // BATCH_SIZE,
+                    concept_ids=list(batch.keys()),
+                    error=str(e)[:500],
+                    error_type=type(e).__name__,
+                )
+                # 将失败的概念添加到 failed_concepts
+                for concept_id in batch.keys():
+                    if concept_id not in failed_concepts and concept_id not in save_failed_concepts:
+                        save_failed_concepts.append(concept_id)
+                        failed_concepts.append(concept_id)
+                # 继续处理下一批
+                continue
     
-    # 1.2 分批保存资源元数据
     if resource_refs:
         resource_items = list(resource_refs.items())
         for i in range(0, len(resource_items), BATCH_SIZE):
             batch = dict(resource_items[i:i + BATCH_SIZE])
-            async with safe_session_with_retry() as session:
-                repo = RoadmapRepository(session)
-                await repo.save_resources_batch(batch, roadmap_id)
-                await session.commit()
+            try:
+                async with safe_session_with_retry() as session:
+                    repo = RoadmapRepository(session)
+                    await repo.save_resources_batch(batch, roadmap_id)
+                    await session.commit()
+            except (IntegrityError, DBAPIError) as e:
+                logger.error(
+                    "resource_batch_save_failed",
+                    task_id=task_id,
+                    roadmap_id=roadmap_id,
+                    batch_index=i // BATCH_SIZE,
+                    concept_ids=list(batch.keys()),
+                    error=str(e)[:500],
+                    error_type=type(e).__name__,
+                )
+                # 将失败的概念添加到 failed_concepts
+                for concept_id in batch.keys():
+                    if concept_id not in failed_concepts and concept_id not in save_failed_concepts:
+                        save_failed_concepts.append(concept_id)
+                        failed_concepts.append(concept_id)
+                continue
     
-    # 1.3 分批保存测验元数据
     if quiz_refs:
         quiz_items = list(quiz_refs.items())
         for i in range(0, len(quiz_items), BATCH_SIZE):
             batch = dict(quiz_items[i:i + BATCH_SIZE])
-            async with safe_session_with_retry() as session:
-                repo = RoadmapRepository(session)
-                await repo.save_quizzes_batch(batch, roadmap_id)
-                await session.commit()
+            try:
+                async with safe_session_with_retry() as session:
+                    repo = RoadmapRepository(session)
+                    await repo.save_quizzes_batch(batch, roadmap_id)
+                    await session.commit()
+            except (IntegrityError, DBAPIError) as e:
+                logger.error(
+                    "quiz_batch_save_failed",
+                    task_id=task_id,
+                    roadmap_id=roadmap_id,
+                    batch_index=i // BATCH_SIZE,
+                    concept_ids=list(batch.keys()),
+                    error=str(e)[:500],
+                    error_type=type(e).__name__,
+                )
+                # 将失败的概念添加到 failed_concepts
+                for concept_id in batch.keys():
+                    if concept_id not in failed_concepts and concept_id not in save_failed_concepts:
+                        save_failed_concepts.append(concept_id)
+                        failed_concepts.append(concept_id)
+                continue
     
-    # Phase 2: 更新 framework_data
-    async with safe_session_with_retry() as session:
-        repo = RoadmapRepository(session)
-        roadmap_metadata = await repo.get_roadmap_metadata(roadmap_id)
-        
-        if roadmap_metadata and roadmap_metadata.framework_data:
-            # 更新 framework 中的 Concept 状态
-            updated_framework = _update_framework_with_content_refs(
-                framework_data=roadmap_metadata.framework_data,
-                tutorial_refs=tutorial_refs,
-                resource_refs=resource_refs,
-                quiz_refs=quiz_refs,
-                failed_concepts=failed_concepts,
-            )
+    # 记录保存失败的统计
+    if save_failed_concepts:
+        logger.warning(
+            "some_concepts_failed_to_save",
+            task_id=task_id,
+            roadmap_id=roadmap_id,
+            save_failed_count=len(save_failed_concepts),
+            save_failed_concepts=save_failed_concepts[:10],  # 只记录前 10 个
+        )
+    
+    # Phase 2: 更新 framework_data（必须执行，即使 Phase 1 有失败）
+    try:
+        async with safe_session_with_retry() as session:
+            repo = RoadmapRepository(session)
+            roadmap_metadata = await repo.get_roadmap_metadata(roadmap_id)
             
-            framework_obj = RoadmapFramework.model_validate(updated_framework)
-            await repo.save_roadmap_metadata(
-                roadmap_id=roadmap_id,
-                user_id=roadmap_metadata.user_id,
-                framework=framework_obj,
-            )
-            await session.commit()
+            if roadmap_metadata and roadmap_metadata.framework_data:
+                updated_framework = update_framework_with_content_refs(
+                    framework_data=roadmap_metadata.framework_data,
+                    tutorial_refs=tutorial_refs,
+                    resource_refs=resource_refs,
+                    quiz_refs=quiz_refs,
+                    failed_concepts=failed_concepts,
+                )
+                
+                framework_obj = RoadmapFramework.model_validate(updated_framework)
+                await repo.save_roadmap_metadata(
+                    roadmap_id=roadmap_id,
+                    user_id=roadmap_metadata.user_id,
+                    framework=framework_obj,
+                )
+                await session.commit()
+                
+                logger.info(
+                    "framework_data_updated",
+                    task_id=task_id,
+                    roadmap_id=roadmap_id,
+                    tutorial_count=len(tutorial_refs),
+                    failed_count=len(failed_concepts),
+                )
+            else:
+                logger.warning(
+                    "framework_data_not_found",
+                    task_id=task_id,
+                    roadmap_id=roadmap_id,
+                )
+    except Exception as e:
+        logger.error(
+            "framework_data_update_failed",
+            task_id=task_id,
+            roadmap_id=roadmap_id,
+            error=str(e)[:500],
+            error_type=type(e).__name__,
+        )
+        # 不抛出异常，继续执行 Phase 3
     
-    # Phase 3: 更新 task 最终状态
+    # Phase 3: 更新 task 最终状态（必须执行）
     final_status = "partial_failure" if failed_concepts else "completed"
     final_step = "content_generation" if failed_concepts else "completed"
     
-    async with safe_session_with_retry() as session:
-        repo = RoadmapRepository(session)
-        await repo.update_task_status(
+    try:
+        async with safe_session_with_retry() as session:
+            repo = RoadmapRepository(session)
+            await repo.update_task_status(
+                task_id=task_id,
+                status=final_status,
+                current_step=final_step,
+                failed_concepts={
+                    "count": len(failed_concepts),
+                    "concept_ids": failed_concepts,
+                } if failed_concepts else None,
+                execution_summary={
+                    "tutorial_count": len(tutorial_refs),
+                    "resource_count": len(resource_refs),
+                    "quiz_count": len(quiz_refs),
+                    "failed_count": len(failed_concepts),
+                    "save_failed_count": len(save_failed_concepts),
+                },
+            )
+            await session.commit()
+            
+            logger.info(
+                "task_status_updated",
+                task_id=task_id,
+                final_status=final_status,
+                failed_count=len(failed_concepts),
+            )
+    except Exception as e:
+        logger.error(
+            "task_status_update_failed",
             task_id=task_id,
-            status=final_status,
-            current_step=final_step,
-            failed_concepts={
-                "count": len(failed_concepts),
-                "concept_ids": failed_concepts,
-            } if failed_concepts else None,
-            execution_summary={
-                "tutorial_count": len(tutorial_refs),
-                "resource_count": len(resource_refs),
-                "quiz_count": len(quiz_refs),
-                "failed_count": len(failed_concepts),
-            },
+            error=str(e)[:500],
+            error_type=type(e).__name__,
         )
-        await session.commit()
+        # 不抛出异常，避免影响整体流程
     
     logger.info(
         "save_content_results_completed",
         task_id=task_id,
         roadmap_id=roadmap_id,
         final_status=final_status,
+        tutorial_saved=len(tutorial_refs) - len([c for c in save_failed_concepts if c in tutorial_refs]),
+        tutorial_failed=len([c for c in save_failed_concepts if c in tutorial_refs]),
+        total_failed=len(failed_concepts),
     )
 
 
-def _update_framework_with_content_refs(
-    framework_data: dict,
-    tutorial_refs: dict,
-    resource_refs: dict,
-    quiz_refs: dict,
-    failed_concepts: list,
-) -> dict:
+@celery_app.task(
+    name="app.tasks.content_generation_tasks.retry_failed_content_task",
+    queue="content_generation",
+    bind=True,
+    max_retries=0,
+    time_limit=1800,
+    soft_time_limit=1500,
+    acks_late=True,
+)
+def retry_failed_content_task(
+    self,
+    roadmap_id: str,
+    task_id: str,
+    user_id: str,
+    preferences: dict,
+    content_types: list[str],
+):
     """
-    更新 framework 中所有 Concept 的内容引用字段
+    重试失败内容的生成（Celery 任务入口）
+    
+    该任务在独立的 Celery Worker 进程中执行，不会阻塞 FastAPI 主进程。
     
     Args:
-        framework_data: 原始 framework 字典数据
-        tutorial_refs: 教程引用字典
-        resource_refs: 资源引用字典
-        quiz_refs: 测验引用字典
-        failed_concepts: 失败的概念 ID 列表
+        roadmap_id: 路线图 ID
+        task_id: 任务 ID（用于 WebSocket 通知）
+        user_id: 用户 ID
+        preferences: 用户偏好（字典格式）
+        content_types: 要重试的内容类型列表（["tutorial", "resources", "quiz"]）
         
     Returns:
-        更新后的 framework 字典
+        重试结果摘要
     """
-    for stage in framework_data.get("stages", []):
-        for module in stage.get("modules", []):
-            for concept in module.get("concepts", []):
-                concept_id = concept.get("concept_id")
-                
-                if not concept_id:
-                    continue
-                
-                # 更新教程相关字段
-                if concept_id in tutorial_refs:
-                    tutorial_output = tutorial_refs[concept_id]
-                    concept["content_status"] = "completed"
-                    concept["tutorial_id"] = tutorial_output.tutorial_id
-                    concept["content_ref"] = tutorial_output.content_url
-                    concept["content_summary"] = tutorial_output.summary
-                    concept["content_version"] = f"v{tutorial_output.content_version}"  # ✅ 添加版本号（int → str）
-                elif concept_id in failed_concepts:
-                    if "content_status" not in concept or concept["content_status"] == "pending":
-                        concept["content_status"] = "failed"
-                
-                # 更新资源相关字段
-                if concept_id in resource_refs:
-                    resource_output = resource_refs[concept_id]
-                    concept["resources_status"] = "completed"
-                    concept["resources_id"] = resource_output.id
-                    concept["resources_count"] = len(resource_output.resources)
-                elif concept_id in failed_concepts:
-                    if "resources_status" not in concept or concept["resources_status"] == "pending":
-                        concept["resources_status"] = "failed"
-                
-                # 更新测验相关字段
-                if concept_id in quiz_refs:
-                    quiz_output = quiz_refs[concept_id]
-                    concept["quiz_status"] = "completed"
-                    concept["quiz_id"] = quiz_output.quiz_id
-                    concept["quiz_questions_count"] = quiz_output.total_questions
-                elif concept_id in failed_concepts:
-                    if "quiz_status" not in concept or concept["quiz_status"] == "pending":
-                        concept["quiz_status"] = "failed"
+    from app.services.retry_service import execute_retry_failed_task
+    from app.api.v1.endpoints.utils import get_failed_content_items
+    from app.db.repository_factory import RepositoryFactory
     
-    return framework_data
-
-
-# ============================================================
-# 单个内容重试 Celery 任务
-# ============================================================
-
-@celery_app.task(
-    name="app.tasks.content_generation_tasks.retry_tutorial_task",
-    queue="content_generation",
-    bind=True,
-    max_retries=0,
-    time_limit=600,  # 10分钟
-    soft_time_limit=540,  # 9分钟
-    acks_late=True,
-)
-def retry_tutorial_task(
-    self,
-    task_id: str,
-    roadmap_id: str,
-    concept_id: str,
-    concept_data: dict,
-    context_data: dict,
-    user_preferences_data: dict,
-):
-    """
-    重试单个概念的教程生成（Celery 异步任务）
-    
-    Args:
-        task_id: 任务 ID
-        roadmap_id: 路线图 ID
-        concept_id: 概念 ID
-        concept_data: 概念数据字典
-        context_data: 上下文数据字典
-        user_preferences_data: 用户偏好数据字典
-    """
     logger.info(
-        "retry_tutorial_task_started",
+        "celery_retry_task_started",
         task_id=task_id,
         roadmap_id=roadmap_id,
-        concept_id=concept_id,
+        celery_task_id=self.request.id,
     )
     
     try:
-        run_async(_async_retry_tutorial(
-            task_id=task_id,
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            concept_data=concept_data,
-            context_data=context_data,
-            user_preferences_data=user_preferences_data,
-        ))
-        logger.info(
-            "retry_tutorial_task_completed",
-            task_id=task_id,
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-        )
-    except Exception as e:
-        logger.error(
-            "retry_tutorial_task_failed",
-            task_id=task_id,
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            error=str(e),
-        )
-        # ✅ 如果内部函数未更新状态，在外层也尝试更新（防御性编程）
-        try:
-            from app.db.session import safe_session_with_retry
-            from app.db.repositories.task_repo import TaskRepository
-            
-            async def _update_failed_status():
-                async with safe_session_with_retry() as session:
-                    task_repo = TaskRepository(session)
-                    await task_repo.update_task_status(
-                        task_id=task_id,
-                        status="failed",
-                        current_step="retry_tutorial",
-                        error_message=str(e)[:500],
-                    )
-                    await session.commit()
-            
-            run_async(_update_failed_status())
-        except Exception:
-            pass  # 静默失败，因为内部函数可能已经更新过了
-        raise
-
-
-async def _async_retry_tutorial(
-    task_id: str,
-    roadmap_id: str,
-    concept_id: str,
-    concept_data: dict,
-    context_data: dict,
-    user_preferences_data: dict,
-):
-    """
-    异步执行教程重试逻辑
-    """
-    from app.models.domain import Concept, LearningPreferences, TutorialGenerationInput
-    from app.agents.factory import AgentFactory
-    from app.services.execution_logger import execution_logger, LogCategory
-    
-    # 反序列化
-    concept = Concept.model_validate(concept_data)
-    preferences = LearningPreferences.model_validate(user_preferences_data)
-    
-    # 1. 更新状态为 'generating'
-    await _update_concept_status_in_framework_async(
-        roadmap_id=roadmap_id,
-        concept_id=concept_id,
-        content_type="tutorial",
-        status="generating",
-    )
-    
-    # 2. 发送 WebSocket 事件：开始生成
-    await notification_service.publish_concept_start(
-        task_id=task_id,
-        concept_id=concept_id,
-        concept_name=concept.name,
-        current=1,
-        total=1,
-        content_type="tutorial",
-    )
-    
-    try:
-        # 3. 执行生成
-        from app.agents.factory import get_agent_factory
-        agent_factory = get_agent_factory()
-        tutorial_agent = agent_factory.create_tutorial_generator()
+        # 反序列化用户偏好
+        user_preferences = LearningPreferences.model_validate(preferences)
         
-        input_data = TutorialGenerationInput(
-            concept=concept,
-            context=context_data,
-            user_preferences=preferences,
-        )
+        # 查询失败的内容项目
+        async def _get_failed_items():
+            async with RepositoryFactory().create_session() as session:
+                from app.db.repositories.roadmap_repo import RoadmapRepository
+                repo = RoadmapRepository(session)
+                roadmap_metadata = await repo.get_roadmap_metadata(roadmap_id)
+                
+                if not roadmap_metadata:
+                    raise RuntimeError(f"路线图 {roadmap_id} 不存在")
+                
+                # 获取失败的内容项目
+                failed_items = get_failed_content_items(roadmap_metadata.framework_data)
+                
+                # 筛选要重试的类型
+                items_to_retry = {}
+                for content_type in content_types:
+                    if content_type in failed_items and failed_items[content_type]:
+                        items_to_retry[content_type] = failed_items[content_type]
+                
+                return items_to_retry
         
-        result = await tutorial_agent.execute(input_data)
+        items_to_retry = run_async(_get_failed_items())
         
-        # 4. 更新状态为 'completed' 并保存结果
-        await _update_concept_status_in_framework_async(
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            content_type="tutorial",
-            status="completed",
-            result={
-                "content_url": result.content_url,
-                "summary": result.summary,
-                "tutorial_id": result.tutorial_id,
-                "content_version": f"v{result.content_version}",
-            },
-        )
-        
-        # 5. 保存教程元数据
-        async with RepositoryFactory().create_session() as session:
-            from app.db.repositories.tutorial_repo import TutorialRepository
-            tutorial_repo = TutorialRepository(session)
-            await tutorial_repo.save_tutorial(result, roadmap_id)
-            await session.commit()
-        
-        # 6. 发送 WebSocket 事件：生成完成
-        await notification_service.publish_concept_complete(
-            task_id=task_id,
-            concept_id=concept_id,
-            concept_name=concept.name,
-            content_type="tutorial",
-            data={
-                "tutorial_id": result.tutorial_id,
-                "title": result.title,
-                "content_url": result.content_url,
-            },
-        )
-        
-        # 7. 更新任务状态为 completed
-        async with RepositoryFactory().create_session() as session:
-            from app.db.repositories.task_repo import TaskRepository
-            task_repo = TaskRepository(session)
-            await task_repo.update_task_status(
-                task_id=task_id,
-                status="completed",
-                current_step="completed",
-            )
-            await session.commit()
-        
-        # 8. 记录执行日志
-        await execution_logger.info(
-            task_id=task_id,
-            category=LogCategory.WORKFLOW,
-            step="retry_tutorial",
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            message=f"✅ Tutorial regenerated for {concept.name}",
-        )
-        
-    except Exception as e:
-        logger.error(
-            "retry_tutorial_execution_failed",
-            task_id=task_id,
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            error=str(e),
-        )
-        
-        # 更新状态为 'failed'
-        await _update_concept_status_in_framework_async(
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            content_type="tutorial",
-            status="failed",
-        )
-        
-        # 发送失败事件
-        await notification_service.publish_concept_failed(
-            task_id=task_id,
-            concept_id=concept_id,
-            concept_name=concept.name,
-            error=str(e),
-            content_type="tutorial",
-        )
-        
-        # 更新任务状态为 failed
-        async with RepositoryFactory().create_session() as session:
-            from app.db.repositories.task_repo import TaskRepository
-            task_repo = TaskRepository(session)
-            await task_repo.update_task_status(
-                task_id=task_id,
-                status="failed",
-                current_step="failed",
-                error_message=str(e)[:500],
-            )
-            await session.commit()
-        
-        raise
-
-
-@celery_app.task(
-    name="app.tasks.content_generation_tasks.retry_resources_task",
-    queue="content_generation",
-    bind=True,
-    max_retries=0,
-    time_limit=600,
-    soft_time_limit=540,
-    acks_late=True,
-)
-def retry_resources_task(
-    self,
-    task_id: str,
-    roadmap_id: str,
-    concept_id: str,
-    concept_data: dict,
-    context_data: dict,
-    user_preferences_data: dict,
-):
-    """
-    重试单个概念的资源推荐生成（Celery 异步任务）
-    """
-    logger.info(
-        "retry_resources_task_started",
-        task_id=task_id,
-        roadmap_id=roadmap_id,
-        concept_id=concept_id,
-    )
-    
-    try:
-        run_async(_async_retry_resources(
-            task_id=task_id,
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            concept_data=concept_data,
-            context_data=context_data,
-            user_preferences_data=user_preferences_data,
-        ))
-        logger.info(
-            "retry_resources_task_completed",
-            task_id=task_id,
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-        )
-    except Exception as e:
-        logger.error(
-            "retry_resources_task_failed",
-            task_id=task_id,
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            error=str(e),
-        )
-        # ✅ 如果内部函数未更新状态，在外层也尝试更新（防御性编程）
-        try:
-            from app.db.session import safe_session_with_retry
-            from app.db.repositories.task_repo import TaskRepository
-            
-            async def _update_failed_status():
-                async with safe_session_with_retry() as session:
-                    task_repo = TaskRepository(session)
-                    await task_repo.update_task_status(
-                        task_id=task_id,
-                        status="failed",
-                        current_step="retry_resources",
-                        error_message=str(e)[:500],
-                    )
-                    await session.commit()
-            
-            run_async(_update_failed_status())
-        except Exception:
-            pass  # 静默失败，因为内部函数可能已经更新过了
-        raise
-
-
-async def _async_retry_resources(
-    task_id: str,
-    roadmap_id: str,
-    concept_id: str,
-    concept_data: dict,
-    context_data: dict,
-    user_preferences_data: dict,
-):
-    """
-    异步执行资源推荐重试逻辑
-    """
-    from app.models.domain import Concept, LearningPreferences, ResourceRecommendationInput
-    from app.agents.factory import AgentFactory
-    from app.services.execution_logger import execution_logger, LogCategory
-    
-    # 反序列化
-    concept = Concept.model_validate(concept_data)
-    preferences = LearningPreferences.model_validate(user_preferences_data)
-    
-    # 1. 更新状态为 'generating'
-    await _update_concept_status_in_framework_async(
-        roadmap_id=roadmap_id,
-        concept_id=concept_id,
-        content_type="resources",
-        status="generating",
-    )
-    
-    # 2. 发送 WebSocket 事件：开始生成
-    await notification_service.publish_concept_start(
-        task_id=task_id,
-        concept_id=concept_id,
-        concept_name=concept.name,
-        current=1,
-        total=1,
-        content_type="resources",
-    )
-    
-    try:
-        # 3. 执行生成
-        from app.agents.factory import get_agent_factory
-        agent_factory = get_agent_factory()
-        resource_agent = agent_factory.create_resource_recommender()
-        
-        input_data = ResourceRecommendationInput(
-            concept=concept,
-            context=context_data,
-            user_preferences=preferences,
-        )
-        
-        result = await resource_agent.execute(input_data)
-        
-        # 4. 更新状态为 'completed' 并保存结果
-        await _update_concept_status_in_framework_async(
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            content_type="resources",
-            status="completed",
-            result={
-                "resources_id": result.id,
-                "resources_count": len(result.resources),
-            },
-        )
-        
-        # 5. 保存资源元数据
-        async with RepositoryFactory().create_session() as session:
-            from app.db.repositories.resource_repo import ResourceRepository
-            resource_repo = ResourceRepository(session)
-            await resource_repo.save_resource_recommendation(result, roadmap_id)
-            await session.commit()
-        
-        # 6. 发送 WebSocket 事件：生成完成
-        await notification_service.publish_concept_complete(
-            task_id=task_id,
-            concept_id=concept_id,
-            concept_name=concept.name,
-            content_type="resources",
-            data={
-                "resources_id": result.id,
-                "resources_count": len(result.resources),
-            },
-        )
-        
-        # 7. 更新任务状态为 completed
-        async with RepositoryFactory().create_session() as session:
-            from app.db.repositories.task_repo import TaskRepository
-            task_repo = TaskRepository(session)
-            await task_repo.update_task_status(
-                task_id=task_id,
-                status="completed",
-                current_step="completed",
-            )
-            await session.commit()
-        
-        # 8. 记录执行日志
-        await execution_logger.info(
-            task_id=task_id,
-            category=LogCategory.WORKFLOW,
-            step="retry_resources",
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            message=f"✅ Resources regenerated for {concept.name}",
-        )
-        
-    except Exception as e:
-        logger.error(
-            "retry_resources_execution_failed",
-            task_id=task_id,
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            error=str(e),
-        )
-        
-        # 更新状态为 'failed'
-        await _update_concept_status_in_framework_async(
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            content_type="resources",
-            status="failed",
-        )
-        
-        # 发送失败事件
-        await notification_service.publish_concept_failed(
-            task_id=task_id,
-            concept_id=concept_id,
-            concept_name=concept.name,
-            error=str(e),
-            content_type="resources",
-        )
-        
-        # 更新任务状态为 failed
-        async with RepositoryFactory().create_session() as session:
-            from app.db.repositories.task_repo import TaskRepository
-            task_repo = TaskRepository(session)
-            await task_repo.update_task_status(
-                task_id=task_id,
-                status="failed",
-                current_step="failed",
-                error_message=str(e)[:500],
-            )
-            await session.commit()
-        
-        raise
-
-
-@celery_app.task(
-    name="app.tasks.content_generation_tasks.retry_quiz_task",
-    queue="content_generation",
-    bind=True,
-    max_retries=0,
-    time_limit=600,
-    soft_time_limit=540,
-    acks_late=True,
-)
-def retry_quiz_task(
-    self,
-    task_id: str,
-    roadmap_id: str,
-    concept_id: str,
-    concept_data: dict,
-    context_data: dict,
-    user_preferences_data: dict,
-):
-    """
-    重试单个概念的测验生成（Celery 异步任务）
-    """
-    logger.info(
-        "retry_quiz_task_started",
-        task_id=task_id,
-        roadmap_id=roadmap_id,
-        concept_id=concept_id,
-    )
-    
-    try:
-        run_async(_async_retry_quiz(
-            task_id=task_id,
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            concept_data=concept_data,
-            context_data=context_data,
-            user_preferences_data=user_preferences_data,
-        ))
-        logger.info(
-            "retry_quiz_task_completed",
-            task_id=task_id,
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-        )
-    except Exception as e:
-        logger.error(
-            "retry_quiz_task_failed",
-            task_id=task_id,
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            error=str(e),
-        )
-        # ✅ 如果内部函数未更新状态，在外层也尝试更新（防御性编程）
-        try:
-            from app.db.session import safe_session_with_retry
-            from app.db.repositories.task_repo import TaskRepository
-            
-            async def _update_failed_status():
-                async with safe_session_with_retry() as session:
-                    task_repo = TaskRepository(session)
-                    await task_repo.update_task_status(
-                        task_id=task_id,
-                        status="failed",
-                        current_step="retry_quiz",
-                        error_message=str(e)[:500],
-                    )
-                    await session.commit()
-            
-            run_async(_update_failed_status())
-        except Exception:
-            pass  # 静默失败，因为内部函数可能已经更新过了
-        raise
-
-
-async def _async_retry_quiz(
-    task_id: str,
-    roadmap_id: str,
-    concept_id: str,
-    concept_data: dict,
-    context_data: dict,
-    user_preferences_data: dict,
-):
-    """
-    异步执行测验重试逻辑
-    """
-    from app.models.domain import Concept, LearningPreferences, QuizGenerationInput
-    from app.agents.factory import AgentFactory
-    from app.services.execution_logger import execution_logger, LogCategory
-    
-    # 反序列化
-    concept = Concept.model_validate(concept_data)
-    preferences = LearningPreferences.model_validate(user_preferences_data)
-    
-    # 1. 更新状态为 'generating'
-    await _update_concept_status_in_framework_async(
-        roadmap_id=roadmap_id,
-        concept_id=concept_id,
-        content_type="quiz",
-        status="generating",
-    )
-    
-    # 2. 发送 WebSocket 事件：开始生成
-    await notification_service.publish_concept_start(
-        task_id=task_id,
-        concept_id=concept_id,
-        concept_name=concept.name,
-        current=1,
-        total=1,
-        content_type="quiz",
-    )
-    
-    try:
-        # 3. 执行生成
-        from app.agents.factory import get_agent_factory
-        agent_factory = get_agent_factory()
-        quiz_agent = agent_factory.create_quiz_generator()
-        
-        input_data = QuizGenerationInput(
-            concept=concept,
-            context=context_data,
-            user_preferences=preferences,
-        )
-        
-        result = await quiz_agent.execute(input_data)
-        
-        # 4. 更新状态为 'completed' 并保存结果
-        await _update_concept_status_in_framework_async(
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            content_type="quiz",
-            status="completed",
-            result={
-                "quiz_id": result.quiz_id,
-                "quiz_questions_count": result.total_questions,
-            },
-        )
-        
-        # 5. 保存测验元数据
-        async with RepositoryFactory().create_session() as session:
-            from app.db.repositories.quiz_repo import QuizRepository
-            quiz_repo = QuizRepository(session)
-            await quiz_repo.save_quiz(result, roadmap_id)
-            await session.commit()
-        
-        # 6. 发送 WebSocket 事件：生成完成
-        await notification_service.publish_concept_complete(
-            task_id=task_id,
-            concept_id=concept_id,
-            concept_name=concept.name,
-            content_type="quiz",
-            data={
-                "quiz_id": result.quiz_id,
-                "total_questions": result.total_questions,
-            },
-        )
-        
-        # 7. 更新任务状态为 completed
-        async with RepositoryFactory().create_session() as session:
-            from app.db.repositories.task_repo import TaskRepository
-            task_repo = TaskRepository(session)
-            await task_repo.update_task_status(
-                task_id=task_id,
-                status="completed",
-                current_step="completed",
-            )
-            await session.commit()
-        
-        # 8. 记录执行日志
-        await execution_logger.info(
-            task_id=task_id,
-            category=LogCategory.WORKFLOW,
-            step="retry_quiz",
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            message=f"✅ Quiz regenerated for {concept.name}",
-        )
-        
-    except Exception as e:
-        logger.error(
-            "retry_quiz_execution_failed",
-            task_id=task_id,
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            error=str(e),
-        )
-        
-        # 更新状态为 'failed'
-        await _update_concept_status_in_framework_async(
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            content_type="quiz",
-            status="failed",
-        )
-        
-        # 发送失败事件
-        await notification_service.publish_concept_failed(
-            task_id=task_id,
-            concept_id=concept_id,
-            concept_name=concept.name,
-            error=str(e),
-            content_type="quiz",
-        )
-        
-        # 更新任务状态为 failed
-        async with RepositoryFactory().create_session() as session:
-            from app.db.repositories.task_repo import TaskRepository
-            task_repo = TaskRepository(session)
-            await task_repo.update_task_status(
-                task_id=task_id,
-                status="failed",
-                current_step="failed",
-                error_message=str(e)[:500],
-            )
-            await session.commit()
-        
-        raise
-
-
-async def _update_concept_status_in_framework_async(
-    roadmap_id: str,
-    concept_id: str,
-    content_type: str,
-    status: str,
-    result: dict | None = None,
-):
-    """
-    更新路线图 framework 中特定概念的内容状态（异步版本）
-    
-    Args:
-        roadmap_id: 路线图 ID
-        concept_id: 概念 ID
-        content_type: 内容类型 ('tutorial', 'resources', 'quiz')
-        status: 新状态 ('generating', 'completed', 'failed')
-        result: 生成结果数据（可选）
-    """
-    from app.db.repositories.roadmap_repo import RoadmapRepository
-    
-    async with RepositoryFactory().create_session() as session:
-        repo = RoadmapRepository(session)
-        
-        # 获取当前路线图
-        metadata = await repo.get_roadmap_metadata(roadmap_id)
-        if not metadata or not metadata.framework_data:
+        if not items_to_retry:
             logger.warning(
-                "roadmap_not_found_for_status_update",
+                "no_failed_items_to_retry",
+                task_id=task_id,
                 roadmap_id=roadmap_id,
-                concept_id=concept_id,
             )
-            return
+            return {
+                "success": True,
+                "retried_count": 0,
+                "message": "没有需要重试的失败项目",
+            }
         
-        framework_data = metadata.framework_data
-        
-        # 查找并更新概念
-        status_field = f"{content_type}_status" if content_type != "tutorial" else "content_status"
-        
-        for stage in framework_data.get("stages", []):
-            for module in stage.get("modules", []):
-                for concept in module.get("concepts", []):
-                    if concept.get("concept_id") == concept_id:
-                        # 更新状态
-                        concept[status_field] = status
-                        
-                        # 如果有结果数据，更新相关字段
-                        if result and status == "completed":
-                            concept.update(result)
-                        
-                        logger.info(
-                            "concept_status_updated",
-                            roadmap_id=roadmap_id,
-                            concept_id=concept_id,
-                            content_type=content_type,
-                            status=status,
-                        )
-                        break
-        
-        # 保存更新（使用 save_roadmap_metadata 确保 flag_modified 被调用）
-        from app.models.domain import RoadmapFramework
-        framework_obj = RoadmapFramework.model_validate(framework_data)
-        await repo.save_roadmap_metadata(
-            roadmap_id=roadmap_id,
-            user_id=metadata.user_id,
-            framework=framework_obj,
+        # 执行重试
+        run_async(
+            execute_retry_failed_task(
+                retry_task_id=task_id,
+                roadmap_id=roadmap_id,
+                items_to_retry=items_to_retry,
+                user_preferences=user_preferences,
+                user_id=user_id,
+            )
         )
-        await session.commit()
-
+        
+        logger.info(
+            "celery_retry_task_completed",
+            task_id=task_id,
+            roadmap_id=roadmap_id,
+        )
+        
+        return {
+            "success": True,
+            "retried_count": sum(len(items) for items in items_to_retry.values()),
+        }
+        
+    except Exception as e:
+        logger.error(
+            "celery_retry_task_failed",
+            task_id=task_id,
+            roadmap_id=roadmap_id,
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+        
+        # 更新任务状态为 failed
+        try:
+            from app.db.session import safe_session_with_retry
+            from app.db.repositories.task_repo import TaskRepository
+            
+            async def _update_failed_status():
+                async with safe_session_with_retry() as session:
+                    task_repo = TaskRepository(session)
+                    await task_repo.update_task_status(
+                        task_id=task_id,
+                        status="failed",
+                        current_step="content_retry",
+                        error_message=str(e)[:500],
+                    )
+                    await session.commit()
+            
+            run_async(_update_failed_status())
+        except Exception as update_error:
+            logger.error("failed_to_update_task_status", task_id=task_id, error=str(update_error))
+        
+        raise

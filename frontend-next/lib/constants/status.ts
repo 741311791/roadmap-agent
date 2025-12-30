@@ -5,7 +5,7 @@
 export enum TaskStatus {
   PENDING = 'pending',                      // 待处理
   PROCESSING = 'processing',                // 处理中
-  HUMAN_REVIEW_PENDING = 'human_review_pending',  // 等待人工审核
+  HUMAN_REVIEW = 'human_review_pending',    // 等待人工审核
   COMPLETED = 'completed',                  // 已完成
   PARTIAL_FAILURE = 'partial_failure',      // 部分失败
   FAILED = 'failed'                         // 失败
@@ -31,8 +31,10 @@ export enum WorkflowStep {
   INTENT_ANALYSIS = 'intent_analysis',      // 需求分析
   CURRICULUM_DESIGN = 'curriculum_design',  // 课程设计
   STRUCTURE_VALIDATION = 'structure_validation',  // 结构验证
-  HUMAN_REVIEW = 'human_review',            // 人工审核
+  VALIDATION_EDIT_PLAN_ANALYSIS = 'validation_edit_plan_analysis',  // 验证修改计划分析
+  EDIT_PLAN_ANALYSIS = 'edit_plan_analysis',  // 审核修改计划分析
   ROADMAP_EDIT = 'roadmap_edit',            // 路线图修正
+  HUMAN_REVIEW = 'human_review',            // 人工审核
   CONTENT_GENERATION = 'content_generation',// 内容生成
   TUTORIAL_GENERATION = 'tutorial_generation',    // 教程生成
   RESOURCE_RECOMMENDATION = 'resource_recommendation',  // 资源推荐
@@ -48,7 +50,7 @@ export enum WorkflowStep {
 export const TASK_STATUS_CONFIG: Record<TaskStatus, { label: string; color: string }> = {
   [TaskStatus.PENDING]: { label: '排队中', color: 'gray' },
   [TaskStatus.PROCESSING]: { label: '处理中', color: 'blue' },
-  [TaskStatus.HUMAN_REVIEW_PENDING]: { label: '等待审核', color: 'yellow' },
+  [TaskStatus.HUMAN_REVIEW]: { label: '等待审核', color: 'yellow' },
   [TaskStatus.COMPLETED]: { label: '已完成', color: 'green' },
   [TaskStatus.PARTIAL_FAILURE]: { label: '部分失败', color: 'orange' },
   [TaskStatus.FAILED]: { label: '失败', color: 'red' },
@@ -74,8 +76,10 @@ export const WORKFLOW_STEP_CONFIG: Record<WorkflowStep, { label: string; descrip
   [WorkflowStep.INTENT_ANALYSIS]: { label: '需求分析', description: '正在分析您的学习需求...' },
   [WorkflowStep.CURRICULUM_DESIGN]: { label: '课程设计', description: '正在设计学习路线图...' },
   [WorkflowStep.STRUCTURE_VALIDATION]: { label: '结构验证', description: '正在验证路线图结构...' },
-  [WorkflowStep.HUMAN_REVIEW]: { label: '人工审核', description: '等待您的审核...' },
+  [WorkflowStep.VALIDATION_EDIT_PLAN_ANALYSIS]: { label: '验证修改计划', description: '正在分析验证失败原因...' },
+  [WorkflowStep.EDIT_PLAN_ANALYSIS]: { label: '审核修改计划', description: '正在分析审核反馈...' },
   [WorkflowStep.ROADMAP_EDIT]: { label: '路线图修正', description: '正在根据反馈修正路线图...' },
+  [WorkflowStep.HUMAN_REVIEW]: { label: '人工审核', description: '等待您的审核...' },
   [WorkflowStep.CONTENT_GENERATION]: { label: '内容生成', description: '正在生成学习内容...' },
   [WorkflowStep.TUTORIAL_GENERATION]: { label: '教程生成', description: '正在生成教程...' },
   [WorkflowStep.RESOURCE_RECOMMENDATION]: { label: '资源推荐', description: '正在推荐学习资源...' },

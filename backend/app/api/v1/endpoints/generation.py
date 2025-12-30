@@ -145,17 +145,15 @@ async def _execute_roadmap_generation_task(
 @router.post("/generate")
 async def generate_roadmap_async(
     request: UserRequest,
-    background_tasks: BackgroundTasks,
-    orchestrator: WorkflowExecutor = Depends(get_workflow_executor),
     repo_factory: RepositoryFactory = Depends(get_repository_factory),
 ):
     """
-    生成学习路线图（异步任务）
+    生成学习路线图（Celery 异步任务）
+    
+    将任务分发到 Celery Worker 执行，FastAPI 进程立即返回。
     
     Args:
         request: 用户请求，包含学习目标和偏好
-        background_tasks: FastAPI后台任务
-        orchestrator: 工作流执行器
         repo_factory: Repository 工厂
         
     Returns:
@@ -165,11 +163,13 @@ async def generate_roadmap_async(
         ```json
         {
             "task_id": "550e8400-e29b-41d4-a716-446655440000",
-            "status": "processing",
-            "message": "路线图生成任务已启动"
+            "status": "pending",
+            "message": "路线图生成任务已创建"
         }
         ```
     """
+    from app.tasks.roadmap_generation_tasks import generate_roadmap
+    
     task_id = str(uuid.uuid4())
     
     logger.info(
@@ -179,7 +179,7 @@ async def generate_roadmap_async(
         learning_goal=request.preferences.learning_goal,
     )
     
-    # 先创建初始任务记录
+    # 创建初始任务记录
     async with repo_factory.create_session() as session:
         task_repo = repo_factory.create_task_repo(session)
         await task_repo.create_task(
@@ -187,26 +187,26 @@ async def generate_roadmap_async(
             user_id=request.user_id,
             user_request=request.model_dump(mode='json'),
         )
-        await task_repo.update_task_status(
-            task_id=task_id,
-            status="processing",
-            current_step="queued",
-        )
         await session.commit()
     
-    # 在后台任务中执行工作流
-    background_tasks.add_task(
-        _execute_roadmap_generation_task,
-        request,
-        task_id,
-        orchestrator,
-        repo_factory,
+    # 分发 Celery 任务
+    celery_task = generate_roadmap.delay(
+        task_id=task_id,
+        user_request=request.preferences.learning_goal,
+        user_id=request.user_id,
+        learning_preferences=request.preferences.model_dump(mode='json'),
+    )
+    
+    logger.info(
+        "celery_task_dispatched",
+        task_id=task_id,
+        celery_task_id=celery_task.id,
     )
     
     return {
         "task_id": task_id,
-        "status": "processing",
-        "message": "路线图生成任务已启动，roadmap_id将在需求分析完成后通过WebSocket发送",
+        "status": "pending",
+        "message": "路线图生成任务已创建，正在队列中等待执行",
     }
 
 
@@ -365,14 +365,15 @@ async def cancel_task(
                 error_type=type(e).__name__,
             )
     
-    # 5. 更新数据库状态为 cancelled
+    # 5. 更新数据库状态为 cancelled（保留原 current_step，只更新 status）
     try:
         async with repo_factory.create_session() as session:
             task_repo = repo_factory.create_task_repo(session)
+            # 保留原来的 current_step，只更新 status
             await task_repo.update_task_status(
                 task_id=task_id,
                 status="cancelled",
-                current_step="cancelled",
+                current_step=task.current_step,  # 保留原来的步骤
                 error_message="Task cancelled by user",
             )
             await session.commit()
@@ -381,6 +382,7 @@ async def cancel_task(
             "task_status_updated_to_cancelled",
             task_id=task_id,
             previous_status=previous_status,
+            preserved_current_step=task.current_step,
         )
     except Exception as e:
         logger.error(
@@ -400,7 +402,6 @@ async def cancel_task(
             task_id=task_id,
             error="Task cancelled by user",
             step=task.current_step,
-            roadmap_id=task.roadmap_id,
         )
         
         logger.info(
@@ -688,7 +689,7 @@ async def retry_tutorial(
     Returns:
         任务 ID，前端可通过 WebSocket 订阅进度
     """
-    from app.tasks.content_generation_tasks import retry_tutorial_task
+    from app.tasks.content_retry_tasks import retry_tutorial_task
     
     # 生成任务 ID 用于 WebSocket 推送
     task_id = _generate_retry_task_id(roadmap_id, concept_id, "tutorial")
@@ -785,7 +786,7 @@ async def retry_resources(
     Returns:
         任务 ID，前端可通过 WebSocket 订阅进度
     """
-    from app.tasks.content_generation_tasks import retry_resources_task
+    from app.tasks.content_retry_tasks import retry_resources_task
     
     # 生成任务 ID 用于 WebSocket 推送
     task_id = _generate_retry_task_id(roadmap_id, concept_id, "resources")
@@ -925,7 +926,7 @@ async def retry_quiz(
         await session.commit()
     
     # 提交 Celery 任务（异步执行）
-    from app.tasks.content_generation_tasks import retry_quiz_task
+    from app.tasks.content_retry_tasks import retry_quiz_task
     
     retry_quiz_task.apply_async(
         args=[

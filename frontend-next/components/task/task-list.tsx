@@ -111,6 +111,12 @@ export function TaskList({ tasks, isLoading, onRetry, onDelete, onCancel }: Task
         icon: AlertCircle,
         className: 'border-red-300 text-red-600 bg-red-50'
       },
+      cancelled: { 
+        variant: 'destructive' as const, 
+        label: 'Cancelled', 
+        icon: XCircle,
+        className: 'border-red-300 text-red-600 bg-red-50'
+      },
     };
     
     return config[status as keyof typeof config] || config.failed;
@@ -259,8 +265,8 @@ export function TaskList({ tasks, isLoading, onRetry, onDelete, onCancel }: Task
                         </Tooltip>
                       )}
 
-                      {/* Retry Button - 仅完全失败时显示 */}
-                      {task.status === 'failed' && (
+                      {/* Retry Button - 失败和取消状态时显示 */}
+                      {(task.status === 'failed' || task.status === 'cancelled') && (
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Button

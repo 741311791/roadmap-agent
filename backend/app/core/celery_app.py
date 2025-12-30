@@ -49,13 +49,16 @@ celery_app.conf.update(
     task_routes={
         "app.tasks.log_tasks.batch_write_logs": {"queue": "logs"},
         "app.tasks.content_generation_tasks.*": {"queue": "content_generation"},
+        "app.tasks.content_retry_tasks.*": {"queue": "content_generation"},
+        "roadmap_generation.*": {"queue": "roadmap_workflow"},
+        "workflow_resume.*": {"queue": "roadmap_workflow"},
     },
     # Worker 配置
     worker_prefetch_multiplier=1,
     worker_max_tasks_per_child=500,  # 每 500 个任务重启进程（加快资源清理）
-    # 任务超时配置
-    task_time_limit=300,  # 5 分钟硬超时
-    task_soft_time_limit=240,  # 4 分钟软超时
+    # 任务超时配置（全局默认值，特定任务可覆盖）
+    task_time_limit=600,  # 10 分钟硬超时
+    task_soft_time_limit=540,  # 9 分钟软超时
     # Redis Backend 超时和连接配置
     # 注意：Upstash Redis（TLS 连接）不支持某些低级别 socket 选项
     result_backend_transport_options={
@@ -82,6 +85,9 @@ celery_app.conf.update(
     imports=(
         "app.tasks.log_tasks",
         "app.tasks.content_generation_tasks",
+        "app.tasks.content_retry_tasks",
+        "app.tasks.roadmap_generation_tasks",
+        "app.tasks.workflow_resume_tasks",
     ),
 )
 

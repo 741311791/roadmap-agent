@@ -470,16 +470,21 @@ class NotificationService:
         如果 Redis 连接失败或超时，会记录错误但不会抛出异常，
         确保工作流不会因为通知失败而中断。
         
+        在异常处理上下文中调用时，能够优雅处理事件循环冲突。
+        
         Args:
             task_id: 任务 ID
             event: 事件数据
         """
-        await self._ensure_connected()
-        channel = self._get_channel(task_id)
-        
         try:
+            await self._ensure_connected()
+            channel = self._get_channel(task_id)
+            
             message = json.dumps(event, ensure_ascii=False)
+            
             # 添加超时保护：5秒超时
+            # 注意：在异常处理上下文中，asyncio.wait_for 可能触发事件循环冲突
+            # 因此需要捕获 RuntimeError
             await asyncio.wait_for(
                 redis_client._client.publish(channel, message),
                 timeout=5.0
@@ -491,12 +496,21 @@ class NotificationService:
                 event_type=event.get("type"),
                 channel=channel,
             )
+            
         except asyncio.TimeoutError:
             logger.error(
                 "notification_publish_timeout",
                 task_id=task_id,
                 event_type=event.get("type"),
                 timeout_seconds=5,
+            )
+        except RuntimeError as e:
+            # 事件循环冲突（如 "Future attached to a different loop"）
+            logger.error(
+                "notification_publish_failed",
+                task_id=task_id,
+                event_type=event.get("type"),
+                error=f"Event loop conflict: {str(e)}",
             )
         except Exception as e:
             logger.error(

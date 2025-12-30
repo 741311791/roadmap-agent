@@ -556,24 +556,27 @@ async def get_user_tasks(
     # 查询任务（应用task_type过滤）
     tasks = await repo.get_tasks_by_user(user_id, status=status, task_type=task_type, limit=limit, offset=offset)
     
-    # 统计各状态数量（查询全部任务，同样应用task_type过滤）
-    all_tasks = await repo.get_tasks_by_user(user_id, task_type=task_type)
+    # 使用聚合查询统计各状态数量（性能优化：避免加载所有任务到内存）
+    status_counts = await repo.count_tasks_by_status(user_id, task_type=task_type)
     
     # 将 human_review_pending、human_review_required、running 等状态归类到 processing
     # 将 approved、rejected 等状态归类到 completed/failed
     stats = {
-        "pending": sum(1 for t in all_tasks if t.status == "pending"),
-        "processing": sum(
-            1 for t in all_tasks 
-            if t.status in ["processing", "running", "human_review_pending", "human_review_required"]
+        "pending": status_counts.get("pending", 0),
+        "processing": (
+            status_counts.get("processing", 0) +
+            status_counts.get("running", 0) +
+            status_counts.get("human_review_pending", 0) +
+            status_counts.get("human_review_required", 0)
         ),
-        "completed": sum(
-            1 for t in all_tasks 
-            if t.status in ["completed", "partial_failure", "approved"]
+        "completed": (
+            status_counts.get("completed", 0) +
+            status_counts.get("partial_failure", 0) +
+            status_counts.get("approved", 0)
         ),
-        "failed": sum(
-            1 for t in all_tasks 
-            if t.status in ["failed", "rejected"]
+        "failed": (
+            status_counts.get("failed", 0) +
+            status_counts.get("rejected", 0)
         ),
     }
     

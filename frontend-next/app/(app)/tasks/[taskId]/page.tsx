@@ -22,6 +22,16 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { TaskWebSocket } from '@/lib/api/websocket';
 import { getTaskDetail, getTaskLogs, getRoadmap, getIntentAnalysis, getUserProfile, cancelTask } from '@/lib/api/endpoints';
 import { WorkflowTopology } from '@/components/task/workflow-topology';
@@ -127,6 +137,9 @@ export default function TaskDetailPage() {
   // 节点选中状态（用于侧边面板）
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
+  // 取消任务确认对话框
+  const [showCancelDialog, setShowCancelDialog] = useState(false);
+
   // WebSocket 连接
   const [ws, setWs] = useState<TaskWebSocket | null>(null);
   
@@ -182,6 +195,13 @@ export default function TaskDetailPage() {
     try {
       const intentData = await getIntentAnalysis(taskId, signal);
       
+      console.log('[TaskDetail] Intent analysis loaded successfully:', {
+        task_id: taskId,
+        has_data: !!intentData,
+        parsed_goal_length: intentData?.parsed_goal?.length,
+        key_technologies_count: intentData?.key_technologies?.length,
+      });
+      
       // 从 time_constraint 解析时间信息
       const { weeks, hoursPerWeek } = parseTimeConstraint(intentData.time_constraint || '');
       
@@ -208,7 +228,15 @@ export default function TaskDetailPage() {
         console.log('[TaskDetail] Intent analysis request cancelled');
         return null;
       }
-      console.error('Failed to load intent analysis:', err);
+      
+      // 增强错误日志，显示详细信息
+      console.error('[TaskDetail] Failed to load intent analysis:', {
+        task_id: taskId,
+        error: err,
+        status: err.response?.status,
+        message: err.response?.data?.detail || err.message,
+      });
+      
       // 如果获取失败，不设置数据（保持为 null）
       return null;
     }
@@ -477,19 +505,16 @@ export default function TaskDetailPage() {
   /**
    * 取消任务
    */
-  const handleCancel = useCallback(async () => {
-    if (!confirm('Are you sure you want to cancel this task? The task will be stopped immediately.')) {
-      return;
-    }
-    
+  const handleCancelConfirm = useCallback(async () => {
     try {
+      setShowCancelDialog(false);
       await cancelTask(taskId);
       
-      // 更新本地状态
+      // 更新本地状态（保留 current_step，只更新 status）
       setTaskInfo((prev) => prev ? {
         ...prev,
         status: 'cancelled',
-        current_step: 'cancelled',
+        // 保留 current_step，不修改它
       } : null);
       
       // 断开 WebSocket 连接
@@ -679,7 +704,29 @@ export default function TaskDetailPage() {
       };
       setExecutionLogs((prev) => [...prev, newLog]);
       
-      // 刷新路线图数据以更新concept状态
+      // 立即更新本地状态，避免等待后端数据库更新
+      setRoadmapFramework(prevRoadmap => {
+        if (!prevRoadmap) return prevRoadmap;
+        
+        const updatedRoadmap = { ...prevRoadmap };
+        // 查找并更新对应的 concept
+        for (const stage of updatedRoadmap.stages) {
+          for (const module of stage.modules) {
+            const concept = module.concepts.find(c => c.concept_id === event.concept_id);
+            if (concept) {
+              // 将所有状态设置为 completed
+              concept.content_status = 'completed';
+              concept.resources_status = 'completed';
+              concept.quiz_status = 'completed';
+              console.log('[TaskDetail] Updated concept status to completed:', concept.name);
+              return updatedRoadmap;
+            }
+          }
+        }
+        return prevRoadmap;
+      });
+      
+      // 刷新路线图数据以验证状态（后台同步）
       const currentRoadmapId = roadmapIdRef.current;
       if (currentRoadmapId) {
         try {
@@ -1156,7 +1203,7 @@ export default function TaskDetailPage() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={handleCancel}
+                    onClick={() => setShowCancelDialog(true)}
                     className="-ml-2 text-orange-600 hover:text-orange-700 hover:bg-orange-50"
                   >
                     <XCircle className="w-4 h-4 mr-2" />
@@ -1232,6 +1279,24 @@ export default function TaskDetailPage() {
           </Card>
         )}
       </div>
+
+      {/* Cancel Task Confirmation Dialog */}
+      <AlertDialog open={showCancelDialog} onOpenChange={setShowCancelDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel Task?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to cancel this task? The task will be stopped immediately and you can retry it later.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleCancelConfirm} className="bg-orange-600 hover:bg-orange-700">
+              Confirm
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

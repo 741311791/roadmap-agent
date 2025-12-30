@@ -59,6 +59,7 @@ const stepProgress: Record<string, { progress: number; status: string }> = {
   'curriculum_design': { progress: 40, status: 'Designing curriculum structure...' },
   'structure_validation': { progress: 50, status: 'Validating roadmap structure...' },
   'human_review': { progress: 55, status: 'Awaiting human review...' },
+  'content_generation_queued': { progress: 65, status: 'Queueing content generation...' },
   'content_generation': { progress: 70, status: 'Generating learning content...' },
   'tutorial_generation': { progress: 75, status: 'Generating tutorial content...' },
   'resource_recommendation': { progress: 85, status: 'Recommending resources...' },

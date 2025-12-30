@@ -103,7 +103,7 @@ router.include_router(trace.router)
 router.include_router(waitlist.router)
 
 # 封面图相关
-router.include_router(cover_image.router, tags=["cover-image"])
+router.include_router(cover_image.router)
 
 # ==================== FastAPI Users 认证路由 ====================
 # JWT 认证路由（登录、登出）

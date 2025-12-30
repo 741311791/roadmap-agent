@@ -60,6 +60,9 @@ interface ExecutionLogTimelineProps {
 
 /**
  * Step 配置映射
+ * 
+ * 同步后端 WorkflowStep 枚举定义：
+ * @see backend/app/models/constants.py
  */
 const STEP_CONFIG: Record<string, { label: string; color: string; bgColor: string }> = {
   // 初始化阶段
@@ -70,10 +73,8 @@ const STEP_CONFIG: Record<string, { label: string; color: string; bgColor: strin
   // 主路节点
   intent_analysis: { label: 'Intent Analysis', color: 'text-sage-700', bgColor: 'bg-sage-50' },
   curriculum_design: { label: 'Curriculum Design', color: 'text-sage-700', bgColor: 'bg-sage-50' },
-  framework_generation: { label: 'Framework Generation', color: 'text-sage-700', bgColor: 'bg-sage-50' },
   structure_validation: { label: 'Structure Validation', color: 'text-sage-700', bgColor: 'bg-sage-50' },
   human_review: { label: 'Human Review', color: 'text-amber-700', bgColor: 'bg-amber-50' },
-  human_review_pending: { label: 'Awaiting Review', color: 'text-amber-700', bgColor: 'bg-amber-50' },
   
   // 验证分支节点（验证失败触发）
   validation_edit_plan_analysis: { label: 'Validation Edit Plan', color: 'text-amber-700', bgColor: 'bg-amber-50' },
@@ -85,6 +86,7 @@ const STEP_CONFIG: Record<string, { label: string; color: string; bgColor: strin
   roadmap_edit: { label: 'Roadmap Edit', color: 'text-purple-700', bgColor: 'bg-purple-50' },
   
   // 内容生成阶段
+  content_generation_queued: { label: 'Content Generation Queued', color: 'text-sage-700', bgColor: 'bg-sage-50' },
   content_generation: { label: 'Content Generation', color: 'text-sage-700', bgColor: 'bg-sage-50' },
   tutorial_generation: { label: 'Tutorial Generation', color: 'text-sage-700', bgColor: 'bg-sage-50' },
   resource_recommendation: { label: 'Resource Recommendation', color: 'text-sage-700', bgColor: 'bg-sage-50' },

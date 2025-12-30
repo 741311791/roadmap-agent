@@ -283,33 +283,18 @@ class Settings(BaseSettings):
     # ==================== 业务配置 ====================
     MAX_FRAMEWORK_RETRY: int = Field(3, description="路线图结构验证最大重试次数")
     HUMAN_REVIEW_TIMEOUT_HOURS: int = Field(24, description="人工审核超时时间（小时）")
-    PARALLEL_TUTORIAL_LIMIT: int = Field(5, description="并发生成教程的最大数量（降低以减少数据库连接压力）")
+    # PARALLEL_TUTORIAL_LIMIT 已废弃：改用 Celery --concurrency 参数控制全局并发
+    # PARALLEL_TUTORIAL_LIMIT: int = Field(5, description="并发生成教程的最大数量")
     
     # 流式教程生成配置
     TUTORIAL_STREAM_BATCH_SIZE: int = Field(1, description="流式教程生成每批次并发数量（建议设置为1避免MinIO超时）")
 
     # ==================== 工作流控制配置 ====================
-    # 核心 Agent（不可跳过）：Intent Analyzer、Curriculum Architect、Tutorial Generator
-    # 可选 Agent（可通过环境变量跳过）：
-    SKIP_STRUCTURE_VALIDATION: bool = Field(
-        False,
-        description="跳过结构验证和路线图编辑（Structure Validator + Roadmap Editor）"
-    )
+    # 核心 Agent（不可跳过）：Intent Analyzer、Curriculum Architect、Structure Validator、Content Generators
+    # 可选 Agent（可通过环境变量跳过）：Human Review
     SKIP_HUMAN_REVIEW: bool = Field(
         False,
         description="跳过人工审核节点（Human Review）"
-    )
-    SKIP_TUTORIAL_GENERATION: bool = Field(
-        False,
-        description="跳过教程生成（仅生成路线图框架，不生成教程内容）"
-    )
-    SKIP_RESOURCE_RECOMMENDATION: bool = Field(
-        False,
-        description="跳过资源推荐（Resource Recommender）"
-    )
-    SKIP_QUIZ_GENERATION: bool = Field(
-        False,
-        description="跳过测验生成（Quiz Generator）"
     )
     
     # ==================== 任务恢复配置 ====================

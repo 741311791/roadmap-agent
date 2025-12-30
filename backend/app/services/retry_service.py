@@ -89,8 +89,8 @@ async def execute_retry_failed_task(
     failed_count = 0
     results = []
     
-    # 并发限制
-    semaphore = asyncio.Semaphore(settings.PARALLEL_TUTORIAL_LIMIT)
+    # 并发控制已移除：改用 Celery --concurrency 参数控制全局并发
+    # semaphore = asyncio.Semaphore(settings.PARALLEL_TUTORIAL_LIMIT)
     
     async def retry_single_item(content_type: str, item: dict, current: int, total: int) -> dict:
         """重试单个项目"""
@@ -144,77 +144,77 @@ async def execute_retry_failed_task(
         )
         
         try:
-            async with semaphore:
-                if content_type == "tutorial" and tutorial_generator:
-                    input_data = TutorialGenerationInput(
-                        concept=concept,
-                        context=context,
-                        user_preferences=user_preferences,
-                    )
-                    result = await tutorial_generator.execute(input_data)
-                    output_data = {
-                        "tutorial_id": result.tutorial_id,
-                        "content_url": result.content_url,
-                    }
-                    
-                elif content_type == "resources" and resource_recommender:
-                    input_data = ResourceRecommendationInput(
-                        concept=concept,
-                        context=context,
-                        user_preferences=user_preferences,
-                    )
-                    result = await resource_recommender.execute(input_data)
-                    output_data = {
-                        "resources_id": result.id,
-                        "resources_count": len(result.resources),
-                    }
-                    
-                elif content_type == "quiz" and quiz_generator:
-                    input_data = QuizGenerationInput(
-                        concept=concept,
-                        context=context,
-                        user_preferences=user_preferences,
-                    )
-                    result = await quiz_generator.execute(input_data)
-                    output_data = {
-                        "quiz_id": result.quiz_id,
-                        "questions_count": result.total_questions,
-                    }
-                else:
-                    raise ValueError(f"Unknown content type: {content_type}")
-                
-                success_count += 1
-                item_duration_ms = int((time.time() - item_start_time) * 1000)
-                
-                # 记录 ExecutionLog：单个项目成功
-                await execution_logger.log_agent_complete(
-                    task_id=retry_task_id,
-                    agent_name=agent_name,
-                    message=f"Retry of {content_type} content succeeded",
-                    duration_ms=item_duration_ms,
-                    concept_id=concept_id,
-                    details={
-                        "concept_name": concept.name,
-                        "content_type": content_type,
-                        "output": output_data,
-                    },
+            # 移除 semaphore 包装，直接执行
+            if content_type == "tutorial" and tutorial_generator:
+                input_data = TutorialGenerationInput(
+                    concept=concept,
+                    context=context,
+                    user_preferences=user_preferences,
                 )
-                
-                # 发布概念完成事件（使用标准事件）
-                await notification_service.publish_concept_complete(
-                    task_id=retry_task_id,
-                    concept_id=concept_id,
-                    concept_name=concept.name,
-                    data=output_data,
-                )
-                
-                return {
-                    "concept_id": concept_id,
-                    "content_type": content_type,
-                    "success": True,
-                    "result": result,
+                result = await tutorial_generator.execute(input_data)
+                output_data = {
+                    "tutorial_id": result.tutorial_id,
+                    "content_url": result.content_url,
                 }
                 
+            elif content_type == "resources" and resource_recommender:
+                input_data = ResourceRecommendationInput(
+                    concept=concept,
+                    context=context,
+                    user_preferences=user_preferences,
+                )
+                result = await resource_recommender.execute(input_data)
+                output_data = {
+                    "resources_id": result.id,
+                    "resources_count": len(result.resources),
+                }
+                
+            elif content_type == "quiz" and quiz_generator:
+                input_data = QuizGenerationInput(
+                    concept=concept,
+                    context=context,
+                    user_preferences=user_preferences,
+                )
+                result = await quiz_generator.execute(input_data)
+                output_data = {
+                    "quiz_id": result.quiz_id,
+                    "questions_count": result.total_questions,
+                }
+            else:
+                raise ValueError(f"Unknown content type: {content_type}")
+            
+            success_count += 1
+            item_duration_ms = int((time.time() - item_start_time) * 1000)
+            
+            # 记录 ExecutionLog：单个项目成功
+            await execution_logger.log_agent_complete(
+                task_id=retry_task_id,
+                agent_name=agent_name,
+                message=f"Retry of {content_type} content succeeded",
+                duration_ms=item_duration_ms,
+                concept_id=concept_id,
+                details={
+                    "concept_name": concept.name,
+                    "content_type": content_type,
+                    "output": output_data,
+                },
+            )
+            
+            # 发布概念完成事件（使用标准事件）
+            await notification_service.publish_concept_complete(
+                task_id=retry_task_id,
+                concept_id=concept_id,
+                concept_name=concept.name,
+                data=output_data,
+            )
+            
+            return {
+                "concept_id": concept_id,
+                "content_type": content_type,
+                "success": True,
+                "result": result,
+            }
+            
         except Exception as e:
             failed_count += 1
             item_duration_ms = int((time.time() - item_start_time) * 1000)

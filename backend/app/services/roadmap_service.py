@@ -108,6 +108,9 @@ class RoadmapService:
         """
         生成学习路线图（异步任务）
         
+        **已废弃**: 此方法已被 Celery 任务 `roadmap_generation_tasks.generate_roadmap` 替代。
+        保留此方法仅用于向后兼容和测试目的。
+        
         Args:
             user_request: 用户请求
             task_id: 追踪 ID（必须提供，由 API 层创建）
@@ -408,7 +411,7 @@ class RoadmapService:
         # 从 JSON 数据重建 RoadmapFramework
         return RoadmapFramework.model_validate(metadata.framework_data)
     
-    async def handle_human_review(
+    async def handle_human_review(  # DEPRECATED: 使用 workflow_resume_tasks.resume_after_review 替代
         self,
         task_id: str,
         approved: bool,

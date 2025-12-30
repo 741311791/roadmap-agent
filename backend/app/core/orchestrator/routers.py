@@ -72,10 +72,9 @@ class WorkflowRouter:
         # 验证通过或达到最大重试次数，进入下一阶段
         if not self.config.skip_human_review:
             return "human_review"
-        elif not self.config.skip_tutorial_generation:
-            return "tutorial_generation"
         else:
-            return "end"
+            # 跳过人工审核，直接进入内容生成
+            return "tutorial_generation"
     
     def route_after_human_review(self, state: RoadmapState) -> str:
         """
@@ -92,13 +91,7 @@ class WorkflowRouter:
             - "end": 结束
         """
         if state.get("human_approved", False):
-            # 用户批准
-            if self.config.skip_tutorial_generation:
-                logger.info(
-                    "tutorial_generation_skipped",
-                    task_id=state["task_id"],
-                )
-                return "end"
+            # 用户批准，进入内容生成
             return "approved"
         else:
             # 用户拒绝，需要修改

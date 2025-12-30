@@ -1,0 +1,347 @@
+"""
+单概念内容生成器
+
+为单个 Concept 串行生成 Tutorial、Resource、Quiz，
+完成后立即写入数据库。
+"""
+import asyncio
+import structlog
+from typing import Any
+
+from app.models.domain import (
+    Concept,
+    LearningPreferences,
+    TutorialGenerationInput,
+    ResourceRecommendationInput,
+    QuizGenerationInput,
+)
+from app.services.notification_service import notification_service
+from app.services.execution_logger import execution_logger, LogCategory
+
+logger = structlog.get_logger()
+
+
+async def generate_single_concept(
+    task_id: str,
+    roadmap_id: str,
+    concept: Concept,
+    concept_map: dict[str, Concept],
+    preferences: LearningPreferences,
+    agent_factory: Any,
+    total_concepts: int,
+    progress_counter: dict[str, int],
+    progress_lock: asyncio.Lock,
+    tutorial_refs: dict[str, Any],
+    resource_refs: dict[str, Any],
+    quiz_refs: dict[str, Any],
+    failed_concepts: list[str],
+    results_lock: asyncio.Lock,
+) -> None:
+    """
+    为单个概念串行生成教程、资源、测验，完成后立即写入数据库
+    
+    执行顺序：
+    1. Tutorial Generation（教程生成）
+    2. Resource Recommendation（资源推荐）
+    3. Quiz Generation（测验生成）
+    4. 立即写入数据库
+    
+    Args:
+        task_id: 任务 ID
+        roadmap_id: 路线图 ID
+        concept: 概念
+        concept_map: 概念ID到概念对象的映射
+        preferences: 用户学习偏好
+        agent_factory: Agent 工厂
+        total_concepts: 总概念数
+        progress_counter: 共享进度计数器
+        progress_lock: 进度计数器保护锁
+        tutorial_refs: 教程引用累积字典
+        resource_refs: 资源引用累积字典
+        quiz_refs: 测验引用累积字典
+        failed_concepts: 失败概念累积列表
+        results_lock: 结果累积保护锁
+    """
+    concept_id = concept.concept_id
+    concept_name = concept.name
+    
+    # 更新进度计数器（线程安全）
+    async with progress_lock:
+        progress_counter["current"] += 1
+        current_progress = progress_counter["current"]
+    
+    # 发送 WebSocket 事件：概念开始生成
+    await notification_service.publish_concept_start(
+        task_id=task_id,
+        concept_id=concept_id,
+        concept_name=concept_name,
+        current=current_progress,
+        total=total_concepts,
+        content_type="tutorial",
+    )
+    
+    # 构建前置概念详情列表
+    prerequisite_details = []
+    if concept.prerequisites:
+        from urllib.parse import quote
+        for prereq_id in concept.prerequisites:
+            prereq_concept = concept_map.get(prereq_id)
+            if prereq_concept:
+                prereq_url = f"/roadmap/{roadmap_id}?concept={quote(prereq_id)}"
+                prerequisite_details.append({
+                    "concept_id": prereq_id,
+                    "name": prereq_concept.name,
+                    "url": prereq_url,
+                })
+    
+    # 记录开始生成日志
+    await execution_logger.info(
+        task_id=task_id,
+        category=LogCategory.WORKFLOW,
+        step="content_generation",
+        roadmap_id=roadmap_id,
+        concept_id=concept_id,
+        message=f"🚀 Generating content for concept: {concept_name}",
+        details={
+            "log_type": "content_generation_start",
+            "concept": {
+                "id": concept_id,
+                "name": concept_name,
+                "difficulty": concept.difficulty,
+            },
+        },
+    )
+    
+    try:
+        # ==================== 串行执行：Tutorial → Resource → Quiz ====================
+        
+        # 1️⃣ 生成教程
+        tutorial_agent = agent_factory.create_tutorial_generator()
+        tutorial_input = TutorialGenerationInput(
+            concept=concept,
+            user_preferences=preferences,
+            context={
+                "roadmap_id": roadmap_id,
+                "prerequisite_details": prerequisite_details,
+            },
+        )
+        
+        logger.info(
+            "generating_tutorial",
+            task_id=task_id,
+            concept_id=concept_id,
+            concept_name=concept_name,
+        )
+        
+        tutorial = await tutorial_agent.execute(tutorial_input)
+        
+        logger.info(
+            "tutorial_generated",
+            task_id=task_id,
+            concept_id=concept_id,
+            tutorial_id=tutorial.tutorial_id if tutorial and hasattr(tutorial, 'tutorial_id') else None,
+        )
+        
+        # 2️⃣ 生成资源推荐
+        resource_agent = agent_factory.create_resource_recommender()
+        resource_input = ResourceRecommendationInput(
+            concept=concept,
+            user_preferences=preferences,
+            context={"roadmap_id": roadmap_id},
+        )
+        
+        logger.info(
+            "generating_resources",
+            task_id=task_id,
+            concept_id=concept_id,
+            concept_name=concept_name,
+        )
+        
+        resource = await resource_agent.execute(resource_input)
+        
+        logger.info(
+            "resources_generated",
+            task_id=task_id,
+            concept_id=concept_id,
+            resources_count=len(resource.resources) if resource and hasattr(resource, 'resources') else 0,
+        )
+        
+        # 3️⃣ 生成测验
+        quiz_agent = agent_factory.create_quiz_generator()
+        quiz_input = QuizGenerationInput(
+            concept=concept,
+            user_preferences=preferences,
+            context={"roadmap_id": roadmap_id},
+        )
+        
+        logger.info(
+            "generating_quiz",
+            task_id=task_id,
+            concept_id=concept_id,
+            concept_name=concept_name,
+        )
+        
+        quiz = await quiz_agent.execute(quiz_input)
+        
+        logger.info(
+            "quiz_generated",
+            task_id=task_id,
+            concept_id=concept_id,
+            questions_count=len(quiz.questions) if quiz and hasattr(quiz, 'questions') else 0,
+        )
+        
+        # 记录概念完成日志
+        await execution_logger.info(
+            task_id=task_id,
+            category=LogCategory.WORKFLOW,
+            step="content_generation",
+            roadmap_id=roadmap_id,
+            concept_id=concept_id,
+            message=f"🎉 All content generated for concept: {concept_name}",
+            details={
+                "log_type": "concept_completed",
+                "concept_id": concept_id,
+                "concept_name": concept_name,
+                "completed_content": [
+                    "tutorial" if tutorial else None,
+                    "resources" if resource else None,
+                    "quiz" if quiz else None,
+                ],
+            },
+        )
+        
+        # ==================== 立即写入数据库（以 Concept 为单位） ====================
+        logger.info(
+            "saving_concept_to_database",
+            task_id=task_id,
+            roadmap_id=roadmap_id,
+            concept_id=concept_id,
+        )
+        
+        from app.db.session import safe_session_with_retry
+        
+        async with safe_session_with_retry() as session:
+            # 保存教程
+            if tutorial:
+                try:
+                    from app.db.repositories.tutorial_repo import TutorialRepository
+                    tutorial_repo = TutorialRepository(session)
+                    await tutorial_repo.save_tutorial(
+                        tutorial_output=tutorial,
+                        roadmap_id=roadmap_id,
+                    )
+                    logger.debug(
+                        "tutorial_saved",
+                        concept_id=concept_id,
+                        tutorial_id=tutorial.tutorial_id if hasattr(tutorial, 'tutorial_id') else None,
+                    )
+                except Exception as e:
+                    logger.error("tutorial_save_failed", concept_id=concept_id, error=str(e))
+            
+            # 保存资源
+            if resource:
+                try:
+                    from app.db.repositories.resource_repo import ResourceRepository
+                    resource_repo = ResourceRepository(session)
+                    await resource_repo.save_resource_recommendation(
+                        resource_output=resource,
+                        roadmap_id=roadmap_id,
+                    )
+                    logger.debug(
+                        "resources_saved",
+                        concept_id=concept_id,
+                        resources_count=len(resource.resources) if hasattr(resource, 'resources') else 0,
+                    )
+                except Exception as e:
+                    logger.error("resources_save_failed", concept_id=concept_id, error=str(e))
+            
+            # 保存测验
+            if quiz:
+                try:
+                    from app.db.repositories.quiz_repo import QuizRepository
+                    quiz_repo = QuizRepository(session)
+                    await quiz_repo.save_quiz(
+                        quiz_output=quiz,
+                        roadmap_id=roadmap_id,
+                    )
+                    logger.debug(
+                        "quiz_saved",
+                        concept_id=concept_id,
+                        questions_count=len(quiz.questions) if hasattr(quiz, 'questions') else 0,
+                    )
+                except Exception as e:
+                    logger.error("quiz_save_failed", concept_id=concept_id, error=str(e))
+            
+            await session.commit()
+        
+        logger.info(
+            "concept_saved_to_database",
+            task_id=task_id,
+            roadmap_id=roadmap_id,
+            concept_id=concept_id,
+        )
+        
+        # 发送 WebSocket 事件：概念生成完成
+        await notification_service.publish_concept_complete(
+            task_id=task_id,
+            concept_id=concept_id,
+            concept_name=concept_name,
+            data={
+                "tutorial_id": tutorial.tutorial_id if tutorial and hasattr(tutorial, 'tutorial_id') else None,
+                "resources_count": len(resource.resources) if resource and hasattr(resource, 'resources') else 0,
+                "quiz_questions": len(quiz.questions) if quiz and hasattr(quiz, 'questions') else 0,
+            },
+            content_type="tutorial",
+        )
+        
+        # 累积到最终结果（线程安全）
+        async with results_lock:
+            if tutorial:
+                tutorial_refs[concept_id] = tutorial
+            if resource:
+                resource_refs[concept_id] = resource
+            if quiz:
+                quiz_refs[concept_id] = quiz
+    
+    except Exception as e:
+        logger.error(
+            "concept_generation_failed",
+            task_id=task_id,
+            concept_id=concept_id,
+            concept_name=concept_name,
+            error=str(e),
+            exc_info=True,
+        )
+        
+        # 记录失败日志
+        await execution_logger.error(
+            task_id=task_id,
+            category=LogCategory.AGENT,
+            step="content_generation",
+            roadmap_id=roadmap_id,
+            concept_id=concept_id,
+            message=f"❌ Content generation failed for concept: {concept_name}",
+            details={
+                "log_type": "content_generation_failed",
+                "concept_id": concept_id,
+                "concept_name": concept_name,
+                "error": str(e)[:500],
+                "error_type": type(e).__name__,
+            },
+        )
+        
+        # 累积失败的概念（线程安全）
+        async with results_lock:
+            failed_concepts.append(concept_id)
+        
+        # 发送失败通知
+        await notification_service.publish_concept_failed(
+            task_id=task_id,
+            concept_id=concept_id,
+            concept_name=concept_name,
+            error=str(e)[:200],
+            content_type="tutorial",
+        )
+        
+        # 不要 raise，让其他 Concept 继续执行
+

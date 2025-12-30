@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -20,20 +20,23 @@ import { ChevronLeft, BookOpen, Plus, LayoutGrid, List } from 'lucide-react';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import { useAuthStore } from '@/lib/store/auth-store';
 import { getUserRoadmaps, deleteRoadmap } from '@/lib/api/endpoints';
-import { batchFetchCoverImagesFromAPI } from '@/lib/cover-image';
+import { batchFetchCoverImagesFromAPI, batchGenerateCoverImages } from '@/lib/cover-image';
 import { cn } from '@/lib/utils';
 
 type ViewMode = 'grid' | 'list';
 
 export default function MyRoadmapsPage() {
   const { history, setHistory } = useRoadmapStore();
-  const { getUserId } = useAuthStore();
+  const { getUserId, isAuthenticated } = useAuthStore();
   const [isLoading, setIsLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [currentPage, setCurrentPage] = useState(1);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [roadmapToDelete, setRoadmapToDelete] = useState<string | null>(null);
   const [coverImageMap, setCoverImageMap] = useState<Map<string, string | null>>(new Map());
+  
+  // 使用 ref 标记避免重复触发生成
+  const hasTriggeredCoverGenerationRef = useRef(false);
   
   const itemsPerPage = viewMode === 'grid' ? 12 : 20;
   
@@ -65,6 +68,26 @@ export default function MyRoadmapsPage() {
         if (roadmapIds.length > 0) {
           const coverImages = await batchFetchCoverImagesFromAPI(roadmapIds);
           setCoverImageMap(coverImages);
+          
+          // 自动触发缺失封面图的生成（仅首次加载，且用户已认证）
+          if (!hasTriggeredCoverGenerationRef.current && isAuthenticated) {
+            const missingCoverIds = roadmapIds.filter(id => {
+              const coverUrl = coverImages.get(id);
+              return coverUrl === null; // null 表示 pending 或 failed
+            });
+            
+            if (missingCoverIds.length > 0) {
+              console.log('[Roadmaps] Auto-triggering cover generation for:', missingCoverIds);
+              hasTriggeredCoverGenerationRef.current = true;
+              
+              try {
+                await batchGenerateCoverImages(missingCoverIds);
+                console.log('[Roadmaps] Cover generation triggered successfully');
+              } catch (error) {
+                console.error('[Roadmaps] Failed to trigger cover generation:', error);
+              }
+            }
+          }
         }
       } catch (error) {
         console.error('Failed to fetch roadmaps:', error);
@@ -74,7 +97,7 @@ export default function MyRoadmapsPage() {
     };
     
     fetchRoadmaps();
-  }, [getUserId, setHistory]);
+  }, [getUserId, setHistory, isAuthenticated]);
   
   // Map history to roadmap format (只包含已完成的路线图)
   const allRoadmaps: MyRoadmap[] = history

@@ -104,6 +104,7 @@ export function mapStepToPhase(step: string | null): GenerationPhase | null {
     'roadmap_edit': 'human_review',  // 编辑中状态，映射到同一阶段
     
     // Content generation phase
+    'content_generation_queued': 'content_generation',
     'content_generation': 'content_generation',
     'tutorial_generation': 'content_generation',
     'quiz_generation': 'content_generation',

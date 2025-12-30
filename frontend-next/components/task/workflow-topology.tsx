@@ -98,7 +98,7 @@ const MAIN_STAGES: WorkflowNode[] = [
     label: 'Curriculum Design',
     shortLabel: 'Design',
     description: 'Designing course structure',
-    steps: ['curriculum_design', 'framework_generation'],
+    steps: ['curriculum_design'],  // 移除不存在的 framework_generation
   },
   {
     id: 'validate',
@@ -112,14 +112,14 @@ const MAIN_STAGES: WorkflowNode[] = [
     label: 'Human Review',
     shortLabel: 'Review',
     description: 'Awaiting confirmation',
-    steps: ['human_review', 'human_review_pending'],
+    steps: ['human_review'],  // 移除 human_review_pending（这是任务状态，不是步骤）
   },
   {
     id: 'content',
     label: 'Content Generation',
     shortLabel: 'Content',
     description: 'Generating materials',
-    steps: ['content_generation', 'tutorial_generation', 'resource_recommendation', 'quiz_generation'],
+    steps: ['content_generation_queued', 'content_generation', 'tutorial_generation', 'resource_recommendation', 'quiz_generation'],
   },
 ];
 
