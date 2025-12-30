@@ -258,6 +258,17 @@ export async function batchGenerateCoverImages(
       signal: AbortSignal.timeout(10000),
     });
     
+    // 如果是401未授权错误，静默返回空结果（用户未登录或token过期）
+    if (response.status === 401) {
+      console.warn('[batchGenerateCoverImages] Unauthorized - user not authenticated');
+      return {
+        triggered: 0,
+        skipped: roadmapIds.length,
+        roadmap_ids: [],
+        message: 'Skipped: user not authenticated'
+      };
+    }
+    
     if (!response.ok) {
       throw new Error(`Failed to batch generate cover images: ${response.statusText}`);
     }

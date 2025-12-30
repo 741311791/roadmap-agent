@@ -75,7 +75,7 @@ function SectionHeader({
 // Main Home Page Component
 export default function HomePage() {
   const { history, setHistory } = useRoadmapStore();
-  const { getUserId } = useAuthStore();
+  const { getUserId, isAuthenticated } = useAuthStore();
   const [isLoading, setIsLoading] = useState(true);
   const [featuredRoadmaps, setFeaturedRoadmaps] = useState<FeaturedRoadmap[]>([]);
   const [isFeaturedLoading, setIsFeaturedLoading] = useState(true);
@@ -126,8 +126,8 @@ export default function HomePage() {
           const coverImages = await batchFetchCoverImagesFromAPI(roadmapIds);
           setCoverImageMap(coverImages);
           
-          // 自动触发缺失封面图的生成（仅首次加载）
-          if (!hasTriggeredCoverGenerationRef.current) {
+          // 自动触发缺失封面图的生成（仅首次加载，且用户已认证）
+          if (!hasTriggeredCoverGenerationRef.current && isAuthenticated) {
             const missingCoverIds = roadmapIds.filter(id => {
               const coverUrl = coverImages.get(id);
               return coverUrl === null; // null 表示 pending 或 failed
