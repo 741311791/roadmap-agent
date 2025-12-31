@@ -1,0 +1,53 @@
+---
+alwaysApply: true
+---
+使用git进行版本控制需要遵循以下规范：
+
+## 一、 分支定义
+
+本规范仅保留两个核心长期分支，所有开发活动直接在 `develop` 进行。
+| 分支名称 | 属性 | 说明 |
+| --- | --- | --- |
+| **`main`** | **生产分支** | 线上稳定版代码。仅接受从 `develop` 合并，禁止直接提交代码。 |
+| **`develop`** | **开发分支** | 日常开发、功能迭代、Bug 修复的主分支。 |
+
+## 二、 代码提交规范 (Commit Message)
+
+采用 Angular 规范简化版，格式为：`<type>: <description>`
+
+* **`feat`**: 新功能、新逻辑 (如：Agent 链路更新)
+* **`fix`**: 修复 Bug (如：Tavily 并发报错修复)
+* **`docs`**: 文档更新 (包括 Markdown 总结归档)
+* **`refactor`**: 代码重构 (不影响功能，如变量名调整、目录优化)
+* **`chore`**: 辅助工具变动 (如：修改 `.gitignore`, 更新 `requirements.txt`)
+
+**提交示例：**
+
+* `feat: 增加 Roadmap 生成进度条回调`
+* `docs: 归档 20251231_后端数据库设计变更.md`
+
+
+## 三、 核心研发流程
+
+1. **日常开发**：
+* 直接在 `develop` 分支进行代码编写与提交。
+
+1. **版本发布 (Release to Main)**：
+* 当功能累积到可发布阶段时，将 `develop` 合并至 `main`：
+```bash
+git checkout main
+git merge develop
+
+```
+* **打标签 (Tag)**：每次合并 `main` 后，必须标记版本号：
+```bash
+git tag -a v1.x.x -m "发布说明"
+git push origin --tags
+
+```
+
+## 四、 安全与防护约束
+
+1. **敏感信息隔离**：禁止将 `.env` 文件、API Keys (Tavily, OpenAI 等) 提交至 Git。
+2. **数据库状态**：涉及 `AsyncPostgresSaver` 或其他数据库 Schema 的变更，须确保相关 SQL 或迁移脚本随代码一同提交。
+3. **冲突处理**：在合并 `develop` 至 `main` 前，确保 `develop` 已合入 `main` 最新的补丁代码（如有）。
