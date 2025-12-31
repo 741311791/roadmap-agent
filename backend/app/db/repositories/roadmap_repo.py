@@ -375,6 +375,12 @@ class RoadmapRepository:
         # 当任务完成（包括部分失败）或失败时，设置 completed_at（包括取消状态）
         if status in ("completed", "partial_failure", "failed", "cancelled"):
             task.completed_at = beijing_now()
+        # 任务重新开始时清除 completed_at 和 error_message（重要：重试时恢复到处理中状态）
+        elif status == "processing":
+            task.completed_at = None
+            # 只在没有显式传入error_message时才清除（避免覆盖新的错误消息）
+            if error_message is None:
+                task.error_message = None
         
         await self.session.flush()
         await self.session.refresh(task)

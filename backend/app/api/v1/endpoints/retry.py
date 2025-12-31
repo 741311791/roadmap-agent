@@ -605,6 +605,30 @@ async def retry_task(
             preferred_languages=["en"]
         )
     
+    # 更新任务状态为 processing（重要：必须在调用Celery前更新）
+    await task_repo.update_task_status(
+        task_id=task_id,
+        status="processing",
+        current_step="content_retry_queued",
+        roadmap_id=roadmap_id,
+    )
+    await db.commit()
+    
+    # 发送 WebSocket 通知，告知前端任务已重新开始
+    from app.services.notification_service import notification_service
+    await notification_service.publish_progress(
+        task_id=task_id,
+        step="content_retry_queued",
+        status="processing",
+        message=f"Retrying {total_items} failed content items",
+        extra_data={
+            "roadmap_id": roadmap_id,
+            "total_items": total_items,
+            "items_by_type": {k: len(v) for k, v in items_to_retry.items()},
+            "recovery_type": "content_retry",
+        },
+    )
+    
     # 分发 Celery 任务进行内容重试
     # 传递 items_to_retry 避免 Worker 重复查询（解决主应用和Worker检测逻辑不一致的问题）
     celery_task = retry_failed_content_task.delay(
