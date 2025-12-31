@@ -224,6 +224,7 @@ class OrchestratorFactory:
             builder=builder,
             state_manager=state_manager,
             checkpointer=cls._checkpointer,
+            execution_logger=execution_logger,  # 关键修复：传递 execution_logger
         )
         
         logger.info(

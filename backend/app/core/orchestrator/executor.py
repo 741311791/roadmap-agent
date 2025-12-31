@@ -28,16 +28,19 @@ class WorkflowExecutor:
         builder: WorkflowBuilder,
         state_manager: StateManager,
         checkpointer,
+        execution_logger: "ExecutionLogger",
     ):
         """
         Args:
             builder: WorkflowBuilder 实例
             state_manager: StateManager 实例
             checkpointer: AsyncPostgresSaver 实例
+            execution_logger: ExecutionLogger 实例（用于刷新日志缓冲区）
         """
         self.builder = builder
         self.state_manager = state_manager
         self.checkpointer = checkpointer
+        self.execution_logger = execution_logger
         self._graph = None
     
     @property
@@ -101,6 +104,14 @@ class WorkflowExecutor:
             # 清除 live_step 缓存
             self.state_manager.clear_live_step(task_id)
             
+            # 关键修复：刷新执行日志缓冲区，确保所有日志都被写入
+            # 场景：工作流快速暂停（如 human_review interrupt）时，日志可能还在缓冲区中
+            await self.execution_logger.flush()
+            logger.debug(
+                "workflow_execution_logs_flushed",
+                task_id=task_id,
+            )
+            
             return final_state
             
         except Exception as e:
@@ -113,6 +124,9 @@ class WorkflowExecutor:
             
             # 清除 live_step 缓存
             self.state_manager.clear_live_step(task_id)
+            
+            # 关键修复：即使失败也要刷新日志，确保错误日志被记录
+            await self.execution_logger.flush()
             
             raise
     
@@ -164,6 +178,13 @@ class WorkflowExecutor:
                 final_step=final_state.get("current_step"),
             )
             
+            # 关键修复：刷新执行日志缓冲区，确保恢复后的所有日志都被写入
+            await self.execution_logger.flush()
+            logger.debug(
+                "workflow_resume_logs_flushed",
+                task_id=task_id,
+            )
+            
             return final_state
             
         except Exception as e:
@@ -173,6 +194,10 @@ class WorkflowExecutor:
                 error=str(e),
                 error_type=type(e).__name__,
             )
+            
+            # 关键修复：即使恢复失败也要刷新日志
+            await self.execution_logger.flush()
+            
             raise
     
     def _create_initial_state(

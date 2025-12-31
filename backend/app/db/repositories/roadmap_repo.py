@@ -1062,7 +1062,10 @@ class RoadmapRepository:
         intent_analysis: IntentAnalysisOutput,
     ) -> IntentAnalysisMetadata:
         """
-        保存需求分析结果元数据（支持增强版字段）
+        保存需求分析结果元数据（Upsert 逻辑）
+        
+        使用 upsert 逻辑：如果 task_id 已存在则更新，否则创建新记录。
+        避免工作流恢复或重试时出现唯一约束冲突。
         
         Args:
             task_id: 任务 ID
@@ -1071,40 +1074,101 @@ class RoadmapRepository:
         Returns:
             保存的元数据记录
         """
-        metadata = IntentAnalysisMetadata(
-            task_id=task_id,
-            # 路线图 ID（在需求分析完成后生成）
-            roadmap_id=intent_analysis.roadmap_id,
-            # 原有字段
-            parsed_goal=intent_analysis.parsed_goal,
-            key_technologies=intent_analysis.key_technologies,
-            difficulty_profile=intent_analysis.difficulty_profile,
-            time_constraint=intent_analysis.time_constraint,
-            recommended_focus=intent_analysis.recommended_focus,
-            # 新增字段
-            user_profile_summary=intent_analysis.user_profile_summary or "",
-            skill_gap_analysis=intent_analysis.skill_gap_analysis or [],
-            personalized_suggestions=intent_analysis.personalized_suggestions or [],
-            estimated_learning_path_type=intent_analysis.estimated_learning_path_type,
-            content_format_weights=intent_analysis.content_format_weights.model_dump() if intent_analysis.content_format_weights else None,
-            # 语言偏好
-            language_preferences=intent_analysis.language_preferences.model_dump() if intent_analysis.language_preferences else None,
-            # 完整数据
-            full_analysis_data=intent_analysis.model_dump(),
-        )
-        self.session.add(metadata)
-        await self.session.flush()
-        await self.session.refresh(metadata)
+        # 1. 检查是否已存在
+        existing = await self.get_intent_analysis_metadata(task_id)
         
-        logger.info(
-            "intent_analysis_metadata_saved",
-            task_id=task_id,
-            roadmap_id=intent_analysis.roadmap_id,
-            key_technologies_count=len(intent_analysis.key_technologies),
-            learning_path_type=intent_analysis.estimated_learning_path_type,
-            primary_language=intent_analysis.language_preferences.primary_language if intent_analysis.language_preferences else None,
-        )
-        return metadata
+        if existing:
+            # 2. 更新已存在的记录
+            logger.info(
+                "intent_analysis_metadata_updating",
+                task_id=task_id,
+                existing_id=existing.id,
+                roadmap_id=intent_analysis.roadmap_id,
+            )
+            
+            # 更新所有字段
+            existing.roadmap_id = intent_analysis.roadmap_id
+            existing.parsed_goal = intent_analysis.parsed_goal
+            existing.key_technologies = intent_analysis.key_technologies
+            existing.difficulty_profile = intent_analysis.difficulty_profile
+            existing.time_constraint = intent_analysis.time_constraint
+            existing.recommended_focus = intent_analysis.recommended_focus
+            existing.user_profile_summary = intent_analysis.user_profile_summary or ""
+            existing.skill_gap_analysis = intent_analysis.skill_gap_analysis or []
+            existing.personalized_suggestions = intent_analysis.personalized_suggestions or []
+            existing.estimated_learning_path_type = intent_analysis.estimated_learning_path_type
+            existing.content_format_weights = (
+                intent_analysis.content_format_weights.model_dump()
+                if intent_analysis.content_format_weights
+                else None
+            )
+            existing.language_preferences = (
+                intent_analysis.language_preferences.model_dump()
+                if intent_analysis.language_preferences
+                else None
+            )
+            existing.full_analysis_data = intent_analysis.model_dump()
+            
+            self.session.add(existing)
+            await self.session.flush()
+            await self.session.refresh(existing)
+            
+            logger.info(
+                "intent_analysis_metadata_updated",
+                task_id=task_id,
+                roadmap_id=intent_analysis.roadmap_id,
+            )
+            
+            return existing
+        
+        else:
+            # 3. 创建新记录
+            metadata = IntentAnalysisMetadata(
+                task_id=task_id,
+                # 路线图 ID（在需求分析完成后生成）
+                roadmap_id=intent_analysis.roadmap_id,
+                # 原有字段
+                parsed_goal=intent_analysis.parsed_goal,
+                key_technologies=intent_analysis.key_technologies,
+                difficulty_profile=intent_analysis.difficulty_profile,
+                time_constraint=intent_analysis.time_constraint,
+                recommended_focus=intent_analysis.recommended_focus,
+                # 新增字段
+                user_profile_summary=intent_analysis.user_profile_summary or "",
+                skill_gap_analysis=intent_analysis.skill_gap_analysis or [],
+                personalized_suggestions=intent_analysis.personalized_suggestions or [],
+                estimated_learning_path_type=intent_analysis.estimated_learning_path_type,
+                content_format_weights=(
+                    intent_analysis.content_format_weights.model_dump()
+                    if intent_analysis.content_format_weights
+                    else None
+                ),
+                # 语言偏好
+                language_preferences=(
+                    intent_analysis.language_preferences.model_dump()
+                    if intent_analysis.language_preferences
+                    else None
+                ),
+                # 完整数据
+                full_analysis_data=intent_analysis.model_dump(),
+            )
+            self.session.add(metadata)
+            await self.session.flush()
+            await self.session.refresh(metadata)
+            
+            logger.info(
+                "intent_analysis_metadata_created",
+                task_id=task_id,
+                roadmap_id=intent_analysis.roadmap_id,
+                key_technologies_count=len(intent_analysis.key_technologies),
+                learning_path_type=intent_analysis.estimated_learning_path_type,
+                primary_language=(
+                    intent_analysis.language_preferences.primary_language
+                    if intent_analysis.language_preferences
+                    else None
+                ),
+            )
+            return metadata
     
     async def get_intent_analysis_metadata(
         self,
@@ -1567,7 +1631,7 @@ class RoadmapRepository:
             offset: 分页偏移
             
         Returns:
-            执行日志列表（按时间降序）
+            执行日志列表（按时间升序，确保早期步骤不会被截断）
         """
         query = select(ExecutionLog).where(ExecutionLog.task_id == task_id)
         
@@ -1576,7 +1640,8 @@ class RoadmapRepository:
         if category:
             query = query.where(ExecutionLog.category == category)
         
-        query = query.order_by(ExecutionLog.created_at.desc()).offset(offset).limit(limit)
+        # 修改：改为升序排序，确保早期步骤（如 structure_validation）的日志不会被截断
+        query = query.order_by(ExecutionLog.created_at.asc()).offset(offset).limit(limit)
         
         result = await self.session.execute(query)
         return list(result.scalars().all())

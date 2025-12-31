@@ -40,6 +40,7 @@ import { ExecutionLogTimeline } from '@/components/task/execution-log-timeline';
 import { cn } from '@/lib/utils';
 import { limitLogsByStep, getLogStatsByStep } from '@/lib/utils/log-grouping';
 import { useAuthStore } from '@/lib/store/auth-store';
+import { mapToDisplayStep } from '@/lib/constants/workflow-steps';
 import type { RoadmapFramework, LearningPreferences } from '@/types/generated/models';
 
 /**
@@ -351,7 +352,9 @@ export default function TaskDetailPage() {
         loadIntentAnalysis(taskId, signal).catch(() => null), // 允许失败，不阻塞主流程
       ]);
       
-      setTaskInfo(taskData);
+      // 🔧 优化：应用步骤映射
+      const displayStep = mapToDisplayStep(taskData.current_step);
+      setTaskInfo({ ...taskData, current_step: displayStep });
       // 更新ref中的roadmap_id
       roadmapIdRef.current = taskData.roadmap_id || null;
       
@@ -577,7 +580,9 @@ export default function TaskDetailPage() {
     const handleStatus = (event: any) => {
       console.log('[TaskDetail] Status update:', event);
       if (event.current_step) {
-        setTaskInfo((prev) => prev ? { ...prev, current_step: event.current_step } : null);
+        // 🔧 优化：将后端步骤映射到前端显示步骤，避免中间步骤导致UI闪烁
+        const displayStep = mapToDisplayStep(event.current_step);
+        setTaskInfo((prev) => prev ? { ...prev, current_step: displayStep } : null);
       }
       if (event.status) {
         setTaskInfo((prev) => prev ? { ...prev, status: event.status } : null);
@@ -617,8 +622,10 @@ export default function TaskDetailPage() {
       setExecutionLogs((prev) => [...prev, newLog]);
       
       // 更新 current_step
+      // 🔧 优化：将后端步骤映射到前端显示步骤，避免中间步骤导致UI闪烁
       if (event.step) {
-        setTaskInfo((prev) => prev ? { ...prev, current_step: event.step } : null);
+        const displayStep = mapToDisplayStep(event.step);
+        setTaskInfo((prev) => prev ? { ...prev, current_step: displayStep } : null);
       }
 
       // 更新 edit_source（用于区分分支）
@@ -704,25 +711,53 @@ export default function TaskDetailPage() {
       };
       setExecutionLogs((prev) => [...prev, newLog]);
       
-      // 立即更新本地状态，避免等待后端数据库更新
+      // 🔧 修复：使用深度不可变更新，确保所有层级都是新对象
+      // 原因：React.memo 和 useMemo 依赖浅比较，必须创建新的引用才能触发重新渲染
       setRoadmapFramework(prevRoadmap => {
         if (!prevRoadmap) return prevRoadmap;
         
-        const updatedRoadmap = { ...prevRoadmap };
-        // 查找并更新对应的 concept
-        for (const stage of updatedRoadmap.stages) {
-          for (const module of stage.modules) {
-            const concept = module.concepts.find(c => c.concept_id === event.concept_id);
-            if (concept) {
-              // 将所有状态设置为 completed
-              concept.content_status = 'completed';
-              concept.resources_status = 'completed';
-              concept.quiz_status = 'completed';
-              console.log('[TaskDetail] Updated concept status to completed:', concept.name);
-              return updatedRoadmap;
+        let conceptFound = false;
+        
+        // 创建新的 stages 数组，深度克隆所有层级
+        const updatedStages = prevRoadmap.stages.map(stage => {
+          const updatedModules = stage.modules.map(module => {
+            const updatedConcepts = module.concepts.map(concept => {
+              if (concept.concept_id === event.concept_id) {
+                conceptFound = true;
+                // 创建新的 concept 对象
+                return {
+                  ...concept,
+                  content_status: 'completed' as const,
+                  resources_status: 'completed' as const,
+                  quiz_status: 'completed' as const,
+                };
+              }
+              return concept;
+            });
+            
+            // 如果 concepts 有变化，创建新的 module 对象
+            if (updatedConcepts.some((c, i) => c !== module.concepts[i])) {
+              return { ...module, concepts: updatedConcepts };
             }
+            return module;
+          });
+          
+          // 如果 modules 有变化，创建新的 stage 对象
+          if (updatedModules.some((m, i) => m !== stage.modules[i])) {
+            return { ...stage, modules: updatedModules };
           }
+          return stage;
+        });
+        
+        if (conceptFound) {
+          console.log('[TaskDetail] Updated concept status to completed (immutable):', event.concept_name);
+          // 创建新的 roadmap 对象
+          return {
+            ...prevRoadmap,
+            stages: updatedStages,
+          };
         }
+        
         return prevRoadmap;
       });
       
@@ -904,7 +939,9 @@ export default function TaskDetailPage() {
                 // 如果任务已完成，更新状态并停止轮询
                 if (latestTask.status === 'completed' || latestTask.status === 'partial_failure' || latestTask.status === 'failed') {
                   console.log('[TaskDetail] Polling detected task completion:', latestTask.status);
-                  setTaskInfo(latestTask);
+                  // 🔧 优化：应用步骤映射
+                  const displayStep = mapToDisplayStep(latestTask.current_step);
+                  setTaskInfo({ ...latestTask, current_step: displayStep });
                   
                   // 刷新日志（只获取 agent 和 workflow 类型）
                   const [agentLogsData, workflowLogsData] = await Promise.all([
@@ -1000,7 +1037,9 @@ export default function TaskDetailPage() {
     if (taskId) {
       try {
         const taskData = await getTaskDetail(taskId);
-        setTaskInfo(taskData);
+        // 🔧 优化：应用步骤映射
+        const displayStep = mapToDisplayStep(taskData.current_step);
+        setTaskInfo({ ...taskData, current_step: displayStep });
       } catch (err) {
         console.error('Failed to refresh task after review:', err);
       }

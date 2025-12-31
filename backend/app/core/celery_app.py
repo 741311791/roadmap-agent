@@ -62,20 +62,30 @@ celery_app.conf.update(
     # Redis Backend 超时和连接配置
     # 注意：Upstash Redis（TLS 连接）不支持某些低级别 socket 选项
     result_backend_transport_options={
-        "socket_timeout": 10,  # Socket 操作超时 10 秒
+        "socket_timeout": 30,  # Socket 操作超时 30 秒(适配 Upstash 网络延迟)
         "socket_connect_timeout": 10,  # 连接超时 10 秒
         "socket_keepalive": True,  # 启用 TCP keepalive
+        "socket_keepalive_options": {  # TCP keepalive 参数(防止连接被服务端关闭)
+            1: 20,   # TCP_KEEPIDLE: 20秒后开始发送 keepalive 探测
+            2: 10,   # TCP_KEEPINTVL: 探测间隔 10 秒
+            3: 3,    # TCP_KEEPCNT: 最多 3 次探测失败后断开
+        },
         "retry_on_timeout": True,  # 超时时自动重试
-        "health_check_interval": 30,  # 健康检查间隔 30 秒
+        "health_check_interval": 25,  # 健康检查间隔 25 秒(略小于 Upstash 空闲超时)
         "max_connections": 50,  # 连接池最大连接数
     },
     # Broker 传输选项（与 backend 相同的配置）
     broker_transport_options={
-        "socket_timeout": 10,
+        "socket_timeout": 30,  # 与 backend 保持一致
         "socket_connect_timeout": 10,
         "socket_keepalive": True,
+        "socket_keepalive_options": {
+            1: 20,   # TCP_KEEPIDLE: 20秒后开始发送 keepalive 探测
+            2: 10,   # TCP_KEEPINTVL: 探测间隔 10 秒
+            3: 3,    # TCP_KEEPCNT: 最多 3 次探测失败后断开
+        },
         "retry_on_timeout": True,
-        "health_check_interval": 30,
+        "health_check_interval": 25,  # 与 backend 保持一致
         "max_connections": 50,
     },
     # 结果存储配置

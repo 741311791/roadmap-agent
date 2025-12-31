@@ -209,3 +209,47 @@ export function getStepDescription(step: string | null): string {
   return STEP_DISPLAY_CONFIG[step]?.description || 'Preparing your roadmap...';
 }
 
+/**
+ * 将后端步骤映射到前端显示步骤
+ * 
+ * 目的：合并中间步骤，避免UI快速闪烁
+ * 原理：将多个内部步骤映射到同一个用户可见的步骤
+ * 
+ * 示例：
+ * - content_generation_queued → content_generation（用户只需要知道"内容生成中"）
+ * - tutorial_generation → content_generation（子步骤，不需要单独显示）
+ * - resource_recommendation → content_generation
+ * - quiz_generation → content_generation
+ * 
+ * @param backendStep 后端返回的步骤名称
+ * @returns 前端应该显示的步骤名称
+ */
+export function mapToDisplayStep(backendStep: string | null): string | null {
+  if (!backendStep) return null;
+  
+  // 内容生成阶段的所有子步骤都映射到 content_generation
+  const contentGenerationSteps = [
+    WorkflowStep.CONTENT_GENERATION_QUEUED,
+    WorkflowStep.TUTORIAL_GENERATION,
+    WorkflowStep.RESOURCE_RECOMMENDATION,
+    WorkflowStep.QUIZ_GENERATION,
+  ] as const;
+  
+  if (contentGenerationSteps.includes(backendStep as any)) {
+    return WorkflowStep.CONTENT_GENERATION;
+  }
+  
+  // 初始化阶段的步骤都映射到 starting
+  const initSteps = [
+    WorkflowStep.INIT,
+    WorkflowStep.QUEUED,
+  ] as const;
+  
+  if (initSteps.includes(backendStep as any)) {
+    return WorkflowStep.STARTING;
+  }
+  
+  // 其他步骤保持原样
+  return backendStep;
+}
+

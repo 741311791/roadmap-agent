@@ -8,14 +8,16 @@
 - 详细的连接池状态监控
 - Prometheus 指标暴露
 - 慢查询追踪
+- 事件循环感知（Celery Worker 兼容）
 """
-from typing import AsyncGenerator
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from typing import AsyncGenerator, Optional
+from sqlalchemy.ext.asyncio import AsyncSession, AsyncEngine, create_async_engine, async_sessionmaker
 from sqlalchemy import event, text
 from sqlalchemy.exc import IllegalStateChangeError
 from sqlmodel import SQLModel
 import structlog
 import time
+import asyncio
 
 from app.config.settings import settings
 
@@ -73,50 +75,96 @@ except ImportError:
     PROMETHEUS_ENABLED = False
 
 # ============================================================
-# 连接池配置（优化版 - 减少连接占用，增加超时容忍度）
+# 事件循环感知的引擎管理（Celery Worker 兼容）
 # ============================================================
 #
-# 关键参数说明（针对 Railway PostgreSQL，最大连接数 200）：
+# 问题背景：
+# - 全局 engine 在导入时创建，绑定到主进程的事件循环
+# - Celery Worker 使用独立的进程级事件循环（get_worker_loop）
+# - asyncpg 连接池创建的 Future 绑定到旧事件循环，导致：
+#   "Task got Future attached to a different loop" 错误
 #
-# 1. pool_size=40: 基础连接池大小
-#    - 从 60 降至 40，减少基础连接占用
-#    - 配合分批保存策略，不再需要大量并发连接
+# 解决方案：
+# - 为每个事件循环创建独立的 engine 实例
+# - 使用字典缓存：event_loop_id -> engine
+# - 自动检测当前事件循环，返回对应的 engine
 #
-# 2. max_overflow=20: 溢出连接数
-#    - 从 60 降至 20，限制峰值连接数
-#    - 总计: 40 + 20 = 60 个连接（预算：SQLAlchemy 60 + Checkpointer 10 = 70/200）
-#
-# 3. pool_recycle=300: 5分钟回收连接
-#    - 从 600 秒缩短至 300 秒
-#    - 更快释放闲置连接，减少僵死连接风险
-#
-# 4. pool_pre_ping=True: 每次获取连接前测试
-#    - 自动剔除已断开的连接
-#    - 略有性能开销但大幅提升稳定性
-#
-# 5. pool_timeout=60: 增加获取连接超时
-#    - 从 30 秒提升到 60 秒
-#    - 配合重试机制，给予更多等待时间
-#
-engine = create_async_engine(
-    settings.DATABASE_URL,
-    echo=False,  # 关闭 SQL 查询日志输出
-    # 注意：异步引擎会自动使用 AsyncAdaptedQueuePool，不需要显式指定
-    pool_size=40,  # 基础连接池大小（降低以减少占用）
-    max_overflow=20,  # 溢出连接数（总计 60 个连接）
-    pool_pre_ping=True,  # 连接前 ping 检查（关键！防止使用已断开的连接）
-    pool_recycle=300,  # 5分钟回收连接（缩短以快速释放）
-    pool_timeout=60,  # 获取连接超时 60 秒（增加以应对高峰期）
-    pool_use_lifo=True,  # LIFO 模式，优先复用最近使用的连接
-    connect_args={
-        "server_settings": {
-            "application_name": "roadmap_agent",
-            "jit": "off",  # 禁用 JIT，提高稳定性
+_engine_cache: dict[int, AsyncEngine] = {}
+_engine_lock = asyncio.Lock()
+
+
+def _create_engine() -> AsyncEngine:
+    """
+    创建数据库引擎（内部函数）
+    
+    连接池配置（针对 Railway PostgreSQL，最大连接数 200）：
+    - pool_size=40: 基础连接池大小
+    - max_overflow=20: 溢出连接数（总计 60 个连接）
+    - pool_recycle=300: 5分钟回收连接
+    - pool_pre_ping=True: 连接前 ping 检查
+    - pool_timeout=60: 获取连接超时 60 秒
+    """
+    return create_async_engine(
+        settings.DATABASE_URL,
+        echo=False,
+        pool_size=40,
+        max_overflow=20,
+        pool_pre_ping=True,
+        pool_recycle=300,
+        pool_timeout=60,
+        pool_use_lifo=True,
+        connect_args={
+            "server_settings": {
+                "application_name": "roadmap_agent",
+                "jit": "off",
+            },
+            "command_timeout": 120,
+            "timeout": 30,
         },
-        "command_timeout": 120,  # 命令超时 120 秒
-        "timeout": 30,  # 连接超时 30 秒
-    },
-)
+    )
+
+
+async def get_engine() -> AsyncEngine:
+    """
+    获取当前事件循环对应的数据库引擎
+    
+    自动检测当前事件循环，如果是新循环则创建新 engine。
+    确保 Celery Worker、FastAPI、测试等不同环境都使用正确的 engine。
+    
+    Returns:
+        AsyncEngine: 绑定到当前事件循环的数据库引擎
+    """
+    loop = asyncio.get_event_loop()
+    loop_id = id(loop)
+    
+    if loop_id not in _engine_cache:
+        # 创建新 engine（线程安全）
+        # 注意：这里不使用 lock，因为多次创建 engine 也是安全的
+        # 最多会有轻微的资源浪费，但避免了锁的性能开销
+        _engine_cache[loop_id] = _create_engine()
+        logger.info(
+            "db_engine_created_for_event_loop",
+            loop_id=loop_id,
+            engine_id=id(_engine_cache[loop_id]),
+        )
+    
+    return _engine_cache[loop_id]
+
+
+def get_engine_sync() -> AsyncEngine:
+    """
+    同步方式获取引擎（用于事件监听器注册）
+    
+    仅在模块导入时使用，不应在异步代码中调用。
+    """
+    loop_id = id(asyncio.get_event_loop())
+    if loop_id not in _engine_cache:
+        _engine_cache[loop_id] = _create_engine()
+    return _engine_cache[loop_id]
+
+
+# 创建默认引擎（用于事件监听器注册）
+engine = get_engine_sync()
 
 
 # ============================================================
@@ -261,19 +309,59 @@ def after_cursor_execute(conn, cursor, statement, parameters, context, executema
             error_type=type(e).__name__,
         )
 
-# 创建异步会话工厂
-AsyncSessionLocal = async_sessionmaker(
-    engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-    autocommit=False,
-    autoflush=False,
-)
+# ============================================================
+# 会话工厂（事件循环感知）
+# ============================================================
+
+
+def get_session_maker() -> async_sessionmaker:
+    """
+    获取当前事件循环对应的会话工厂
+    
+    由于 engine 是事件循环感知的，会话工厂也需要动态获取。
+    
+    Returns:
+        async_sessionmaker: 绑定到当前事件循环 engine 的会话工厂
+    """
+    # 注意：这里需要同步获取 engine，因为 async_sessionmaker 不是异步函数
+    # 我们假设 engine 已经在当前事件循环中创建（通过 get_engine()）
+    loop_id = id(asyncio.get_event_loop())
+    current_engine = _engine_cache.get(loop_id)
+    
+    if current_engine is None:
+        # 如果当前循环还没有 engine，创建一个
+        current_engine = get_engine_sync()
+    
+    return async_sessionmaker(
+        current_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autocommit=False,
+        autoflush=False,
+    )
+
+
+def AsyncSessionLocal() -> AsyncSession:
+    """
+    创建数据库会话（事件循环感知）
+    
+    兼容旧代码的函数签名，但内部使用事件循环感知的引擎。
+    
+    Returns:
+        AsyncSession: 数据库会话
+    """
+    return get_session_maker()()
+
+
+# 保留旧的全局会话工厂（仅用于向后兼容）
+# 新代码应该使用 AsyncSessionLocal() 函数
+_default_session_maker = get_session_maker()
 
 
 async def init_db():
     """初始化数据库（创建表）"""
-    async with engine.begin() as conn:
+    current_engine = await get_engine()
+    async with current_engine.begin() as conn:
         # 生产环境应使用 Alembic 迁移
         if settings.ENVIRONMENT == "development":
             await conn.run_sync(SQLModel.metadata.create_all)
@@ -287,7 +375,8 @@ async def get_pool_status() -> dict:
     Returns:
         包含连接池状态信息的字典
     """
-    pool = engine.pool
+    current_engine = await get_engine()
+    pool = current_engine.pool
     return {
         "pool_size": pool.size(),  # 当前池中的连接数
         "checked_out": pool.checkedout(),  # 正在使用的连接数
