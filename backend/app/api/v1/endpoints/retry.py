@@ -609,7 +609,7 @@ async def retry_task(
     await task_repo.update_task_status(
         task_id=task_id,
         status="processing",
-        current_step="content_retry_queued",
+        current_step="content_generation",  # 使用前端Content节点对应的步骤名称
         roadmap_id=roadmap_id,
     )
     await db.commit()
@@ -618,7 +618,7 @@ async def retry_task(
     from app.services.notification_service import notification_service
     await notification_service.publish_progress(
         task_id=task_id,
-        step="content_retry_queued",
+        step="content_generation",  # 使用前端Content节点对应的步骤名称
         status="processing",
         message=f"Retrying {total_items} failed content items",
         extra_data={

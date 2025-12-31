@@ -57,7 +57,7 @@ async def execute_retry_failed_task(
     # 记录 ExecutionLog：重试任务开始
     await execution_logger.log_workflow_start(
         task_id=retry_task_id,
-        step="retry_started",
+        step="content_generation",  # 使用前端Content节点对应的步骤
         message="Starting retry of failed content",
         roadmap_id=roadmap_id,
         details={
@@ -70,7 +70,7 @@ async def execute_retry_failed_task(
     # 发布重试开始事件
     await notification_service.publish_progress(
         task_id=retry_task_id,
-        step="retry_started",
+        step="content_generation",  # 使用前端Content节点对应的步骤
         status="processing",
         message="Starting retry of failed items",
         extra_data={
@@ -360,7 +360,7 @@ async def execute_retry_failed_task(
         await repo.update_task_status(
             task_id=retry_task_id,
             status=final_status,
-            current_step="retry_completed",
+            current_step="completed" if final_status == "completed" else "failed",  # 使用前端对应的步骤
             execution_summary={
                 "success_count": success_count,
                 "failed_count": failed_count,
@@ -373,7 +373,7 @@ async def execute_retry_failed_task(
     # 记录 ExecutionLog：重试任务完成
     await execution_logger.log_workflow_complete(
         task_id=retry_task_id,
-        step="retry_completed",
+        step="completed" if final_status == "completed" else "failed",  # 使用前端对应的步骤
         message=f"Retry task completed: {success_count} succeeded, {failed_count} failed",
         duration_ms=task_duration_ms,
         roadmap_id=roadmap_id,
@@ -397,7 +397,7 @@ async def execute_retry_failed_task(
     # 发布进度通知，告知前端 framework 已更新
     await notification_service.publish_progress(
         task_id=retry_task_id,
-        step="retry_completed",
+        step="completed" if final_status == "completed" else "failed",  # 使用前端对应的步骤
         status=final_status,
         message=f"Retry completed: {success_count} succeeded, {failed_count} failed",
         extra_data={
