@@ -97,18 +97,21 @@ def _create_engine() -> AsyncEngine:
     """
     创建数据库引擎（内部函数）
     
-    连接池配置（针对 Railway PostgreSQL，最大连接数 200）：
-    - pool_size=40: 基础连接池大小
-    - max_overflow=20: 溢出连接数（总计 60 个连接）
+    连接池配置（支持环境变量动态调整）：
+    - pool_size: 由 DB_POOL_SIZE 环境变量控制（默认40，Railway建议5）
+    - max_overflow: 由 DB_MAX_OVERFLOW 环境变量控制（默认20，Railway建议3）
     - pool_recycle=300: 5分钟回收连接
     - pool_pre_ping=True: 连接前 ping 检查
     - pool_timeout=60: 获取连接超时 60 秒
+    
+    注意：多进程部署时，每个进程创建独立的连接池
+    总连接数 = (pool_size + max_overflow) × 进程数
     """
     return create_async_engine(
         settings.DATABASE_URL,
         echo=False,
-        pool_size=40,
-        max_overflow=20,
+        pool_size=settings.DB_POOL_SIZE,
+        max_overflow=settings.DB_MAX_OVERFLOW,
         pool_pre_ping=True,
         pool_recycle=300,
         pool_timeout=60,

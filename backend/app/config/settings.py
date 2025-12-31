@@ -59,6 +59,19 @@ class Settings(BaseSettings):
     POSTGRES_PASSWORD: str = Field("roadmap_pass", description="数据库密码")
     POSTGRES_DB: str = Field("roadmap_db", description="数据库名称")
     
+    # 连接池配置（针对多进程部署优化）
+    # 注意：由于事件循环隔离策略，每个Worker进程会创建独立的engine和连接池
+    # 总连接数 = (DB_POOL_SIZE + DB_MAX_OVERFLOW) × 总进程数
+    # Railway部署建议: DB_POOL_SIZE=5, DB_MAX_OVERFLOW=3 (18进程 × 8 = 144连接)
+    DB_POOL_SIZE: int = Field(
+        40, 
+        description="数据库连接池基础大小（本地开发默认40，Railway生产环境建议5）"
+    )
+    DB_MAX_OVERFLOW: int = Field(
+        20, 
+        description="数据库连接池最大溢出数（本地开发默认20，Railway生产环境建议3）"
+    )
+    
     @property
     def DATABASE_URL(self) -> str:
         """构建异步数据库连接 URL（用于 SQLAlchemy）"""
