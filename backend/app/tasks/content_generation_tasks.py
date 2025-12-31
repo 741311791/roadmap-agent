@@ -637,6 +637,7 @@ def retry_failed_content_task(
     user_id: str,
     preferences: dict,
     content_types: list[str],
+    items_to_retry: dict | None = None,
 ):
     """
     重试失败内容的生成（Celery 任务入口）
@@ -649,6 +650,7 @@ def retry_failed_content_task(
         user_id: 用户 ID
         preferences: 用户偏好（字典格式）
         content_types: 要重试的内容类型列表（["tutorial", "resources", "quiz"]）
+        items_to_retry: 要重试的具体项目列表（可选，如果提供则直接使用，避免重复查询）
         
     Returns:
         重试结果摘要
@@ -662,34 +664,43 @@ def retry_failed_content_task(
         task_id=task_id,
         roadmap_id=roadmap_id,
         celery_task_id=self.request.id,
+        items_provided=items_to_retry is not None,
     )
     
     try:
         # 反序列化用户偏好
         user_preferences = LearningPreferences.model_validate(preferences)
         
-        # 查询失败的内容项目
-        async def _get_failed_items():
-            async with RepositoryFactory().create_session() as session:
-                from app.db.repositories.roadmap_repo import RoadmapRepository
-                repo = RoadmapRepository(session)
-                roadmap_metadata = await repo.get_roadmap_metadata(roadmap_id)
-                
-                if not roadmap_metadata:
-                    raise RuntimeError(f"路线图 {roadmap_id} 不存在")
-                
-                # 获取失败的内容项目
-                failed_items = get_failed_content_items(roadmap_metadata.framework_data)
-                
-                # 筛选要重试的类型
-                items_to_retry = {}
-                for content_type in content_types:
-                    if content_type in failed_items and failed_items[content_type]:
-                        items_to_retry[content_type] = failed_items[content_type]
-                
-                return items_to_retry
-        
-        items_to_retry = run_async(_get_failed_items())
+        # 如果没有提供items_to_retry，则查询失败的内容项目
+        if items_to_retry is None:
+            async def _get_failed_items():
+                async with RepositoryFactory().create_session() as session:
+                    from app.db.repositories.roadmap_repo import RoadmapRepository
+                    repo = RoadmapRepository(session)
+                    roadmap_metadata = await repo.get_roadmap_metadata(roadmap_id)
+                    
+                    if not roadmap_metadata:
+                        raise RuntimeError(f"路线图 {roadmap_id} 不存在")
+                    
+                    # 获取失败的内容项目
+                    failed_items = get_failed_content_items(roadmap_metadata.framework_data)
+                    
+                    # 筛选要重试的类型
+                    items_to_retry = {}
+                    for content_type in content_types:
+                        if content_type in failed_items and failed_items[content_type]:
+                            items_to_retry[content_type] = failed_items[content_type]
+                    
+                    return items_to_retry
+            
+            items_to_retry = run_async(_get_failed_items())
+        else:
+            # 使用提供的items_to_retry，但仍需要筛选content_types
+            filtered_items = {}
+            for content_type in content_types:
+                if content_type in items_to_retry and items_to_retry[content_type]:
+                    filtered_items[content_type] = items_to_retry[content_type]
+            items_to_retry = filtered_items
         
         if not items_to_retry:
             logger.warning(

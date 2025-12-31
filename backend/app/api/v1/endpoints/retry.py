@@ -606,12 +606,14 @@ async def retry_task(
         )
     
     # 分发 Celery 任务进行内容重试
+    # 传递 items_to_retry 避免 Worker 重复查询（解决主应用和Worker检测逻辑不一致的问题）
     celery_task = retry_failed_content_task.delay(
         roadmap_id=roadmap_id,
         task_id=task_id,
         user_id=user_id,
         preferences=preferences.model_dump(mode='json'),
         content_types=content_types,
+        items_to_retry=items_to_retry,
     )
     
     logger.info(
