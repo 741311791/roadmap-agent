@@ -360,15 +360,16 @@ async def _generate_content_parallel(
     failed_concepts: list[str] = []
     results_lock = asyncio.Lock()
     
-    # 🔧 数据库连接限制：最多 3 个并发数据库操作
+    # 🔧 数据库连接限制：最多 8 个并发数据库操作
     # 
     # ⚠️ 关键约束：
-    # - 每个进程的连接池只有 4 个连接（pool_size=2 + max_overflow=2）
+    # - 每个进程的连接池现在有 10 个连接（pool_size=5 + max_overflow=5）
     # - 必须为其他操作（状态更新、日志等）预留连接
     # - MAX_DB_CONCURRENT 必须 < 每进程连接池大小
     #
-    # 公式：MAX_DB_CONCURRENT = pool_size（留 50% 给其他操作）
-    MAX_DB_CONCURRENT = 3
+    # 公式：MAX_DB_CONCURRENT = pool_size × 80% (留 20% 给其他操作)
+    # 优化后: 10 × 80% = 8
+    MAX_DB_CONCURRENT = 8
     db_semaphore = asyncio.Semaphore(MAX_DB_CONCURRENT)
     
     logger.info(
