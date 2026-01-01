@@ -41,8 +41,8 @@ logger = structlog.get_logger()
     queue="content_generation",
     bind=True,
     max_retries=0,
-    time_limit=1800,
-    soft_time_limit=1500,
+    time_limit=3600,  # 60 分钟硬超时（大型路线图需要更多时间）
+    soft_time_limit=3300,  # 55 分钟软超时
     acks_late=True,
 )
 def generate_roadmap_content(
@@ -651,8 +651,8 @@ async def _save_content_results(
     queue="content_generation",
     bind=True,
     max_retries=0,
-    time_limit=1800,
-    soft_time_limit=1500,
+    time_limit=3600,  # 60 分钟硬超时（大型路线图需要更多时间）
+    soft_time_limit=3300,  # 55 分钟软超时
     acks_late=True,
 )
 def retry_failed_content_task(
