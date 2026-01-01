@@ -93,30 +93,184 @@ _engine_cache: dict[int, AsyncEngine] = {}
 _engine_lock = asyncio.Lock()
 
 
+def _register_engine_events(engine_instance: AsyncEngine) -> None:
+    """
+    为 engine 注册事件监听器
+    
+    ⚠️ 关键：每个新创建的 engine 实例都必须注册这些事件
+    确保跨事件循环的 engine 都能正确清理预编译语句
+    """
+    sync_engine = engine_instance.sync_engine
+    
+    # ============================================================
+    # checkout 事件：连接取出时清理预编译语句
+    # ============================================================
+    @event.listens_for(sync_engine, "checkout")
+    def on_checkout_handler(dbapi_connection, connection_record, connection_proxy):
+        """
+        从连接池获取连接时触发
+        
+        ⚠️ 关键修复：在连接取出时清理预编译语句
+        - Supabase pgbouncer 事务模式不支持跨事务的预编译语句
+        - 即使配置了 statement_cache_size=0，连接池中的旧连接仍可能携带预编译语句
+        - 必须在连接取出时主动清理，而不是归还时清理
+        """
+        connection_record.info["checkout_time"] = time.time()
+        
+        # 清理预编译语句
+        try:
+            if hasattr(dbapi_connection, "_connection"):
+                raw_connection = dbapi_connection._connection
+                if hasattr(raw_connection, "execute"):
+                    from sqlalchemy.util._concurrency_py3k import await_only
+                    try:
+                        await_only(raw_connection.execute("DEALLOCATE ALL"))
+                        logger.debug(
+                            "db_prepared_statements_cleared_on_checkout",
+                            connection_id=id(dbapi_connection),
+                        )
+                    except Exception as e:
+                        logger.debug(
+                            "db_prepared_statements_clear_on_checkout_failed",
+                            error=str(e),
+                            error_type=type(e).__name__,
+                        )
+        except Exception as e:
+            logger.debug(
+                "db_checkout_cleanup_error",
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+        
+        # Prometheus 指标
+        if PROMETHEUS_ENABLED:
+            db_pool_connections_in_use.inc()
+            try:
+                pool = engine_instance.pool
+                db_pool_size_gauge.set(pool.size())
+                checked_out = pool.checkedout()
+                max_connections = pool.size() + pool._max_overflow
+                usage_ratio = checked_out / max_connections if max_connections > 0 else 0
+                if usage_ratio > 0.9:
+                    logger.error(
+                        "db_pool_critical_usage",
+                        checked_out=checked_out,
+                        max_connections=max_connections,
+                        usage_ratio=round(usage_ratio * 100, 1),
+                        message=f"🚨 连接池使用率过高 ({round(usage_ratio * 100, 1)}%)，即将耗尽",
+                    )
+            except Exception:
+                pass
+    
+    # ============================================================
+    # checkin 事件：连接归还时清理预编译语句（双重保险）
+    # ============================================================
+    @event.listens_for(sync_engine, "checkin")
+    def on_checkin_handler(dbapi_connection, connection_record):
+        """连接归还连接池时触发"""
+        checkout_time = connection_record.info.get("checkout_time")
+        if checkout_time:
+            duration = time.time() - checkout_time
+            if PROMETHEUS_ENABLED:
+                db_connection_hold_time.observe(duration)
+                db_pool_connections_in_use.dec()
+            if duration > 5:
+                logger.warning(
+                    "db_connection_long_hold",
+                    duration_seconds=round(duration, 2),
+                    connection_id=id(dbapi_connection),
+                )
+            if duration > 10:
+                logger.error(
+                    "db_connection_held_too_long",
+                    duration_seconds=round(duration, 2),
+                    threshold_seconds=10,
+                    connection_id=id(dbapi_connection),
+                )
+        
+        # 清理预编译语句（双重保险）
+        try:
+            if hasattr(dbapi_connection, "_connection"):
+                raw_connection = dbapi_connection._connection
+                if hasattr(raw_connection, "execute"):
+                    from sqlalchemy.util._concurrency_py3k import await_only
+                    try:
+                        await_only(raw_connection.execute("DEALLOCATE ALL"))
+                        logger.debug(
+                            "db_prepared_statements_cleared",
+                            connection_id=id(dbapi_connection),
+                        )
+                    except Exception as e:
+                        logger.debug(
+                            "db_prepared_statements_clear_failed",
+                            error=str(e),
+                            error_type=type(e).__name__,
+                        )
+        except Exception as e:
+            logger.debug(
+                "db_checkin_cleanup_error",
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+    
+    # ============================================================
+    # 其他事件
+    # ============================================================
+    @event.listens_for(sync_engine, "connect")
+    def on_connect_handler(dbapi_connection, connection_record):
+        """新连接创建时触发"""
+        logger.debug(
+            "db_pool_new_connection",
+            connection_id=id(dbapi_connection),
+        )
+    
+    @event.listens_for(sync_engine, "invalidate")
+    def on_invalidate_handler(dbapi_connection, connection_record, exception):
+        """连接被标记为无效时触发"""
+        logger.warning(
+            "db_connection_invalidated",
+            connection_id=id(dbapi_connection),
+            exception=str(exception),
+        )
+
+
 def _create_engine() -> AsyncEngine:
     """
-    创建数据库引擎（内部函数）
+    创建数据库引擎（Supabase 事务池化模式优化）
+    
+    Supabase Transaction Pooling 关键配置：
+    ⚠️ 关键：asyncpg 默认会自动创建预编译语句（prepared statements），
+    但 pgbouncer 的事务模式不支持跨事务的预编译语句。
+    
+    解决方案：
+    1. statement_cache_size=0: 禁用 asyncpg 客户端缓存
+    2. 监听 checkout/checkin 事件，主动执行 DEALLOCATE ALL 清理预编译语句
+    3. pool_pre_ping=False: 避免健康检查触发预编译语句创建
+    4. pool_recycle=300: 定期回收连接
     
     连接池配置（支持环境变量动态调整）：
-    - pool_size: 由 DB_POOL_SIZE 环境变量控制（默认40，Railway建议5）
-    - max_overflow: 由 DB_MAX_OVERFLOW 环境变量控制（默认20，Railway建议3）
-    - pool_recycle=300: 5分钟回收连接
-    - pool_pre_ping=True: 连接前 ping 检查
-    - pool_timeout=60: 获取连接超时 60 秒
+    - pool_size: 由 DB_POOL_SIZE 环境变量控制
+    - max_overflow: 由 DB_MAX_OVERFLOW 环境变量控制
     
     注意：多进程部署时，每个进程创建独立的连接池
-    总连接数 = (pool_size + max_overflow) × 进程数
+    总应用连接数 = (pool_size + max_overflow) × 进程数
     """
-    return create_async_engine(
+    new_engine = create_async_engine(
         settings.DATABASE_URL,
         echo=False,
         pool_size=settings.DB_POOL_SIZE,
         max_overflow=settings.DB_MAX_OVERFLOW,
-        pool_pre_ping=True,
-        pool_recycle=300,
+        pool_pre_ping=False,  # 禁用健康检查
+        pool_recycle=300,  # 5分钟回收连接
         pool_timeout=60,
         pool_use_lifo=True,
         connect_args={
+            # Supabase Transaction Mode 必须配置
+            # ⚠️ 关键修复：同时设置两个参数禁用预编译语句
+            "statement_cache_size": 0,  # 禁用 SQLAlchemy 层面的语句缓存
+            "prepared_statement_cache_size": 0,  # 禁用 asyncpg 驱动层面的缓存
+            
+            # 应用级配置
             "server_settings": {
                 "application_name": "roadmap_agent",
                 "jit": "off",
@@ -125,6 +279,11 @@ def _create_engine() -> AsyncEngine:
             "timeout": 30,
         },
     )
+    
+    # ⚠️ 关键：为新创建的 engine 注册事件监听器
+    _register_engine_events(new_engine)
+    
+    return new_engine
 
 
 async def get_engine() -> AsyncEngine:
@@ -185,8 +344,47 @@ def on_connect(dbapi_connection, connection_record):
 
 @event.listens_for(engine.sync_engine, "checkout")
 def on_checkout(dbapi_connection, connection_record, connection_proxy):
-    """从连接池获取连接时触发"""
+    """
+    从连接池获取连接时触发
+    
+    ⚠️ 关键修复：在连接取出时清理预编译语句
+    - Supabase pgbouncer 事务模式不支持跨事务的预编译语句
+    - 即使配置了 statement_cache_size=0，连接池中的旧连接仍可能携带预编译语句
+    - 必须在连接取出时主动清理，而不是归还时清理
+    """
     connection_record.info["checkout_time"] = time.time()
+    
+    # ============================================================
+    # ⚠️ 关键修复：清理预编译语句（Supabase 事务池化必需）
+    # ============================================================
+    try:
+        # 获取底层的 asyncpg 连接
+        if hasattr(dbapi_connection, "_connection"):
+            raw_connection = dbapi_connection._connection
+            # 检查是否是 asyncpg 连接
+            if hasattr(raw_connection, "execute"):
+                # 注意：这是同步事件处理器，需要使用 await_only 包装异步操作
+                from sqlalchemy.util._concurrency_py3k import await_only
+                try:
+                    await_only(raw_connection.execute("DEALLOCATE ALL"))
+                    logger.debug(
+                        "db_prepared_statements_cleared_on_checkout",
+                        connection_id=id(dbapi_connection),
+                    )
+                except Exception as e:
+                    # 清理失败不应该阻止连接使用
+                    logger.debug(
+                        "db_prepared_statements_clear_on_checkout_failed",
+                        error=str(e),
+                        error_type=type(e).__name__,
+                    )
+    except Exception as e:
+        # 任何错误都不应该阻止连接使用
+        logger.debug(
+            "db_checkout_cleanup_error",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
     
     # Prometheus 指标：增加使用中的连接数
     if PROMETHEUS_ENABLED:
@@ -195,13 +393,33 @@ def on_checkout(dbapi_connection, connection_record, connection_proxy):
         try:
             pool = engine.pool
             db_pool_size_gauge.set(pool.size())
+            
+            # ⚠️ 连接池使用率监控（实时）
+            checked_out = pool.checkedout()
+            max_connections = pool.size() + pool._max_overflow
+            usage_ratio = checked_out / max_connections if max_connections > 0 else 0
+            
+            # 使用率超过 90% 时发出错误级别警告
+            if usage_ratio > 0.9:
+                logger.error(
+                    "db_pool_critical_usage",
+                    checked_out=checked_out,
+                    max_connections=max_connections,
+                    usage_ratio=round(usage_ratio * 100, 1),
+                    message=f"🚨 连接池使用率过高 ({round(usage_ratio * 100, 1)}%)，即将耗尽",
+                )
         except Exception:
             pass
 
 
 @event.listens_for(engine.sync_engine, "checkin")
 def on_checkin(dbapi_connection, connection_record):
-    """连接归还连接池时触发"""
+    """
+    连接归还连接池时触发
+    
+    ⚠️ Supabase Transaction Mode 关键修复：
+    在归还连接前清理所有预编译语句，避免 pgbouncer 连接复用时冲突。
+    """
     checkout_time = connection_record.info.get("checkout_time")
     if checkout_time:
         duration = time.time() - checkout_time
@@ -227,6 +445,37 @@ def on_checkin(dbapi_connection, connection_record):
                 threshold_seconds=10,
                 connection_id=id(dbapi_connection),
             )
+    
+    # 🔧 Supabase Transaction Mode 修复：清理预编译语句
+    # 在归还连接前执行 DEALLOCATE ALL，防止 pgbouncer 后端连接复用时冲突
+    try:
+        # 获取底层的 asyncpg 连接
+        if hasattr(dbapi_connection, "_connection"):
+            raw_connection = dbapi_connection._connection
+            # 检查是否是 asyncpg 连接
+            if hasattr(raw_connection, "execute"):
+                # 注意：这是同步事件处理器，需要使用 await_only 包装异步操作
+                from sqlalchemy.util._concurrency_py3k import await_only
+                try:
+                    await_only(raw_connection.execute("DEALLOCATE ALL"))
+                    logger.debug(
+                        "db_prepared_statements_cleared",
+                        connection_id=id(dbapi_connection),
+                    )
+                except Exception as e:
+                    # 清理失败不应该阻止连接归还
+                    logger.debug(
+                        "db_prepared_statements_clear_failed",
+                        error=str(e),
+                        error_type=type(e).__name__,
+                    )
+    except Exception as e:
+        # 任何错误都不应该阻止连接归还
+        logger.debug(
+            "db_checkin_cleanup_error",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
 
 
 @event.listens_for(engine.sync_engine, "invalidate")
@@ -380,14 +629,43 @@ async def get_pool_status() -> dict:
     """
     current_engine = await get_engine()
     pool = current_engine.pool
+    
+    checked_out = pool.checkedout()
+    pool_size = pool.size()
+    max_overflow = pool._max_overflow
+    max_connections = pool_size + max_overflow
+    
+    # 计算连接使用率
+    usage_ratio = checked_out / max_connections if max_connections > 0 else 0
+    
+    # ⚠️ 连接池告警：使用率超过 80% 时警告
+    if usage_ratio > 0.8:
+        logger.warning(
+            "db_pool_high_usage",
+            checked_out=checked_out,
+            max_connections=max_connections,
+            usage_ratio=round(usage_ratio * 100, 1),
+            message=f"⚠️ 连接池使用率过高 ({round(usage_ratio * 100, 1)}%)，可能导致连接耗尽",
+        )
+    
+    # 尝试获取失效连接数（某些池类型可能不支持）
+    invalid_count = 0
+    try:
+        if hasattr(pool, 'invalidatedcount'):
+            invalid_count = pool.invalidatedcount()
+    except Exception:
+        pass
+    
     return {
-        "pool_size": pool.size(),  # 当前池中的连接数
-        "checked_out": pool.checkedout(),  # 正在使用的连接数
+        "pool_size": pool_size,  # 当前池中的连接数
+        "checked_out": checked_out,  # 正在使用的连接数
         "overflow": pool.overflow(),  # 溢出连接数
         "checked_in": pool.checkedin(),  # 空闲连接数
-        "invalid": pool.invalidatedcount(),  # 已失效的连接数
-        "max_overflow": pool._max_overflow,  # 最大溢出配置
+        "invalid": invalid_count,  # 已失效的连接数
+        "max_overflow": max_overflow,  # 最大溢出配置
         "pool_max_size": pool._pool.maxsize if hasattr(pool, "_pool") else None,
+        "max_connections": max_connections,  # 最大连接数
+        "usage_ratio": round(usage_ratio * 100, 2),  # 使用率（百分比）
     }
 
 
@@ -561,24 +839,47 @@ async def safe_session_with_retry(
     # ============================================================
     # Phase 2: yield 会话（只执行一次，符合 asynccontextmanager 规范）
     # ============================================================
+    request_cancelled = False
+    
     try:
         yield session
+    except asyncio.CancelledError:
+        # ⚠️ 请求被取消（客户端断开、超时等）
+        request_cancelled = True
+        logger.warning(
+            "db_session_request_cancelled_with_retry",
+            message="带重试的会话：请求被取消，强制清理数据库会话",
+        )
+        raise
     except (GeneratorExit, IllegalStateChangeError):
         # SSE 流中断或并发状态冲突，静默处理
         pass
     finally:
-        # ✅ 强制确保连接归还到池（防止泄漏）
+        # ✅ 【关键修复】使用 shield 确保连接归还不可取消
         if session is not None:
             try:
                 # 等待所有挂起的异步操作完成
                 await asyncio.sleep(0)
-                # 关闭会话（归还连接到池）
-                await session.close()
+                
+                # 🛡️ shield 保护：确保 close() 一定会完成
+                await asyncio.shield(session.close())
                 logger.debug("db_session_closed_successfully")
+                
+                if request_cancelled:
+                    logger.info(
+                        "db_session_with_retry_closed_after_cancellation",
+                        message="已成功在请求取消后关闭会话（带重试）",
+                    )
             except IllegalStateChangeError:
                 # 并发状态冲突，静默处理但仍尝试释放
                 logger.debug("db_session_close_illegal_state")
                 pass
+            except asyncio.CancelledError:
+                # shield 内部的取消（极端情况）
+                logger.error(
+                    "db_session_with_retry_close_cancelled_despite_shield",
+                    message="⚠️ 会话关闭在 shield 保护下仍被取消（带重试），可能发生连接泄漏",
+                )
             except Exception as e:
                 # 强制记录所有关闭错误
                 logger.warning(
@@ -600,9 +901,11 @@ async def safe_session():
     当 session 正在执行操作时被强制关闭，会触发 IllegalStateChangeError，
     这在 SSE 场景下是正常的，应该被静默处理。
     
-    ✨ 连接泄漏防护：
+    ✨ 连接泄漏防护（第一性原理修复）：
+    - 使用 asyncio.shield() 确保会话关闭不可被取消
     - 在会话关闭前等待所有挂起的异步操作完成
     - 使用强制清理机制，防止连接被垃圾回收时还未归还
+    - 捕获 CancelledError，防止请求取消导致连接泄漏
     
     使用示例:
         async with safe_session() as session:
@@ -610,28 +913,56 @@ async def safe_session():
             await session.commit()
     """
     session = None
+    request_cancelled = False
+    
     try:
         session = AsyncSessionLocal()
         yield session
+    except asyncio.CancelledError:
+        # ⚠️ 请求被取消（客户端断开、超时等）
+        # 这是连接泄漏的主要原因：取消操作可能导致 close() 未执行
+        request_cancelled = True
+        logger.warning(
+            "db_session_request_cancelled",
+            message="请求被取消，强制清理数据库会话以防止连接泄漏",
+        )
+        # 重新抛出，让调用方知道请求已取消
+        raise
     except (GeneratorExit, IllegalStateChangeError):
         # SSE 流中断或并发状态冲突，静默处理
         pass
     finally:
-        # ✅ 增强的清理逻辑：确保连接归还到池
+        # ✅ 【关键修复】使用 shield 确保连接归还不可取消
+        # 即使外部任务被取消，也必须完成连接清理
         if session is not None:
             try:
                 # 等待所有挂起的异步操作完成
                 await asyncio.sleep(0)
                 
-                # 关闭会话（归还连接到池）
-                await session.close()
+                # 🛡️ shield 保护：确保 close() 一定会完成
+                # 即使请求被取消，也要归还连接到池
+                await asyncio.shield(session.close())
+                
+                if request_cancelled:
+                    logger.info(
+                        "db_session_closed_after_cancellation",
+                        message="已成功在请求取消后关闭会话",
+                    )
             except IllegalStateChangeError:
                 # Session 关闭时另一操作正在进行，静默处理
                 # 这种情况下连接最终会被连接池回收
                 pass
+            except asyncio.CancelledError:
+                # shield 内部的取消（极端情况）
+                # 强制记录，这表示连接可能泄漏
+                logger.error(
+                    "db_session_close_cancelled_despite_shield",
+                    message="⚠️ 会话关闭在 shield 保护下仍被取消，可能发生连接泄漏",
+                )
+                # 不重新抛出，避免掩盖连接泄漏
             except Exception as e:
                 # 其他关闭错误，记录但不抛出
-                logger.debug(
+                logger.warning(
                     "db_session_close_error",
                     error=str(e),
                     error_type=type(e).__name__,
@@ -653,9 +984,14 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     异常处理策略：
     1. 正常请求结束：自动 commit
     2. 连接错误：记录警告，跳过 commit/rollback（数据库会自动回滚）
-    3. GeneratorExit（SSE 中断）：静默处理，不尝试 commit/rollback
-    4. IllegalStateChangeError（并发状态冲突）：静默处理
-    5. 其他异常：尝试 rollback，然后重新抛出
+    3. CancelledError（请求取消）：安全清理，归还连接（已用 shield 保护）
+    4. GeneratorExit（SSE 中断）：静默处理，不尝试 commit/rollback
+    5. IllegalStateChangeError（并发状态冲突）：静默处理
+    6. 其他异常：尝试 rollback，然后重新抛出
+    
+    连接泄漏防护：
+    - safe_session() 使用 asyncio.shield() 确保连接关闭不可被取消
+    - 即使客户端断开连接或请求超时，连接也会被正确归还到池中
     
     连接错误被静默处理的原因：
     - 查询操作通常已完成，数据已返回

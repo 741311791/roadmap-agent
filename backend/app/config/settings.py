@@ -60,21 +60,42 @@ class Settings(BaseSettings):
     POSTGRES_DB: str = Field("roadmap_db", description="数据库名称")
     
     # 连接池配置（针对多进程部署优化）
-    # 注意：由于事件循环隔离策略，每个Worker进程会创建独立的engine和连接池
+    # 
+    # ⚠️ 关键计算：
     # 总连接数 = (DB_POOL_SIZE + DB_MAX_OVERFLOW) × 总进程数
-    # Railway部署建议: DB_POOL_SIZE=5, DB_MAX_OVERFLOW=3 (18进程 × 8 = 144连接)
+    # PostgreSQL 默认 max_connections = 100
+    # 
+    # 本地开发进程数统计（当前配置）：
+    # - FastAPI (uvicorn --workers 4): 4 个进程
+    # - Celery logs (--concurrency=4 --pool=prefork): 5 个进程
+    # - Celery content_generation (--concurrency=8 --pool=prefork): 9 个进程
+    # - Celery workflow (--concurrency=2): 3 个进程
+    # 总计: 21 个进程
+    #
+    # 连接分配：
+    # 每个进程: pool_size=2 + max_overflow=2 = 4 个连接
+    # 总需求: 21 × 4 = 84 < 100 ✅ (预留 16 个给 psql/监控/其他)
+    #
+    # Railway 部署建议: DB_POOL_SIZE=2, DB_MAX_OVERFLOW=1
     DB_POOL_SIZE: int = Field(
-        40, 
-        description="数据库连接池基础大小（本地开发默认40，Railway生产环境建议5）"
+        2, 
+        description="数据库连接池基础大小（本地开发和生产都建议 2）"
     )
     DB_MAX_OVERFLOW: int = Field(
-        20, 
-        description="数据库连接池最大溢出数（本地开发默认20，Railway生产环境建议3）"
+        2, 
+        description="数据库连接池最大溢出数（本地开发建议 2，生产建议 1）"
     )
     
     @property
     def DATABASE_URL(self) -> str:
-        """构建异步数据库连接 URL（用于 SQLAlchemy）"""
+        """
+        构建异步数据库连接 URL（Supabase 兼容）
+        
+        Supabase Transaction Mode (端口 6543) 优化：
+        - 使用简化的连接 URL
+        - 不添加 keepalives 参数（由 Supabase 连接池管理）
+        - 不添加 statement_timeout（事务模式限制）
+        """
         return (
             f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
             f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
@@ -83,21 +104,19 @@ class Settings(BaseSettings):
     @property
     def CHECKPOINTER_DATABASE_URL(self) -> str:
         """
-        构建 Checkpointer 数据库连接 URL（用于 AsyncPostgresSaver）
+        构建 Checkpointer 数据库连接 URL（Supabase 兼容）
         
-        包含 TCP keepalive 参数以防止长时间运行的工作流中连接超时：
-        - keepalives=1: 启用 TCP keepalive
-        - keepalives_idle=30: 空闲 30 秒后发送 keepalive（默认是 2 小时）
-        - keepalives_interval=10: keepalive 间隔 10 秒
-        - keepalives_count=5: 最大重试 5 次
-        - connect_timeout=30: 连接超时 30 秒（增加以应对网络延迟）
-        - options=-c statement_timeout=120s: SQL 语句执行超时 120 秒（防止大数据量写入超时）
+        Supabase Transaction Mode 要求：
+        - 不使用 keepalives 参数（由 Supabase 连接池管理）
+        - 不使用 statement_timeout（事务模式不支持会话级参数）
+        - 简化参数，依赖 Supabase 连接池管理连接生命周期
+        
+        预处理语句缓存控制：
+        - 通过 AsyncConnectionPool 的 kwargs 中设置 prepare_threshold=0
         """
         return (
             f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
             f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
-            f"?keepalives=1&keepalives_idle=30&keepalives_interval=10&keepalives_count=5"
-            f"&connect_timeout=30&options=-c%20statement_timeout%3D120s"
         )
     
     # ==================== S3/R2 对象存储配置 ====================

@@ -36,6 +36,7 @@ async def generate_single_concept(
     quiz_refs: dict[str, Any],
     failed_concepts: list[str],
     results_lock: asyncio.Lock,
+    db_semaphore: asyncio.Semaphore,
 ) -> None:
     """
     为单个概念串行生成教程、资源、测验，完成后立即写入数据库
@@ -44,7 +45,7 @@ async def generate_single_concept(
     1. Tutorial Generation（教程生成）
     2. Resource Recommendation（资源推荐）
     3. Quiz Generation（测验生成）
-    4. 立即写入数据库
+    4. 立即写入数据库（受信号量限制，防止连接池耗尽）
     
     Args:
         task_id: 任务 ID
@@ -61,6 +62,7 @@ async def generate_single_concept(
         quiz_refs: 测验引用累积字典
         failed_concepts: 失败概念累积列表
         results_lock: 结果累积保护锁
+        db_semaphore: 数据库操作信号量（限制并发数据库连接数）
     """
     concept_id = concept.concept_id
     concept_name = concept.name
@@ -220,59 +222,74 @@ async def generate_single_concept(
         
         from app.db.session import safe_session_with_retry
         
-        async with safe_session_with_retry() as session:
-            # 保存教程
-            if tutorial:
-                try:
-                    from app.db.repositories.tutorial_repo import TutorialRepository
-                    tutorial_repo = TutorialRepository(session)
-                    await tutorial_repo.save_tutorial(
-                        tutorial_output=tutorial,
-                        roadmap_id=roadmap_id,
-                    )
-                    logger.debug(
-                        "tutorial_saved",
-                        concept_id=concept_id,
-                        tutorial_id=tutorial.tutorial_id if hasattr(tutorial, 'tutorial_id') else None,
-                    )
-                except Exception as e:
-                    logger.error("tutorial_save_failed", concept_id=concept_id, error=str(e))
+        # 🔧 使用信号量限制并发数据库连接数
+        # 防止 30+ 个 Concept 同时打开数据库会话导致连接池耗尽
+        async with db_semaphore:
+            logger.debug(
+                "db_semaphore_acquired",
+                concept_id=concept_id,
+                message="获取数据库操作许可",
+            )
             
-            # 保存资源
-            if resource:
-                try:
-                    from app.db.repositories.resource_repo import ResourceRepository
-                    resource_repo = ResourceRepository(session)
-                    await resource_repo.save_resource_recommendation(
-                        resource_output=resource,
-                        roadmap_id=roadmap_id,
-                    )
-                    logger.debug(
-                        "resources_saved",
-                        concept_id=concept_id,
-                        resources_count=len(resource.resources) if hasattr(resource, 'resources') else 0,
-                    )
-                except Exception as e:
-                    logger.error("resources_save_failed", concept_id=concept_id, error=str(e))
+            async with safe_session_with_retry() as session:
+                # 保存教程
+                if tutorial:
+                    try:
+                        from app.db.repositories.tutorial_repo import TutorialRepository
+                        tutorial_repo = TutorialRepository(session)
+                        await tutorial_repo.save_tutorial(
+                            tutorial_output=tutorial,
+                            roadmap_id=roadmap_id,
+                        )
+                        logger.debug(
+                            "tutorial_saved",
+                            concept_id=concept_id,
+                            tutorial_id=tutorial.tutorial_id if hasattr(tutorial, 'tutorial_id') else None,
+                        )
+                    except Exception as e:
+                        logger.error("tutorial_save_failed", concept_id=concept_id, error=str(e))
+                
+                # 保存资源
+                if resource:
+                    try:
+                        from app.db.repositories.resource_repo import ResourceRepository
+                        resource_repo = ResourceRepository(session)
+                        await resource_repo.save_resource_recommendation(
+                            resource_output=resource,
+                            roadmap_id=roadmap_id,
+                        )
+                        logger.debug(
+                            "resources_saved",
+                            concept_id=concept_id,
+                            resources_count=len(resource.resources) if hasattr(resource, 'resources') else 0,
+                        )
+                    except Exception as e:
+                        logger.error("resources_save_failed", concept_id=concept_id, error=str(e))
+                
+                # 保存测验
+                if quiz:
+                    try:
+                        from app.db.repositories.quiz_repo import QuizRepository
+                        quiz_repo = QuizRepository(session)
+                        await quiz_repo.save_quiz(
+                            quiz_output=quiz,
+                            roadmap_id=roadmap_id,
+                        )
+                        logger.debug(
+                            "quiz_saved",
+                            concept_id=concept_id,
+                            questions_count=len(quiz.questions) if hasattr(quiz, 'questions') else 0,
+                        )
+                    except Exception as e:
+                        logger.error("quiz_save_failed", concept_id=concept_id, error=str(e))
+                
+                await session.commit()
             
-            # 保存测验
-            if quiz:
-                try:
-                    from app.db.repositories.quiz_repo import QuizRepository
-                    quiz_repo = QuizRepository(session)
-                    await quiz_repo.save_quiz(
-                        quiz_output=quiz,
-                        roadmap_id=roadmap_id,
-                    )
-                    logger.debug(
-                        "quiz_saved",
-                        concept_id=concept_id,
-                        questions_count=len(quiz.questions) if hasattr(quiz, 'questions') else 0,
-                    )
-                except Exception as e:
-                    logger.error("quiz_save_failed", concept_id=concept_id, error=str(e))
-            
-            await session.commit()
+            logger.debug(
+                "db_semaphore_released",
+                concept_id=concept_id,
+                message="释放数据库操作许可",
+            )
         
         logger.info(
             "concept_saved_to_database",

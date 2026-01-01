@@ -64,16 +64,23 @@ class OrchestratorFactory:
         # 创建 AgentFactory 单例
         cls._agent_factory = AgentFactory(settings)
         
-        # 创建 AsyncPostgresSaver（使用连接池）
+        # 创建 AsyncPostgresSaver（使用连接池，Supabase 优化）
         try:
-            # 使用连接池管理连接（生产环境配置）
+            # 使用连接池管理连接（Supabase 事务池化模式配置）
             # - min_size=2: 最小保持 2 个连接（确保基本可用性）
             # - max_size=10: 最大 10 个连接（适度增加，应对 LangGraph 工作流并发）
             # - max_idle=180: 空闲连接最多保持 3 分钟（缩短以快速释放）
-            # - timeout=60: 获取连接超时 60 秒（增加以应对 Railway 网络延迟）
+            # - timeout=60: 获取连接超时 60 秒（增加以应对云端网络延迟）
             # - reconnect_timeout=0: 自动重连
             # - open=False: 避免弃用警告，显式调用 await pool.open()
-            # 总连接数预算: SQLAlchemy(100) + Checkpointer(10) = 110/200
+            # - prepare_threshold=None: 完全禁用预编译语句（Supabase Transaction Mode 必须）
+            # 
+            # ⚠️ Supabase Transaction Mode 关键配置：
+            # prepare_threshold=None 强制 psycopg 使用简单查询协议，
+            # 完全避免预编译语句（_pg3_0 等）的创建和冲突。
+            # 
+            # Supabase 连接池管理：
+            # 应用连接 (SQLAlchemy + Checkpointer) → Supabase Transaction Pooler → 真实 PostgreSQL 连接
             cls._connection_pool = AsyncConnectionPool(
                 conninfo=settings.CHECKPOINTER_DATABASE_URL,
                 min_size=2,
@@ -84,7 +91,7 @@ class OrchestratorFactory:
                 open=False,  # 禁用构造函数自动打开（避免 DeprecationWarning）
                 kwargs={
                     "autocommit": True,
-                    "prepare_threshold": 0,
+                    "prepare_threshold": None,  # 完全禁用预编译语句（Supabase Transaction Mode 必须）
                 },
             )
             

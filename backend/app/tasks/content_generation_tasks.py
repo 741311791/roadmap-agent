@@ -330,9 +330,14 @@ async def _generate_content_parallel(
     agent_factory: Any,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], list[str]]:
     """
-    并行生成所有概念的内容
+    并行生成所有概念的内容（带数据库连接限制）
     
     每个概念独立生成（Tutorial → Resource → Quiz），完成后立即写入数据库。
+    
+    🔧 连接池保护：
+    - 使用信号量限制并发数据库操作数量
+    - 默认最多 8 个 Concept 同时写入数据库
+    - 防止连接池耗尽（pool_size=10 + max_overflow=5）
     
     Args:
         task_id: 任务 ID
@@ -355,6 +360,25 @@ async def _generate_content_parallel(
     failed_concepts: list[str] = []
     results_lock = asyncio.Lock()
     
+    # 🔧 数据库连接限制：最多 3 个并发数据库操作
+    # 
+    # ⚠️ 关键约束：
+    # - 每个进程的连接池只有 4 个连接（pool_size=2 + max_overflow=2）
+    # - 必须为其他操作（状态更新、日志等）预留连接
+    # - MAX_DB_CONCURRENT 必须 < 每进程连接池大小
+    #
+    # 公式：MAX_DB_CONCURRENT = pool_size（留 50% 给其他操作）
+    MAX_DB_CONCURRENT = 3
+    db_semaphore = asyncio.Semaphore(MAX_DB_CONCURRENT)
+    
+    logger.info(
+        "content_generation_parallel_config",
+        task_id=task_id,
+        total_concepts=total_concepts,
+        max_db_concurrent=MAX_DB_CONCURRENT,
+        message=f"限制最多 {MAX_DB_CONCURRENT} 个 Concept 同时写入数据库（进程池连接数有限）",
+    )
+    
     # 并发执行所有概念的内容生成
     tasks = [
         generate_single_concept(
@@ -372,6 +396,7 @@ async def _generate_content_parallel(
             quiz_refs=quiz_refs,
             failed_concepts=failed_concepts,
             results_lock=results_lock,
+            db_semaphore=db_semaphore,  # 传递信号量
         )
         for concept in concepts
     ]
