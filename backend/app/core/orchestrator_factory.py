@@ -66,32 +66,40 @@ class OrchestratorFactory:
         
         # 创建 AsyncPostgresSaver（使用连接池，Supabase 优化）
         try:
-            # 使用连接池管理连接（Supabase 事务池化模式配置）
+            # 使用连接池管理连接（PostgreSQL 标准配置）
+            # 
+            # 连接池参数：
             # - min_size=2: 最小保持 2 个连接（确保基本可用性）
-            # - max_size=10: 最大 10 个连接（适度增加，应对 LangGraph 工作流并发）
-            # - max_idle=180: 空闲连接最多保持 3 分钟（缩短以快速释放）
-            # - timeout=60: 获取连接超时 60 秒（增加以应对云端网络延迟）
+            # - max_size=20: 最大 20 个连接（应对 LangGraph 工作流并发）
+            # - max_idle=300: 空闲连接最多保持 5 分钟
+            # - timeout=60: 获取连接超时 60 秒
             # - reconnect_timeout=0: 自动重连
             # - open=False: 避免弃用警告，显式调用 await pool.open()
-            # - prepare_threshold=None: 完全禁用预编译语句（Supabase Transaction Mode 必须）
             # 
-            # ⚠️ Supabase Transaction Mode 关键配置：
-            # prepare_threshold=None 强制 psycopg 使用简单查询协议，
-            # 完全避免预编译语句（_pg3_0 等）的创建和冲突。
-            # 
-            # Supabase 连接池管理：
-            # 应用连接 (SQLAlchemy + Checkpointer) → Supabase Transaction Pooler → 真实 PostgreSQL 连接
+            # 连接参数（kwargs）：
+            # - autocommit=True: 自动提交模式（LangGraph checkpoint 需要）
+            # - connect_timeout=30: 连接建立超时 30 秒
+            # - keepalives=1: 启用 TCP keepalive（防止长时间空闲连接被中间件断开）
+            # - keepalives_idle=30: 空闲 30 秒后开始发送 keepalive 探测
+            # - keepalives_interval=10: keepalive 探测间隔 10 秒
+            # - keepalives_count=5: 最多 5 次探测失败后关闭连接（总计 50 秒）
+            # - options="-c statement_timeout=120000": SQL 语句超时 120 秒（防止长查询阻塞）
             cls._connection_pool = AsyncConnectionPool(
                 conninfo=settings.CHECKPOINTER_DATABASE_URL,
                 min_size=2,
-                max_size=10,
-                max_idle=180,
+                max_size=20,  # 提高最大连接数，应对工作流并发
+                max_idle=300,  # 延长空闲时间到 5 分钟
                 timeout=60,
                 reconnect_timeout=0,  # 自动重连
                 open=False,  # 禁用构造函数自动打开（避免 DeprecationWarning）
                 kwargs={
-                    "autocommit": True,
-                    "prepare_threshold": None,  # 完全禁用预编译语句（Supabase Transaction Mode 必须）
+                    "autocommit": True,  # LangGraph checkpoint 需要自动提交
+                    "connect_timeout": 30,  # 连接建立超时 30 秒
+                    "keepalives": 1,  # 启用 TCP keepalive
+                    "keepalives_idle": 30,  # 空闲 30 秒后开始发送 keepalive 探测
+                    "keepalives_interval": 10,  # keepalive 探测间隔 10 秒
+                    "keepalives_count": 5,  # 最多 5 次探测失败后关闭连接
+                    "options": "-c statement_timeout=120000",  # SQL 语句超时 120 秒（120000ms）
                 },
             )
             

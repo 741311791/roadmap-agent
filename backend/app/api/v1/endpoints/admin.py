@@ -546,6 +546,7 @@ async def batch_send_invites(
     """
     批量发送 Waitlist 邀请
     
+    采用"一次读取，批量处理，一次提交"策略优化性能。
     为选中的邮箱生成临时凭证并发送邀请邮件。
     支持部分成功模式：成功的更新状态，失败的收集错误信息。
     
@@ -564,85 +565,60 @@ async def batch_send_invites(
         validity_days=request.password_validity_days,
     )
     
-    success_count = 0
-    failed_count = 0
-    errors = []
+    # 标准化邮箱列表
+    normalized_emails = [email.lower().strip() for email in request.emails]
     
-    for email_raw in request.emails:
-        email = email_raw.lower().strip()
+    # Step 1: 一次性批量读取所有 waitlist 记录
+    waitlist_result = await db.execute(
+        select(WaitlistEmail).where(WaitlistEmail.email.in_(normalized_emails))
+    )
+    waitlist_map = {entry.email: entry for entry in waitlist_result.scalars().all()}
+    
+    # Step 2: 一次性批量读取所有已存在用户
+    existing_users_result = await db.execute(
+        select(User.email).where(User.email.in_(normalized_emails))
+    )
+    existing_users_set = set(existing_users_result.scalars().all())
+    
+    # Step 3: 预处理，区分可处理和不可处理的邮箱
+    errors = []
+    emails_to_process = []
+    
+    for email in normalized_emails:
+        waitlist_entry = waitlist_map.get(email)
         
+        if not waitlist_entry:
+            errors.append({"email": email, "error": "Email not found in waitlist"})
+            continue
+        
+        if waitlist_entry.invited:
+            errors.append({"email": email, "error": "Invitation already sent"})
+            continue
+        
+        if email in existing_users_set:
+            errors.append({"email": email, "error": "User account already exists"})
+            continue
+        
+        emails_to_process.append((email, waitlist_entry))
+    
+    # Step 4: 处理可邀请的邮箱（邮件发送是外部副作用，需逐个处理）
+    success_count = 0
+    pending_commits = []  # 收集待提交的变更
+    
+    for email, waitlist_entry in emails_to_process:
         try:
-            # 检查 waitlist 记录是否存在
-            waitlist_result = await db.execute(
-                select(WaitlistEmail).where(WaitlistEmail.email == email)
-            )
-            waitlist_entry = waitlist_result.scalar_one_or_none()
-            
-            if not waitlist_entry:
-                errors.append({
-                    "email": email,
-                    "error": "Email not found in waitlist"
-                })
-                failed_count += 1
-                continue
-            
-            # 如果已经发送过，跳过
-            if waitlist_entry.invited:
-                errors.append({
-                    "email": email,
-                    "error": "Invitation already sent"
-                })
-                failed_count += 1
-                continue
-            
-            # 检查用户是否已存在
-            existing_user_result = await db.execute(
-                select(User).where(User.email == email)
-            )
-            existing_user = existing_user_result.scalar_one_or_none()
-            
-            if existing_user:
-                errors.append({
-                    "email": email,
-                    "error": "User account already exists"
-                })
-                failed_count += 1
-                continue
-            
-            # 生成用户名（从邮箱提取）
             username = email.split('@')[0]
-            
-            # 生成临时密码
             temp_password = generate_random_password()
-            
-            # 计算密码过期时间
             expires_at = beijing_now() + timedelta(days=request.password_validity_days)
             
             # 创建用户账号
-            try:
-                user_create = UserCreate(
-                    email=email,
-                    username=username,
-                    password=temp_password,
-                )
-                new_user = await user_manager.create(user_create)
-                
-                # 设置密码过期时间（不立即提交）
-                new_user.password_expires_at = expires_at
-                
-            except Exception as user_create_error:
-                errors.append({
-                    "email": email,
-                    "error": f"Failed to create user account: {str(user_create_error)}"
-                })
-                failed_count += 1
-                await db.rollback()
-                continue
-            
-            # 更新 waitlist 记录（不立即提交）
-            waitlist_entry.username = username
-            waitlist_entry.password = temp_password
-            waitlist_entry.expires_at = expires_at
+            user_create = UserCreate(
+                email=email,
+                username=username,
+                password=temp_password,
+            )
+            new_user = await user_manager.create(user_create)
+            new_user.password_expires_at = expires_at
             
             # 发送邀请邮件
             email_sent = await email_service.send_invite_email(
@@ -653,7 +629,10 @@ async def batch_send_invites(
             )
             
             if email_sent:
-                # 邮件发送成功，提交用户创建和 waitlist 更新
+                # 更新 waitlist 记录
+                waitlist_entry.username = username
+                waitlist_entry.password = temp_password
+                waitlist_entry.expires_at = expires_at
                 waitlist_entry.invited = True
                 waitlist_entry.invited_at = beijing_now()
                 waitlist_entry.sent_content = {
@@ -662,7 +641,7 @@ async def batch_send_invites(
                     "sent_at": beijing_now().isoformat(),
                     "sent_by": current_user.id,
                 }
-                await db.commit()
+                pending_commits.append((email, username, new_user.id))
                 success_count += 1
                 
                 logger.info(
@@ -673,44 +652,54 @@ async def batch_send_invites(
                     user_id=new_user.id,
                 )
             else:
-                # 邮件发送失败，回滚用户创建
-                logger.warning(
-                    "admin_batch_send_invite_email_failed",
-                    admin_id=current_user.id,
-                    email=email,
-                    username=username,
-                )
+                # 邮件发送失败，回滚此用户创建
+                await db.rollback()
                 errors.append({
                     "email": email,
                     "error": "Failed to send email, user account not created"
                 })
-                failed_count += 1
-                await db.rollback()
+                logger.warning(
+                    "admin_batch_send_invite_email_failed",
+                    admin_id=current_user.id,
+                    email=email,
+                )
                 
         except Exception as e:
+            await db.rollback()
+            errors.append({"email": email, "error": str(e)})
             logger.error(
                 "admin_batch_send_invite_error",
                 admin_id=current_user.id,
                 email=email,
                 error=str(e),
             )
-            errors.append({
-                "email": email,
-                "error": str(e)
-            })
-            failed_count += 1
+    
+    # Step 5: 一次性提交所有成功的变更
+    if pending_commits:
+        try:
+            await db.commit()
+        except Exception as e:
             await db.rollback()
+            logger.error(
+                "admin_batch_send_invites_commit_failed",
+                admin_id=current_user.id,
+                error=str(e),
+            )
+            # 提交失败，所有待提交的都算失败
+            for email, _, _ in pending_commits:
+                errors.append({"email": email, "error": f"Final commit failed: {str(e)}"})
+            success_count = 0
     
     logger.info(
         "admin_batch_send_invites_completed",
         admin_id=current_user.id,
         success=success_count,
-        failed=failed_count,
+        failed=len(errors),
     )
     
     return BatchSendInviteResponse(
         success=success_count,
-        failed=failed_count,
+        failed=len(errors),
         errors=errors,
     )
 
@@ -925,6 +914,7 @@ async def batch_add_tavily_keys(
     """
     批量添加 Tavily API Keys
     
+    采用"一次读取，批量处理，一次提交"策略优化性能。
     支持部分成功模式：成功的添加记录，失败的收集错误信息。
     只有超级管理员可以调用此接口。
     
@@ -940,56 +930,60 @@ async def batch_add_tavily_keys(
         key_count=len(request.keys),
     )
     
-    success_count = 0
-    failed_count = 0
     errors = []
+    new_keys_to_add = []
     
-    repo = TavilyKeyRepository(db)
+    # Step 1: 一次性读取所有请求中的 Key，检查哪些已存在
+    requested_api_keys = [key_req.api_key for key_req in request.keys]
+    existing_result = await db.execute(
+        select(TavilyAPIKey.api_key).where(TavilyAPIKey.api_key.in_(requested_api_keys))
+    )
+    existing_keys_set = set(existing_result.scalars().all())
     
+    # Step 2: 批量处理，区分已存在和新增的 Key
     for key_req in request.keys:
-        try:
-            # 检查 Key 是否已存在
-            existing_key = await repo.get_by_key(key_req.api_key)
-            
-            if existing_key:
-                errors.append({
-                    "api_key": f"{key_req.api_key[:10]}...",
-                    "error": "API Key already exists"
-                })
-                failed_count += 1
-                continue
-            
-            # 创建新的 Key 记录
+        if key_req.api_key in existing_keys_set:
+            errors.append({
+                "api_key": f"{key_req.api_key[:10]}...",
+                "error": "API Key already exists"
+            })
+        else:
+            # 构建新 Key 对象（暂不提交）
             new_key = TavilyAPIKey(
                 api_key=key_req.api_key,
                 plan_limit=key_req.plan_limit,
-                remaining_quota=key_req.plan_limit,  # 初始配额等于计划配额
+                remaining_quota=key_req.plan_limit,
             )
-            
-            db.add(new_key)
+            new_keys_to_add.append(new_key)
+    
+    # Step 3: 一次性批量添加所有新 Key
+    success_count = 0
+    if new_keys_to_add:
+        try:
+            db.add_all(new_keys_to_add)
             await db.commit()
-            
-            success_count += 1
+            success_count = len(new_keys_to_add)
             
             logger.info(
-                "admin_batch_add_tavily_key_success",
+                "admin_batch_add_tavily_keys_bulk_insert",
                 admin_id=current_user.id,
-                key_prefix=key_req.api_key[:10] + "...",
+                inserted_count=success_count,
             )
-            
         except Exception as e:
+            await db.rollback()
             logger.error(
-                "admin_batch_add_tavily_key_error",
+                "admin_batch_add_tavily_keys_bulk_insert_failed",
                 admin_id=current_user.id,
-                key_prefix=key_req.api_key[:10] + "...",
                 error=str(e),
             )
-            errors.append({
-                "api_key": f"{key_req.api_key[:10]}...",
-                "error": str(e)
-            })
-            failed_count += 1
-            await db.rollback()
+            # 批量插入失败，所有待添加的 Key 都记录为失败
+            for key_obj in new_keys_to_add:
+                errors.append({
+                    "api_key": f"{key_obj.api_key[:10]}...",
+                    "error": f"Bulk insert failed: {str(e)}"
+                })
+    
+    failed_count = len(errors)
     
     logger.info(
         "admin_batch_add_tavily_keys_completed",

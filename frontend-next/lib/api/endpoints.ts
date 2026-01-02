@@ -1610,3 +1610,48 @@ export async function getEditDiff(taskId: string, editRound: number): Promise<an
   return response.data;
 }
 
+// ============================================================
+// Concept 状态 API（内容生成进度追踪）
+// ============================================================
+
+export interface ConceptStatusResponse {
+  concept_id: string;
+  overall_status: 'pending' | 'generating' | 'completed' | 'partial_failed';
+  tutorial_status: 'pending' | 'generating' | 'completed' | 'failed';
+  resources_status: 'pending' | 'generating' | 'completed' | 'failed';
+  quiz_status: 'pending' | 'generating' | 'completed' | 'failed';
+  tutorial_id: string | null;
+  resources_id: string | null;
+  quiz_id: string | null;
+  all_content_completed_at: string | null;
+}
+
+export interface RoadmapConceptsStatusResponse {
+  roadmap_id: string;
+  total_concepts: number;
+  completed_count: number;
+  concepts: ConceptStatusResponse[];
+}
+
+/**
+ * 获取 Roadmap 的所有 Concept 内容生成状态
+ * 
+ * 用于页面刷新后恢复状态显示
+ */
+export async function getRoadmapConceptsStatus(
+  roadmapId: string
+): Promise<RoadmapConceptsStatusResponse> {
+  const response = await apiClient.get(`/concept-status/roadmaps/${roadmapId}`);
+  return response.data;
+}
+
+/**
+ * 获取单个 Concept 的内容生成状态
+ */
+export async function getConceptStatus(
+  conceptId: string
+): Promise<ConceptStatusResponse> {
+  const response = await apiClient.get(`/concept-status/concepts/${conceptId}`);
+  return response.data;
+}
+

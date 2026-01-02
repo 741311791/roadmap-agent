@@ -115,6 +115,19 @@ export interface WSConceptCompleteEvent extends WSEvent {
   };
 }
 
+export interface WSConceptAllContentCompleteEvent extends WSEvent {
+  type: 'concept_all_content_complete';
+  concept_id: string;
+  concept_name: string;
+  message: string;
+  timestamp: string;
+  data?: {
+    tutorial_id?: string;
+    resources_id?: string;
+    quiz_id?: string;
+  };
+}
+
 export interface WSConceptFailedEvent extends WSEvent {
   type: 'concept_failed';
   concept_id: string;
@@ -183,6 +196,7 @@ export type TaskWSEvent =
   | WSHumanReviewEvent
   | WSConceptStartEvent
   | WSConceptCompleteEvent
+  | WSConceptAllContentCompleteEvent
   | WSConceptFailedEvent
   | WSBatchStartEvent
   | WSBatchCompleteEvent
@@ -207,6 +221,7 @@ export interface WSHandlers {
   // Concept 级别事件
   onConceptStart?: (event: WSConceptStartEvent) => void;
   onConceptComplete?: (event: WSConceptCompleteEvent) => void;
+  onConceptAllContentComplete?: (event: WSConceptAllContentCompleteEvent) => void;
   onConceptFailed?: (event: WSConceptFailedEvent) => void;
   
   // 批次事件
@@ -302,6 +317,9 @@ export class TaskWebSocket {
             break;
           case 'concept_complete':
             this.handlers.onConceptComplete?.(data as WSConceptCompleteEvent);
+            break;
+          case 'concept_all_content_complete':
+            this.handlers.onConceptAllContentComplete?.(data as WSConceptAllContentCompleteEvent);
             break;
           case 'concept_failed':
             this.handlers.onConceptFailed?.(data as WSConceptFailedEvent);

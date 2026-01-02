@@ -22,7 +22,8 @@ from datetime import datetime
 
 from app.core.celery_app import celery_app
 from app.core.orchestrator_factory import OrchestratorFactory
-from app.db.repository_factory import RepositoryFactory
+# 使用 Celery 专用的数据库连接管理，避免 Fork 进程继承问题
+from app.db.celery_session import CeleryRepositoryFactory
 from app.services.notification_service import notification_service
 from app.models.constants import TaskStatus
 from app.models.domain import UserRequest, LearningPreferences
@@ -179,7 +180,8 @@ async def _execute_roadmap_workflow(
     
     try:
         # 更新任务状态为 processing
-        repo_factory = RepositoryFactory()
+        # 使用 Celery 专用的数据库连接，避免 Fork 进程继承的连接池问题
+        repo_factory = CeleryRepositoryFactory()
         async with repo_factory.create_session() as session:
             task_repo = repo_factory.create_task_repo(session)
             await task_repo.update_task_status(
@@ -286,7 +288,8 @@ async def _mark_task_failed(task_id: str, error_message: str):
         error_message: 错误信息
     """
     try:
-        repo_factory = RepositoryFactory()
+        # 使用 Celery 专用的数据库连接
+        repo_factory = CeleryRepositoryFactory()
         async with repo_factory.create_session() as session:
             task_repo = repo_factory.create_task_repo(session)
             await task_repo.update_task_status(

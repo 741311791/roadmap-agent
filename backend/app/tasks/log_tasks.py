@@ -23,7 +23,8 @@ Celery 任务：批量写入执行日志到数据库。
 import structlog
 import asyncio
 from app.core.celery_app import celery_app
-from app.db.session import safe_session
+# 使用 Celery 专用的数据库连接管理，避免 Fork 进程继承问题
+from app.db.celery_session import celery_safe_session as safe_session
 from app.models.database import ExecutionLog
 
 logger = structlog.get_logger()

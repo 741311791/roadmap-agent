@@ -16,7 +16,8 @@ from datetime import datetime
 
 from app.core.celery_app import celery_app
 from app.core.orchestrator_factory import OrchestratorFactory
-from app.db.repository_factory import RepositoryFactory
+# 使用 Celery 专用的数据库连接管理，避免 Fork 进程继承问题
+from app.db.celery_session import CeleryRepositoryFactory
 from app.services.notification_service import notification_service
 from app.models.constants import TaskStatus
 
@@ -247,7 +248,7 @@ async def _resume_workflow_after_review(
     
     try:
         # 更新任务状态为 processing
-        repo_factory = RepositoryFactory()
+        repo_factory = CeleryRepositoryFactory()
         async with repo_factory.create_session() as session:
             task_repo = repo_factory.create_task_repo(session)
             await task_repo.update_task_status(
@@ -351,7 +352,7 @@ async def _resume_workflow_from_checkpoint(
     
     try:
         # 更新任务状态为 processing
-        repo_factory = RepositoryFactory()
+        repo_factory = CeleryRepositoryFactory()
         async with repo_factory.create_session() as session:
             task_repo = repo_factory.create_task_repo(session)
             await task_repo.update_task_status(
@@ -449,7 +450,7 @@ async def _mark_task_failed(task_id: str, error_message: str):
     """
     # 1. 先更新数据库状态（关键操作）
     try:
-        repo_factory = RepositoryFactory()
+        repo_factory = CeleryRepositoryFactory()
         async with repo_factory.create_session() as session:
             task_repo = repo_factory.create_task_repo(session)
             await task_repo.update_task_status(

@@ -89,12 +89,9 @@ class Settings(BaseSettings):
     @property
     def DATABASE_URL(self) -> str:
         """
-        构建异步数据库连接 URL（Supabase 兼容）
+        构建异步数据库连接 URL
         
-        Supabase Transaction Mode (端口 6543) 优化：
-        - 使用简化的连接 URL
-        - 不添加 keepalives 参数（由 Supabase 连接池管理）
-        - 不添加 statement_timeout（事务模式限制）
+        基于单独的环境变量构建标准 PostgreSQL 连接字符串。
         """
         return (
             f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
@@ -104,15 +101,9 @@ class Settings(BaseSettings):
     @property
     def CHECKPOINTER_DATABASE_URL(self) -> str:
         """
-        构建 Checkpointer 数据库连接 URL（Supabase 兼容）
+        构建 Checkpointer 数据库连接 URL
         
-        Supabase Transaction Mode 要求：
-        - 不使用 keepalives 参数（由 Supabase 连接池管理）
-        - 不使用 statement_timeout（事务模式不支持会话级参数）
-        - 简化参数，依赖 Supabase 连接池管理连接生命周期
-        
-        预处理语句缓存控制：
-        - 通过 AsyncConnectionPool 的 kwargs 中设置 prepare_threshold=0
+        LangGraph Checkpointer 使用的标准 PostgreSQL 连接字符串。
         """
         return (
             f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
@@ -267,9 +258,7 @@ class Settings(BaseSettings):
     @property
     def REDIS_URL(self) -> str:
         """
-        获取 Redis 连接 URL（向后兼容属性）
-        
-        注意：此属性调用 get_redis_url，保留以保持向后兼容
+        获取 Redis 连接 URL
         """
         return self.get_redis_url
     

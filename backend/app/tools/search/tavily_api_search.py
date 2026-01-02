@@ -36,28 +36,55 @@ class TavilyAPISearchTool(BaseTool[SearchQuery, SearchResult]):
     
     特性：
     - 使用官方 TavilyClient（按照官方示例调用）
-    - 从数据库读取配额信息（由外部项目维护）
+    - 支持两种模式：从数据库读取 Key 或使用预分配 Key
     - 全局速率控制（每分钟 100 次，基于 Redis，多进程共享）
     - 支持高级搜索参数（search_depth, time_range, include_domains 等）
     """
     
-    def __init__(self, db_session: AsyncSession):
+    def __init__(
+        self, 
+        db_session: Optional[AsyncSession] = None,
+        pre_allocated_key: Optional[str] = None
+    ):
         """
         初始化搜索工具
         
+        支持两种初始化模式：
+        1. 模式 1（原有行为）：传入 db_session，每次搜索时动态查询最优 Key
+        2. 模式 2（优化行为）：传入 pre_allocated_key，使用预分配的 Key，跳过数据库查询
+        
         Args:
             db_session: 数据库会话（用于查询 API Key）
+            pre_allocated_key: 预分配的 API Key（如果提供，则不查询数据库）
+            
+        Raises:
+            ValueError: 如果 db_session 和 pre_allocated_key 都未提供
         """
         super().__init__(tool_id="tavily_api_search")
         
-        # 数据库仓储
-        self.repo = TavilyKeyRepository(db_session)
+        # 验证至少提供一种初始化方式
+        if not db_session and not pre_allocated_key:
+            raise ValueError("必须提供 db_session 或 pre_allocated_key 之一")
+        
+        # 预分配的 API Key（优先使用）
+        self._pre_allocated_key = pre_allocated_key
+        
+        # 数据库仓储（仅在未提供预分配 Key 时使用）
+        self.repo = TavilyKeyRepository(db_session) if db_session else None
         
         # TavilyClient 缓存（按 API Key 索引）
         self._clients: Dict[str, TavilyClient] = {}
         
         # 局部并发控制（防止单个实例过度并发）
         self._search_semaphore = asyncio.Semaphore(3)  # 最多3个并发请求
+        
+        if pre_allocated_key:
+            logger.debug(
+                "tavily_tool_initialized_with_pre_allocated_key",
+                key_prefix=pre_allocated_key[:10] + "...",
+            )
+        else:
+            logger.debug("tavily_tool_initialized_with_db_session")
     
     def _get_client(self, api_key: str) -> TavilyClient:
         """
@@ -117,14 +144,27 @@ class TavilyAPISearchTool(BaseTool[SearchQuery, SearchResult]):
     
     async def _get_best_key(self) -> Optional[str]:
         """
-        从数据库获取最优 API Key
+        获取 API Key
+        
+        优先使用预分配的 Key，如果没有则从数据库查询最优 Key
         
         Returns:
             API Key 字符串，如果没有可用 Key 则返回 None
         """
-        key_record = await self.repo.get_best_key()
-        if key_record:
-            return key_record.api_key
+        # 优先使用预分配的 Key
+        if self._pre_allocated_key:
+            logger.debug(
+                "tavily_using_pre_allocated_key",
+                key_prefix=self._pre_allocated_key[:10] + "...",
+            )
+            return self._pre_allocated_key
+        
+        # 回退到数据库查询（原有行为）
+        if self.repo:
+            key_record = await self.repo.get_best_key()
+            if key_record:
+                return key_record.api_key
+        
         return None
     
     async def execute(self, input_data: SearchQuery) -> SearchResult:

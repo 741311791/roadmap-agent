@@ -32,6 +32,7 @@ class ResourceRecommenderAgent(BaseAgent):
     - RECOMMENDER_MODEL: 模型名称（默认: gpt-4o-mini）
     - RECOMMENDER_BASE_URL: 自定义 API 端点（可选）
     - RECOMMENDER_API_KEY: API 密钥（必需）
+    - tavily_key: 预分配的 Tavily API Key（可选，用于优化性能）
     """
     
     def __init__(
@@ -41,6 +42,7 @@ class ResourceRecommenderAgent(BaseAgent):
         model_name: str | None = None,
         base_url: str | None = None,
         api_key: str | None = None,
+        tavily_key: Optional[str] = None,
     ):
         super().__init__(
             agent_id=agent_id,
@@ -51,6 +53,16 @@ class ResourceRecommenderAgent(BaseAgent):
             temperature=0.5,
             max_tokens=4096,
         )
+        
+        # 预分配的 Tavily API Key（用于优化性能，避免数据库查询）
+        self._tavily_key = tavily_key
+        
+        if tavily_key:
+            logger.debug(
+                "resource_recommender_initialized_with_tavily_key",
+                agent_id=agent_id,
+                key_prefix=tavily_key[:10] + "...",
+            )
     
     def _get_tools_definition(self) -> List[Dict[str, Any]]:
         """
@@ -194,8 +206,11 @@ class ResourceRecommenderAgent(BaseAgent):
                         exclude_domains=tool_args.get("exclude_domains"),
                     )
                     
-                    # 执行搜索
-                    search_result = await search_tool.execute(search_query)
+                    # 执行搜索（使用预分配的 Tavily Key，如果可用）
+                    search_result = await search_tool.execute(
+                        search_query,
+                        pre_allocated_tavily_key=self._tavily_key,
+                    )
                     
                     # 格式化搜索结果
                     formatted_results = []

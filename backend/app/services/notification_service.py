@@ -44,6 +44,7 @@ class TaskEvent:
     CONCEPT_START = "concept_start"
     CONCEPT_COMPLETE = "concept_complete"
     CONCEPT_FAILED = "concept_failed"
+    CONCEPT_ALL_CONTENT_COMPLETE = "concept_all_content_complete"  # 🆕 三项内容全部完成
     BATCH_START = "batch_start"
     BATCH_COMPLETE = "batch_complete"
     
@@ -390,6 +391,40 @@ class NotificationService:
             "timestamp": beijing_now().isoformat(),
             "message": f"内容生成失败: {concept_name}",
         }
+        
+        await self._publish(task_id, event)
+    
+    async def publish_concept_all_content_complete(
+        self,
+        task_id: str,
+        concept_id: str,
+        concept_name: str,
+        data: Optional[dict] = None,
+    ):
+        """
+        发布 Concept 全部内容完成事件（Tutorial + Resource + Quiz）
+        
+        与 publish_concept_complete 的区别：
+        - concept_complete: 单项内容完成时发送（如 Tutorial 完成）
+        - concept_all_content_complete: 三项内容全部完成时发送（用于前端更新节点状态）
+        
+        Args:
+            task_id: 任务 ID
+            concept_id: 概念 ID
+            concept_name: 概念名称
+            data: 生成的内容数据（包含 tutorial_id, resources_id, quiz_id）
+        """
+        event = {
+            "type": TaskEvent.CONCEPT_ALL_CONTENT_COMPLETE,
+            "task_id": task_id,
+            "concept_id": concept_id,
+            "concept_name": concept_name,
+            "timestamp": beijing_now().isoformat(),
+            "message": f"✅ Concept 完整内容已生成: {concept_name}",
+        }
+        
+        if data:
+            event["data"] = data
         
         await self._publish(task_id, event)
     

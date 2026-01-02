@@ -128,11 +128,12 @@ async def update_concept_status_in_framework(
         status: 新状态 ('generating', 'completed', 'failed')
         result: 生成结果数据（可选）
     """
-    from app.db.repository_factory import RepositoryFactory
+    # 使用 Celery 专用的数据库连接管理，避免 Fork 进程继承问题
+    from app.db.celery_session import CeleryRepositoryFactory
     from app.db.repositories.roadmap_repo import RoadmapRepository
     from app.models.domain import RoadmapFramework
     
-    async with RepositoryFactory().create_session() as session:
+    async with CeleryRepositoryFactory().create_session() as session:
         repo = RoadmapRepository(session)
         
         # 获取当前路线图

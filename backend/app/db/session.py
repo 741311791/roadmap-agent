@@ -8,7 +8,7 @@
 - 详细的连接池状态监控
 - Prometheus 指标暴露
 - 慢查询追踪
-- 事件循环感知（Celery Worker 兼容）
+- 事件循环感知（解决 Celery Worker 进程隔离问题）
 """
 from typing import AsyncGenerator, Optional
 from sqlalchemy.ext.asyncio import AsyncSession, AsyncEngine, create_async_engine, async_sessionmaker
@@ -75,30 +75,38 @@ except ImportError:
     PROMETHEUS_ENABLED = False
 
 # ============================================================
-# 事件循环感知的引擎管理（Celery Worker 兼容）
+# 事件循环感知的引擎管理
 # ============================================================
 #
-# 问题背景：
-# - 全局 engine 在导入时创建，绑定到主进程的事件循环
-# - Celery Worker 使用独立的进程级事件循环（get_worker_loop）
-# - asyncpg 连接池创建的 Future 绑定到旧事件循环，导致：
-#   "Task got Future attached to a different loop" 错误
-#
-# 解决方案：
-# - 为每个事件循环创建独立的 engine 实例
-# - 使用字典缓存：event_loop_id -> engine
-# - 自动检测当前事件循环，返回对应的 engine
+# Celery Worker 使用 prefork 模式，每个子进程有独立的事件循环。
+# 为避免 "Task got Future attached to a different loop" 错误，
+# 为每个事件循环创建独立的 engine 实例并缓存。
 #
 _engine_cache: dict[int, AsyncEngine] = {}
 _engine_lock = asyncio.Lock()
+
+
+def reset_engine_cache() -> None:
+    """
+    重置全局 engine 缓存
+    
+    在 Celery Worker 进程初始化时调用。
+    清空继承自父进程的 engine 缓存，强制子进程创建新的 engine。
+    """
+    global _engine_cache
+    _engine_cache.clear()
+    logger.info(
+        "db_engine_cache_reset",
+        message="数据库引擎缓存已重置（Worker 进程初始化）",
+    )
 
 
 def _register_engine_events(engine_instance: AsyncEngine) -> None:
     """
     为 engine 注册事件监听器
     
-    ⚠️ 关键：每个新创建的 engine 实例都必须注册这些事件
-    确保跨事件循环的 engine 都能正确清理预编译语句
+    注册连接池事件，用于监控连接持有时长和连接池使用情况。
+    每个新创建的 engine 实例都必须注册这些事件。
     """
     sync_engine = engine_instance.sync_engine
     
@@ -110,37 +118,9 @@ def _register_engine_events(engine_instance: AsyncEngine) -> None:
         """
         从连接池获取连接时触发
         
-        ⚠️ 关键修复：在连接取出时清理预编译语句
-        - Supabase pgbouncer 事务模式不支持跨事务的预编译语句
-        - 即使配置了 statement_cache_size=0，连接池中的旧连接仍可能携带预编译语句
-        - 必须在连接取出时主动清理，而不是归还时清理
+        记录连接取出时间，用于监控连接持有时长。
         """
         connection_record.info["checkout_time"] = time.time()
-        
-        # 清理预编译语句
-        try:
-            if hasattr(dbapi_connection, "_connection"):
-                raw_connection = dbapi_connection._connection
-                if hasattr(raw_connection, "execute"):
-                    from sqlalchemy.util._concurrency_py3k import await_only
-                    try:
-                        await_only(raw_connection.execute("DEALLOCATE ALL"))
-                        logger.debug(
-                            "db_prepared_statements_cleared_on_checkout",
-                            connection_id=id(dbapi_connection),
-                        )
-                    except Exception as e:
-                        logger.debug(
-                            "db_prepared_statements_clear_on_checkout_failed",
-                            error=str(e),
-                            error_type=type(e).__name__,
-                        )
-        except Exception as e:
-            logger.debug(
-                "db_checkout_cleanup_error",
-                error=str(e),
-                error_type=type(e).__name__,
-            )
         
         # Prometheus 指标
         if PROMETHEUS_ENABLED:
@@ -163,11 +143,11 @@ def _register_engine_events(engine_instance: AsyncEngine) -> None:
                 pass
     
     # ============================================================
-    # checkin 事件：连接归还时清理预编译语句（双重保险）
+    # checkin 事件：连接归还时记录统计信息
     # ============================================================
     @event.listens_for(sync_engine, "checkin")
     def on_checkin_handler(dbapi_connection, connection_record):
-        """连接归还连接池时触发"""
+        """连接归还连接池时触发，记录连接持有时长"""
         checkout_time = connection_record.info.get("checkout_time")
         if checkout_time:
             duration = time.time() - checkout_time
@@ -187,31 +167,6 @@ def _register_engine_events(engine_instance: AsyncEngine) -> None:
                     threshold_seconds=10,
                     connection_id=id(dbapi_connection),
                 )
-        
-        # 清理预编译语句（双重保险）
-        try:
-            if hasattr(dbapi_connection, "_connection"):
-                raw_connection = dbapi_connection._connection
-                if hasattr(raw_connection, "execute"):
-                    from sqlalchemy.util._concurrency_py3k import await_only
-                    try:
-                        await_only(raw_connection.execute("DEALLOCATE ALL"))
-                        logger.debug(
-                            "db_prepared_statements_cleared",
-                            connection_id=id(dbapi_connection),
-                        )
-                    except Exception as e:
-                        logger.debug(
-                            "db_prepared_statements_clear_failed",
-                            error=str(e),
-                            error_type=type(e).__name__,
-                        )
-        except Exception as e:
-            logger.debug(
-                "db_checkin_cleanup_error",
-                error=str(e),
-                error_type=type(e).__name__,
-            )
     
     # ============================================================
     # 其他事件
@@ -236,21 +191,15 @@ def _register_engine_events(engine_instance: AsyncEngine) -> None:
 
 def _create_engine() -> AsyncEngine:
     """
-    创建数据库引擎（Supabase 事务池化模式优化）
-    
-    Supabase Transaction Pooling 关键配置：
-    ⚠️ 关键：asyncpg 默认会自动创建预编译语句（prepared statements），
-    但 pgbouncer 的事务模式不支持跨事务的预编译语句。
-    
-    解决方案：
-    1. statement_cache_size=0: 禁用 asyncpg 客户端缓存
-    2. 监听 checkout/checkin 事件，主动执行 DEALLOCATE ALL 清理预编译语句
-    3. pool_pre_ping=False: 避免健康检查触发预编译语句创建
-    4. pool_recycle=300: 定期回收连接
+    创建数据库引擎
     
     连接池配置（支持环境变量动态调整）：
     - pool_size: 由 DB_POOL_SIZE 环境变量控制
     - max_overflow: 由 DB_MAX_OVERFLOW 环境变量控制
+    - pool_pre_ping: 启用连接健康检查，自动检测失效连接
+    - pool_recycle: 定期回收连接，避免长时间空闲连接
+    
+    asyncpg 默认启用预编译语句缓存，提升重复查询性能。
     
     注意：多进程部署时，每个进程创建独立的连接池
     总应用连接数 = (pool_size + max_overflow) × 进程数
@@ -260,16 +209,11 @@ def _create_engine() -> AsyncEngine:
         echo=False,
         pool_size=settings.DB_POOL_SIZE,
         max_overflow=settings.DB_MAX_OVERFLOW,
-        pool_pre_ping=False,  # 禁用健康检查
+        pool_pre_ping=True,  # 启用健康检查
         pool_recycle=300,  # 5分钟回收连接
         pool_timeout=60,
         pool_use_lifo=True,
         connect_args={
-            # Supabase Transaction Mode 必须配置
-            # ⚠️ 关键修复：同时设置两个参数禁用预编译语句
-            "statement_cache_size": 0,  # 禁用 SQLAlchemy 层面的语句缓存
-            "prepared_statement_cache_size": 0,  # 禁用 asyncpg 驱动层面的缓存
-            
             # 应用级配置
             "server_settings": {
                 "application_name": "roadmap_agent",
@@ -347,44 +291,9 @@ def on_checkout(dbapi_connection, connection_record, connection_proxy):
     """
     从连接池获取连接时触发
     
-    ⚠️ 关键修复：在连接取出时清理预编译语句
-    - Supabase pgbouncer 事务模式不支持跨事务的预编译语句
-    - 即使配置了 statement_cache_size=0，连接池中的旧连接仍可能携带预编译语句
-    - 必须在连接取出时主动清理，而不是归还时清理
+    记录连接取出时间，用于监控连接持有时长。
     """
     connection_record.info["checkout_time"] = time.time()
-    
-    # ============================================================
-    # ⚠️ 关键修复：清理预编译语句（Supabase 事务池化必需）
-    # ============================================================
-    try:
-        # 获取底层的 asyncpg 连接
-        if hasattr(dbapi_connection, "_connection"):
-            raw_connection = dbapi_connection._connection
-            # 检查是否是 asyncpg 连接
-            if hasattr(raw_connection, "execute"):
-                # 注意：这是同步事件处理器，需要使用 await_only 包装异步操作
-                from sqlalchemy.util._concurrency_py3k import await_only
-                try:
-                    await_only(raw_connection.execute("DEALLOCATE ALL"))
-                    logger.debug(
-                        "db_prepared_statements_cleared_on_checkout",
-                        connection_id=id(dbapi_connection),
-                    )
-                except Exception as e:
-                    # 清理失败不应该阻止连接使用
-                    logger.debug(
-                        "db_prepared_statements_clear_on_checkout_failed",
-                        error=str(e),
-                        error_type=type(e).__name__,
-                    )
-    except Exception as e:
-        # 任何错误都不应该阻止连接使用
-        logger.debug(
-            "db_checkout_cleanup_error",
-            error=str(e),
-            error_type=type(e).__name__,
-        )
     
     # Prometheus 指标：增加使用中的连接数
     if PROMETHEUS_ENABLED:
@@ -415,10 +324,7 @@ def on_checkout(dbapi_connection, connection_record, connection_proxy):
 @event.listens_for(engine.sync_engine, "checkin")
 def on_checkin(dbapi_connection, connection_record):
     """
-    连接归还连接池时触发
-    
-    ⚠️ Supabase Transaction Mode 关键修复：
-    在归还连接前清理所有预编译语句，避免 pgbouncer 连接复用时冲突。
+    连接归还连接池时触发，记录连接持有时长
     """
     checkout_time = connection_record.info.get("checkout_time")
     if checkout_time:
@@ -445,37 +351,6 @@ def on_checkin(dbapi_connection, connection_record):
                 threshold_seconds=10,
                 connection_id=id(dbapi_connection),
             )
-    
-    # 🔧 Supabase Transaction Mode 修复：清理预编译语句
-    # 在归还连接前执行 DEALLOCATE ALL，防止 pgbouncer 后端连接复用时冲突
-    try:
-        # 获取底层的 asyncpg 连接
-        if hasattr(dbapi_connection, "_connection"):
-            raw_connection = dbapi_connection._connection
-            # 检查是否是 asyncpg 连接
-            if hasattr(raw_connection, "execute"):
-                # 注意：这是同步事件处理器，需要使用 await_only 包装异步操作
-                from sqlalchemy.util._concurrency_py3k import await_only
-                try:
-                    await_only(raw_connection.execute("DEALLOCATE ALL"))
-                    logger.debug(
-                        "db_prepared_statements_cleared",
-                        connection_id=id(dbapi_connection),
-                    )
-                except Exception as e:
-                    # 清理失败不应该阻止连接归还
-                    logger.debug(
-                        "db_prepared_statements_clear_failed",
-                        error=str(e),
-                        error_type=type(e).__name__,
-                    )
-    except Exception as e:
-        # 任何错误都不应该阻止连接归还
-        logger.debug(
-            "db_checkin_cleanup_error",
-            error=str(e),
-            error_type=type(e).__name__,
-        )
 
 
 @event.listens_for(engine.sync_engine, "invalidate")
@@ -597,16 +472,13 @@ def AsyncSessionLocal() -> AsyncSession:
     """
     创建数据库会话（事件循环感知）
     
-    兼容旧代码的函数签名，但内部使用事件循环感知的引擎。
-    
     Returns:
         AsyncSession: 数据库会话
     """
     return get_session_maker()()
 
 
-# 保留旧的全局会话工厂（仅用于向后兼容）
-# 新代码应该使用 AsyncSessionLocal() 函数
+# 默认会话工厂
 _default_session_maker = get_session_maker()
 
 

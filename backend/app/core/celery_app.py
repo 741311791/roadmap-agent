@@ -1,19 +1,20 @@
 """
 Celery 应用配置
 
-用于异步日志队列处理，完全解耦日志写入和主流程。
+用于异步任务处理，包括日志队列和路线图生成任务。
 
 架构：
-- FastAPI 应用：将日志放入本地缓冲区，批量发送到 Celery
-- Celery Worker：独立进程，批量写入数据库
+- FastAPI 应用：将任务提交到 Celery
+- Celery Worker：独立进程，执行异步任务
 - Redis：作为消息队列 broker 和 result backend
 
-优势：
-- 主应用不占用数据库连接
-- 独立的 Worker 进程和连接池
-- 支持任务重试和故障恢复
+Worker 进程初始化：
+- Celery prefork 模式下，子进程继承父进程的全局状态
+- 在 worker_process_init 信号中重置数据库 engine 缓存
+- 确保每个子进程使用独立的数据库连接
 """
 from celery import Celery
+from celery.signals import worker_process_init
 from app.config.settings import settings
 
 # 构建 Redis URL（支持 Upstash 等云服务的完整 URL，或根据配置构建）
@@ -90,4 +91,42 @@ celery_app.conf.update(
         "app.tasks.workflow_resume_tasks",
     ),
 )
+
+
+# ============================================================
+# Worker 进程初始化钩子（解决数据库连接隔离问题）
+# ============================================================
+@worker_process_init.connect
+def on_worker_process_init(**kwargs):
+    """
+    Worker 子进程初始化时调用
+    
+    Celery prefork 模式下，子进程继承父进程的全局变量。
+    清空继承的 engine 缓存，强制子进程创建新的数据库连接。
+    """
+    import structlog
+    logger = structlog.get_logger()
+    
+    try:
+        # 重置主 session 模块的 engine 缓存
+        from app.db.session import reset_engine_cache
+        reset_engine_cache()
+        
+        # 重置 Celery 专用 session 模块的 engine 缓存（如果存在）
+        try:
+            from app.db.celery_session import reset_celery_engine_cache
+            reset_celery_engine_cache()
+        except ImportError:
+            pass
+        
+        logger.info(
+            "celery_worker_process_init",
+            message="Celery Worker 进程初始化完成，数据库引擎缓存已重置",
+        )
+    except Exception as e:
+        logger.error(
+            "celery_worker_process_init_error",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
 

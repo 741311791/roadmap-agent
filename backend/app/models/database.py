@@ -170,6 +170,100 @@ class RoadmapMetadata(SQLModel, table=True):
     )
 
 
+class ConceptMetadata(SQLModel, table=True):
+    """
+    Concept 元数据表（内容生成状态追踪）
+    
+    追踪每个 Concept 的内容生成进度（Tutorial、Resource、Quiz）。
+    注意：本表追踪内容生成状态（全局），用户学习进度在 ConceptProgress 表中追踪。
+    
+    主键说明：
+    - concept_id 来自 framework_data，格式如：prompt-engineering-9b2c8d4e:c-1-1-1
+    - 每个 roadmap 的每个 concept 只有一条记录
+    """
+    __tablename__ = "concept_metadata"
+    
+    # 主键（使用 framework_data 中的 concept_id）
+    concept_id: str = Field(primary_key=True, description="概念 ID（来自 framework_data）")
+    roadmap_id: str = Field(
+        foreign_key="roadmap_metadata.roadmap_id",
+        index=True,
+        description="关联的路线图 ID"
+    )
+    
+    # === Tutorial 内容状态 ===
+    tutorial_status: str = Field(
+        default="pending",
+        index=True,
+        description="Tutorial 生成状态: pending/generating/completed/failed"
+    )
+    tutorial_id: Optional[str] = Field(
+        default=None,
+        description="Tutorial ID（UUID 格式）"
+    )
+    tutorial_completed_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=False), nullable=True),
+        description="Tutorial 完成时间（北京时间）"
+    )
+    
+    # === Resources 内容状态 ===
+    resources_status: str = Field(
+        default="pending",
+        index=True,
+        description="Resources 生成状态: pending/generating/completed/failed"
+    )
+    resources_id: Optional[str] = Field(
+        default=None,
+        description="Resources ID（UUID 格式）"
+    )
+    resources_completed_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=False), nullable=True),
+        description="Resources 完成时间（北京时间）"
+    )
+    
+    # === Quiz 内容状态 ===
+    quiz_status: str = Field(
+        default="pending",
+        index=True,
+        description="Quiz 生成状态: pending/generating/completed/failed"
+    )
+    quiz_id: Optional[str] = Field(
+        default=None,
+        description="Quiz ID（UUID 格式）"
+    )
+    quiz_completed_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=False), nullable=True),
+        description="Quiz 完成时间（北京时间）"
+    )
+    
+    # === 整体状态 ===
+    overall_status: str = Field(
+        default="pending",
+        index=True,
+        description="整体状态: pending/generating/completed/partial_failed（三项全部完成才是 completed）"
+    )
+    all_content_completed_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=False), nullable=True),
+        description="全部内容完成时间（北京时间）"
+    )
+    
+    # 时间戳
+    created_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False)),
+        description="创建时间（北京时间）"
+    )
+    updated_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False)),
+        description="最后更新时间（北京时间）"
+    )
+
+
 class TutorialMetadata(SQLModel, table=True):
     """
     教程元数据表（仅存储引用和摘要）

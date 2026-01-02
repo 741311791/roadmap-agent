@@ -9,7 +9,8 @@
 import structlog
 
 from app.core.celery_app import celery_app
-from app.db.repository_factory import RepositoryFactory
+# 使用 Celery 专用的数据库连接管理，避免 Fork 进程继承问题
+from app.db.celery_session import CeleryRepositoryFactory
 from app.services.notification_service import notification_service
 from app.tasks.content_utils import run_async, update_concept_status_in_framework
 
@@ -137,10 +138,21 @@ async def _async_retry_tutorial(
         )
         
         # 5. 保存教程元数据
-        async with RepositoryFactory().create_session() as session:
+        async with CeleryRepositoryFactory().create_session() as session:
             from app.db.repositories.tutorial_repo import TutorialRepository
             tutorial_repo = TutorialRepository(session)
             await tutorial_repo.save_tutorial(result, roadmap_id)
+            
+            # 🆕 更新 ConceptMetadata
+            from app.db.repositories.concept_meta_repo import ConceptMetadataRepository
+            concept_meta_repo = ConceptMetadataRepository(session)
+            await concept_meta_repo.update_content_status(
+                concept_id=concept_id,
+                content_type="tutorial",
+                status="completed",
+                content_id=result.tutorial_id,
+            )
+            
             await session.commit()
         
         # 6. 发送 WebSocket 事件：生成完成
@@ -157,7 +169,7 @@ async def _async_retry_tutorial(
         )
         
         # 7. 更新任务状态为 completed
-        async with RepositoryFactory().create_session() as session:
+        async with CeleryRepositoryFactory().create_session() as session:
             from app.db.repositories.task_repo import TaskRepository
             task_repo = TaskRepository(session)
             await task_repo.update_task_status(
@@ -193,6 +205,17 @@ async def _async_retry_tutorial(
             status="failed",
         )
         
+        # 🆕 更新 ConceptMetadata 为失败状态
+        async with CeleryRepositoryFactory().create_session() as session:
+            from app.db.repositories.concept_meta_repo import ConceptMetadataRepository
+            concept_meta_repo = ConceptMetadataRepository(session)
+            await concept_meta_repo.update_content_status(
+                concept_id=concept_id,
+                content_type="tutorial",
+                status="failed",
+            )
+            await session.commit()
+        
         await notification_service.publish_concept_failed(
             task_id=task_id,
             concept_id=concept_id,
@@ -201,7 +224,7 @@ async def _async_retry_tutorial(
             content_type="tutorial",
         )
         
-        async with RepositoryFactory().create_session() as session:
+        async with CeleryRepositoryFactory().create_session() as session:
             from app.db.repositories.task_repo import TaskRepository
             task_repo = TaskRepository(session)
             await task_repo.update_task_status(
@@ -327,10 +350,21 @@ async def _async_retry_resources(
             },
         )
         
-        async with RepositoryFactory().create_session() as session:
+        async with CeleryRepositoryFactory().create_session() as session:
             from app.db.repositories.resource_repo import ResourceRepository
             resource_repo = ResourceRepository(session)
             await resource_repo.save_resource_recommendation(result, roadmap_id)
+            
+            # 🆕 更新 ConceptMetadata
+            from app.db.repositories.concept_meta_repo import ConceptMetadataRepository
+            concept_meta_repo = ConceptMetadataRepository(session)
+            await concept_meta_repo.update_content_status(
+                concept_id=concept_id,
+                content_type="resources",
+                status="completed",
+                content_id=result.id,
+            )
+            
             await session.commit()
         
         await notification_service.publish_concept_complete(
@@ -344,7 +378,7 @@ async def _async_retry_resources(
             },
         )
         
-        async with RepositoryFactory().create_session() as session:
+        async with CeleryRepositoryFactory().create_session() as session:
             from app.db.repositories.task_repo import TaskRepository
             task_repo = TaskRepository(session)
             await task_repo.update_task_status(
@@ -379,6 +413,17 @@ async def _async_retry_resources(
             status="failed",
         )
         
+        # 🆕 更新 ConceptMetadata 为失败状态
+        async with CeleryRepositoryFactory().create_session() as session:
+            from app.db.repositories.concept_meta_repo import ConceptMetadataRepository
+            concept_meta_repo = ConceptMetadataRepository(session)
+            await concept_meta_repo.update_content_status(
+                concept_id=concept_id,
+                content_type="resources",
+                status="failed",
+            )
+            await session.commit()
+        
         await notification_service.publish_concept_failed(
             task_id=task_id,
             concept_id=concept_id,
@@ -387,7 +432,7 @@ async def _async_retry_resources(
             content_type="resources",
         )
         
-        async with RepositoryFactory().create_session() as session:
+        async with CeleryRepositoryFactory().create_session() as session:
             from app.db.repositories.task_repo import TaskRepository
             task_repo = TaskRepository(session)
             await task_repo.update_task_status(
@@ -513,10 +558,21 @@ async def _async_retry_quiz(
             },
         )
         
-        async with RepositoryFactory().create_session() as session:
+        async with CeleryRepositoryFactory().create_session() as session:
             from app.db.repositories.quiz_repo import QuizRepository
             quiz_repo = QuizRepository(session)
             await quiz_repo.save_quiz(result, roadmap_id)
+            
+            # 🆕 更新 ConceptMetadata
+            from app.db.repositories.concept_meta_repo import ConceptMetadataRepository
+            concept_meta_repo = ConceptMetadataRepository(session)
+            await concept_meta_repo.update_content_status(
+                concept_id=concept_id,
+                content_type="quiz",
+                status="completed",
+                content_id=result.quiz_id,
+            )
+            
             await session.commit()
         
         await notification_service.publish_concept_complete(
@@ -530,7 +586,7 @@ async def _async_retry_quiz(
             },
         )
         
-        async with RepositoryFactory().create_session() as session:
+        async with CeleryRepositoryFactory().create_session() as session:
             from app.db.repositories.task_repo import TaskRepository
             task_repo = TaskRepository(session)
             await task_repo.update_task_status(
@@ -565,6 +621,17 @@ async def _async_retry_quiz(
             status="failed",
         )
         
+        # 🆕 更新 ConceptMetadata 为失败状态
+        async with CeleryRepositoryFactory().create_session() as session:
+            from app.db.repositories.concept_meta_repo import ConceptMetadataRepository
+            concept_meta_repo = ConceptMetadataRepository(session)
+            await concept_meta_repo.update_content_status(
+                concept_id=concept_id,
+                content_type="quiz",
+                status="failed",
+            )
+            await session.commit()
+        
         await notification_service.publish_concept_failed(
             task_id=task_id,
             concept_id=concept_id,
@@ -573,7 +640,7 @@ async def _async_retry_quiz(
             content_type="quiz",
         )
         
-        async with RepositoryFactory().create_session() as session:
+        async with CeleryRepositoryFactory().create_session() as session:
             from app.db.repositories.task_repo import TaskRepository
             task_repo = TaskRepository(session)
             await task_repo.update_task_status(
@@ -594,7 +661,7 @@ async def _async_retry_quiz(
 def _update_task_status_on_failure(task_id: str, step: str, error: str):
     """在任务失败时更新任务状态（防御性编程）"""
     try:
-        from app.db.session import safe_session_with_retry
+        from app.db.celery_session import celery_safe_session_with_retry as safe_session_with_retry
         from app.db.repositories.task_repo import TaskRepository
         
         async def _update():

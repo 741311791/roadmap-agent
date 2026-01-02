@@ -22,7 +22,7 @@ intent_analyzer = factory.create_intent_analyzer()
 result = await intent_analyzer.execute(user_request)
 ```
 """
-from typing import Protocol
+from typing import Protocol, Optional
 import structlog
 
 from app.config.settings import Settings
@@ -199,7 +199,10 @@ class AgentFactory:
             api_key=self.settings.GENERATOR_API_KEY,
         )
     
-    def create_resource_recommender(self) -> ResourceRecommenderProtocol:
+    def create_resource_recommender(
+        self, 
+        tavily_key: Optional[str] = None
+    ) -> ResourceRecommenderProtocol:
         """
         创建资源推荐器
         
@@ -208,6 +211,9 @@ class AgentFactory:
         - 技术文章
         - 开发工具
         - 实战项目
+        
+        Args:
+            tavily_key: 预分配的 Tavily API Key（可选，用于优化性能）
         
         Returns:
             ResourceRecommenderAgent 实例
@@ -220,6 +226,7 @@ class AgentFactory:
             model_name=self.settings.RECOMMENDER_MODEL,
             base_url=self.settings.RECOMMENDER_BASE_URL,
             api_key=self.settings.RECOMMENDER_API_KEY,
+            tavily_key=tavily_key,
         )
     
     def create_quiz_generator(self) -> QuizGeneratorProtocol:

@@ -15,6 +15,7 @@ import time
 from app.agents.factory import AgentFactory
 from app.models.domain import RoadmapEditInput
 from app.services.execution_logger import execution_logger, LogCategory
+from app.utils.framework_validator import validate_and_raise_if_invalid
 from ..base import RoadmapState
 from ..workflow_brain import WorkflowBrain
 
@@ -137,6 +138,9 @@ class EditorRunner:
             # 执行 Agent
             result = await agent.execute(edit_input)
             
+            # 🔍 验证 concept_id 唯一性（修改后强制检查）
+            validate_and_raise_if_invalid(result.framework)
+            
             # 保存编辑记录（在更新框架之前）
             roadmap_id = result.framework.roadmap_id
             await self.brain.save_edit_result(
@@ -154,6 +158,33 @@ class EditorRunner:
                 user_id=state["user_request"].user_id,
                 framework=result.framework,
             )
+            
+            # 🆕 更新 ConceptMetadata（处理新增/删除的 concept）
+            new_concept_ids = []
+            for stage in result.framework.stages:
+                for module in stage.modules:
+                    for concept in module.concepts:
+                        new_concept_ids.append(concept.concept_id)
+            
+            if new_concept_ids:
+                from app.db.celery_session import celery_safe_session_with_retry
+                from app.db.repositories.concept_meta_repo import ConceptMetadataRepository
+                
+                async with celery_safe_session_with_retry() as session:
+                    concept_meta_repo = ConceptMetadataRepository(session)
+                    # 批量初始化（只会创建不存在的 concept）
+                    await concept_meta_repo.batch_initialize_concepts(
+                        roadmap_id=roadmap_id,
+                        concept_ids=new_concept_ids,
+                    )
+                    await session.commit()
+                    
+                logger.info(
+                    "concept_metadata_synchronized_after_edit",
+                    task_id=state["task_id"],
+                    roadmap_id=roadmap_id,
+                    concept_count=len(new_concept_ids),
+                )
             
             # 计算执行时长
             duration_ms = int((time.time() - start_time) * 1000)

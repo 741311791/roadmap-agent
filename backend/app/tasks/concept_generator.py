@@ -37,6 +37,7 @@ async def generate_single_concept(
     failed_concepts: list[str],
     results_lock: asyncio.Lock,
     db_semaphore: asyncio.Semaphore,
+    allocated_tavily_key: str | None = None,
 ) -> None:
     """
     为单个概念串行生成教程、资源、测验，完成后立即写入数据库
@@ -63,6 +64,7 @@ async def generate_single_concept(
         failed_concepts: 失败概念累积列表
         results_lock: 结果累积保护锁
         db_semaphore: 数据库操作信号量（限制并发数据库连接数）
+        allocated_tavily_key: 预分配的 Tavily API Key（可选，用于优化性能）
     """
     concept_id = concept.concept_id
     concept_name = concept.name
@@ -145,7 +147,9 @@ async def generate_single_concept(
         )
         
         # 2️⃣ 生成资源推荐
-        resource_agent = agent_factory.create_resource_recommender()
+        resource_agent = agent_factory.create_resource_recommender(
+            tavily_key=allocated_tavily_key
+        )
         resource_input = ResourceRecommendationInput(
             concept=concept,
             user_preferences=preferences,
@@ -220,7 +224,7 @@ async def generate_single_concept(
             concept_id=concept_id,
         )
         
-        from app.db.session import safe_session_with_retry
+        from app.db.celery_session import celery_safe_session_with_retry as safe_session_with_retry
         
         # 🔧 使用信号量限制并发数据库连接数
         # 防止 30+ 个 Concept 同时打开数据库会话导致连接池耗尽
@@ -283,6 +287,34 @@ async def generate_single_concept(
                     except Exception as e:
                         logger.error("quiz_save_failed", concept_id=concept_id, error=str(e))
                 
+                # 🆕 更新 ConceptMetadata（追踪内容生成状态）
+                from app.db.repositories.concept_meta_repo import ConceptMetadataRepository
+                concept_meta_repo = ConceptMetadataRepository(session)
+                
+                # 更新三项内容的状态
+                await concept_meta_repo.update_content_status(
+                    concept_id=concept_id,
+                    content_type="tutorial",
+                    status="completed" if tutorial else "failed",
+                    content_id=tutorial.tutorial_id if tutorial and hasattr(tutorial, 'tutorial_id') else None,
+                )
+                await concept_meta_repo.update_content_status(
+                    concept_id=concept_id,
+                    content_type="resources",
+                    status="completed" if resource else "failed",
+                    content_id=resource.id if resource and hasattr(resource, 'id') else None,
+                )
+                await concept_meta_repo.update_content_status(
+                    concept_id=concept_id,
+                    content_type="quiz",
+                    status="completed" if quiz else "failed",
+                    content_id=quiz.quiz_id if quiz and hasattr(quiz, 'quiz_id') else None,
+                )
+                
+                # 检查是否全部完成
+                concept_meta = await concept_meta_repo.get_by_concept_id(concept_id)
+                is_all_complete = (concept_meta and concept_meta.overall_status == "completed")
+                
                 await session.commit()
             
             logger.debug(
@@ -310,6 +342,19 @@ async def generate_single_concept(
             },
             content_type="tutorial",
         )
+        
+        # 🆕 如果三项内容全部完成，发送新的完整完成事件
+        if is_all_complete:
+            await notification_service.publish_concept_all_content_complete(
+                task_id=task_id,
+                concept_id=concept_id,
+                concept_name=concept_name,
+                data={
+                    "tutorial_id": tutorial.tutorial_id if tutorial and hasattr(tutorial, 'tutorial_id') else None,
+                    "resources_id": resource.id if resource and hasattr(resource, 'id') else None,
+                    "quiz_id": quiz.quiz_id if quiz and hasattr(quiz, 'quiz_id') else None,
+                }
+            )
         
         # 累积到最终结果（线程安全）
         async with results_lock:
@@ -350,6 +395,37 @@ async def generate_single_concept(
         # 累积失败的概念（线程安全）
         async with results_lock:
             failed_concepts.append(concept_id)
+        
+        # 🆕 更新 ConceptMetadata 为失败状态
+        try:
+            from app.db.celery_session import celery_safe_session_with_retry as safe_session_with_retry
+            from app.db.repositories.concept_meta_repo import ConceptMetadataRepository
+            
+            async with safe_session_with_retry() as session:
+                concept_meta_repo = ConceptMetadataRepository(session)
+                # 标记所有三项为失败（因为整个 Concept 生成失败了）
+                await concept_meta_repo.update_content_status(
+                    concept_id=concept_id,
+                    content_type="tutorial",
+                    status="failed",
+                )
+                await concept_meta_repo.update_content_status(
+                    concept_id=concept_id,
+                    content_type="resources",
+                    status="failed",
+                )
+                await concept_meta_repo.update_content_status(
+                    concept_id=concept_id,
+                    content_type="quiz",
+                    status="failed",
+                )
+                await session.commit()
+        except Exception as meta_error:
+            logger.error(
+                "concept_metadata_update_failed",
+                concept_id=concept_id,
+                error=str(meta_error),
+            )
         
         # 发送失败通知
         await notification_service.publish_concept_failed(

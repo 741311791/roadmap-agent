@@ -5,12 +5,14 @@ Web Search Router（搜索工具路由器）
 - 按优先级选择搜索引擎
 - 处理回退逻辑
 - 统一错误处理
+- 支持预分配 Tavily API Key（优化性能）
 
 优先级：
-1. Tavily API（从数据库读取配额）
+1. Tavily API（使用预分配 Key 或从数据库读取配额）
 2. DuckDuckGo（如果启用了 fallback）
 """
 import structlog
+from typing import Optional
 from tenacity import retry, stop_after_attempt, wait_fixed
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -79,17 +81,23 @@ class WebSearchRouter(BaseTool[SearchQuery, SearchResult]):
             return False
     
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
-    async def execute(self, input_data: SearchQuery, db_session: AsyncSession = None) -> SearchResult:
+    async def execute(
+        self, 
+        input_data: SearchQuery, 
+        db_session: Optional[AsyncSession] = None,
+        pre_allocated_tavily_key: Optional[str] = None
+    ) -> SearchResult:
         """
         执行网络搜索（按优先级路由）
         
         优先级：
-        1. Tavily API（从数据库读取配额）
+        1. Tavily API（使用预分配 Key 或从数据库读取配额）
         2. DuckDuckGo（如果启用了 fallback）
         
         Args:
             input_data: 搜索查询
-            db_session: 数据库会话（用于 Tavily API Key 查询）
+            db_session: 数据库会话（用于 Tavily API Key 查询，仅在未提供预分配 Key 时使用）
+            pre_allocated_tavily_key: 预分配的 Tavily API Key（如果提供，跳过数据库查询）
             
         Returns:
             搜索结果
@@ -97,6 +105,65 @@ class WebSearchRouter(BaseTool[SearchQuery, SearchResult]):
         Raises:
             ValueError: 如果所有搜索引擎都不可用或都失败
         """
+        # 模式 1：使用预分配的 Tavily Key（优化路径）
+        if pre_allocated_tavily_key:
+            try:
+                logger.info(
+                    "web_search_router_trying_tavily_with_pre_allocated_key",
+                    query=input_data.query,
+                    key_prefix=pre_allocated_tavily_key[:10] + "...",
+                )
+                # 使用预分配 Key 创建 TavilyAPISearchTool（跳过数据库查询）
+                tavily_tool = TavilyAPISearchTool(pre_allocated_key=pre_allocated_tavily_key)
+                result = await tavily_tool.execute(input_data)
+                
+                logger.info(
+                    "web_search_router_success",
+                    query=input_data.query,
+                    engine="tavily_pre_allocated",
+                    results_count=result.total_found,
+                )
+                return result
+                
+            except Exception as e:
+                logger.warning(
+                    "web_search_router_tavily_pre_allocated_failed",
+                    query=input_data.query,
+                    error=str(e),
+                    message="预分配 Tavily Key 失败，尝试回退到 DuckDuckGo"
+                )
+                
+                # 回退到 DuckDuckGo（如果可用）
+                if self.duckduckgo_tool:
+                    try:
+                        logger.info(
+                            "web_search_router_fallback_to_duckduckgo",
+                            query=input_data.query,
+                            reason="预分配 Tavily Key 失败"
+                        )
+                        result = await self.duckduckgo_tool.execute(input_data)
+                        logger.info(
+                            "web_search_router_success",
+                            query=input_data.query,
+                            engine="duckduckgo",
+                            results_count=result.total_found,
+                        )
+                        return result
+                    except Exception as ddg_error:
+                        logger.error(
+                            "web_search_router_all_engines_failed",
+                            query=input_data.query,
+                            tavily_error=str(e),
+                            duckduckgo_error=str(ddg_error),
+                        )
+                        raise ValueError(
+                            f"所有搜索引擎都失败: Tavily={e}, DuckDuckGo={ddg_error}"
+                        )
+                else:
+                    # 没有备选方案
+                    raise
+        
+        # 模式 2：从数据库查询 Key（原有行为）
         # 如果没有提供数据库会话，尝试获取一个
         if db_session is None:
             async for session in get_db():
@@ -113,7 +180,7 @@ class WebSearchRouter(BaseTool[SearchQuery, SearchResult]):
             duckduckgo_available=self.duckduckgo_tool is not None,
         )
         
-        # 策略 1: 尝试使用 Tavily API
+        # 策略 1: 尝试使用 Tavily API（从数据库查询 Key）
         if tavily_available:
             try:
                 logger.info(
@@ -121,7 +188,7 @@ class WebSearchRouter(BaseTool[SearchQuery, SearchResult]):
                     query=input_data.query
                 )
                 # 动态创建 TavilyAPISearchTool 实例（传递数据库会话）
-                tavily_tool = TavilyAPISearchTool(db_session)
+                tavily_tool = TavilyAPISearchTool(db_session=db_session)
                 result = await tavily_tool.execute(input_data)
                 
                 logger.info(

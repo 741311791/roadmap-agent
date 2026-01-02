@@ -30,6 +30,7 @@ from .endpoints import (
     trace,
     cover_image,
     celery_monitor,
+    concept_status,
 )
 from app.core.auth import fastapi_users, auth_backend
 from app.core.auth.schemas import UserRead, UserCreate, UserUpdate
@@ -65,6 +66,9 @@ router.include_router(retry.tasks_router)
 
 # 学习进度相关
 router.include_router(progress.router)
+
+# Concept 状态相关（内容生成进度）
+router.include_router(concept_status.router)
 
 # 验证记录相关
 router.include_router(validation.router)

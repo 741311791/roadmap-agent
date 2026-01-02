@@ -21,7 +21,8 @@ from typing import Any
 
 from app.core.celery_app import celery_app
 from app.models.domain import RoadmapFramework, LearningPreferences, Concept
-from app.db.repository_factory import RepositoryFactory
+# 使用 Celery 专用的数据库连接管理，避免 Fork 进程继承问题
+from app.db.celery_session import CeleryRepositoryFactory
 from app.services.notification_service import notification_service
 
 # 从工具模块导入
@@ -112,7 +113,7 @@ def generate_roadmap_content(
         
         # 更新任务状态为 failed
         try:
-            from app.db.session import safe_session_with_retry
+            from app.db.celery_session import celery_safe_session_with_retry as safe_session_with_retry
             from app.db.repositories.task_repo import TaskRepository
             
             async def _update_failed_status():
@@ -183,7 +184,7 @@ async def _async_generate_content(
     )
     
     # 3. 断点续传：查询已完成的 Concept
-    from app.db.session import safe_session_with_retry
+    from app.db.celery_session import celery_safe_session_with_retry as safe_session_with_retry
     from app.db.repositories.roadmap_repo import RoadmapRepository
     
     completed_concept_ids = set()
@@ -237,9 +238,28 @@ async def _async_generate_content(
         }
     
     # 5. 创建服务和工具
-    repo_factory = RepositoryFactory()
+    repo_factory = CeleryRepositoryFactory()
     agent_factory = get_agent_factory()
     config = WorkflowConfig()
+    
+    # 5.5. 预分配 Tavily API Keys（优化：一次性数据库查询）
+    from app.services.tavily_key_allocator import allocate_keys_for_concepts
+    
+    concept_ids = [c.concept_id for c in pending_concepts]
+    key_allocation = await allocate_keys_for_concepts(
+        concept_ids=concept_ids,
+        min_quota=4,
+    )
+    
+    keys_with_allocation = sum(1 for k in key_allocation.values() if k is not None)
+    logger.info(
+        "tavily_keys_allocated",
+        task_id=task_id,
+        total_concepts=len(concept_ids),
+        concepts_with_keys=keys_with_allocation,
+        concepts_without_keys=len(concept_ids) - keys_with_allocation,
+        allocation_rate=f"{keys_with_allocation / len(concept_ids) * 100:.1f}%" if concept_ids else "0%",
+    )
     
     # 6. 并行生成内容
     tutorial_refs, resource_refs, quiz_refs, failed_concepts = await _generate_content_parallel(
@@ -249,6 +269,7 @@ async def _async_generate_content(
         concept_map=concept_map,
         preferences=preferences,
         agent_factory=agent_factory,
+        key_allocation=key_allocation,
     )
     
     # 7. 检查失败率
@@ -328,6 +349,7 @@ async def _generate_content_parallel(
     concept_map: dict[str, Concept],
     preferences: LearningPreferences,
     agent_factory: Any,
+    key_allocation: dict[str, str | None],
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], list[str]]:
     """
     并行生成所有概念的内容（带数据库连接限制）
@@ -339,6 +361,10 @@ async def _generate_content_parallel(
     - 默认最多 8 个 Concept 同时写入数据库
     - 防止连接池耗尽（pool_size=10 + max_overflow=5）
     
+    🚀 性能优化：
+    - 使用预分配的 Tavily API Keys，避免内容生成过程中的数据库查询
+    - 从 N×M 次数据库查询降至 1 次（N=Concept数量，M=每个Concept的搜索次数）
+    
     Args:
         task_id: 任务 ID
         roadmap_id: 路线图 ID
@@ -346,6 +372,7 @@ async def _generate_content_parallel(
         concept_map: 概念映射
         preferences: 用户偏好
         agent_factory: Agent 工厂
+        key_allocation: Tavily API Key 预分配映射（concept_id -> api_key）
         
     Returns:
         (tutorial_refs, resource_refs, quiz_refs, failed_concepts)
@@ -398,6 +425,7 @@ async def _generate_content_parallel(
             failed_concepts=failed_concepts,
             results_lock=results_lock,
             db_semaphore=db_semaphore,  # 传递信号量
+            allocated_tavily_key=key_allocation.get(concept.concept_id),  # 传递预分配的 Tavily Key
         )
         for concept in concepts
     ]
@@ -443,7 +471,7 @@ async def _save_content_results(
         failed_concepts: 失败的概念 ID 列表（会被修改）
         repo_factory: Repository 工厂
     """
-    from app.db.session import safe_session_with_retry
+    from app.db.celery_session import celery_safe_session_with_retry as safe_session_with_retry
     from app.db.repositories.roadmap_repo import RoadmapRepository
     from sqlalchemy.exc import IntegrityError, DBAPIError
     
@@ -683,7 +711,7 @@ def retry_failed_content_task(
     """
     from app.services.retry_service import execute_retry_failed_task
     from app.api.v1.endpoints.utils import get_failed_content_items
-    from app.db.repository_factory import RepositoryFactory
+    # 注意：这里使用 CeleryRepositoryFactory（已在文件顶部导入）
     
     logger.info(
         "celery_retry_task_started",
@@ -700,7 +728,7 @@ def retry_failed_content_task(
         # 如果没有提供items_to_retry，则查询失败的内容项目
         if items_to_retry is None:
             async def _get_failed_items():
-                async with RepositoryFactory().create_session() as session:
+                async with CeleryRepositoryFactory().create_session() as session:
                     from app.db.repositories.roadmap_repo import RoadmapRepository
                     repo = RoadmapRepository(session)
                     roadmap_metadata = await repo.get_roadmap_metadata(roadmap_id)
@@ -773,7 +801,7 @@ def retry_failed_content_task(
         
         # 更新任务状态为 failed
         try:
-            from app.db.session import safe_session_with_retry
+            from app.db.celery_session import celery_safe_session_with_retry as safe_session_with_retry
             from app.db.repositories.task_repo import TaskRepository
             
             async def _update_failed_status():

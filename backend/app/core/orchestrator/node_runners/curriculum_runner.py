@@ -13,6 +13,7 @@ import time
 
 from app.agents.factory import AgentFactory
 from app.services.execution_logger import execution_logger, LogCategory
+from app.utils.framework_validator import validate_and_raise_if_invalid
 from ..base import RoadmapState
 from ..workflow_brain import WorkflowBrain
 
@@ -92,6 +93,9 @@ class CurriculumDesignRunner:
                 )
                 result.framework.roadmap_id = state_roadmap_id
             
+            # 🔍 验证 concept_id 唯一性（生成后强制检查）
+            validate_and_raise_if_invalid(result.framework)
+            
             # 保存路线图框架（由 brain 统一事务管理）
             await self.brain.save_roadmap_framework(
                 task_id=state["task_id"],
@@ -99,6 +103,32 @@ class CurriculumDesignRunner:
                 user_id=state["user_request"].user_id,
                 framework=result.framework,
             )
+            
+            # 🆕 批量初始化 ConceptMetadata（追踪内容生成状态）
+            concept_ids = []
+            for stage in result.framework.stages:
+                for module in stage.modules:
+                    for concept in module.concepts:
+                        concept_ids.append(concept.concept_id)
+            
+            if concept_ids:
+                from app.db.celery_session import celery_safe_session_with_retry
+                from app.db.repositories.concept_meta_repo import ConceptMetadataRepository
+                
+                async with celery_safe_session_with_retry() as session:
+                    concept_meta_repo = ConceptMetadataRepository(session)
+                    await concept_meta_repo.batch_initialize_concepts(
+                        roadmap_id=result.framework.roadmap_id,
+                        concept_ids=concept_ids,
+                    )
+                    await session.commit()
+                    
+                logger.info(
+                    "concept_metadata_initialized",
+                    task_id=state["task_id"],
+                    roadmap_id=result.framework.roadmap_id,
+                    concept_count=len(concept_ids),
+                )
             
             # 统计路线图结构
             total_modules = sum(len(stage.modules) for stage in result.framework.stages)
