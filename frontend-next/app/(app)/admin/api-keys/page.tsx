@@ -31,6 +31,7 @@ import {
   addTavilyAPIKey,
   batchAddTavilyAPIKeys,
   deleteTavilyAPIKey,
+  refreshTavilyQuota,
   type TavilyAPIKeyInfo,
   type AddTavilyAPIKeyRequest,
 } from '@/lib/api/tavily-keys';
@@ -63,6 +64,9 @@ export default function APIKeysManagementPage() {
   // 删除确认
   const [keyToDelete, setKeyToDelete] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  
+  // 刷新配额
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // 权限检查
   useEffect(() => {
@@ -193,6 +197,33 @@ export default function APIKeysManagementPage() {
       alert(err instanceof Error ? err.message : 'Failed to delete API key');
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  /**
+   * 手动刷新所有 API Keys 的配额信息
+   */
+  const handleRefreshQuota = async () => {
+    try {
+      setIsRefreshing(true);
+      const result = await refreshTavilyQuota();
+      
+      // 重新加载列表以显示更新后的配额
+      await loadKeys();
+      
+      // 显示结果
+      alert(
+        `Quota refresh completed!\n\n` +
+        `Total Keys: ${result.total_keys}\n` +
+        `Success: ${result.success}\n` +
+        `Failed: ${result.failed}\n` +
+        `Time: ${result.elapsed_seconds.toFixed(2)}s`
+      );
+    } catch (err) {
+      console.error('Failed to refresh quota:', err);
+      alert(err instanceof Error ? err.message : 'Failed to refresh quota');
+    } finally {
+      setIsRefreshing(false);
     }
   };
 
@@ -409,8 +440,18 @@ export default function APIKeysManagementPage() {
 
         {/* API Keys Table */}
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
             <CardTitle>Current API Keys</CardTitle>
+            <Button
+              onClick={handleRefreshQuota}
+              disabled={isRefreshing || isLoading || keys.length === 0}
+              variant="outline"
+              size="sm"
+              className="gap-2"
+            >
+              <RefreshCw className={cn('w-4 h-4', isRefreshing && 'animate-spin')} />
+              {isRefreshing ? 'Refreshing...' : 'Refresh Quota'}
+            </Button>
           </CardHeader>
           <CardContent>
             {isLoading ? (

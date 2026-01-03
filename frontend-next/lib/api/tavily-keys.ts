@@ -87,6 +87,20 @@ export interface DeleteTavilyAPIKeyResponse {
   message: string;
 }
 
+/**
+ * 刷新配额响应
+ */
+export interface RefreshQuotaResponse {
+  /** 成功更新的数量 */
+  success: number;
+  /** 失败的数量 */
+  failed: number;
+  /** 总 Key 数量 */
+  total_keys: number;
+  /** 耗时（秒） */
+  elapsed_seconds: number;
+}
+
 // ==================== API 函数 ====================
 
 /**
@@ -162,6 +176,20 @@ export async function deleteTavilyAPIKey(
 ): Promise<DeleteTavilyAPIKeyResponse> {
   const response = await apiClient.delete<DeleteTavilyAPIKeyResponse>(
     `/admin/tavily-keys/${encodeURIComponent(apiKey)}`
+  );
+  return response.data;
+}
+
+/**
+ * 手动刷新所有 Tavily API Keys 的配额信息
+ * 
+ * 调用 Tavily 官方 API 获取最新的配额使用情况并更新数据库
+ * 
+ * @returns 刷新结果，包含成功/失败数量和耗时
+ */
+export async function refreshTavilyQuota(): Promise<RefreshQuotaResponse> {
+  const response = await apiClient.post<RefreshQuotaResponse>(
+    '/admin/tavily-keys/refresh-quota'
   );
   return response.data;
 }
