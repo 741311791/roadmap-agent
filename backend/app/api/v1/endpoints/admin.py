@@ -3,12 +3,13 @@
 
 提供用户邀请、Waitlist 管理等管理功能。
 """
+import asyncio
 import secrets
 import string
 import time
 import httpx
 from datetime import timedelta
-from typing import Optional, List
+from typing import Optional, List, Dict, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1204,40 +1205,34 @@ async def fetch_tavily_usage(api_key: str, client: httpx.AsyncClient) -> dict:
     return response.json()
 
 
-async def update_single_key_quota(
-    key_record: TavilyAPIKey,
-    session: AsyncSession,
+async def fetch_single_key_usage(
+    api_key: str,
     client: httpx.AsyncClient
-) -> bool:
+) -> Tuple[str, Optional[Dict], Optional[str]]:
     """
-    更新单个 API Key 的配额信息
+    获取单个 API Key 的配额使用情况
     
     Args:
-        key_record: TavilyAPIKey 数据库记录
-        session: 数据库会话
+        api_key: Tavily API Key
         client: HTTP 客户端
         
     Returns:
-        更新是否成功
+        元组 (api_key, usage_data, error_message)
+        - 成功时: (api_key, usage_data, None)
+        - 失败时: (api_key, None, error_message)
     """
-    api_key = key_record.api_key
     key_prefix = api_key[:10] + "..." if len(api_key) > 10 else api_key
-    old_quota = key_record.remaining_quota
-    old_limit = key_record.plan_limit
     
     try:
-        # 调用 Tavily API 获取使用量
         logger.debug(
             "fetching_tavily_usage",
-            key_prefix=key_prefix,
-            old_quota=old_quota
+            key_prefix=key_prefix
         )
         
         usage_data = await fetch_tavily_usage(api_key, client)
         
-        # 解析响应数据
+        # 验证响应数据
         account_data = usage_data.get("account", {})
-        plan_usage = account_data.get("plan_usage", 0)
         plan_limit = account_data.get("plan_limit", 0)
         
         if plan_limit == 0:
@@ -1246,68 +1241,38 @@ async def update_single_key_quota(
                 key_prefix=key_prefix,
                 usage_data=usage_data
             )
-            return False
+            return (api_key, None, "plan_limit is zero")
         
-        # 计算剩余配额
-        remaining_quota = plan_limit - plan_usage
-        
-        # 更新数据库（仅在值发生变化时）
-        if remaining_quota != old_quota or plan_limit != old_limit:
-            key_record.remaining_quota = remaining_quota
-            key_record.plan_limit = plan_limit
-            # updated_at 会通过 onupdate 自动更新
-            
-            await session.commit()
-            
-            logger.info(
-                "tavily_quota_updated",
-                key_prefix=key_prefix,
-                old_quota=old_quota,
-                new_quota=remaining_quota,
-                plan_limit=plan_limit,
-                plan_usage=plan_usage,
-                quota_change=remaining_quota - old_quota
-            )
-        else:
-            logger.debug(
-                "tavily_quota_unchanged",
-                key_prefix=key_prefix,
-                quota=remaining_quota,
-                limit=plan_limit
-            )
-        
-        return True
+        return (api_key, usage_data, None)
         
     except httpx.HTTPStatusError as e:
+        error_msg = f"HTTP {e.response.status_code}: {e.response.text[:100]}"
         logger.error(
             "tavily_api_http_error",
             key_prefix=key_prefix,
             status_code=e.response.status_code,
-            error=str(e),
-            response_text=e.response.text[:200] if e.response else None
+            error=str(e)
         )
-        await session.rollback()
-        return False
+        return (api_key, None, error_msg)
         
     except httpx.TimeoutException as e:
+        error_msg = f"Timeout after {HTTP_TIMEOUT}s"
         logger.error(
             "tavily_api_timeout",
             key_prefix=key_prefix,
-            error=str(e),
-            timeout=HTTP_TIMEOUT
+            error=str(e)
         )
-        await session.rollback()
-        return False
+        return (api_key, None, error_msg)
         
     except Exception as e:
+        error_msg = f"{type(e).__name__}: {str(e)}"
         logger.error(
-            "tavily_quota_update_failed",
+            "tavily_quota_fetch_failed",
             key_prefix=key_prefix,
             error=str(e),
             error_type=type(e).__name__
         )
-        await session.rollback()
-        return False
+        return (api_key, None, error_msg)
 
 
 @router.post("/tavily-keys/refresh-quota", response_model=RefreshQuotaResponse)
@@ -1316,9 +1281,13 @@ async def refresh_tavily_quota(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    手动刷新所有 Tavily API Keys 的配额信息
+    手动刷新所有 Tavily API Keys 的配额信息（优化版，批量更新）
     
-    调用 Tavily 官方 API 获取最新的配额使用情况并更新数据库。
+    优化策略：
+    1. 并发获取所有 Tavily API 配额数据（使用 asyncio.gather）
+    2. 批量更新数据库记录
+    3. 一次性 commit（避免 N+1 问题）
+    
     只有超级管理员可以调用此接口。
     
     Returns:
@@ -1332,7 +1301,7 @@ async def refresh_tavily_quota(
     )
     
     try:
-        # 查询所有 Key
+        # Step 1: 查询所有 Key（1次数据库查询）
         stmt = select(TavilyAPIKey).where(
             TavilyAPIKey.remaining_quota <= TavilyAPIKey.plan_limit
         )
@@ -1358,37 +1327,116 @@ async def refresh_tavily_quota(
             total_keys=total_keys
         )
         
-        # 创建 HTTP 客户端（复用连接）
+        # Step 2: 并发获取所有 Tavily API 配额数据
         async with httpx.AsyncClient() as client:
-            success_count = 0
-            failed_count = 0
+            # 创建并发任务列表
+            fetch_tasks = [
+                fetch_single_key_usage(key_record.api_key, client)
+                for key_record in keys
+            ]
             
-            # 逐个更新 Key
-            for key_record in keys:
-                success = await update_single_key_quota(key_record, db, client)
-                if success:
-                    success_count += 1
-                else:
-                    failed_count += 1
+            # 并发执行所有 API 请求
+            fetch_results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+        
+        # Step 3: 构建 API Key 到数据的映射
+        key_to_usage: Dict[str, Dict] = {}
+        success_count = 0
+        failed_count = 0
+        
+        for result_item in fetch_results:
+            # 处理异常结果
+            if isinstance(result_item, Exception):
+                logger.error(
+                    "tavily_api_gather_exception",
+                    error=str(result_item),
+                    error_type=type(result_item).__name__
+                )
+                failed_count += 1
+                continue
             
-            elapsed_time = time.time() - start_time
+            api_key, usage_data, error_msg = result_item
             
+            if error_msg:
+                # 获取失败
+                failed_count += 1
+                logger.warning(
+                    "tavily_api_fetch_failed",
+                    key_prefix=api_key[:10] + "...",
+                    error=error_msg
+                )
+            else:
+                # 获取成功
+                key_to_usage[api_key] = usage_data
+        
+        # Step 4: 批量更新数据库记录
+        updated_count = 0
+        for key_record in keys:
+            usage_data = key_to_usage.get(key_record.api_key)
+            if not usage_data:
+                continue  # 该 Key 获取失败，跳过
+            
+            # 解析配额数据
+            account_data = usage_data.get("account", {})
+            plan_usage = account_data.get("plan_usage", 0)
+            plan_limit = account_data.get("plan_limit", 0)
+            remaining_quota = plan_limit - plan_usage
+            
+            # 仅更新发生变化的字段
+            old_quota = key_record.remaining_quota
+            old_limit = key_record.plan_limit
+            
+            if remaining_quota != old_quota or plan_limit != old_limit:
+                key_record.remaining_quota = remaining_quota
+                key_record.plan_limit = plan_limit
+                # updated_at 会通过 onupdate 自动更新
+                updated_count += 1
+                
+                logger.info(
+                    "tavily_quota_updated",
+                    key_prefix=key_record.api_key[:10] + "...",
+                    old_quota=old_quota,
+                    new_quota=remaining_quota,
+                    plan_limit=plan_limit,
+                    plan_usage=plan_usage,
+                    quota_change=remaining_quota - old_quota
+                )
+            else:
+                logger.debug(
+                    "tavily_quota_unchanged",
+                    key_prefix=key_record.api_key[:10] + "...",
+                    quota=remaining_quota,
+                    limit=plan_limit
+                )
+        
+        # Step 5: 一次性 commit（1次数据库写入）
+        success_count = len(key_to_usage)
+        if updated_count > 0:
+            await db.commit()
             logger.info(
-                "admin_refresh_tavily_quota_completed",
-                admin_id=current_user.id,
-                total_keys=total_keys,
-                success_count=success_count,
-                failed_count=failed_count,
-                elapsed_seconds=round(elapsed_time, 2)
+                "tavily_quota_batch_committed",
+                updated_count=updated_count,
+                success_count=success_count
             )
-            
-            return RefreshQuotaResponse(
-                success=success_count,
-                failed=failed_count,
-                total_keys=total_keys,
-                elapsed_seconds=round(elapsed_time, 2)
-            )
-            
+        
+        elapsed_time = time.time() - start_time
+        
+        logger.info(
+            "admin_refresh_tavily_quota_completed",
+            admin_id=current_user.id,
+            total_keys=total_keys,
+            success_count=success_count,
+            failed_count=failed_count,
+            updated_count=updated_count,
+            elapsed_seconds=round(elapsed_time, 2)
+        )
+        
+        return RefreshQuotaResponse(
+            success=success_count,
+            failed=failed_count,
+            total_keys=total_keys,
+            elapsed_seconds=round(elapsed_time, 2)
+        )
+        
     except Exception as e:
         logger.error(
             "admin_refresh_tavily_quota_failed",
@@ -1396,6 +1444,7 @@ async def refresh_tavily_quota(
             error=str(e),
             error_type=type(e).__name__
         )
+        await db.rollback()
         raise HTTPException(
             status_code=500,
             detail=f"Failed to refresh Tavily quota: {str(e)}"
