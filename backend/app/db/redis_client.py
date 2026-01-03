@@ -12,17 +12,53 @@ logger = structlog.get_logger()
 
 
 class RedisClient:
-    """Redis 异步客户端封装"""
+    """
+    Redis 异步客户端封装
+    
+    设计说明：
+    - 全局单例模式：便于在任何地方访问，无需传递实例
+    - 事件循环感知：检测循环切换（如 asyncio.run() 创建新循环），自动重建连接
+    - 连接池复用：redis-py 内部使用连接池，提高性能
+    """
     
     def __init__(self):
         self._client: aioredis.Redis | None = None
+        self._loop_id: int | None = None  # 记录连接创建时的事件循环 ID
     
     async def connect(self):
         """
         建立连接
         
         支持标准 Redis 和 Upstash Redis（通过 rediss:// 协议使用 TLS/SSL）
+        
+        自动检测事件循环切换（如每次 asyncio.run() 创建新循环），重新建立连接。
+        这是必要的，因为：
+        1. redis-py 的 ConnectionPool 绑定到特定事件循环
+        2. asyncio.run() 每次创建新循环
+        3. 我们使用全局单例模式
         """
+        import asyncio
+        
+        try:
+            current_loop_id = id(asyncio.get_running_loop())
+        except RuntimeError:
+            # 如果没有运行中的循环，获取当前设置的循环
+            current_loop_id = id(asyncio.get_event_loop())
+        
+        # 检测事件循环切换，重新建立连接
+        if self._client is not None and self._loop_id != current_loop_id:
+            logger.debug(
+                "redis_event_loop_changed_recreating_connection",
+                old_loop_id=self._loop_id,
+                new_loop_id=current_loop_id,
+            )
+            try:
+                await self._client.close()
+            except Exception as e:
+                logger.warning("redis_close_old_connection_failed", error=str(e))
+            self._client = None
+            self._loop_id = None
+        
         if self._client is None:
             redis_url = settings.get_redis_url
             
@@ -48,16 +84,20 @@ class RedisClient:
                 connection_kwargs["ssl_cert_reqs"] = "required"
             
             self._client = await aioredis.from_url(redis_url, **connection_kwargs)
+            self._loop_id = current_loop_id  # 记录当前事件循环 ID
             logger.info(
                 "redis_client_initialized",
                 redis_url=redis_url,
                 ssl_enabled=use_ssl,
+                loop_id=current_loop_id,
             )
     
     async def close(self):
         """关闭连接"""
         if self._client:
             await self._client.close()
+            self._client = None
+            self._loop_id = None
             logger.info("redis_client_closed")
     
     async def ping(self) -> bool:

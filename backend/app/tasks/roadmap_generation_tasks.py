@@ -30,36 +30,21 @@ from app.models.domain import UserRequest, LearningPreferences
 
 logger = structlog.get_logger()
 
-# 每个 Worker 进程的事件循环（懒加载）
-_worker_loop = None
-
-
-def get_worker_loop():
-    """
-    获取或创建 Worker 进程的事件循环
-    
-    每个 Worker 进程维护一个独立的事件循环，
-    不在任务结束时关闭，避免连接清理问题。
-    
-    Returns:
-        asyncio.AbstractEventLoop: Worker 进程的事件循环
-    """
-    global _worker_loop
-    
-    if _worker_loop is None or _worker_loop.is_closed():
-        # 创建新的事件循环
-        _worker_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(_worker_loop)
-        logger.debug("celery_worker_loop_created", loop_id=id(_worker_loop))
-    
-    return _worker_loop
-
-
 def run_async(coro):
     """
     在同步上下文中运行异步协程
     
-    使用 Worker 进程级别的事件循环，避免频繁创建/销毁循环。
+    使用 asyncio.run() 确保每次执行都在干净的事件循环中进行，
+    避免事件循环冲突和资源泄漏。
+    
+    asyncio.run() 会自动：
+    1. 创建新的事件循环
+    2. 设置为当前事件循环
+    3. 运行协程
+    4. 清理所有未完成的任务
+    5. 关闭事件循环
+    
+    这是 Python 3.7+ 推荐的标准做法，避免手动管理事件循环。
     
     Args:
         coro: 异步协程对象
@@ -67,8 +52,7 @@ def run_async(coro):
     Returns:
         协程的返回值
     """
-    loop = get_worker_loop()
-    return loop.run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 @celery_app.task(
@@ -179,9 +163,47 @@ async def _execute_roadmap_workflow(
     factory = None
     
     try:
-        # 更新任务状态为 processing
-        # 使用 Celery 专用的数据库连接，避免 Fork 进程继承的连接池问题
+        # ✅ 修复：验证任务记录是否存在（解决时序竞争问题）
+        # 背景：FastAPI 和 Celery Worker 使用不同的数据库连接，
+        # Worker 可能在 FastAPI 提交事务后立即执行，导致看不到刚创建的任务记录。
+        # 解决方案：重试机制，最多等待 500ms
         repo_factory = CeleryRepositoryFactory()
+        max_retries = 5
+        task_found = False
+        
+        for attempt in range(max_retries):
+            async with repo_factory.create_session() as session:
+                task_repo = repo_factory.create_task_repo(session)
+                task = await task_repo.get_by_task_id(task_id)
+                
+                if task:
+                    task_found = True
+                    logger.info(
+                        "task_record_found",
+                        task_id=task_id,
+                        attempt=attempt + 1,
+                    )
+                    break
+                
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        "task_not_found_retrying",
+                        task_id=task_id,
+                        attempt=attempt + 1,
+                        max_retries=max_retries,
+                    )
+                    await asyncio.sleep(0.1 * (attempt + 1))  # 指数退避：100ms, 200ms, 300ms, 400ms
+        
+        if not task_found:
+            error_msg = f"Task {task_id} not found in database after {max_retries} retries"
+            logger.error(
+                "task_not_found_fatal",
+                task_id=task_id,
+                max_retries=max_retries,
+            )
+            raise ValueError(error_msg)
+        
+        # 更新任务状态为 processing
         async with repo_factory.create_session() as session:
             task_repo = repo_factory.create_task_repo(session)
             await task_repo.update_task_status(
