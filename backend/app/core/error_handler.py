@@ -119,11 +119,12 @@ class WorkflowErrorHandler:
                 },
             )
             
-            # 3. 发布失败通知
+            # 3. 发布失败通知（传递异常对象以获取完整堆栈）
             await notification_service.publish_failed(
                 task_id=task_id,
                 error=str(e),
                 step=node_name,
+                exception=e,
             )
             
             # 4. 更新任务状态为失败

@@ -44,6 +44,7 @@ export interface Concept {
   content_ref?: string | null;
   content_version: string;
   content_summary?: string | null;
+  tutorial_id?: string | null;
   
   // 资源推荐引用
   resources_status: ContentStatus;
@@ -54,6 +55,10 @@ export interface Concept {
   quiz_status: ContentStatus;
   quiz_id?: string | null;
   quiz_question_count: number;
+  
+  // 整体状态（来自 concept_metadata 表）
+  // pending: 未开始 | generating: 生成中 | completed: 全部完成 | partial_failed: 部分失败
+  overall_status?: ContentStatus | 'partial_failed';
 }
 
 /**

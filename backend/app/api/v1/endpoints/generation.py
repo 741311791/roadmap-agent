@@ -169,6 +169,7 @@ async def generate_roadmap_async(
         ```
     """
     from app.tasks.roadmap_generation_tasks import generate_roadmap
+    import asyncio
     
     task_id = str(uuid.uuid4())
     
@@ -179,7 +180,9 @@ async def generate_roadmap_async(
         learning_goal=request.preferences.learning_goal,
     )
     
-    # 创建初始任务记录
+    # ============================================================
+    # 第一步：创建任务记录并 commit
+    # ============================================================
     async with repo_factory.create_session() as session:
         task_repo = repo_factory.create_task_repo(session)
         await task_repo.create_task(
@@ -188,14 +191,79 @@ async def generate_roadmap_async(
             user_request=request.model_dump(mode='json'),
         )
         await session.commit()
+        
+        logger.debug(
+            "task_created_and_committed",
+            task_id=task_id,
+            user_id=request.user_id,
+        )
     
-    # 分发 Celery 任务
+    # ============================================================
+    # 第二步：验证任务已持久化（使用新的 session 验证可见性）
+    # 
+    # 背景：由于数据库连接池和事务隔离，刚 commit 的数据可能
+    # 在另一个连接中不可见。这里使用独立的 session 验证，
+    # 确保在分发 Celery 任务之前数据已完全可见。
+    # ============================================================
+    max_verify_retries = 5
+    task_verified = False
+    
+    for attempt in range(max_verify_retries):
+        async with repo_factory.create_session() as session:
+            task_repo = repo_factory.create_task_repo(session)
+            task = await task_repo.get_by_task_id(task_id)
+            
+            if task:
+                task_verified = True
+                logger.debug(
+                    "task_persistence_verified",
+                    task_id=task_id,
+                    attempt=attempt + 1,
+                )
+                break
+        
+        if attempt < max_verify_retries - 1:
+            logger.warning(
+                "task_not_visible_retrying",
+                task_id=task_id,
+                attempt=attempt + 1,
+                max_retries=max_verify_retries,
+            )
+            # 指数退避等待：50ms, 100ms, 150ms, 200ms
+            await asyncio.sleep(0.05 * (attempt + 1))
+    
+    if not task_verified:
+        # 任务创建失败，这是一个严重错误
+        logger.error(
+            "task_persistence_verification_failed",
+            task_id=task_id,
+            max_retries=max_verify_retries,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"任务创建失败：数据库持久化验证失败（task_id={task_id}）",
+        )
+    
+    # ============================================================
+    # 第三步：分发 Celery 任务（此时任务已确认存在）
+    # ============================================================
     celery_task = generate_roadmap.delay(
         task_id=task_id,
         user_request=request.preferences.learning_goal,
         user_id=request.user_id,
         learning_preferences=request.preferences.model_dump(mode='json'),
     )
+    
+    # ============================================================
+    # 第四步：更新任务记录中的 celery_task_id
+    # ============================================================
+    async with repo_factory.create_session() as session:
+        task_repo = repo_factory.create_task_repo(session)
+        await task_repo.update_task_celery_id(
+            task_id=task_id,
+            celery_task_id=celery_task.id,
+        )
+        await session.commit()
     
     logger.info(
         "celery_task_dispatched",

@@ -4,6 +4,9 @@ FastAPI 主应用
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from sqlalchemy.exc import SQLAlchemyError
 import structlog
 
 from app.api.v1.router import router as api_router_v1
@@ -11,6 +14,13 @@ from app.api.v1.websocket import router as websocket_router
 from app.config.settings import settings
 from app.core.dependencies import init_orchestrator, cleanup_orchestrator
 from app.db.s3_init import ensure_bucket_exists
+from app.middleware.request_id import RequestIDMiddleware
+from app.core.global_exception_handlers import (
+    http_exception_handler,
+    validation_exception_handler,
+    sqlalchemy_exception_handler,
+    generic_exception_handler,
+)
 # 延迟导入避免循环依赖
 def get_recover_interrupted_tasks_on_startup():
     from app.services.task_recovery_service import recover_interrupted_tasks_on_startup
@@ -101,6 +111,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# 配置 Request ID 中间件（必须在其他中间件之前）
+app.add_middleware(RequestIDMiddleware)
+
 # 配置 CORS 中间件（从环境变量读取允许的域名）
 app.add_middleware(
     CORSMiddleware,
@@ -109,6 +122,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 注册全局异常处理器
+app.add_exception_handler(StarletteHTTPException, http_exception_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(SQLAlchemyError, sqlalchemy_exception_handler)
+app.add_exception_handler(Exception, generic_exception_handler)
 
 # 注册API路由（新的拆分结构）
 app.include_router(api_router_v1)

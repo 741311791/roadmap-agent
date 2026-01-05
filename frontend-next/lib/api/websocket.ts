@@ -70,6 +70,8 @@ export interface WSFailedEvent extends WSEvent {
   type: 'failed';
   error: string;
   error_message?: string; // alias
+  error_detail?: string; // 完整错误信息（包含异常类型和堆栈跟踪）
+  message?: string; // 友好的错误消息（包含异常类型）
   step?: string;
   timestamp: string;
 }

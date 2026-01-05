@@ -183,9 +183,28 @@ async def _async_generate_content(
         total_concepts=total_concepts,
     )
     
-    # 3. 断点续传：查询已完成的 Concept
+    # 2.5. 初始化 ConceptMetadata (如果不存在)
     from app.db.celery_session import celery_safe_session_with_retry as safe_session_with_retry
     from app.db.repositories.roadmap_repo import RoadmapRepository
+    from app.db.repositories.concept_meta_repo import ConceptMetadataRepository
+    
+    async with safe_session_with_retry() as session:
+        concept_meta_repo = ConceptMetadataRepository(session)
+        concept_ids = [concept.concept_id for concept in all_concepts]
+        await concept_meta_repo.batch_initialize_concepts(
+            roadmap_id=roadmap_id,
+            concept_ids=concept_ids,
+        )
+        await session.commit()
+    
+    logger.info(
+        "concept_metadata_initialized",
+        task_id=task_id,
+        roadmap_id=roadmap_id,
+        concept_count=len(concept_ids),
+    )
+    
+    # 3. 断点续传：查询已完成的 Concept
     
     completed_concept_ids = set()
     async with safe_session_with_retry() as session:
@@ -579,12 +598,23 @@ async def _save_content_results(
         )
     
     # Phase 2: 更新 framework_data（必须执行，即使 Phase 1 有失败）
+    framework_update_success = False
     try:
         async with safe_session_with_retry() as session:
             repo = RoadmapRepository(session)
             roadmap_metadata = await repo.get_roadmap_metadata(roadmap_id)
             
             if roadmap_metadata and roadmap_metadata.framework_data:
+                logger.info(
+                    "framework_data_update_starting",
+                    task_id=task_id,
+                    roadmap_id=roadmap_id,
+                    tutorial_count=len(tutorial_refs),
+                    resource_count=len(resource_refs),
+                    quiz_count=len(quiz_refs),
+                    failed_count=len(failed_concepts),
+                )
+                
                 updated_framework = update_framework_with_content_refs(
                     framework_data=roadmap_metadata.framework_data,
                     tutorial_refs=tutorial_refs,
@@ -601,18 +631,23 @@ async def _save_content_results(
                 )
                 await session.commit()
                 
+                framework_update_success = True
                 logger.info(
-                    "framework_data_updated",
+                    "framework_data_updated_successfully",
                     task_id=task_id,
                     roadmap_id=roadmap_id,
                     tutorial_count=len(tutorial_refs),
+                    resource_count=len(resource_refs),
+                    quiz_count=len(quiz_refs),
                     failed_count=len(failed_concepts),
                 )
             else:
-                logger.warning(
-                    "framework_data_not_found",
+                logger.error(
+                    "framework_data_not_found_cannot_update",
                     task_id=task_id,
                     roadmap_id=roadmap_id,
+                    has_metadata=bool(roadmap_metadata),
+                    has_framework_data=bool(roadmap_metadata.framework_data) if roadmap_metadata else False,
                 )
     except Exception as e:
         logger.error(
@@ -621,8 +656,18 @@ async def _save_content_results(
             roadmap_id=roadmap_id,
             error=str(e)[:500],
             error_type=type(e).__name__,
+            traceback=str(e),
         )
-        # 不抛出异常，继续执行 Phase 3
+        # 不抛出异常，继续执行 Phase 3，但记录更新失败状态
+    
+    # 记录更新状态（供排查问题）
+    if not framework_update_success:
+        logger.warning(
+            "framework_data_update_incomplete",
+            task_id=task_id,
+            roadmap_id=roadmap_id,
+            message="framework_data 未成功更新，前端可能看到不一致的状态",
+        )
     
     # Phase 3: 更新 task 最终状态（必须执行）
     final_status = "partial_failure" if failed_concepts else "completed"

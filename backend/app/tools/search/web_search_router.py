@@ -67,17 +67,45 @@ class WebSearchRouter(BaseTool[SearchQuery, SearchResult]):
             
         Returns:
             True 如果有可用的 Key
+            
+        注意：
+        - 在高并发场景下，此方法可能导致连接池耗尽
+        - 如果查询超时，快速失败并返回 False
         """
         try:
+            import asyncio
             from app.db.repositories.tavily_key_repo import TavilyKeyRepository
+            
             repo = TavilyKeyRepository(db_session)
-            key_record = await repo.get_best_key()
-            return key_record is not None
-        except Exception as e:
-            logger.warning(
-                "web_search_router_tavily_check_failed",
-                error=str(e)
+            
+            # 设置超时保护（5秒），避免在连接池耗尽时长时间阻塞
+            key_record = await asyncio.wait_for(
+                repo.get_best_key(),
+                timeout=5.0
             )
+            return key_record is not None
+            
+        except asyncio.TimeoutError:
+            # 连接池耗尽或数据库响应慢，快速失败
+            logger.warning(
+                "web_search_router_tavily_check_timeout",
+                message="Tavily Key 查询超时（可能是连接池耗尽），回退到 DuckDuckGo"
+            )
+            return False
+        except Exception as e:
+            # 其他错误（包括连接池 TimeoutError）
+            error_msg = str(e).lower()
+            if "pool" in error_msg or "timeout" in error_msg:
+                logger.warning(
+                    "web_search_router_tavily_check_pool_exhausted",
+                    error=str(e)[:200],
+                    message="连接池耗尽，跳过 Tavily 检查"
+                )
+            else:
+                logger.warning(
+                    "web_search_router_tavily_check_failed",
+                    error=str(e)[:200]
+                )
             return False
     
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))

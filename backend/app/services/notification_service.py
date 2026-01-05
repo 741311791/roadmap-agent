@@ -20,12 +20,66 @@ from typing import AsyncIterator, Optional
 from datetime import datetime
 import json
 import asyncio
+import traceback
 import structlog
 
 from app.db.redis_client import redis_client
 from app.models.database import beijing_now
 
 logger = structlog.get_logger()
+
+
+def format_error_for_notification(
+    error: Exception | str,
+    include_traceback: bool = True,
+    max_length: int = 2000,
+) -> tuple[str, str]:
+    """
+    格式化错误信息，用于通知推送
+    
+    提供完整的错误信息，方便排查问题。
+    
+    Args:
+        error: 异常对象或错误字符串
+        include_traceback: 是否包含堆栈跟踪（默认 True）
+        max_length: 最大消息长度
+        
+    Returns:
+        tuple: (简短消息, 完整错误详情)
+    """
+    if isinstance(error, str):
+        # 如果传入的是字符串，直接使用
+        error_type = "Error"
+        error_message = error
+        tb_str = ""
+    else:
+        # 如果传入的是异常对象，提取详细信息
+        error_type = type(error).__name__
+        error_message = str(error)
+        
+        # 获取堆栈跟踪
+        if include_traceback and error.__traceback__:
+            tb_str = "".join(traceback.format_exception(
+                type(error), error, error.__traceback__
+            ))
+        else:
+            tb_str = ""
+    
+    # 构建简短消息（用于 message 字段，前端展示）
+    short_message = f"[{error_type}] {error_message}"
+    if len(short_message) > 200:
+        short_message = short_message[:197] + "..."
+    
+    # 构建完整错误详情（用于 error_detail 字段，调试用）
+    full_detail = f"[{error_type}] {error_message}"
+    if tb_str:
+        full_detail += f"\n\n--- Traceback ---\n{tb_str}"
+    
+    # 限制总长度
+    if len(full_detail) > max_length:
+        full_detail = full_detail[:max_length - 20] + "\n... (truncated)"
+    
+    return short_message, full_detail
 
 
 # Redis 频道前缀
@@ -226,23 +280,34 @@ class NotificationService:
     async def publish_failed(
         self,
         task_id: str,
-        error: str,
+        error: str | Exception,
         step: Optional[str] = None,
+        exception: Optional[Exception] = None,
     ):
         """
         发布任务失败事件
         
+        增强版：支持传入异常对象，自动提取完整错误信息。
+        
         Args:
             task_id: 任务 ID
-            error: 错误信息
+            error: 错误信息字符串或异常对象
             step: 失败的步骤
+            exception: 可选的原始异常对象（用于提取堆栈跟踪）
         """
+        # 使用异常对象（优先）或错误字符串
+        error_source = exception if exception else error
+        
+        # 格式化错误信息
+        short_message, full_detail = format_error_for_notification(error_source)
+        
         event = {
             "type": TaskEvent.FAILED,
             "task_id": task_id,
-            "error": error,
+            "error": str(error) if isinstance(error, str) else str(error),
+            "error_detail": full_detail,  # 完整错误信息（包含类型和堆栈）
             "timestamp": beijing_now().isoformat(),
-            "message": f"任务失败: {error[:100]}",
+            "message": f"Task failed: {short_message}",  # 更友好的消息
         }
         
         if step:

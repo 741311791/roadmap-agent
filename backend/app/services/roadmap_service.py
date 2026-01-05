@@ -391,25 +391,62 @@ class RoadmapService:
             )
             return None
     
-    async def get_roadmap(self, roadmap_id: str) -> RoadmapFramework | None:
+    async def get_roadmap(self, roadmap_id: str) -> dict | None:
         """
-        获取完整的路线图数据
+        获取完整的路线图数据（合并 concept_metadata 的 overall_status）
         
         Args:
             roadmap_id: 路线图 ID
             
         Returns:
-            路线图框架，如果不存在则返回 None
+            路线图框架字典（包含 concept_metadata 状态），如果不存在则返回 None
         """
         async with self.repo_factory.create_session() as session:
             roadmap_repo = self.repo_factory.create_roadmap_meta_repo(session)
             metadata = await roadmap_repo.get_by_roadmap_id(roadmap_id)
+            
+            if not metadata:
+                return None
+            
+            # 获取所有 concept_metadata
+            from app.db.repositories.concept_meta_repo import ConceptMetadataRepository
+            concept_meta_repo = ConceptMetadataRepository(session)
+            concept_metas = await concept_meta_repo.get_by_roadmap_id(roadmap_id)
         
-        if not metadata:
-            return None
+        # 构建 concept_id -> ConceptMetadata 映射
+        concept_meta_map = {cm.concept_id: cm for cm in concept_metas}
         
         # 从 JSON 数据重建 RoadmapFramework
-        return RoadmapFramework.model_validate(metadata.framework_data)
+        framework_data = metadata.framework_data.copy()
+        
+        # 合并 concept_metadata 的 overall_status 到 framework_data
+        for stage in framework_data.get("stages", []):
+            for module in stage.get("modules", []):
+                for concept in module.get("concepts", []):
+                    concept_id = concept.get("concept_id")
+                    if concept_id and concept_id in concept_meta_map:
+                        concept_meta = concept_meta_map[concept_id]
+                        # 使用 concept_metadata 中的真实状态覆盖 framework_data 中的状态
+                        concept["content_status"] = concept_meta.tutorial_status
+                        concept["resources_status"] = concept_meta.resources_status
+                        concept["quiz_status"] = concept_meta.quiz_status
+                        concept["overall_status"] = concept_meta.overall_status
+                        
+                        # 同时更新 ID 引用（确保一致性）
+                        if concept_meta.tutorial_id:
+                            concept["tutorial_id"] = concept_meta.tutorial_id
+                        if concept_meta.resources_id:
+                            concept["resources_id"] = concept_meta.resources_id
+                        if concept_meta.quiz_id:
+                            concept["quiz_id"] = concept_meta.quiz_id
+        
+        logger.info(
+            "roadmap_enriched_with_concept_metadata",
+            roadmap_id=roadmap_id,
+            concept_count=len(concept_meta_map),
+        )
+        
+        return framework_data
     
     async def handle_human_review(  # DEPRECATED: 使用 workflow_resume_tasks.resume_after_review 替代
         self,

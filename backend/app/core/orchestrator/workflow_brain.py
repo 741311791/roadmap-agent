@@ -382,19 +382,12 @@ class WorkflowBrain:
             },
         )
         
-        # 3. 发布错误通知
-        # 从 state 中提取 edit_source（用于前端区分分支）
-        extra_data = {"error": str(error)}
-        edit_source = state.get("edit_source")
-        if edit_source:
-            extra_data["edit_source"] = edit_source
-        
-        await self.notification_service.publish_progress(
+        # 3. 发布失败通知（使用 publish_failed 获取完整错误信息）
+        await self.notification_service.publish_failed(
             task_id=ctx.task_id,
+            error=str(error),
             step=ctx.node_name,
-            status="failed",
-            message=f"执行失败: {ctx.node_name}",
-            extra_data=extra_data,
+            exception=error,  # 传递异常对象以获取完整堆栈
         )
         
         # 4. 清理执行上下文

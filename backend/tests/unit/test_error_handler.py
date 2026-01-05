@@ -82,18 +82,19 @@ class TestWorkflowErrorHandler:
         assert call_args.kwargs["step"] == node_name
         assert error_message in call_args.kwargs["message"]
         
-        # 验证失败通知发布
-        mock_services["notif_service"].publish_failed.assert_called_once_with(
-            task_id=task_id,
-            error=error_message,
-            step=node_name,
-        )
+        # 验证失败通知发布（包含 exception 参数）
+        mock_services["notif_service"].publish_failed.assert_called_once()
+        call_kwargs = mock_services["notif_service"].publish_failed.call_args.kwargs
+        assert call_kwargs["task_id"] == task_id
+        assert call_kwargs["error"] == error_message
+        assert call_kwargs["step"] == node_name
+        assert call_kwargs["exception"] is not None  # 应该传递异常对象
         
-        # 验证任务状态更新
+        # 验证任务状态更新（current_step 使用 node_name）
         mock_services["repo"].update_task_status.assert_called_once_with(
             task_id=task_id,
             status="failed",
-            current_step="failed",
+            current_step=node_name,
             error_message=error_message[:500],
         )
         mock_services["session"].commit.assert_called_once()

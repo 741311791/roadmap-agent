@@ -869,11 +869,15 @@ export default function TaskDetailPage() {
         pollingInterval = null;
       }
       console.log('[TaskDetail] Task failed:', event);
+      
+      // 优先使用 message（包含错误类型），其次使用 error_detail（完整堆栈），最后使用 error
+      const errorMessage = event.message || event.error_detail || event.error || 'Task failed';
+      
       setTaskInfo((prev) => prev ? { 
         ...prev, 
         status: 'failed', 
         current_step: 'failed',
-        error_message: event.error || 'Task failed'
+        error_message: errorMessage
       } : null);
       
       const newLog: ExecutionLog = {
@@ -883,8 +887,12 @@ export default function TaskDetailPage() {
         category: 'workflow',
         step: 'failed',
         agent_name: null,
-        message: event.error || 'Task failed',
-        details: event,
+        message: errorMessage,
+        details: {
+          ...event,
+          // 确保 error_detail 可用于调试
+          full_error: event.error_detail || event.error,
+        },
         duration_ms: null,
         created_at: new Date().toISOString(),
       };

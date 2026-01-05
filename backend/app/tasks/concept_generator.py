@@ -393,8 +393,11 @@ async def generate_single_concept(
         )
         
         # 累积失败的概念（线程安全）
+        # 使用细粒度格式记录失败（因为整个 Concept 生成失败，三项都失败）
         async with results_lock:
-            failed_concepts.append(concept_id)
+            failed_concepts.append(f"{concept_id}:tutorial")
+            failed_concepts.append(f"{concept_id}:resources")
+            failed_concepts.append(f"{concept_id}:quiz")
         
         # 🆕 更新 ConceptMetadata 为失败状态
         try:

@@ -59,31 +59,42 @@ class Settings(BaseSettings):
     POSTGRES_PASSWORD: str = Field("roadmap_pass", description="数据库密码")
     POSTGRES_DB: str = Field("roadmap_db", description="数据库名称")
     
-    # 连接池配置（针对多进程部署优化）
+    # 连接池配置（阿里云数据库优化）
     # 
     # ⚠️ 关键计算：
     # 总连接数 = (DB_POOL_SIZE + DB_MAX_OVERFLOW) × 总进程数
-    # PostgreSQL 默认 max_connections = 100
     # 
-    # 本地开发进程数统计（当前配置）：
+    # 阿里云数据库配置：
+    # - 总连接数: 400
+    # - 研发环境: 120 个连接
+    # - 生产环境: 280 个连接
+    # 
+    # 研发环境进程数（推荐配置）：
     # - FastAPI (uvicorn --workers 4): 4 个进程
-    # - Celery logs (--concurrency=4 --pool=prefork): 5 个进程
-    # - Celery content_generation (--concurrency=8 --pool=prefork): 9 个进程
-    # - Celery workflow (--concurrency=2): 3 个进程
+    # - Celery logs (--concurrency=4): 5 个进程
+    # - Celery content_generation (--concurrency=6): 7 个进程
+    # - Celery workflow (--concurrency=4): 5 个进程
     # 总计: 21 个进程
+    # 每进程连接: 4 + 3 = 7
+    # 总需求: 21 × 7 = 147（实际峰值 60% ≈ 88）
     #
-    # 连接分配：
-    # 每个进程: pool_size=2 + max_overflow=2 = 4 个连接
-    # 总需求: 21 × 4 = 84 < 100 ✅ (预留 16 个给 psql/监控/其他)
+    # 生产环境进程数（默认配置）：
+    # - FastAPI (uvicorn --workers 8): 8 个进程
+    # - Celery logs (--concurrency=8): 9 个进程
+    # - Celery content_generation (--concurrency=10): 11 个进程
+    # - Celery workflow (--concurrency=6): 7 个进程
+    # 总计: 35 个进程
+    # 每进程连接: 6 + 4 = 10
+    # 总需求: 35 × 10 = 350（实际峰值 60% ≈ 210）
     #
-    # Railway 部署建议: DB_POOL_SIZE=2, DB_MAX_OVERFLOW=1
+    # 默认值为生产环境配置，研发环境通过 .env 覆盖为 DB_POOL_SIZE=4, DB_MAX_OVERFLOW=3
     DB_POOL_SIZE: int = Field(
-        2, 
-        description="数据库连接池基础大小（本地开发和生产都建议 2）"
+        6, 
+        description="数据库连接池基础大小（生产环境默认 6，研发环境建议 4）"
     )
     DB_MAX_OVERFLOW: int = Field(
-        2, 
-        description="数据库连接池最大溢出数（本地开发建议 2，生产建议 1）"
+        4, 
+        description="数据库连接池最大溢出数（生产环境默认 4，研发环境建议 3）"
     )
     
     @property

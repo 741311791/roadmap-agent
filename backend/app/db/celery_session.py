@@ -142,20 +142,60 @@ async def get_celery_session() -> AsyncGenerator[AsyncSession, None]:
     Yields:
         AsyncSession: 数据库会话
     """
-    session_maker = get_celery_session_maker()
-    session = session_maker()
+    import time
+    start_time = time.time()
+    
+    try:
+        session_maker = get_celery_session_maker()
+        session = session_maker()
+        
+        create_time = time.time() - start_time
+        if create_time > 1.0:  # 如果创建会话超过 1 秒，记录警告
+            logger.warning(
+                "celery_session_slow_create",
+                create_seconds=round(create_time, 2),
+            )
+        
+        logger.debug(
+            "celery_session_created",
+            session_id=id(session),
+            create_seconds=round(create_time, 3),
+        )
+        
+    except Exception as create_error:
+        create_time = time.time() - start_time
+        logger.error(
+            "celery_session_create_failed",
+            error=str(create_error),
+            error_type=type(create_error).__name__,
+            create_seconds=round(create_time, 2),
+        )
+        raise
     
     try:
         yield session
         # 自动提交成功的事务
         await session.commit()
-    except Exception:
+    except Exception as e:
         # 回滚失败的事务
-        await session.rollback()
+        try:
+            await session.rollback()
+        except Exception as rollback_error:
+            logger.warning(
+                "celery_session_rollback_failed",
+                error=str(rollback_error),
+            )
         raise
     finally:
         # 关闭会话
-        await session.close()
+        try:
+            await session.close()
+            logger.debug("celery_session_closed")
+        except Exception as close_error:
+            logger.warning(
+                "celery_session_close_failed",
+                error=str(close_error),
+            )
 
 
 async def cleanup_celery_engine() -> None:
@@ -193,7 +233,21 @@ class CeleryRepositoryFactory:
         Yields:
             AsyncSession: 数据库会话
         """
+        from app.config.settings import settings
+        
+        # 调试日志：记录数据库连接信息
+        logger.debug(
+            "celery_session_creating",
+            db_host=settings.POSTGRES_HOST,
+            db_name=settings.POSTGRES_DB,
+            db_user=settings.POSTGRES_USER[:3] + "***" if settings.POSTGRES_USER else None,
+        )
+        
         async with get_celery_session() as session:
+            logger.debug(
+                "celery_session_created",
+                session_id=id(session),
+            )
             yield session
     
     # 导入 Repository 类（避免循环导入，使用延迟导入）

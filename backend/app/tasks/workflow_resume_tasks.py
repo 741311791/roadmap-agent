@@ -132,7 +132,7 @@ def resume_after_review(
         
         # 更新任务状态为失败（捕获可能的事件循环冲突）
         try:
-            run_async(_mark_task_failed(task_id, str(e)))
+            run_async(_mark_task_failed(task_id, str(e), exception=e))
         except Exception as mark_error:
             logger.error(
                 "failed_to_mark_task_as_failed",
@@ -209,7 +209,7 @@ def resume_from_checkpoint(
         
         # 更新任务状态为失败（捕获可能的事件循环冲突）
         try:
-            run_async(_mark_task_failed(task_id, str(e)))
+            run_async(_mark_task_failed(task_id, str(e), exception=e))
         except Exception as mark_error:
             logger.error(
                 "failed_to_mark_task_as_failed",
@@ -438,7 +438,11 @@ async def _resume_workflow_from_checkpoint(
             await factory.cleanup()
 
 
-async def _mark_task_failed(task_id: str, error_message: str):
+async def _mark_task_failed(
+    task_id: str,
+    error_message: str,
+    exception: Exception | None = None,
+):
     """
     标记任务为失败状态
     
@@ -447,6 +451,7 @@ async def _mark_task_failed(task_id: str, error_message: str):
     Args:
         task_id: 任务 ID
         error_message: 错误信息
+        exception: 原始异常对象（可选，用于提取堆栈跟踪）
     """
     # 1. 先更新数据库状态（关键操作）
     try:
@@ -478,6 +483,7 @@ async def _mark_task_failed(task_id: str, error_message: str):
             task_id=task_id,
             error=error_message,
             step="failed",
+            exception=exception,  # 传递异常对象以获取完整堆栈
         )
     except Exception as e:
         # 在异常处理上下文中，通知失败是可以接受的

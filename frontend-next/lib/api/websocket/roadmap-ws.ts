@@ -118,6 +118,7 @@ export interface CompletedEvent extends WebSocketEvent {
 export interface FailedEvent extends WebSocketEvent {
   type: 'failed';
   error: string;
+  error_detail?: string; // 完整错误信息（包含异常类型和堆栈跟踪）
   step?: string;
   message: string;
 }

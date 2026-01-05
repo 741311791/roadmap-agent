@@ -310,6 +310,36 @@ class TaskRepository(BaseRepository[RoadmapTask]):
             updated_at=beijing_now(),
         )
     
+    async def update_task_celery_id(
+        self,
+        task_id: str,
+        celery_task_id: str,
+    ) -> bool:
+        """
+        更新任务的 celery_task_id
+        
+        Args:
+            task_id: 任务 ID
+            celery_task_id: Celery 任务 ID
+            
+        Returns:
+            True 如果更新成功，False 如果任务不存在
+        """
+        updated = await self.update_by_id(
+            task_id,
+            celery_task_id=celery_task_id,
+            updated_at=beijing_now(),
+        )
+        
+        if updated:
+            logger.info(
+                "task_celery_id_updated",
+                task_id=task_id,
+                celery_task_id=celery_task_id,
+            )
+        
+        return updated
+    
     # ============================================================
     # 删除方法
     # ============================================================

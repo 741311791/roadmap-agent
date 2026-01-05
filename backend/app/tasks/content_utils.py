@@ -48,6 +48,34 @@ def run_async(coro):
     return loop.run_until_complete(coro)
 
 
+def parse_failed_concept(failed_item: str) -> tuple[str, str | None]:
+    """
+    解析失败项格式 (支持双格式向后兼容)
+    
+    格式 1 (旧): "concept_id" - 代表整个 Concept 失败
+    格式 2 (新): "concept_id:content_type" - 代表特定内容类型失败
+    
+    Args:
+        failed_item: 失败项字符串
+        
+    Returns:
+        (concept_id, content_type | None)
+        
+    Examples:
+        >>> parse_failed_concept("abc123")
+        ("abc123", None)
+        >>> parse_failed_concept("abc123:tutorial")
+        ("abc123", "tutorial")
+    """
+    if ":" in failed_item:
+        # 新格式: "concept_id:content_type"
+        parts = failed_item.split(":", 1)
+        return parts[0], parts[1]
+    else:
+        # 旧格式: "concept_id" (代表整个 Concept 失败)
+        return failed_item, None
+
+
 def update_framework_with_content_refs(
     framework_data: dict,
     tutorial_refs: dict,
@@ -58,16 +86,36 @@ def update_framework_with_content_refs(
     """
     更新 framework 中所有 Concept 的内容引用字段
     
+    支持双格式失败记录:
+    - 旧格式: ["concept_id_1", "concept_id_2"]
+    - 新格式: ["concept_id_1:tutorial", "concept_id_2:resources"]
+    
     Args:
         framework_data: 原始 framework 字典数据
         tutorial_refs: 教程引用字典
         resource_refs: 资源引用字典
         quiz_refs: 测验引用字典
-        failed_concepts: 失败的概念 ID 列表
+        failed_concepts: 失败的概念 ID 列表 (支持双格式)
         
     Returns:
         更新后的 framework 字典
     """
+    # 解析失败概念列表，构建查找映射
+    # failed_map: {concept_id: set(failed_content_types)}
+    # None 表示所有内容类型失败（旧格式）
+    failed_map: dict[str, set[str] | None] = {}
+    for failed_item in failed_concepts:
+        concept_id, content_type = parse_failed_concept(failed_item)
+        
+        if content_type is None:
+            # 旧格式：整个 Concept 失败
+            failed_map[concept_id] = None
+        else:
+            # 新格式：特定内容类型失败
+            if concept_id not in failed_map:
+                failed_map[concept_id] = set()
+            if failed_map[concept_id] is not None:
+                failed_map[concept_id].add(content_type)
     for stage in framework_data.get("stages", []):
         for module in stage.get("modules", []):
             for concept in module.get("concepts", []):
@@ -75,6 +123,9 @@ def update_framework_with_content_refs(
                 
                 if not concept_id:
                     continue
+                
+                # 获取该 Concept 的失败内容类型集合
+                failed_types = failed_map.get(concept_id)
                 
                 # 更新教程相关字段
                 if concept_id in tutorial_refs:
@@ -84,7 +135,9 @@ def update_framework_with_content_refs(
                     concept["content_ref"] = tutorial_output.content_url
                     concept["content_summary"] = tutorial_output.summary
                     concept["content_version"] = f"v{tutorial_output.content_version}"
-                elif concept_id in failed_concepts:
+                elif failed_types is None or "tutorial" in failed_types:
+                    # failed_types is None: 旧格式，所有内容失败
+                    # "tutorial" in failed_types: 新格式，tutorial 失败
                     if "content_status" not in concept or concept["content_status"] == "pending":
                         concept["content_status"] = "failed"
                 
@@ -94,7 +147,7 @@ def update_framework_with_content_refs(
                     concept["resources_status"] = "completed"
                     concept["resources_id"] = resource_output.id
                     concept["resources_count"] = len(resource_output.resources)
-                elif concept_id in failed_concepts:
+                elif failed_types is None or "resources" in failed_types:
                     if "resources_status" not in concept or concept["resources_status"] == "pending":
                         concept["resources_status"] = "failed"
                 
@@ -104,7 +157,7 @@ def update_framework_with_content_refs(
                     concept["quiz_status"] = "completed"
                     concept["quiz_id"] = quiz_output.quiz_id
                     concept["quiz_questions_count"] = quiz_output.total_questions
-                elif concept_id in failed_concepts:
+                elif failed_types is None or "quiz" in failed_types:
                     if "quiz_status" not in concept or concept["quiz_status"] == "pending":
                         concept["quiz_status"] = "failed"
     

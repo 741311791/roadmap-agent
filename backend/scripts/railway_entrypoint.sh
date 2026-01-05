@@ -28,10 +28,12 @@ case $SERVICE_TYPE in
       --username ${ADMIN_USERNAME:-admin} || true
     
     # 启动 FastAPI 应用
+    # 默认值为生产环境配置（阿里云数据库 280 连接）
+    # 研发环境通过环境变量覆盖为 UVICORN_WORKERS=4
     exec uvicorn app.main:app \
       --host 0.0.0.0 \
       --port ${PORT:-8000} \
-      --workers ${UVICORN_WORKERS:-4}
+      --workers ${UVICORN_WORKERS:-8}
     ;;
     
   celery_logs)
@@ -44,11 +46,11 @@ case $SERVICE_TYPE in
     # 优化参数：
     # - prefetch_multiplier=1: 避免预取，确保负载均衡
     # - max-tasks-per-child=1000: 高任务量后重启，防止内存泄漏
-    # - concurrency=4: 日志任务轻量，可以高并发
+    # - concurrency=8: 默认生产环境配置（阿里云），研发环境设置为 4
     exec celery -A app.core.celery_app worker \
       --loglevel=${CELERY_LOG_LEVEL:-info} \
       --queues=logs \
-      --concurrency=${CELERY_LOGS_CONCURRENCY:-4} \
+      --concurrency=${CELERY_LOGS_CONCURRENCY:-8} \
       --pool=prefork \
       --hostname=logs@%h \
       --prefetch-multiplier=1 \
@@ -67,12 +69,12 @@ case $SERVICE_TYPE in
     # 优化参数：
     # - prefetch_multiplier=1: 避免预取，防止任务堆积
     # - max-tasks-per-child=50: 及时释放 LLM 客户端连接
-    # - concurrency=6: 中等并发（每个任务内部已有 AsyncIO 并发）
+    # - concurrency=10: 默认生产环境配置（阿里云），研发环境设置为 6
     # - time-limit=1800: 30 分钟硬超时（内容生成可能较慢）
     exec celery -A app.core.celery_app worker \
       --loglevel=${CELERY_LOG_LEVEL:-info} \
       --queues=content_generation \
-      --concurrency=${CELERY_CONTENT_CONCURRENCY:-6} \
+      --concurrency=${CELERY_CONTENT_CONCURRENCY:-10} \
       --pool=prefork \
       --hostname=content@%h \
       --prefetch-multiplier=1 \
@@ -94,12 +96,12 @@ case $SERVICE_TYPE in
     # 优化参数：
     # - prefetch_multiplier=1: 避免预取，确保 checkpoint 隔离
     # - max-tasks-per-child=100: 定期重启，清理 LangGraph 状态
-    # - concurrency=4: 中等并发（避免过多路线图同时生成）
+    # - concurrency=6: 默认生产环境配置（阿里云），研发环境设置为 4
     # - time-limit=3600: 1 小时硬超时（完整路线图生成）
     exec celery -A app.core.celery_app worker \
       --loglevel=${CELERY_LOG_LEVEL:-info} \
       --queues=roadmap_workflow \
-      --concurrency=${CELERY_WORKFLOW_CONCURRENCY:-4} \
+      --concurrency=${CELERY_WORKFLOW_CONCURRENCY:-6} \
       --pool=prefork \
       --hostname=workflow@%h \
       --prefetch-multiplier=1 \

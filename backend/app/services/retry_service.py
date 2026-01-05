@@ -93,13 +93,39 @@ async def execute_retry_failed_task(
     # semaphore = asyncio.Semaphore(settings.PARALLEL_TUTORIAL_LIMIT)
     
     async def retry_single_item(content_type: str, item: dict, current: int, total: int) -> dict:
-        """重试单个项目"""
+        """重试单个项目 (增强版: 支持细粒度跳过)"""
         nonlocal success_count, failed_count
         
         concept_id = item["concept_id"]
         concept_data = item["concept_data"]
         context = item["context"]
         item_start_time = time.time()
+        
+        # 【新增】实时检查 concept_metadata 状态,避免重复生成
+        async with AsyncSessionLocal() as check_session:
+            from app.db.repositories.concept_meta_repo import ConceptMetadataRepository
+            concept_meta_repo = ConceptMetadataRepository(check_session)
+            meta = await concept_meta_repo.get_by_concept_id(concept_id)
+            
+            if meta:
+                status_field = f"{content_type}_status"
+                current_status = getattr(meta, status_field, "pending")
+                
+                if current_status == "completed":
+                    logger.info(
+                        "skip_already_completed_content",
+                        concept_id=concept_id,
+                        content_type=content_type,
+                        message="内容已在其他重试任务中完成,跳过",
+                    )
+                    success_count += 1  # 计入成功 (因为内容已存在)
+                    return {
+                        "concept_id": concept_id,
+                        "content_type": content_type,
+                        "success": True,
+                        "result": None,  # 没有新生成结果
+                        "skipped": True,  # 标记为跳过
+                    }
         
         # Agent 名称映射
         agent_name_map = {
@@ -186,6 +212,35 @@ async def execute_retry_failed_task(
             success_count += 1
             item_duration_ms = int((time.time() - item_start_time) * 1000)
             
+            # 【新增】更新 concept_metadata 状态
+            async with AsyncSessionLocal() as update_session:
+                from app.db.repositories.concept_meta_repo import ConceptMetadataRepository
+                concept_meta_repo = ConceptMetadataRepository(update_session)
+                
+                # 提取 content_id
+                content_id = None
+                if content_type == "tutorial" and result:
+                    content_id = result.tutorial_id if hasattr(result, 'tutorial_id') else None
+                elif content_type == "resources" and result:
+                    content_id = result.id if hasattr(result, 'id') else None
+                elif content_type == "quiz" and result:
+                    content_id = result.quiz_id if hasattr(result, 'quiz_id') else None
+                
+                await concept_meta_repo.update_content_status(
+                    concept_id=concept_id,
+                    content_type=content_type,
+                    status="completed",
+                    content_id=content_id,
+                )
+                await update_session.commit()
+                
+                logger.debug(
+                    "concept_metadata_updated_on_retry",
+                    concept_id=concept_id,
+                    content_type=content_type,
+                    status="completed",
+                )
+            
             # 记录 ExecutionLog：单个项目成功
             await execution_logger.log_agent_complete(
                 task_id=retry_task_id,
@@ -226,6 +281,18 @@ async def execute_retry_failed_task(
                 content_type=content_type,
                 error=str(e),
             )
+            
+            # 【新增】更新 concept_metadata 状态为 failed
+            async with AsyncSessionLocal() as update_session:
+                from app.db.repositories.concept_meta_repo import ConceptMetadataRepository
+                concept_meta_repo = ConceptMetadataRepository(update_session)
+                
+                await concept_meta_repo.update_content_status(
+                    concept_id=concept_id,
+                    content_type=content_type,
+                    status="failed",
+                )
+                await update_session.commit()
             
             # 记录 ExecutionLog：单个项目失败
             await execution_logger.log_agent_error(

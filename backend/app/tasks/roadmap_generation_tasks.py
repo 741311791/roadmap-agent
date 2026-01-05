@@ -130,8 +130,8 @@ def generate_roadmap(
             exc_info=True,
         )
         
-        # 更新任务状态为失败
-        run_async(_mark_task_failed(task_id, str(e)))
+        # 更新任务状态为失败（传递异常对象以获取完整堆栈）
+        run_async(_mark_task_failed(task_id, str(e), exception=e))
         
         return {
             "success": False,
@@ -163,43 +163,117 @@ async def _execute_roadmap_workflow(
     factory = None
     
     try:
-        # ✅ 修复：验证任务记录是否存在（解决时序竞争问题）
-        # 背景：FastAPI 和 Celery Worker 使用不同的数据库连接，
-        # Worker 可能在 FastAPI 提交事务后立即执行，导致看不到刚创建的任务记录。
-        # 解决方案：重试机制，最多等待 500ms
+        # ============================================================
+        # 验证任务记录是否存在（增强版重试机制）
+        # 
+        # 背景：FastAPI 和 Celery Worker 使用不同的数据库连接。
+        # 虽然 FastAPI 端点现在会在分发任务前验证持久化，
+        # 但在高并发或网络延迟情况下仍可能出现短暂的不可见窗口。
+        # 
+        # 策略：更激进的重试机制
+        # - 增加重试次数：5 → 10
+        # - 使用更长的初始等待时间
+        # - 使用指数退避 + 抖动避免雷群效应
+        # ============================================================
         repo_factory = CeleryRepositoryFactory()
-        max_retries = 5
+        max_retries = 10  # 增加重试次数
         task_found = False
         
+        # 调试日志：记录任务查询开始
+        logger.info(
+            "task_lookup_started",
+            task_id=task_id,
+            max_retries=max_retries,
+        )
+        
+        import random
+        import traceback
+        
         for attempt in range(max_retries):
-            async with repo_factory.create_session() as session:
-                task_repo = repo_factory.create_task_repo(session)
-                task = await task_repo.get_by_task_id(task_id)
+            session_acquired = False
+            query_executed = False
+            
+            try:
+                logger.debug(
+                    "task_query_attempt_start",
+                    task_id=task_id,
+                    attempt=attempt + 1,
+                )
                 
-                if task:
-                    task_found = True
-                    logger.info(
-                        "task_record_found",
+                async with repo_factory.create_session() as session:
+                    session_acquired = True
+                    logger.debug(
+                        "task_query_session_acquired",
                         task_id=task_id,
                         attempt=attempt + 1,
+                        session_id=id(session),
                     )
-                    break
+                    
+                    task_repo = repo_factory.create_task_repo(session)
+                    
+                    # 直接使用 Repository 查询（简化逻辑）
+                    task = await task_repo.get_by_task_id(task_id)
+                    query_executed = True
+                    
+                    if task:
+                        task_found = True
+                        logger.info(
+                            "task_record_found",
+                            task_id=task_id,
+                            attempt=attempt + 1,
+                            task_status=task.status,
+                        )
+                        break
+                    else:
+                        logger.warning(
+                            "task_query_returned_none",
+                            task_id=task_id,
+                            attempt=attempt + 1,
+                        )
+                    
+            except Exception as query_error:
+                # 详细记录错误信息
+                error_traceback = traceback.format_exc()
+                logger.error(
+                    "task_query_exception",
+                    task_id=task_id,
+                    attempt=attempt + 1,
+                    session_acquired=session_acquired,
+                    query_executed=query_executed,
+                    error=str(query_error),
+                    error_type=type(query_error).__name__,
+                    error_traceback=error_traceback[:1000],  # 截断避免日志过长
+                )
                 
-                if attempt < max_retries - 1:
-                    logger.warning(
-                        "task_not_found_retrying",
-                        task_id=task_id,
-                        attempt=attempt + 1,
-                        max_retries=max_retries,
-                    )
-                    await asyncio.sleep(0.1 * (attempt + 1))  # 指数退避：100ms, 200ms, 300ms, 400ms
+            if attempt < max_retries - 1:
+                # 使用指数退避 + 随机抖动
+                base_wait = 0.2 * (attempt + 1)  # 200ms, 400ms, 600ms...
+                jitter = random.uniform(0, 0.1)  # 0-100ms 随机抖动
+                wait_time = base_wait + jitter
+                
+                logger.warning(
+                    "task_not_found_retrying",
+                    task_id=task_id,
+                    attempt=attempt + 1,
+                    max_retries=max_retries,
+                    wait_seconds=round(wait_time, 3),
+                    session_acquired=session_acquired,
+                    query_executed=query_executed,
+                )
+                await asyncio.sleep(wait_time)
         
         if not task_found:
-            error_msg = f"Task {task_id} not found in database after {max_retries} retries"
+            # 任务在数据库中不存在，这是一个严重的问题
+            error_msg = (
+                f"Task {task_id} not found in database after {max_retries} retries. "
+                f"Total wait time: ~10s. This indicates a database persistence or "
+                f"connectivity issue between FastAPI and Celery Worker."
+            )
             logger.error(
                 "task_not_found_fatal",
                 task_id=task_id,
                 max_retries=max_retries,
+                total_wait_seconds=sum(0.2 * (i + 1) for i in range(max_retries - 1)),
             )
             raise ValueError(error_msg)
         
@@ -301,13 +375,18 @@ async def _execute_roadmap_workflow(
             await factory.cleanup()
 
 
-async def _mark_task_failed(task_id: str, error_message: str):
+async def _mark_task_failed(
+    task_id: str,
+    error_message: str,
+    exception: Exception | None = None,
+):
     """
     标记任务为失败状态
     
     Args:
         task_id: 任务 ID
         error_message: 错误信息
+        exception: 原始异常对象（可选，用于提取堆栈跟踪）
     """
     try:
         # 使用 Celery 专用的数据库连接
@@ -321,11 +400,12 @@ async def _mark_task_failed(task_id: str, error_message: str):
                 error_message=error_message,
             )
         
-        # 发送 WebSocket 通知
+        # 发送 WebSocket 通知（传递异常对象以获取完整堆栈）
         await notification_service.publish_failed(
             task_id=task_id,
             error=error_message,
             step="failed",
+            exception=exception,
         )
         
     except Exception as e:

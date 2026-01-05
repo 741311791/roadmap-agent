@@ -14,7 +14,7 @@ Worker 进程初始化：
 - 确保每个子进程使用独立的数据库连接
 """
 from celery import Celery
-from celery.signals import worker_process_init
+from celery.signals import worker_process_init, task_failure, task_retry
 from app.config.settings import settings
 
 # 构建 Redis URL（支持 Upstash 等云服务的完整 URL，或根据配置构建）
@@ -119,9 +119,18 @@ def on_worker_process_init(**kwargs):
         except ImportError:
             pass
         
+        # 打印数据库连接信息（隐藏密码）
+        from app.config.settings import settings
+        db_url_safe = settings.DATABASE_URL.replace(
+            settings.POSTGRES_PASSWORD, "***"
+        ) if settings.POSTGRES_PASSWORD else settings.DATABASE_URL
+        
         logger.info(
             "celery_worker_process_init",
             message="Celery Worker 进程初始化完成，数据库引擎缓存已重置",
+            db_host=settings.POSTGRES_HOST,
+            db_name=settings.POSTGRES_DB,
+            db_url_safe=db_url_safe[:50] + "..." if len(db_url_safe) > 50 else db_url_safe,
         )
     except Exception as e:
         logger.error(
@@ -129,4 +138,42 @@ def on_worker_process_init(**kwargs):
             error=str(e),
             error_type=type(e).__name__,
         )
+
+
+# ============================================================
+# Celery 错误信号处理器（全局异常捕获）
+# ============================================================
+@task_failure.connect
+def on_task_failure(sender=None, task_id=None, exception=None, **kwargs):
+    """
+    Celery 任务失败信号处理器
+    
+    捕获所有未被 @safe_task 装饰器处理的任务异常。
+    当任务抛出异常且未被捕获时，此信号会被触发。
+    
+    Args:
+        sender: 任务实例
+        task_id: Celery 任务 ID
+        exception: 异常对象
+        **kwargs: 其他信号参数
+    """
+    from app.core.celery_error_handler import handle_task_failure
+    handle_task_failure(sender, task_id, exception, **kwargs)
+
+
+@task_retry.connect
+def on_task_retry(sender=None, task_id=None, **kwargs):
+    """
+    Celery 任务重试信号处理器
+    
+    当任务重试时，此信号会被触发。
+    用于记录重试事件，方便排查问题。
+    
+    Args:
+        sender: 任务实例
+        task_id: Celery 任务 ID
+        **kwargs: 其他信号参数（包含 reason、einfo 等）
+    """
+    from app.core.celery_error_handler import handle_task_retry
+    handle_task_retry(sender, task_id, **kwargs)
 

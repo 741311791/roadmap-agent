@@ -16,7 +16,7 @@ from app.models.domain import LearningPreferences
 from app.db.session import get_db
 from app.db.repositories.roadmap_repo import RoadmapRepository
 from app.db.repositories.task_repo import TaskRepository
-from .utils import get_failed_content_items
+from .utils import get_failed_content_items, get_failed_content_items_v2
 
 router = APIRouter(prefix="/roadmaps", tags=["retry"])
 tasks_router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -93,8 +93,20 @@ async def retry_failed_content(
     if not roadmap_metadata:
         raise HTTPException(status_code=404, detail=f"路线图 {roadmap_id} 不存在")
     
-    # 2. 获取失败的内容项目
-    failed_items = get_failed_content_items(roadmap_metadata.framework_data)
+    # 2. 获取失败的内容项目 (使用细粒度检测)
+    failed_items = await get_failed_content_items_v2(
+        roadmap_id=roadmap_id,
+        session=db,
+    )
+    
+    # 如果返回为空 (可能是老数据),降级到旧逻辑
+    if not any(failed_items.values()):
+        logger.info(
+            "fallback_to_old_failed_detection",
+            roadmap_id=roadmap_id,
+            message="concept_metadata 为空,使用 framework_data 作为降级方案"
+        )
+        failed_items = get_failed_content_items(roadmap_metadata.framework_data)
     
     # 3. 根据请求筛选要重试的类型
     items_to_retry = {}
@@ -381,8 +393,21 @@ async def retry_task(
             detail=f"路线图 {roadmap_id} 不存在"
         )
     
-    # 获取失败的内容项目（从 framework_data）
-    failed_items = get_failed_content_items(roadmap_metadata.framework_data)
+    # 获取失败的内容项目 (使用细粒度检测)
+    failed_items = await get_failed_content_items_v2(
+        roadmap_id=roadmap_id,
+        session=db,
+    )
+    
+    # 如果返回为空 (可能是老数据),降级到旧逻辑
+    if not any(failed_items.values()):
+        logger.info(
+            "fallback_to_old_failed_detection_in_retry_task",
+            roadmap_id=roadmap_id,
+            task_id=task_id,
+            message="concept_metadata 为空,使用 framework_data 作为降级方案"
+        )
+        failed_items = get_failed_content_items(roadmap_metadata.framework_data)
     
     # 筛选要重试的类型
     content_types = ["tutorial", "resources", "quiz"]

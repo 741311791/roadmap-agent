@@ -12,7 +12,7 @@ from typing import AsyncContextManager
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.session import get_db
+# get_db 已废弃，改用 safe_session_with_retry（在 create_session 中延迟导入）
 from app.db.repositories.base import BaseRepository
 from app.db.repositories.task_repo import TaskRepository
 from app.db.repositories.roadmap_meta_repo import RoadmapMetadataRepository
@@ -70,6 +70,13 @@ class RepositoryFactory:
         """
         创建数据库会话（上下文管理器）
         
+        ⚠️ 重要设计变更（v2.0）：
+        不再使用 `async for get_db()` 的方式，而是直接使用 `safe_session_with_retry()`。
+        这样可以更可靠地控制事务边界，避免生成器交互导致的时序问题。
+        
+        调用者必须显式调用 `await session.commit()` 来提交事务。
+        会话结束时会自动关闭连接。
+        
         使用示例：
         ```python
         async with repo_factory.create_session() as session:
@@ -77,7 +84,7 @@ class RepositoryFactory:
             task_repo = repo_factory.create_task_repo(session)
             # 执行数据库操作
             task = await task_repo.get_by_task_id("task-123")
-            # 提交事务
+            # 必须显式提交事务
             await session.commit()
         # 会话自动关闭
         ```
@@ -85,24 +92,31 @@ class RepositoryFactory:
         Yields:
             AsyncSession: 数据库会话
         """
-        async for session in get_db():
-            try:
-                yield session
-            finally:
-                # 会话由 get_db 管理，这里不需要额外操作
-                pass
+        from app.db.session import safe_session_with_retry
+        
+        async with safe_session_with_retry() as session:
+            yield session
     
     async def get_session(self) -> AsyncSession:
         """
         获取数据库会话（手动管理）
+        
+        ⚠️ 废弃警告：推荐使用 create_session() 上下文管理器，可自动处理会话关闭。
         
         注意：调用者负责关闭会话
         
         Returns:
             AsyncSession: 数据库会话
         """
-        async for session in get_db():
-            return session
+        import warnings
+        warnings.warn(
+            "get_session() 已废弃，请使用 create_session() 上下文管理器",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        
+        from app.db.session import AsyncSessionLocal
+        return AsyncSessionLocal()
     
     # ============================================================
     # Repository 创建方法

@@ -92,6 +92,16 @@ async def _async_retry_tutorial(
     concept = Concept.model_validate(concept_data)
     preferences = LearningPreferences.model_validate(user_preferences_data)
     
+    # 0. 记录重试开始日志
+    await execution_logger.info(
+        task_id=task_id,
+        category=LogCategory.WORKFLOW,
+        step="content_generation",
+        roadmap_id=roadmap_id,
+        concept_id=concept_id,
+        message=f"🔄 Starting tutorial retry for {concept.name}",
+    )
+    
     # 1. 更新状态为 'generating'
     await update_concept_status_in_framework(
         roadmap_id=roadmap_id,
@@ -183,7 +193,7 @@ async def _async_retry_tutorial(
         await execution_logger.info(
             task_id=task_id,
             category=LogCategory.WORKFLOW,
-            step="retry_tutorial",
+            step="content_generation",
             roadmap_id=roadmap_id,
             concept_id=concept_id,
             message=f"✅ Tutorial regenerated for {concept.name}",
@@ -196,6 +206,17 @@ async def _async_retry_tutorial(
             roadmap_id=roadmap_id,
             concept_id=concept_id,
             error=str(e),
+        )
+        
+        # 记录失败日志
+        await execution_logger.error(
+            task_id=task_id,
+            category=LogCategory.WORKFLOW,
+            step="content_generation",
+            roadmap_id=roadmap_id,
+            concept_id=concept_id,
+            message=f"❌ Tutorial retry failed for {concept.name}: {str(e)[:100]}",
+            details={"error": str(e)},
         )
         
         await update_concept_status_in_framework(
@@ -311,6 +332,16 @@ async def _async_retry_resources(
     concept = Concept.model_validate(concept_data)
     preferences = LearningPreferences.model_validate(user_preferences_data)
     
+    # 记录重试开始日志
+    await execution_logger.info(
+        task_id=task_id,
+        category=LogCategory.WORKFLOW,
+        step="content_generation",
+        roadmap_id=roadmap_id,
+        concept_id=concept_id,
+        message=f"🔄 Starting resources retry for {concept.name}",
+    )
+    
     await update_concept_status_in_framework(
         roadmap_id=roadmap_id,
         concept_id=concept_id,
@@ -391,7 +422,7 @@ async def _async_retry_resources(
         await execution_logger.info(
             task_id=task_id,
             category=LogCategory.WORKFLOW,
-            step="retry_resources",
+            step="content_generation",
             roadmap_id=roadmap_id,
             concept_id=concept_id,
             message=f"✅ Resources regenerated for {concept.name}",
@@ -404,6 +435,17 @@ async def _async_retry_resources(
             roadmap_id=roadmap_id,
             concept_id=concept_id,
             error=str(e),
+        )
+        
+        # 记录失败日志
+        await execution_logger.error(
+            task_id=task_id,
+            category=LogCategory.WORKFLOW,
+            step="content_generation",
+            roadmap_id=roadmap_id,
+            concept_id=concept_id,
+            message=f"❌ Resources retry failed for {concept.name}: {str(e)[:100]}",
+            details={"error": str(e)},
         )
         
         await update_concept_status_in_framework(
@@ -519,6 +561,16 @@ async def _async_retry_quiz(
     concept = Concept.model_validate(concept_data)
     preferences = LearningPreferences.model_validate(user_preferences_data)
     
+    # 记录重试开始日志
+    await execution_logger.info(
+        task_id=task_id,
+        category=LogCategory.WORKFLOW,
+        step="content_generation",
+        roadmap_id=roadmap_id,
+        concept_id=concept_id,
+        message=f"🔄 Starting quiz retry for {concept.name}",
+    )
+    
     await update_concept_status_in_framework(
         roadmap_id=roadmap_id,
         concept_id=concept_id,
@@ -599,7 +651,7 @@ async def _async_retry_quiz(
         await execution_logger.info(
             task_id=task_id,
             category=LogCategory.WORKFLOW,
-            step="retry_quiz",
+            step="content_generation",
             roadmap_id=roadmap_id,
             concept_id=concept_id,
             message=f"✅ Quiz regenerated for {concept.name}",
@@ -612,6 +664,17 @@ async def _async_retry_quiz(
             roadmap_id=roadmap_id,
             concept_id=concept_id,
             error=str(e),
+        )
+        
+        # 记录失败日志
+        await execution_logger.error(
+            task_id=task_id,
+            category=LogCategory.WORKFLOW,
+            step="content_generation",
+            roadmap_id=roadmap_id,
+            concept_id=concept_id,
+            message=f"❌ Quiz retry failed for {concept.name}: {str(e)[:100]}",
+            details={"error": str(e)},
         )
         
         await update_concept_status_in_framework(

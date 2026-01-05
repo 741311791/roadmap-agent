@@ -84,10 +84,16 @@ class OrchestratorFactory:
             # - keepalives_interval=10: keepalive 探测间隔 10 秒
             # - keepalives_count=5: 最多 5 次探测失败后关闭连接（总计 50 秒）
             # - options="-c statement_timeout=120000": SQL 语句超时 120 秒（防止长查询阻塞）
+            
+            # 根据环境动态调整连接池大小
+            # 研发环境（ENVIRONMENT=development）：max_size=10
+            # 生产环境（ENVIRONMENT=production）：max_size=20
+            langgraph_max_size = 10 if settings.ENVIRONMENT == "development" else 20
+            
             cls._connection_pool = AsyncConnectionPool(
                 conninfo=settings.CHECKPOINTER_DATABASE_URL,
                 min_size=2,
-                max_size=20,  # 提高最大连接数，应对工作流并发
+                max_size=langgraph_max_size,
                 max_idle=300,  # 延长空闲时间到 5 分钟
                 timeout=60,
                 reconnect_timeout=0,  # 自动重连
@@ -101,6 +107,12 @@ class OrchestratorFactory:
                     "keepalives_count": 5,  # 最多 5 次探测失败后关闭连接
                     "options": "-c statement_timeout=120000",  # SQL 语句超时 120 秒（120000ms）
                 },
+            )
+            
+            logger.info(
+                "langgraph_connection_pool_configured",
+                environment=settings.ENVIRONMENT,
+                max_size=langgraph_max_size,
             )
             
             # 打开连接池

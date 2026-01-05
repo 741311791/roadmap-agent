@@ -244,6 +244,8 @@ export const TREE_LAYOUT_CONFIG = {
 
 /**
  * 从 Concept 计算节点状态
+ * 
+ * 优先使用 overall_status（来自 concept_metadata 表），如果不存在则根据三个状态字段推断
  */
 export function getConceptNodeStatus(
   concept: Concept,
@@ -274,7 +276,26 @@ export function getConceptNodeStatus(
     return 'partial_failure';
   }
   
-  // 根据内容状态判断
+  // 🆕 优先使用 overall_status（来自 concept_metadata 表，更准确）
+  if (concept.overall_status) {
+    switch (concept.overall_status) {
+      case 'completed':
+        return 'completed';
+      case 'generating':
+        return 'loading';
+      case 'failed':
+        return 'failed';
+      case 'partial_failed':
+        return 'partial_failure';
+      case 'pending':
+        return 'pending';
+      default:
+        // 继续使用旧逻辑
+        break;
+    }
+  }
+  
+  // 向后兼容：根据三个状态字段推断（如果 overall_status 不存在）
   const allCompleted = 
     concept.content_status === 'completed' &&
     concept.resources_status === 'completed' &&
