@@ -21,7 +21,7 @@ from app.models.domain import SearchQuery, SearchResult
 from app.config.settings import settings
 from app.tools.search.tavily_api_search import TavilyAPISearchTool
 from app.tools.search.duckduckgo_search import DuckDuckGoSearchTool
-from app.db.session import get_db
+from app.db.session import get_db_transaction
 
 logger = structlog.get_logger()
 
@@ -74,6 +74,7 @@ class WebSearchRouter(BaseTool[SearchQuery, SearchResult]):
         """
         try:
             import asyncio
+            # 特殊处理：TavilyKeyRepository包含复杂的分布式锁逻辑，暂时保留
             from app.db.repositories.tavily_key_repo import TavilyKeyRepository
             
             repo = TavilyKeyRepository(db_session)
@@ -194,7 +195,7 @@ class WebSearchRouter(BaseTool[SearchQuery, SearchResult]):
         # 模式 2：从数据库查询 Key（原有行为）
         # 如果没有提供数据库会话，尝试获取一个
         if db_session is None:
-            async for session in get_db():
+            async for session in get_db_transaction():
                 db_session = session
                 break
         

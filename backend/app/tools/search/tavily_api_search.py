@@ -24,10 +24,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.tools.base import BaseTool
 from app.models.domain import SearchQuery, SearchResult
-from app.db.repositories.tavily_key_repo import TavilyKeyRepository
+from app.db.repositories.tavily_key_repo import TavilyKeyRepository  # 特殊处理：保留
 from app.utils.rate_limiter import get_tavily_rate_limiter
 
 logger = structlog.get_logger()
+
+# 注意：TavilyKeyRepository 包含复杂的分布式锁和配额管理逻辑，
+# 暂时保留在repositories/目录中，不强制迁移到CRUD。
+# 可以在Phase 2中将其重命名为 app/core/tavily_key_manager.py
 
 
 class TavilyAPISearchTool(BaseTool[SearchQuery, SearchResult]):

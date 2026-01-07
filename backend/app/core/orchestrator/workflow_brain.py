@@ -20,7 +20,9 @@ from typing import TYPE_CHECKING
 import structlog
 
 from app.db.session import AsyncSessionLocal, safe_session
-from app.db.repositories.roadmap_repo import RoadmapRepository
+from app.crud.crud_task import get_task_crud
+from app.crud.crud_roadmap import get_roadmap_crud
+from app.crud.crud_workflow import get_intent_analysis_crud, get_validation_crud, get_edit_crud
 from app.services.notification_service import NotificationService
 from app.services.execution_logger import ExecutionLogger
 from app.core.orchestrator.state_manager import StateManager

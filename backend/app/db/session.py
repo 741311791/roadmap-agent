@@ -844,39 +844,93 @@ async def safe_session():
                 session = None
 
 
-async def get_db() -> AsyncGenerator[AsyncSession, None]:
+# ============================================================
+# Session读写分离（生产级实现）
+# ============================================================
+
+async def get_db_readonly() -> AsyncGenerator[AsyncSession, None]:
     """
-    FastAPI 依赖注入：获取数据库会话
+    只读Session（不自动commit）
+    
+    使用场景：
+    - GET请求
+    - 查询操作
+    - 不需要事务的场景
+    
+    特性：
+    - 不自动commit，避免不必要的开销
+    - 异常时自动清理，不执行rollback
+    - 连接泄漏防护
     
     使用示例:
-        @app.get("/users")
-        async def get_users(db: AsyncSession = Depends(get_db)):
-            ...
+        from app.db.session import CurrentSession
         
-    异常处理策略：
-    1. 正常请求结束：自动 commit
-    2. 连接错误：记录警告，跳过 commit/rollback（数据库会自动回滚）
-    3. CancelledError（请求取消）：安全清理，归还连接（已用 shield 保护）
-    4. GeneratorExit（SSE 中断）：静默处理，不尝试 commit/rollback
-    5. IllegalStateChangeError（并发状态冲突）：静默处理
-    6. 其他异常：尝试 rollback，然后重新抛出
+        @router.get("/roadmaps/{roadmap_id}")
+        async def get_roadmap(
+            roadmap_id: str,
+            session: CurrentSession,
+        ):
+            result = await session.execute(select(Roadmap))
+            return result.scalar_one_or_none()
+    """
+    async with safe_session() as session:
+        try:
+            yield session
+            # ✅ 只读Session不commit
+        except GeneratorExit:
+            # SSE 流式传输中断
+            logger.debug("db_readonly_session_generator_exit")
+        except IllegalStateChangeError:
+            # 并发状态冲突，静默处理
+            pass
+        except asyncio.CancelledError:
+            # 请求取消
+            logger.debug("db_readonly_session_cancelled")
+            raise
+        except Exception as e:
+            # 只读操作异常，直接抛出，不rollback
+            logger.warning(
+                "db_readonly_session_error",
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            raise
+
+
+async def get_db_transaction() -> AsyncGenerator[AsyncSession, None]:
+    """
+    写Session（自动事务管理）
     
-    连接泄漏防护：
-    - safe_session() 使用 asyncio.shield() 确保连接关闭不可被取消
-    - 即使客户端断开连接或请求超时，连接也会被正确归还到池中
+    使用场景：
+    - POST/PUT/DELETE请求
+    - 需要修改数据的操作
+    - 需要明确事务边界的场景
     
-    连接错误被静默处理的原因：
-    - 查询操作通常已完成，数据已返回
-    - 写操作会被数据库自动回滚
-    - 抛出连接错误只会掩盖真正的业务错误
+    行为：
+    - 成功：自动commit
+    - 异常：自动rollback
+    
+    使用示例:
+        from app.db.session import CurrentSessionTransaction
+        
+        @router.post("/roadmaps")
+        async def create_roadmap(
+            request: RoadmapCreate,
+            session: CurrentSessionTransaction,
+        ):
+            roadmap = Roadmap(**request.dict())
+            session.add(roadmap)
+            # ✅ 函数结束时自动commit
+            return roadmap
     """
     async with safe_session() as session:
         try:
             yield session
             
-            # 尝试 commit
+            # ✅ 成功时自动commit
             try:
                 await session.commit()
+                logger.debug("transaction_committed")
             except IllegalStateChangeError:
                 # 并发状态冲突，静默处理
                 pass
@@ -884,14 +938,14 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
                 if _is_connection_error(commit_error):
                     # 连接错误：静默处理
                     logger.warning(
-                        "db_session_commit_connection_error",
+                        "db_transaction_commit_connection_error",
                         error=str(commit_error),
                         error_type=type(commit_error).__name__,
                     )
                 else:
                     # 其他错误：记录并重新抛出
                     logger.error(
-                        "db_session_commit_failed",
+                        "db_transaction_commit_failed",
                         error=str(commit_error),
                         error_type=type(commit_error).__name__,
                     )
@@ -899,20 +953,18 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         
         except GeneratorExit:
             # SSE 流式传输中断
-            # 不尝试 commit/rollback，直接让会话关闭
-            logger.debug("db_session_generator_exit")
+            logger.debug("db_transaction_generator_exit")
             
         except IllegalStateChangeError:
-            # 并发状态冲突（SSE 中断时常见）
-            # 静默处理，数据库会自动处理未完成的事务
+            # 并发状态冲突，静默处理
             pass
             
         except Exception as e:
-            # 其他异常：尝试回滚
+            # ✅ 异常时自动rollback
             if _is_connection_error(e):
                 # 连接已断开，无法回滚
                 logger.warning(
-                    "db_session_error_connection_lost",
+                    "db_transaction_error_connection_lost",
                     error=str(e),
                     error_type=type(e).__name__,
                 )
@@ -920,15 +972,54 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
                 # 尝试回滚
                 try:
                     await session.rollback()
+                    logger.debug("transaction_rollback", error=str(e)[:100])
                 except (IllegalStateChangeError, GeneratorExit):
                     # 并发状态冲突或 SSE 中断，静默处理
                     pass
                 except Exception as rollback_error:
                     logger.error(
-                        "db_session_rollback_failed",
+                        "db_transaction_rollback_failed",
                         original_error=str(e),
                         rollback_error=str(rollback_error),
                     )
             
             raise
+
+
+# ============================================================
+# 向后兼容：get_db() 保留作为过渡
+# ============================================================
+
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    """
+    ⚠️ 已废弃：请使用 get_db_readonly() 或 get_db_transaction()
+    
+    为了向后兼容，暂时保留此函数。
+    默认行为：自动提交事务（与 get_db_transaction() 相同）
+    
+    新代码请使用：
+    - GET请求 → get_db_readonly()
+    - POST/PUT/DELETE → get_db_transaction()
+    """
+    async for session in get_db_transaction():
+        yield session
+
+
+# ============================================================
+# 类型别名（用于依赖注入）
+# ============================================================
+from typing import Annotated
+from fastapi import Depends
+
+# 只读Session（用于GET请求和查询操作）
+CurrentSession = Annotated[
+    AsyncSession,
+    Depends(get_db_readonly),
+]
+
+# 写Session（用于POST/PUT/DELETE请求和事务操作）
+CurrentSessionTransaction = Annotated[
+    AsyncSession,
+    Depends(get_db_transaction),
+]
 

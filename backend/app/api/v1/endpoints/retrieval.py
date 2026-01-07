@@ -1,36 +1,34 @@
 """
 路线图查询相关端点
 """
+from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
-from app.db.session import get_db
-from app.services.roadmap_service import RoadmapService
-from app.core.dependencies import get_workflow_executor, get_repository_factory
-from app.core.orchestrator.executor import WorkflowExecutor
-from app.db.repository_factory import RepositoryFactory
-from app.db.repositories.roadmap_repo import RoadmapRepository
+from app.api.v1.deps import get_current_session
+from app.services.retrieval_service import RetrievalService, get_retrieval_service
 
 router = APIRouter(prefix="/roadmaps", tags=["retrieval"])
 logger = structlog.get_logger()
+
+# 依赖注入
+CurrentRetrievalService = Annotated[RetrievalService, Depends(get_retrieval_service)]
 
 
 @router.get("/{roadmap_id}")
 async def get_roadmap(
     roadmap_id: str,
-    db: AsyncSession = Depends(get_db),
-    repo_factory: RepositoryFactory = Depends(get_repository_factory),
-    orchestrator: WorkflowExecutor = Depends(get_workflow_executor),
+    session: AsyncSession = Depends(get_current_session),
+    service: CurrentRetrievalService = None,
 ):
     """
     获取完整的路线图数据
     
     Args:
         roadmap_id: 路线图ID
-        db: 数据库会话
-        repo_factory: Repository 工厂
-        orchestrator: 工作流执行器
+        session: 数据库会话
+        service: 检索服务
         
     Returns:
         - 如果路线图存在，返回完整的路线图框架数据
@@ -39,25 +37,13 @@ async def get_roadmap(
         
     Raises:
         HTTPException: 404 - 路线图不存在
-        
-    Example:
-        ```json
-        {
-            "roadmap_id": "python-web-dev-2024",
-            "title": "Python Web开发学习路线",
-            "topic": "Python Web开发",
-            "concepts": [...],
-            "status": "completed"
-        }
-        ```
     """
-    service = RoadmapService(repo_factory, orchestrator)
-    roadmap = await service.get_roadmap(roadmap_id)
+    # 调用Service层获取路线图
+    roadmap = await service.get_roadmap_with_status(session, roadmap_id)
     
     if not roadmap:
         # 检查是否有活跃任务正在生成这个路线图
-        repo = RoadmapRepository(db)
-        active_task = await repo.get_active_task_by_roadmap_id(roadmap_id)
+        active_task = await service.get_active_task_by_roadmap(session, roadmap_id)
         
         if active_task:
             # 路线图正在生成中

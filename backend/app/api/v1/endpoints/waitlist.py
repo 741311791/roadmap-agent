@@ -6,46 +6,25 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from pydantic import BaseModel, EmailStr
 import structlog
 
-from app.db.session import get_db
+from app.db.session import get_db_transaction
 from app.models.database import WaitlistEmail, beijing_now
+
+# ✅ 导入 Schema（符合企业级架构规范）
+from app.schemas.waitlist import (
+    WaitlistJoinRequest,
+    WaitlistJoinResponse,
+)
 
 router = APIRouter(prefix="/waitlist", tags=["waitlist"])
 logger = structlog.get_logger()
 
 
-class WaitlistJoinRequest(BaseModel):
-    """
-    加入候补名单请求
-    
-    Args:
-        email: 用户邮箱地址
-        source: 来源标记（可选，默认为 landing_page）
-    """
-    email: EmailStr
-    source: str = "landing_page"
-
-
-class WaitlistJoinResponse(BaseModel):
-    """
-    加入候补名单响应
-    
-    Args:
-        success: 是否成功
-        message: 提示消息
-        is_new: 是否为新用户（首次加入）
-    """
-    success: bool
-    message: str
-    is_new: bool
-
-
 @router.post("", response_model=WaitlistJoinResponse)
 async def join_waitlist(
     request: WaitlistJoinRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_transaction),
 ):
     """
     加入候补名单
@@ -112,7 +91,7 @@ async def join_waitlist(
 
 @router.get("/count")
 async def get_waitlist_count(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_transaction),
 ):
     """
     获取候补名单人数（仅供管理员查看）

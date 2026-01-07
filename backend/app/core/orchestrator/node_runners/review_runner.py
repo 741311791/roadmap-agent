@@ -19,7 +19,8 @@ from langgraph.types import interrupt
 
 from app.services.execution_logger import execution_logger, LogCategory
 from app.db.session import AsyncSessionLocal
-from app.db.repositories.review_feedback_repo import ReviewFeedbackRepository
+from app.crud.crud_workflow import get_review_feedback_crud
+from app.crud.crud_roadmap import get_roadmap_crud
 from ..base import RoadmapState
 from ..workflow_brain import WorkflowBrain
 
@@ -67,13 +68,13 @@ class ReviewRunner:
             是否是恢复执行
         """
         from app.db.session import AsyncSessionLocal
-        from app.db.repositories.roadmap_repo import RoadmapRepository
+        from app.crud.crud_task import get_task_crud
         
         try:
             async with AsyncSessionLocal() as session:
-                repo = RoadmapRepository(session)
-                # 修复：使用正确的方法名 get_task 而不是 get_task_by_id
-                task = await repo.get_task(task_id)
+                task_crud = get_task_crud()
+                # 使用CRUD方法获取任务
+                task = await task_crud.get(session, task_id)
                 
                 if task and task.status == "human_review_pending":
                     logger.debug(
@@ -203,10 +204,10 @@ class ReviewRunner:
             # ========================================
             try:
                 async with AsyncSessionLocal() as session:
-                    feedback_repo = ReviewFeedbackRepository(session)
+                    feedback_crud = get_review_feedback_crud()
                     
                     # 计算当前审核轮次
-                    review_count = await feedback_repo.count_by_task(task_id)
+                    review_count = await feedback_crud.count_by_task(session, task_id)
                     current_round = review_count + 1
                     
                     # 获取路线图框架快照
@@ -217,7 +218,8 @@ class ReviewRunner:
                     user_id = state.get("user_request", {}).user_id if hasattr(state.get("user_request"), "user_id") else state["task_id"]
                     
                     # 创建审核反馈记录
-                    feedback_record = await feedback_repo.create_feedback(
+                    feedback_record = await feedback_crud.create_feedback(
+                        session=session,
                         task_id=task_id,
                         roadmap_id=roadmap_id,
                         user_id=user_id,

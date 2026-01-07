@@ -9,6 +9,8 @@ from app.models.database import beijing_now
 from app.core.orchestrator.executor import WorkflowExecutor
 from app.db.repository_factory import RepositoryFactory
 from app.services.notification_service import notification_service
+from app.schemas.task import TaskStatusDetailResponse
+from app.schemas.roadmap import RoadmapDetail
 
 logger = structlog.get_logger()
 
@@ -305,7 +307,7 @@ class RoadmapService:
             "failed_count": len(final_state.get("failed_concepts", [])),
         }
     
-    async def get_task_status(self, task_id: str) -> dict | None:
+    async def get_task_status(self, task_id: str) -> TaskStatusDetailResponse | None:
         """
         获取任务状态
         
@@ -313,7 +315,7 @@ class RoadmapService:
             task_id: 任务 ID
             
         Returns:
-            任务状态字典，如果不存在则返回 None
+            任务状态 Schema，如果不存在则返回 None
         """
         async with self.repo_factory.create_session() as session:
             task_repo = self.repo_factory.create_task_repo(session)
@@ -337,15 +339,15 @@ class RoadmapService:
                     error=str(e),
                 )
         
-        return {
-            "task_id": task.task_id,
-            "status": task.status,
-            "current_step": current_step,
-            "roadmap_id": task.roadmap_id,
-            "created_at": task.created_at.isoformat() if task.created_at else None,
-            "updated_at": task.updated_at.isoformat() if task.updated_at else None,
-            "error_message": task.error_message,
-        }
+        return TaskStatusDetailResponse(
+            task_id=task.task_id,
+            status=task.status,
+            current_step=current_step,
+            roadmap_id=task.roadmap_id,
+            created_at=task.created_at.isoformat() if task.created_at else None,
+            updated_at=task.updated_at.isoformat() if task.updated_at else None,
+            error_message=task.error_message,
+        )
     
     async def _get_realtime_step_from_checkpointer(self, task_id: str) -> str | None:
         """
@@ -391,7 +393,7 @@ class RoadmapService:
             )
             return None
     
-    async def get_roadmap(self, roadmap_id: str) -> dict | None:
+    async def get_roadmap(self, roadmap_id: str) -> RoadmapDetail | None:
         """
         获取完整的路线图数据（合并 concept_metadata 的 overall_status）
         
@@ -446,7 +448,16 @@ class RoadmapService:
             concept_count=len(concept_meta_map),
         )
         
-        return framework_data
+        return RoadmapDetail(
+            roadmap_id=metadata.roadmap_id,
+            title=metadata.title,
+            description=metadata.description,
+            cover_image_url=metadata.cover_image_url,
+            framework_data=framework_data,
+            user_id=metadata.user_id,
+            created_at=metadata.created_at,
+            updated_at=metadata.updated_at,
+        )
     
     async def handle_human_review(  # DEPRECATED: 使用 workflow_resume_tasks.resume_after_review 替代
         self,

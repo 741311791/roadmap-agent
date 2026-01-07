@@ -22,7 +22,7 @@ from app.models.domain import (
     TutorialGenerationOutput,
 )
 from app.db.session import AsyncSessionLocal
-from app.db.repositories.roadmap_repo import RoadmapRepository
+from app.services.streaming_service import StreamingService
 from app.agents.intent_analyzer import IntentAnalyzerAgent
 from app.agents.curriculum_architect import CurriculumArchitectAgent
 from app.agents.tutorial_generator import TutorialGeneratorAgent
@@ -553,13 +553,16 @@ async def _generate_sse_stream(
                 )
                 
                 async with AsyncSessionLocal() as session:
-                    repo = RoadmapRepository(session)
+                    service = StreamingService()
                     
                     # 1. 创建任务记录
-                    await repo.create_task(
-                        task_id=task_id,
-                        user_id=request.user_id,
-                        user_request=request.model_dump(mode='json'),
+                    await service.create_task(
+                        session=session,
+                        task_data={
+                            "task_id": task_id,
+                            "user_id": request.user_id,
+                            "user_request": request.model_dump(mode='json'),
+                        },
                     )
                     
                     # 2. 保存路线图元数据
@@ -716,8 +719,8 @@ async def _chat_modification_stream(
         })
         
         async with AsyncSessionLocal() as session:
-            repo = RoadmapRepository(session)
-            roadmap_metadata = await repo.get_roadmap_metadata(roadmap_id)
+            service = StreamingService()
+            roadmap_metadata = await service.get_roadmap_metadata(session, roadmap_id)
             
             if not roadmap_metadata:
                 yield _sse_event("error", {"message": f"Roadmap {roadmap_id} not found"})

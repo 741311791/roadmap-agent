@@ -16,7 +16,7 @@ from app.agents.factory import AgentFactory
 from app.models.domain import EditPlanAnalyzerInput
 from app.services.execution_logger import execution_logger, LogCategory
 from app.db.session import AsyncSessionLocal
-from app.db.repositories.review_feedback_repo import EditPlanRepository
+from app.crud.crud_workflow import get_edit_plan_crud
 from ..base import RoadmapState
 from ..workflow_brain import WorkflowBrain
 
@@ -174,14 +174,15 @@ class EditPlanRunner:
             edit_plan_record_id = None
             try:
                 async with AsyncSessionLocal() as session:
-                    edit_plan_repo = EditPlanRepository(session)
+                    edit_plan_crud = get_edit_plan_crud()
                     
                     # 获取关联的 feedback_id（从上一步 review_runner 传递）
                     feedback_id = state.get("review_feedback_id")
                     
                     if feedback_id:
                         # 创建修改计划记录（将 confidence 从 float 转换为 str）
-                        plan_record = await edit_plan_repo.create_plan(
+                        plan_record = await edit_plan_crud.create_plan(
+                            session=session,
                             task_id=state["task_id"],
                             roadmap_id=state.get("roadmap_id"),
                             feedback_id=feedback_id,

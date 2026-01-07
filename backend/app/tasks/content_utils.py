@@ -183,14 +183,15 @@ async def update_concept_status_in_framework(
     """
     # 使用 Celery 专用的数据库连接管理，避免 Fork 进程继承问题
     from app.db.celery_session import CeleryRepositoryFactory
-    from app.db.repositories.roadmap_repo import RoadmapRepository
+    from app.crud.crud_roadmap import RoadmapCRUD
+    from app.models.database import RoadmapMetadata
     from app.models.domain import RoadmapFramework
     
+    roadmap_crud = RoadmapCRUD(RoadmapMetadata)
+    
     async with CeleryRepositoryFactory().create_session() as session:
-        repo = RoadmapRepository(session)
-        
         # 获取当前路线图
-        metadata = await repo.get_roadmap_metadata(roadmap_id)
+        metadata = await roadmap_crud.get_by_roadmap_id(session, roadmap_id)
         if not metadata or not metadata.framework_data:
             logger.warning(
                 "roadmap_not_found_for_status_update",

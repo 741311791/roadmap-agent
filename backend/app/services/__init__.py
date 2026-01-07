@@ -2,6 +2,8 @@
 
 from app.services.notification_service import notification_service, TaskEvent, StepName
 from app.services.roadmap_service import RoadmapService
+from app.services.concept_service import ConceptService, get_concept_service
+from app.services.content_service import ContentService, get_content_service
 # 延迟导入 task_recovery_service 避免循环依赖
 # from app.services.task_recovery_service import (
 #     task_recovery_service,
@@ -17,6 +19,12 @@ __all__ = [
     "StepName",
     # 路线图服务
     "RoadmapService",
+    # 概念服务
+    "ConceptService",
+    "get_concept_service",
+    # 内容服务
+    "ContentService",
+    "get_content_service",
     # 任务恢复服务（延迟导入，避免循环依赖）
     # "task_recovery_service",
     # "TaskRecoveryService",

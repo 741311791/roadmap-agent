@@ -111,17 +111,42 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# 配置 Request ID 中间件（必须在其他中间件之前）
-app.add_middleware(RequestIDMiddleware)
+# ============================================================
+# 中间件配置（洋葱圈模型：后添加先执行）
+# ============================================================
+# 
+# 执行顺序（请求进入）：CORS（最外层）→ RequestID → 业务逻辑
+# 执行顺序（响应返回）：业务逻辑 → RequestID → CORS（最外层）
+# 
+# ⚠️ 关键原理：
+# FastAPI/Starlette中间件是LIFO（后进先出）栈结构
+# - 先添加的中间件在内层（后执行）
+# - 后添加的中间件在外层（先执行）
+# 
+# ✅ 正确顺序：
+# 1. 先添加 RequestID（内层，晚执行）
+# 2. 后添加 CORS（外层，先执行）
+# 
+# 这样确保：
+# - CORS预检请求（OPTIONS）可以正确处理跨域头
+# - 所有请求（包括OPTIONS）都能获得RequestID
+# - RequestID可以通过expose_headers暴露给前端
+# ============================================================
 
-# 配置 CORS 中间件（从环境变量读取允许的域名）
+# 第1步：添加 RequestID 中间件（内层）
+app.add_middleware(RequestIDMiddleware)
+logger.info("middleware_registered", name="RequestIDMiddleware", layer="inner")
+
+# 第2步：添加 CORS 中间件（外层）
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.get_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"],  # ✅ 暴露RequestID给前端
 )
+logger.info("middleware_registered", name="CORSMiddleware", layer="outer")
 
 # 注册全局异常处理器
 app.add_exception_handler(StarletteHTTPException, http_exception_handler)

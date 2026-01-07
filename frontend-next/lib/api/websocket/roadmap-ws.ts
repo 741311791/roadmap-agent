@@ -171,19 +171,36 @@ export class RoadmapWebSocket {
 
   /**
    * 连接 WebSocket
+   * 
+   * ✅ v2.0: 强制要求 JWT Token 认证
+   * 
+   * @throws Error if token is not available
    */
   connect(includeHistory = true) {
+    // ✅ 强制要求 Token（未登录用户直接失败）
+    const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
+    
+    if (!token) {
+      const error = new Error('Authentication required: No access token found');
+      logger.error('Connection failed:', error.message);
+      this.handlers.onError?.(error);
+      throw error;
+    }
+    
     const wsUrl = WS_CONFIG.BASE_URL;
-    const url = `${wsUrl}/ws/${this.taskId}?include_history=${includeHistory}`;
+    
+    // ✅ 构建包含 Token 的 WebSocket URL
+    const url = `${wsUrl}/ws/${this.taskId}?include_history=${includeHistory}&token=${encodeURIComponent(token)}`;
     
     try {
-      logger.info(`Connecting to WebSocket: ${url}`);
+      logger.info(`Connecting to WebSocket: ${url.replace(/token=[^&]+/, 'token=***')}`);
       this.ws = new WebSocket(url);
       this.setupEventHandlers();
       this.startHeartbeat();
     } catch (error) {
       logger.error('Connection failed:', error);
       this.handlers.onError?.(error as Error);
+      throw error;
     }
   }
 

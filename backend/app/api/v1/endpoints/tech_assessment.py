@@ -3,20 +3,33 @@
 
 提供技术栈能力测验题目获取和评估功能
 """
-from typing import List, Optional, Dict, Any
 import random
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
-from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
-from app.db.session import get_db
+from app.db.session import get_db_transaction
 from app.db.redis_client import redis_client
-from app.db.repositories.tech_assessment_repo import TechAssessmentRepository
-from app.db.repositories.user_profile_repo import UserProfileRepository
+from app.services.tech_assessment_service import TechAssessmentService
 from app.services.tech_assessment_evaluator import evaluate_answers, TechCapabilityAnalyzer
 from app.services.tech_assessment_generator import TechAssessmentGenerator
+
+# ✅ 导入 Schema（符合企业级架构规范）
+from app.schemas.tech_assessment import (
+    QuestionResponse,
+    AssessmentResponse,
+    EvaluateRequest,
+    EvaluationResult,
+    KnowledgeGap,
+    ProficiencyVerification,
+    ScoreBreakdownItem,
+    CapabilityAnalysisResult,
+    AnalyzeCapabilityRequest,
+    CustomTechAssessmentRequest,
+    CustomAssessmentResponse,
+    AvailableTechnologiesResponse,
+)
 
 router = APIRouter(prefix="/tech-assessments", tags=["tech-assessments"])
 logger = structlog.get_logger()
@@ -46,164 +59,12 @@ PROFICIENCY_DISTRIBUTION = {
 
 
 # ============================================================
-# Redis 缓存辅助函数
-# ============================================================
-
-async def _save_assessment_to_cache(assessment_id: str, questions: List[Dict[str, Any]]):
-    """
-    将测验题目保存到 Redis 缓存
-    
-    Args:
-        assessment_id: 测验会话ID
-        questions: 完整题目列表（包含答案和解析）
-    """
-    cache_key = f"{ASSESSMENT_CACHE_PREFIX}{assessment_id}"
-    await redis_client.set_json(cache_key, questions, ex=ASSESSMENT_CACHE_TTL)
-    logger.debug(
-        "assessment_saved_to_cache",
-        assessment_id=assessment_id,
-        question_count=len(questions),
-        ttl_seconds=ASSESSMENT_CACHE_TTL,
-    )
-
-
-async def _get_assessment_from_cache(assessment_id: str) -> List[Dict[str, Any]] | None:
-    """
-    从 Redis 缓存获取测验题目
-    
-    Args:
-        assessment_id: 测验会话ID
-        
-    Returns:
-        题目列表，如果不存在或已过期则返回 None
-    """
-    cache_key = f"{ASSESSMENT_CACHE_PREFIX}{assessment_id}"
-    questions = await redis_client.get_json(cache_key)
-    
-    if questions:
-        logger.debug(
-            "assessment_loaded_from_cache",
-            assessment_id=assessment_id,
-            question_count=len(questions),
-        )
-    else:
-        logger.warning(
-            "assessment_not_found_in_cache",
-            assessment_id=assessment_id,
-        )
-    
-    return questions
-
-
-# ============================================================
-# Pydantic Models
-# ============================================================
-
-class QuestionResponse(BaseModel):
-    """题目响应模型"""
-    question: str = Field(..., description="题目内容")
-    type: str = Field(..., description="题目类型: single_choice, multiple_choice, true_false")
-    options: List[str] = Field(..., description="选项列表")
-    proficiency_level: Optional[str] = Field(None, description="题目来源级别: beginner, intermediate, expert")
-    # 不返回correct_answer和explanation，避免作弊
-
-
-class AssessmentResponse(BaseModel):
-    """测验响应模型"""
-    assessment_id: str
-    technology: str
-    proficiency_level: str
-    questions: List[QuestionResponse]
-    total_questions: int
-
-
-class EvaluateRequest(BaseModel):
-    """评估请求模型"""
-    assessment_id: str = Field(..., description="测验ID（前端获取题目时返回的ID）")
-    answers: List[str] = Field(..., description="用户的答案列表（按题目顺序）")
-
-
-class EvaluationResult(BaseModel):
-    """评估结果模型"""
-    score: int = Field(..., description="得分")
-    max_score: int = Field(..., description="总分")
-    percentage: float = Field(..., description="正确率百分比")
-    correct_count: int = Field(..., description="答对题数")
-    total_questions: int = Field(..., description="题目总数")
-    recommendation: str = Field(..., description="建议: confirmed, adjust, downgrade")
-    message: str = Field(..., description="建议说明")
-
-
-class KnowledgeGap(BaseModel):
-    """知识缺口模型"""
-    topic: str = Field(..., description="主题名称")
-    description: str = Field(..., description="详细说明")
-    priority: str = Field(..., description="优先级: high/medium/low")
-    recommendations: List[str] = Field(..., description="学习建议列表")
-
-
-class ProficiencyVerification(BaseModel):
-    """能力级别验证模型"""
-    claimed_level: str = Field(..., description="声称的能力级别")
-    verified_level: str = Field(..., description="验证的实际能力级别")
-    confidence: str = Field(..., description="置信度: high/medium/low")
-    reasoning: str = Field(..., description="判定依据")
-
-
-class ScoreBreakdownItem(BaseModel):
-    """分数细分项"""
-    correct: int = Field(..., description="答对题数")
-    total: int = Field(..., description="总题数")
-    percentage: float = Field(..., description="正确率百分比")
-
-
-class CapabilityAnalysisResult(BaseModel):
-    """能力分析结果模型"""
-    technology: str = Field(..., description="技术栈名称")
-    proficiency_level: str = Field(..., description="声称的能力级别")
-    overall_assessment: str = Field(..., description="整体评价")
-    strengths: List[str] = Field(..., description="优势领域列表")
-    weaknesses: List[str] = Field(..., description="薄弱点列表")
-    knowledge_gaps: List[KnowledgeGap] = Field(..., description="知识缺口列表")
-    learning_suggestions: List[str] = Field(..., description="学习建议列表")
-    proficiency_verification: ProficiencyVerification = Field(..., description="能力级别验证")
-    score_breakdown: Dict[str, ScoreBreakdownItem] = Field(..., description="各难度得分情况")
-
-
-class AnalyzeCapabilityRequest(BaseModel):
-    """能力分析请求模型"""
-    user_id: str = Field(..., description="用户ID")
-    assessment_id: str = Field(..., description="测验ID")
-    answers: List[str] = Field(..., description="用户的答案列表（按题目顺序）")
-    save_to_profile: bool = Field(default=True, description="是否保存到用户画像")
-
-
-class CustomTechAssessmentRequest(BaseModel):
-    """自定义技能测验请求模型"""
-    technology: str = Field(..., description="自定义技术栈名称")
-    proficiency: str = Field(..., description="能力级别")
-
-
-class CustomAssessmentResponse(BaseModel):
-    """自定义测验响应模型"""
-    status: str = Field(..., description="generation_started | ready")
-    message: str
-    assessment: Optional[AssessmentResponse] = None
-
-
-class AvailableTechnologiesResponse(BaseModel):
-    """可用技术栈列表响应模型"""
-    technologies: List[str] = Field(..., description="技术栈名称列表")
-    count: int = Field(..., description="技术栈总数")
-
-
-# ============================================================
 # API Endpoints
 # ============================================================
 
 @router.get("/available-technologies", response_model=AvailableTechnologiesResponse)
 async def get_available_technologies(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_transaction),
 ):
     """
     获取所有有测验题目的技术栈列表
@@ -220,8 +81,8 @@ async def get_available_technologies(
     """
     logger.info("get_available_technologies_requested")
     
-    repo = TechAssessmentRepository(db)
-    technologies = await repo.get_available_technologies()
+    service = TechAssessmentService()
+    technologies = await service.get_available_technologies(db)
     
     logger.info(
         "available_technologies_retrieved",
@@ -238,7 +99,7 @@ async def get_available_technologies(
 async def get_tech_assessment(
     technology: str,
     proficiency: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_transaction),
 ):
     """
     获取技术栈能力测验题目（混合级别抽选10题）
@@ -268,18 +129,14 @@ async def get_tech_assessment(
         proficiency_level=proficiency,
     )
     
-    repo = TechAssessmentRepository(db)
+    service = TechAssessmentService()
     
     # 获取三个级别的题库
-    assessments = {}
-    for level in ["beginner", "intermediate", "expert"]:
-        assessment = await repo.get_assessment(technology, level)
-        if not assessment:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Missing {level} assessment for {technology}"
-            )
-        assessments[level] = assessment.questions
+    try:
+        assessments_dict = await service.get_assessments_by_levels(db, technology)
+        assessments = {level: obj.questions for level, obj in assessments_dict.items()}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     
     # 获取目标分布比例
     distribution = PROFICIENCY_DISTRIBUTION.get(proficiency, PROFICIENCY_DISTRIBUTION["intermediate"])
@@ -359,7 +216,7 @@ async def evaluate_assessment(
     technology: str,
     proficiency: str,
     request: EvaluateRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_transaction),
 ):
     """
     评估测验结果（支持混合级别题目）
@@ -442,7 +299,7 @@ async def analyze_capability(
     technology: str,
     proficiency: str,
     request: AnalyzeCapabilityRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_transaction),
 ):
     """
     分析用户的技术栈能力（支持混合级别题目）
@@ -572,61 +429,19 @@ async def _save_capability_analysis_to_profile(
     from datetime import datetime
     from app.models.database import beijing_now
     
-    user_profile_repo = UserProfileRepository(db)
+    service = TechAssessmentService()
     
-    # 获取或创建用户画像
-    profile = await user_profile_repo.get_by_user_id(user_id)
-    if not profile:
-        # 创建新的用户画像
-        from app.models.database import UserProfile
-        profile = UserProfile(user_id=user_id, tech_stack=[])
-        profile = await user_profile_repo.create(profile, flush=True)
-    
-    # 更新tech_stack中对应技术栈的能力分析
-    tech_stack = profile.tech_stack or []
-    
-    # 查找是否已存在该技术栈
-    tech_item = None
-    tech_item_index = -1
-    for i, item in enumerate(tech_stack):
-        if item.get("technology") == technology:
-            tech_item = item
-            tech_item_index = i
-            break
-    
-    # 如果不存在，创建新的技术栈项
-    if not tech_item:
-        tech_item = {
-            "technology": technology,
-            "proficiency": proficiency,
-        }
-        tech_stack.append(tech_item)
-    else:
-        # 如果存在，更新proficiency级别
-        tech_item["proficiency"] = proficiency
-    
-    # 添加能力分析数据
-    tech_item["capability_analysis"] = {
-        **analysis_result,
-        "analyzed_at": datetime.utcnow().isoformat(),
-    }
-    
-    # 如果tech_item已存在，确保更新了列表中的引用
-    if tech_item_index >= 0:
-        tech_stack[tech_item_index] = tech_item
-    
-    # 使用update_by_id方法更新数据库
-    await user_profile_repo.update_by_id(
-        user_id,
-        tech_stack=tech_stack,
-        updated_at=beijing_now()
+    # 保存能力分析到用户画像
+    await service.save_capability_analysis_to_profile(
+        session=db,
+        user_id=user_id,
+        technology=technology,
+        proficiency=proficiency,
+        analysis_result=analysis_result,
     )
     
-    # Commit changes
-    await db.commit()
-    
     logger.info(
-        "capability_analysis_saved_to_profile",
+        "capability_analysis_saved",
         user_id=user_id,
         technology=technology,
         proficiency=proficiency,
@@ -637,7 +452,7 @@ async def _save_capability_analysis_to_profile(
 async def get_custom_tech_assessment(
     request: CustomTechAssessmentRequest,
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_transaction),
 ):
     """
     获取自定义技术栈测验
@@ -667,10 +482,10 @@ async def get_custom_tech_assessment(
         proficiency=request.proficiency,
     )
     
-    repo = TechAssessmentRepository(db)
+    service = TechAssessmentService()
     
     # 检查是否已存在该技术栈的题库（至少一个级别）
-    tech_exists = await repo.technology_exists(request.technology)
+    tech_exists = await service.technology_exists(db, request.technology)
     
     if tech_exists:
         # 已存在，检查所需级别是否齐全
@@ -678,7 +493,7 @@ async def get_custom_tech_assessment(
         all_levels_exist = True
         
         for level in ["beginner", "intermediate", "expert"]:
-            assessment = await repo.get_assessment(request.technology, level)
+            assessment = await service.get_assessment(db, request.technology, level)
             if assessment:
                 assessments[level] = assessment.questions
             else:
@@ -773,7 +588,7 @@ async def _generate_custom_assessment_pool(
     Args:
         technology: 技术栈名称
     """
-    from app.db.session import get_db
+    from app.db.session import get_db_transaction as get_db
     import asyncio
     
     logger.info(
@@ -787,13 +602,13 @@ async def _generate_custom_assessment_pool(
     
     try:
         generator = TechAssessmentGenerator()
-        repo = TechAssessmentRepository(db)
+        service = TechAssessmentService()
         
         for level in ["beginner", "intermediate", "expert"]:
             try:
                 # 检查是否已存在（避免重复生成）
-                exists = await repo.assessment_exists(technology, level)
-                if exists:
+                existing_assessment = await service.get_assessment(db, technology, level)
+                if existing_assessment:
                     logger.info(
                         "custom_assessment_already_exists",
                         technology=technology,
@@ -813,13 +628,12 @@ async def _generate_custom_assessment_pool(
                     proficiency_level=level,
                 )
                 
-                # 保存到数据库（使用 upsert 逻辑，避免唯一约束冲突）
-                await repo.create_assessment(
-                    assessment_id=assessment_data["assessment_id"],
+                # 保存到数据库
+                await service.create_assessment(
+                    session=db,
                     technology=technology,
-                    proficiency_level=level,
+                    proficiency=level,
                     questions=assessment_data["questions"],
-                    total_questions=assessment_data["total_questions"],
                 )
                 
                 logger.info(

@@ -168,12 +168,13 @@ class EditorRunner:
             
             if new_concept_ids:
                 from app.db.celery_session import celery_safe_session_with_retry
-                from app.db.repositories.concept_meta_repo import ConceptMetadataRepository
+                from app.crud.crud_concept import get_concept_crud
                 
                 async with celery_safe_session_with_retry() as session:
-                    concept_meta_repo = ConceptMetadataRepository(session)
+                    concept_crud = get_concept_crud()
                     # 批量初始化（只会创建不存在的 concept）
-                    await concept_meta_repo.batch_initialize_concepts(
+                    await concept_crud.batch_initialize_concepts(
+                        session=session,
                         roadmap_id=roadmap_id,
                         concept_ids=new_concept_ids,
                     )

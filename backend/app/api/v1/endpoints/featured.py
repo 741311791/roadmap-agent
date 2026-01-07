@@ -8,49 +8,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import structlog
 
-from app.db.session import get_db
-from app.models.database import User
-from app.db.repositories.roadmap_repo import RoadmapRepository
-from app.db.repositories.progress_repo import ProgressRepository
-from pydantic import BaseModel
-from typing import List, Optional
+from app.db.session import get_db_readonly
+from app.services.featured_service import FeaturedService
+
+# ✅ 导入 Schema（符合企业级架构规范）
+from app.schemas.featured import (
+    StageSummary,
+    FeaturedRoadmapItem,
+    FeaturedRoadmapsResponse,
+)
 
 router = APIRouter(prefix="/featured", tags=["featured"])
 logger = structlog.get_logger()
-
-
-class StageSummary(BaseModel):
-    """阶段摘要信息"""
-    name: str
-    description: Optional[str] = None
-    order: int
-
-
-class FeaturedRoadmapItem(BaseModel):
-    """精选路线图条目"""
-    roadmap_id: str
-    title: str
-    created_at: str
-    total_concepts: int
-    completed_concepts: int = 0
-    topic: Optional[str] = None
-    status: str = "completed"
-    stages: Optional[List[StageSummary]] = None
-
-
-class FeaturedRoadmapsResponse(BaseModel):
-    """精选路线图列表响应"""
-    roadmaps: List[FeaturedRoadmapItem]
-    total: int
-    featured_user_id: str
-    featured_user_email: str
 
 
 @router.get("/roadmaps", response_model=FeaturedRoadmapsResponse)
 async def get_featured_roadmaps(
     limit: int = 50,
     offset: int = 0,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_readonly),
 ):
     """
     获取精选路线图列表
@@ -97,14 +73,12 @@ async def get_featured_roadmaps(
                 limit=limit, 
                 offset=offset)
     
+    service = FeaturedService()
+    
     # 1. 根据邮箱查找Featured用户
-    result = await db.execute(
-        select(User).where(User.email == FEATURED_USER_EMAIL)
-    )
-    featured_user = result.scalar_one_or_none()
+    featured_user = await service.get_featured_user(db, FEATURED_USER_EMAIL)
     
     if not featured_user:
-        logger.warning("featured_user_not_found", email=FEATURED_USER_EMAIL)
         raise HTTPException(
             status_code=404,
             detail=f"Featured user with email {FEATURED_USER_EMAIL} not found. "
@@ -112,22 +86,11 @@ async def get_featured_roadmaps(
         )
     
     user_id = featured_user.id
-    logger.info("featured_user_found", 
-                user_id=user_id,
-                email=featured_user.email,
-                username=featured_user.username)
     
-    # 2. 获取该用户的所有已完成路线图（只包含未删除的）
-    repo = RoadmapRepository(db)
-    roadmaps = await repo.get_roadmaps_by_user(
-        user_id, 
-        limit=limit, 
-        offset=offset
+    # 2. 获取该用户的所有已完成路线图及Task
+    roadmaps, tasks_by_roadmap = await service.get_featured_roadmaps(
+        db, user_id, limit, offset
     )
-    
-    # 3. 批量获取所有路线图的 Task（解决 N+1 查询问题）
-    roadmap_ids = [r.roadmap_id for r in roadmaps]
-    tasks_by_roadmap = await repo.get_tasks_by_roadmap_ids_batch(roadmap_ids)
     
     roadmap_items = []
     

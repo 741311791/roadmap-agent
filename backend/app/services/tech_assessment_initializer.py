@@ -8,8 +8,8 @@ import asyncio
 from typing import List, Dict, Any
 import structlog
 
-from app.db.session import get_db
-from app.db.repositories.tech_assessment_repo import TechAssessmentRepository
+from app.db.session import get_db_transaction
+from app.crud.crud_tech_assessment import get_tech_assessment_crud
 from app.services.tech_assessment_generator import TechAssessmentGenerator
 
 logger = structlog.get_logger()
@@ -47,16 +47,16 @@ async def initialize_tech_assessments() -> Dict[str, Any]:
     
     try:
         # 获取数据库会话
-        db_gen = get_db()
-        db = await db_gen.__anext__()
+        db_gen = get_db_transaction()
+        db = await db_gen.__antml:parameter>
         
         try:
-            repo = TechAssessmentRepository(db)
+            tech_crud = get_tech_assessment_crud()
             generator = TechAssessmentGenerator()
             
             # ✅ 优化：一次性批量获取所有已存在的 (technology, level) 组合
             # 避免在循环中逐个查询（N+1 问题）
-            existing_combinations = await repo.get_existing_combinations()
+            existing_combinations = await tech_crud.get_existing_combinations(db)
             existing_count = len(existing_combinations)
             
             logger.info(
@@ -103,7 +103,8 @@ async def initialize_tech_assessments() -> Dict[str, Any]:
                     assessment_data = await generator.generate_assessment_with_plan(tech, level)
                     
                     # 保存到数据库
-                    await repo.create_assessment(
+                    await tech_crud.create_assessment(
+                        db,
                         assessment_id=assessment_data["assessment_id"],
                         technology=tech,
                         proficiency_level=level,

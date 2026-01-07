@@ -9,9 +9,7 @@ from .endpoints import (
     generation,
     retrieval,
     approval,
-    tutorial,
-    resource,
-    quiz,
+    content,  # ✅ 替代: tutorial, resource, quiz已合并到content
     modification,
     retry,
     progress,
@@ -31,6 +29,7 @@ from .endpoints import (
     cover_image,
     celery_monitor,
     concept_status,
+    auth_ext,
 )
 from app.core.auth import fastapi_users, auth_backend
 from app.core.auth.schemas import UserRead, UserCreate, UserUpdate
@@ -48,14 +47,8 @@ router.include_router(retrieval.router)
 # 人工审核相关
 router.include_router(approval.router)
 
-# 教程管理相关
-router.include_router(tutorial.router)
-
-# 资源管理相关
-router.include_router(resource.router)
-
-# 测验管理相关
-router.include_router(quiz.router)
+# 内容管理相关（教程/资源/测验）
+router.include_router(content.router)
 
 # 内容修改相关
 router.include_router(modification.router)
@@ -110,12 +103,15 @@ router.include_router(waitlist.router)
 router.include_router(cover_image.router)
 
 # ==================== FastAPI Users 认证路由 ====================
-# JWT 认证路由（登录、登出）
+# JWT 认证路由（登录）
 router.include_router(
     fastapi_users.get_auth_router(auth_backend),
     prefix="/auth/jwt",
     tags=["auth"],
 )
+
+# 认证扩展路由（登出、黑名单管理）
+router.include_router(auth_ext.router)
 
 # 用户管理路由（获取/更新当前用户信息）
 router.include_router(

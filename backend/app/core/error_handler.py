@@ -10,7 +10,7 @@ from typing import AsyncIterator, Any, Dict, Optional
 
 from app.services.notification_service import notification_service
 from app.services.execution_logger import execution_logger, LogCategory
-from app.db.repositories.roadmap_repo import RoadmapRepository
+from app.crud.crud_task import get_task_crud
 from app.db.session import AsyncSessionLocal
 
 logger = structlog.get_logger()
@@ -153,8 +153,9 @@ class WorkflowErrorHandler:
         """
         try:
             async with AsyncSessionLocal() as session:
-                repo = RoadmapRepository(session)
-                await repo.update_task_status(
+                task_crud = get_task_crud()
+                await task_crud.update_status(
+                    session=session,
                     task_id=task_id,
                     status="failed",
                     current_step=node_name,  # 修复：保留实际出错的节点名称，而不是写死为 "failed"

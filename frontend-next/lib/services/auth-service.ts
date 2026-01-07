@@ -212,12 +212,17 @@ class AuthService {
   
   /**
    * 异步登出（调用后端接口）
+   * 
+   * ✅ v2.0: 更新为新的登出端点（支持 JWT 黑名单）
    */
   async logoutAsync(): Promise<void> {
     try {
-      await apiClient.post('/auth/jwt/logout');
+      // ✅ 新端点：/auth/logout（会将 Token 加入黑名单）
+      await apiClient.post('/auth/logout');
+      console.log('[AuthService] Successfully logged out from server');
     } catch (error) {
       console.error('[AuthService] Logout API call failed:', error);
+      // 即使后端登出失败，也清除本地存储
     } finally {
       this.logout();
     }

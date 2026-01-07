@@ -30,15 +30,16 @@ async def update_task_status_failed(task_id: str, error: Exception) -> None:
     """
     try:
         from app.db.session import AsyncSessionLocal
-        from app.db.repositories.roadmap_repo import RoadmapRepository
+        from app.crud.crud_task import get_task_crud
         
         async with AsyncSessionLocal() as session:
-            repo = RoadmapRepository(session)
+            task_crud = get_task_crud()
             
             # 清理错误消息（移除敏感信息）
             error_message = sanitize_error_message(str(error), error)
             
-            await repo.update_task_status(
+            await task_crud.update_status(
+                session=session,
                 task_id=task_id,
                 status="failed",
                 current_step="failed",

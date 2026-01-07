@@ -23,6 +23,7 @@ from app.agents.quiz_generator import QuizGeneratorAgent
 from app.services.notification_service import notification_service
 from app.services.execution_logger import execution_logger
 from app.config.settings import settings
+from app.schemas.content_retry import ContentRetryResult
 
 logger = structlog.get_logger()
 
@@ -92,7 +93,7 @@ async def execute_retry_failed_task(
     # 并发控制已移除：改用 Celery --concurrency 参数控制全局并发
     # semaphore = asyncio.Semaphore(settings.PARALLEL_TUTORIAL_LIMIT)
     
-    async def retry_single_item(content_type: str, item: dict, current: int, total: int) -> dict:
+    async def retry_single_item(content_type: str, item: dict, current: int, total: int) -> ContentRetryResult:
         """重试单个项目 (增强版: 支持细粒度跳过)"""
         nonlocal success_count, failed_count
         
@@ -119,13 +120,13 @@ async def execute_retry_failed_task(
                         message="内容已在其他重试任务中完成,跳过",
                     )
                     success_count += 1  # 计入成功 (因为内容已存在)
-                    return {
-                        "concept_id": concept_id,
-                        "content_type": content_type,
-                        "success": True,
-                        "result": None,  # 没有新生成结果
-                        "skipped": True,  # 标记为跳过
-                    }
+                    return ContentRetryResult(
+                        concept_id=concept_id,
+                        content_type=content_type,
+                        success=True,
+                        result=None,  # 没有新生成结果
+                        skipped=True,  # 标记为跳过
+                    )
         
         # Agent 名称映射
         agent_name_map = {
@@ -263,12 +264,12 @@ async def execute_retry_failed_task(
                 data=output_data,
             )
             
-            return {
-                "concept_id": concept_id,
-                "content_type": content_type,
-                "success": True,
-                "result": result,
-            }
+            return ContentRetryResult(
+                concept_id=concept_id,
+                content_type=content_type,
+                success=True,
+                result=result,
+            )
             
         except Exception as e:
             failed_count += 1
@@ -316,12 +317,12 @@ async def execute_retry_failed_task(
                 error=str(e),
             )
             
-            return {
-                "concept_id": concept_id,
-                "content_type": content_type,
-                "success": False,
-                "error": str(e),
-            }
+            return ContentRetryResult(
+                concept_id=concept_id,
+                content_type=content_type,
+                success=False,
+                error=str(e),
+            )
     
     # 收集所有重试任务
     all_tasks = []

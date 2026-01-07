@@ -89,6 +89,7 @@ celery_app.conf.update(
         "app.tasks.content_retry_tasks",
         "app.tasks.roadmap_generation_tasks",
         "app.tasks.workflow_resume_tasks",
+        "app.tasks.cover_image_tasks",  # ✅ 新增：封面图生成任务
     ),
 )
 

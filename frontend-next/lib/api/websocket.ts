@@ -253,6 +253,10 @@ export class TaskWebSocket {
 
   /**
    * Connect to WebSocket server
+   * 
+   * ✅ v2.0: 强制要求 JWT Token 认证
+   * 
+   * @throws Error if token is not available
    */
   connect(includeHistory = true): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
@@ -260,11 +264,22 @@ export class TaskWebSocket {
       return;
     }
 
+    // ✅ 强制要求 Token（未登录用户直接失败）
+    const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
+    
+    if (!token) {
+      const error = new Error('Authentication required: No access token found');
+      console.error('[WS] Connection failed:', error.message);
+      throw error;
+    }
+
     // Convert http(s) to ws(s)
     const wsBaseUrl = API_BASE_URL.replace(/^http/, 'ws');
-    const wsUrl = `${wsBaseUrl}/api/v1/ws/${this.taskId}?include_history=${includeHistory}`;
+    
+    // ✅ 构建包含 Token 的 WebSocket URL
+    const wsUrl = `${wsBaseUrl}/api/v1/ws/${this.taskId}?include_history=${includeHistory}&token=${encodeURIComponent(token)}`;
 
-    console.log('[WS] Connecting to:', wsUrl);
+    console.log('[WS] Connecting to:', wsUrl.replace(/token=[^&]+/, 'token=***'));
 
     this.isIntentionallyClosed = false;
     this.ws = new WebSocket(wsUrl);

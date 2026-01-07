@@ -7,17 +7,26 @@ WebSocket 实时推送端点
 - 任务完成/失败通知
 
 客户端连接后，会实时收到与 task_id 相关的所有事件。
+
+🔒 安全策略：
+- 使用JWT Token进行身份验证（通过Query参数传递）
+- 验证用户是否拥有该任务的访问权限
+- 拒绝未授权的连接
 """
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, status
 from starlette.websockets import WebSocketState
 from typing import Optional
 import json
 import asyncio
+import time
 import structlog
+from jose import jwt, JWTError
 
 from app.services.notification_service import notification_service, TaskEvent
-from app.db.repositories.roadmap_repo import RoadmapRepository
+from app.crud.crud_task import TaskCRUD, get_task_crud
+from app.models.database import RoadmapTask
 from app.db.session import AsyncSessionLocal
+from app.config.settings import settings
 
 router = APIRouter(prefix="/api/v1")
 logger = structlog.get_logger()
@@ -100,10 +109,16 @@ manager = ConnectionManager()
 async def websocket_endpoint(
     websocket: WebSocket,
     task_id: str,
+    token: str = Query(None, description="JWT Token for authentication"),
     include_history: bool = Query(False, description="是否包含历史状态"),
 ):
     """
-    WebSocket 端点：订阅任务进度更新
+    WebSocket 端点：订阅任务进度更新（带鉴权）
+    
+    🔒 安全机制：
+    1. 必须提供有效的JWT Token（通过Query参数）
+    2. 验证Token的有效性和过期时间
+    3. 检查用户是否拥有该任务的访问权限
     
     连接后会实时收到以下事件：
     - progress: 任务进度更新
@@ -113,7 +128,11 @@ async def websocket_endpoint(
     
     Args:
         task_id: 任务 ID
+        token: JWT Token（必需）
         include_history: 是否在连接时发送当前状态（默认 False）
+    
+    连接URL示例：
+        ws://api.example.com/ws/task-123?token=eyJ...
     
     Message Format:
     ```json
@@ -126,7 +145,52 @@ async def websocket_endpoint(
     }
     ```
     """
+    # ===== 步骤1: 验证Token =====
+    user_id = None
+    if not token:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        logger.warning("ws_no_token", task_id=task_id)
+        return
+    
+    try:
+        # 解码JWT Token
+        payload = jwt.decode(
+            token,
+            settings.JWT_SECRET_KEY,
+            algorithms=[settings.JWT_ALGORITHM]
+        )
+        user_id = payload.get("sub")
+        
+        # 检查Token是否过期
+        exp = payload.get("exp")
+        if not exp or exp < time.time():
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            logger.warning("ws_token_expired", task_id=task_id)
+            return
+            
+    except JWTError as e:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        logger.warning("ws_auth_failed", task_id=task_id, error=str(e))
+        return
+    
+    # ===== 步骤2: 验证用户有权访问该任务 =====
+    task_crud = get_task_crud()
+    async with AsyncSessionLocal() as session:
+        task = await task_crud.get_by_task_id(session, task_id)
+        
+        if not task:
+            await websocket.close(code=status.WS_1003_UNSUPPORTED_DATA)
+            logger.warning("ws_task_not_found", task_id=task_id, user_id=user_id)
+            return
+        
+        if task.user_id != user_id:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            logger.warning("ws_forbidden", task_id=task_id, user_id=user_id, task_owner=task.user_id)
+            return
+    
+    # ===== 步骤3: 建立连接 =====
     await manager.connect(websocket, task_id)
+    logger.info("ws_connected", task_id=task_id, user_id=user_id)
     
     try:
         # 如果请求包含历史状态，先发送当前状态

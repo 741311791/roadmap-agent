@@ -1,18 +1,23 @@
 """
 封面图相关 API 端点
+
+⚠️ 架构变更（v2.0）：
+- 移除 BackgroundTasks（避免 Session 泄漏）
+- 改用 Celery 异步任务（独立进程，独立 Session）
 """
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 from pydantic import BaseModel
 
-from app.db.session import get_db
+from app.db.session import get_db_transaction
 from app.core.auth.deps import current_active_user
 from app.models.database import User
 from app.services.cover_image_service import CoverImageService
-import logging
+from app.tasks.cover_image_tasks import generate_cover_image_task, batch_generate_cover_images_task
+import structlog
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 router = APIRouter(tags=["cover-image"])
 
@@ -43,7 +48,7 @@ class GenerateCoverImageRequest(BaseModel):
 @router.get("/roadmap/{roadmap_id}/cover-image", response_model=CoverImageResponse)
 async def get_roadmap_cover_image(
     roadmap_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db_transaction)
 ):
     """
     获取路线图封面图信息（公开接口，无需认证）
@@ -70,17 +75,19 @@ async def get_roadmap_cover_image(
 @router.post("/roadmap/{roadmap_id}/cover-image/generate", response_model=CoverImageResponse)
 async def generate_roadmap_cover_image(
     roadmap_id: str,
-    background_tasks: BackgroundTasks,
     prompt: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_transaction),
     current_user: User = Depends(current_active_user)
 ):
     """
-    触发路线图封面图生成（异步）
+    触发路线图封面图生成（异步 Celery 任务）
+    
+    ✅ 架构变更：
+    - 移除 BackgroundTasks（避免 Session 泄漏）
+    - 改用 Celery 异步任务（独立进程）
     
     Args:
         roadmap_id: 路线图ID
-        background_tasks: 后台任务
         prompt: 可选的图片生成提示词
         db: 数据库会话
         current_user: 当前用户
@@ -90,17 +97,25 @@ async def generate_roadmap_cover_image(
     """
     service = CoverImageService(db)
     
-    # 在后台任务中生成封面图
-    background_tasks.add_task(
-        service.generate_cover_image,
+    # 验证路线图存在
+    status_info = await service.get_cover_image_status(roadmap_id)
+    
+    # ✅ 分发 Celery 任务（独立进程，独立 Session）
+    celery_task = generate_cover_image_task.delay(
         roadmap_id=roadmap_id,
-        prompt=prompt
+        prompt=prompt or "Generate a modern learning roadmap cover",
+    )
+    
+    logger.info(
+        "cover_image_task_dispatched",
+        roadmap_id=roadmap_id,
+        celery_task_id=celery_task.id,
     )
     
     return CoverImageResponse(
         roadmap_id=roadmap_id,
         cover_image_url=None,
-        status="generating",
+        status="pending",
         error=None
     )
 
@@ -109,7 +124,7 @@ async def generate_roadmap_cover_image(
 async def generate_roadmap_cover_image_sync(
     roadmap_id: str,
     prompt: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_transaction),
     current_user: User = Depends(current_active_user)
 ):
     """
@@ -158,18 +173,20 @@ class BatchGenerateRequest(BaseModel):
 @router.post("/cover-images/batch-generate")
 async def batch_generate_cover_images(
     request: BatchGenerateRequest,
-    background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_transaction),
     current_user: User = Depends(current_active_user)
 ):
     """
-    批量生成封面图（异步）
+    批量生成封面图（异步 Celery 任务）
     
     仅触发 pending/failed 状态的封面图生成，跳过已成功生成的。
     
+    ✅ 架构变更：
+    - 移除 BackgroundTasks（避免 Session 泄漏）
+    - 改用 Celery 批量任务
+    
     Args:
         request: 包含路线图ID列表的请求
-        background_tasks: 后台任务
         db: 数据库会话
         current_user: 当前用户
     
@@ -181,7 +198,7 @@ async def batch_generate_cover_images(
     # 获取当前封面图状态
     status_map = await service.batch_get_cover_images(request.roadmap_ids)
     
-    triggered = []
+    triggered_ids = []
     skipped = []
     
     # 只为 pending/failed 状态的路线图触发生成
@@ -194,18 +211,25 @@ async def batch_generate_cover_images(
             skipped.append(roadmap_id)
             continue
         
-        # 触发生成（not_started, pending, failed 状态）
-        triggered.append(roadmap_id)
-        background_tasks.add_task(
-            service.generate_cover_image,
-            roadmap_id=roadmap_id
+        # 收集需要生成的路线图ID
+        triggered_ids.append(roadmap_id)
+    
+    # ✅ 分发批量 Celery 任务
+    if triggered_ids:
+        celery_task = batch_generate_cover_images_task.delay(triggered_ids)
+        
+        logger.info(
+            "batch_cover_image_task_dispatched",
+            celery_task_id=celery_task.id,
+            triggered_count=len(triggered_ids),
+            skipped_count=len(skipped),
         )
     
     return {
-        "triggered": len(triggered),
+        "triggered": len(triggered_ids),
         "skipped": len(skipped),
-        "roadmap_ids": triggered,
-        "message": f"Triggered {len(triggered)} cover image generation tasks, skipped {len(skipped)} already successful"
+        "roadmap_ids": triggered_ids,
+        "message": f"Triggered {len(triggered_ids)} cover image generation tasks, skipped {len(skipped)} already successful"
     }
 
 
@@ -226,7 +250,7 @@ class BatchCoverImageResponse(BaseModel):
 @router.post("/cover-images/batch-get", response_model=list[BatchCoverImageResponse])
 async def batch_get_cover_images(
     request: BatchGetCoverImagesRequest,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db_transaction)
 ):
     """
     批量获取路线图封面图信息（公开接口，无需认证）

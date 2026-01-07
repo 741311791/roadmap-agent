@@ -113,11 +113,12 @@ class CurriculumDesignRunner:
             
             if concept_ids:
                 from app.db.celery_session import celery_safe_session_with_retry
-                from app.db.repositories.concept_meta_repo import ConceptMetadataRepository
+                from app.crud.crud_concept import get_concept_crud
                 
                 async with celery_safe_session_with_retry() as session:
-                    concept_meta_repo = ConceptMetadataRepository(session)
-                    await concept_meta_repo.batch_initialize_concepts(
+                    concept_crud = get_concept_crud()
+                    await concept_crud.batch_initialize_concepts(
+                        session=session,
                         roadmap_id=result.framework.roadmap_id,
                         concept_ids=concept_ids,
                     )

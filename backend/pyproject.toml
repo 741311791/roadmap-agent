@@ -43,7 +43,7 @@ dependencies = [
     "resend>=2.0.0",
     # Celery 异步任务队列
     "celery>=5.4.0",
-    "celery-pool-asyncio>=0.2.0",
+    "celery-pool-asyncio>=0.2.0",  # ✅ 稳定版本，生产环境验证
     "kombu>=5.4.0",
     "flower>=2.0.0",
     # 定时任务调度

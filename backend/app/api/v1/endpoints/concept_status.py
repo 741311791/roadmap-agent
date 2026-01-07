@@ -8,8 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 import structlog
 
-from app.db.session import get_db
-from app.db.repositories.concept_meta_repo import ConceptMetadataRepository
+from app.db.session import get_db_transaction
+from app.services.concept_status_service import ConceptStatusService
 from pydantic import BaseModel
 
 logger = structlog.get_logger()
@@ -67,7 +67,7 @@ class RoadmapConceptsStatusResponse(BaseModel):
 )
 async def get_roadmap_concepts_status(
     roadmap_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_transaction),
 ):
     """
     获取某 roadmap 的所有 Concept 内容生成状态
@@ -82,8 +82,8 @@ async def get_roadmap_concepts_status(
     Raises:
         HTTPException: 如果 roadmap 不存在
     """
-    repo = ConceptMetadataRepository(db)
-    concepts = await repo.get_by_roadmap_id(roadmap_id)
+    service = ConceptStatusService()
+    concepts = await service.get_roadmap_concepts(db, roadmap_id)
     
     if not concepts:
         # 可能是刚创建的 roadmap，尚未初始化 ConceptMetadata
@@ -143,7 +143,7 @@ async def get_roadmap_concepts_status(
 )
 async def get_concept_status(
     concept_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_transaction),
 ):
     """
     获取单个 Concept 的内容生成状态
@@ -158,8 +158,8 @@ async def get_concept_status(
     Raises:
         HTTPException: 如果 concept 不存在
     """
-    repo = ConceptMetadataRepository(db)
-    concept = await repo.get_by_concept_id(concept_id)
+    service = ConceptStatusService()
+    concept = await service.get_concept(db, concept_id)
     
     if not concept:
         raise HTTPException(

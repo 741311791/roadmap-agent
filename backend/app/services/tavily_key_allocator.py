@@ -122,7 +122,7 @@ async def allocate_keys_for_concepts(
         return allocation
 
 
-async def get_allocation_stats(allocation: dict[str, Optional[str]]) -> dict:
+async def get_allocation_stats(allocation: dict[str, Optional[str]]) -> TavilyAllocationStats:
     """
     获取分配统计信息（用于日志和监控）
     
@@ -130,18 +130,18 @@ async def get_allocation_stats(allocation: dict[str, Optional[str]]) -> dict:
         allocation: Key 分配映射
         
     Returns:
-        统计信息字典
+        Tavily 分配统计 Schema
     """
     total = len(allocation)
     with_keys = sum(1 for k in allocation.values() if k is not None)
     without_keys = total - with_keys
     unique_keys = len(set(allocation.values()) - {None})
     
-    return {
-        "total_concepts": total,
-        "concepts_with_keys": with_keys,
-        "concepts_without_keys": without_keys,
-        "unique_keys_used": unique_keys,
-        "allocation_rate": f"{with_keys / total * 100:.1f}%" if total > 0 else "0%",
-    }
+    return TavilyAllocationStats(
+        total_concepts=total,
+        concepts_with_keys=with_keys,
+        concepts_without_keys=without_keys,
+        unique_keys_used=unique_keys,
+        allocation_rate=f"{with_keys / total * 100:.1f}%" if total > 0 else "0%",
+    )
 

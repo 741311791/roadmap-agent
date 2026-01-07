@@ -1,6 +1,8 @@
 """
 创建管理员用户脚本
 
+✅ v2.0: 使用 FastAPI Users 的密码哈希机制（passlib）
+
 用法：
     uv run python scripts/create_admin_user.py
     
@@ -20,7 +22,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.db.session import AsyncSessionLocal
 from datetime import datetime, timezone, timedelta
 import uuid
-import bcrypt
+from passlib.context import CryptContext
+
+# ✅ 使用与 FastAPI Users 相同的密码哈希配置
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 async def create_admin_user(
@@ -58,10 +63,8 @@ async def create_admin_user(
         if not username:
             username = email.split("@")[0]
         
-        # 哈希密码（使用 bcrypt，与 FastAPI Users 兼容）
-        password_bytes = password.encode('utf-8')
-        salt = bcrypt.gensalt()
-        hashed_password = bcrypt.hashpw(password_bytes, salt).decode('utf-8')
+        # ✅ 哈希密码（使用 passlib，与 FastAPI Users 完全兼容）
+        hashed_password = pwd_context.hash(password)
         
         # 获取当前北京时间（无时区）
         utc_now = datetime.now(timezone.utc)

@@ -9,6 +9,7 @@ from typing import Optional, Union
 from sqlmodel import Session, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.database import RoadmapCoverImage, RoadmapMetadata, beijing_now
+from app.schemas.cover_image import CoverImageStatusResponse
 
 logger = logging.getLogger(__name__)
 
@@ -228,7 +229,7 @@ class CoverImageService:
         
         return None
     
-    async def get_cover_image_status(self, roadmap_id: str) -> dict:
+    async def get_cover_image_status(self, roadmap_id: str) -> CoverImageStatusResponse:
         """
         获取封面图生成状态
         
@@ -236,7 +237,7 @@ class CoverImageService:
             roadmap_id: 路线图ID
         
         Returns:
-            包含状态信息的字典
+            封面图状态 Schema
         """
         if self.is_async:
             result = await self.db.execute(
@@ -253,20 +254,21 @@ class CoverImageService:
             ).first()
         
         if not cover_image:
-            return {
-                "status": "not_started",
-                "url": None,
-                "error": None
-            }
+            return CoverImageStatusResponse(
+                status="not_started",
+                url=None,
+                error=None,
+                retry_count=0
+            )
         
-        return {
-            "status": cover_image.generation_status,
-            "url": cover_image.cover_image_url,
-            "error": cover_image.error_message,
-            "retry_count": cover_image.retry_count
-        }
+        return CoverImageStatusResponse(
+            status=cover_image.generation_status,
+            url=cover_image.cover_image_url,
+            error=cover_image.error_message,
+            retry_count=cover_image.retry_count
+        )
     
-    async def batch_get_cover_images(self, roadmap_ids: list[str]) -> dict[str, dict]:
+    async def batch_get_cover_images(self, roadmap_ids: list[str]) -> dict[str, CoverImageStatusResponse]:
         """
         批量获取多个路线图的封面图状态
         
@@ -274,7 +276,7 @@ class CoverImageService:
             roadmap_ids: 路线图ID列表
         
         Returns:
-            字典，key为roadmap_id，value为状态信息字典
+            字典，key为roadmap_id，value为封面图状态 Schema
         """
         if not roadmap_ids:
             return {}
@@ -294,26 +296,26 @@ class CoverImageService:
             ).all()
         
         # 构建结果字典
-        result_dict: dict[str, dict] = {}
+        result_dict: dict[str, CoverImageStatusResponse] = {}
         
         # 先处理有记录的路线图
         for cover_image in cover_images:
-            result_dict[cover_image.roadmap_id] = {
-                "status": cover_image.generation_status,
-                "url": cover_image.cover_image_url,
-                "error": cover_image.error_message,
-                "retry_count": cover_image.retry_count
-            }
+            result_dict[cover_image.roadmap_id] = CoverImageStatusResponse(
+                status=cover_image.generation_status,
+                url=cover_image.cover_image_url,
+                error=cover_image.error_message,
+                retry_count=cover_image.retry_count
+            )
         
         # 处理没有记录的路线图（返回not_started状态）
         for roadmap_id in roadmap_ids:
             if roadmap_id not in result_dict:
-                result_dict[roadmap_id] = {
-                    "status": "not_started",
-                    "url": None,
-                    "error": None,
-                    "retry_count": None
-                }
+                result_dict[roadmap_id] = CoverImageStatusResponse(
+                    status="not_started",
+                    url=None,
+                    error=None,
+                    retry_count=0
+                )
         
         return result_dict
 

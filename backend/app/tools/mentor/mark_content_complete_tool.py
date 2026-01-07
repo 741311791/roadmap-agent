@@ -9,7 +9,9 @@ from pydantic import BaseModel, Field
 import structlog
 
 from app.tools.base import BaseTool
-from app.db.repository_factory import get_repository_factory
+from app.crud.crud_progress import ProgressCRUD, get_progress_crud
+from app.db.session import AsyncSessionLocal
+from app.models.database import ConceptProgress, beijing_now
 
 logger = structlog.get_logger()
 
@@ -43,7 +45,7 @@ class MarkContentCompleteTool(BaseTool[MarkContentCompleteInput, MarkContentComp
     
     def __init__(self):
         super().__init__(tool_id="mark_content_complete_v1")
-        self.repo_factory = get_repository_factory()
+        self.progress_crud = get_progress_crud()
     
     async def execute(self, input_data: MarkContentCompleteInput) -> MarkContentCompleteOutput:
         """
@@ -56,14 +58,9 @@ class MarkContentCompleteTool(BaseTool[MarkContentCompleteInput, MarkContentComp
             标记结果
         """
         try:
-            # 使用 progress_repo 来更新学习进度
-            # progress_repo 应该已经在 progress.py endpoint 中实现了
-            async with self.repo_factory.create_session() as session:
-                from app.db.repositories.progress_repo import ProgressRepository
-                from app.models.database import ConceptProgress, beijing_now
+            # 使用ProgressCRUD更新学习进度
+            async with AsyncSessionLocal() as session:
                 from sqlalchemy import select
-                
-                progress_repo = ProgressRepository(session)
                 
                 # 查找或创建进度记录
                 result = await session.execute(

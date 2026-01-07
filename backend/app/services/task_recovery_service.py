@@ -25,6 +25,7 @@ from app.core.orchestrator.executor import WorkflowExecutor
 from app.db.repository_factory import RepositoryFactory
 from app.models.database import RoadmapTask, beijing_now
 from app.services.notification_service import notification_service
+from app.schemas.task_recovery import TaskRecoveryReport
 
 logger = structlog.get_logger()
 
@@ -57,18 +58,12 @@ class TaskRecoveryService:
         self.repo_factory = RepositoryFactory()
         self._recovery_tasks: dict[str, asyncio.Task] = {}
     
-    async def recover_interrupted_tasks(self) -> dict:
+    async def recover_interrupted_tasks(self) -> TaskRecoveryReport:
         """
         恢复所有被中断的任务（主入口）
         
         Returns:
-            恢复结果摘要：{
-                "total_found": int,      # 找到的中断任务数
-                "recovered": int,        # 成功恢复的任务数
-                "failed": int,           # 恢复失败的任务数
-                "no_checkpoint": int,    # 没有 checkpoint 的任务数
-                "task_ids": list[str],   # 尝试恢复的任务 ID 列表
-            }
+            任务恢复报告 Schema
         """
         logger.info(
             "task_recovery_starting",
@@ -97,7 +92,7 @@ class TaskRecoveryService:
             
             if not interrupted_tasks:
                 logger.info("task_recovery_no_tasks_found")
-                return result
+                return TaskRecoveryReport(**result)
             
             logger.info(
                 "task_recovery_tasks_found",
@@ -135,7 +130,7 @@ class TaskRecoveryService:
                 **result,
             )
             
-            return result
+            return TaskRecoveryReport(**result)
             
         except Exception as e:
             logger.error(
@@ -486,24 +481,23 @@ task_recovery_service = TaskRecoveryService(
 )
 
 
-async def recover_interrupted_tasks_on_startup() -> dict:
+async def recover_interrupted_tasks_on_startup() -> TaskRecoveryReport:
     """
     启动时恢复中断任务的便捷函数
     
     在应用启动时调用，自动恢复被服务器重启中断的任务。
     
     Returns:
-        恢复结果摘要
+        任务恢复报告 Schema
     """
     if not settings.ENABLE_TASK_RECOVERY:
         logger.info("task_recovery_disabled_by_config")
-        return {
-            "total_found": 0,
-            "recovered": 0,
-            "failed": 0,
-            "no_checkpoint": 0,
-            "task_ids": [],
-            "disabled": True,
-        }
+        return TaskRecoveryReport(
+            total_found=0,
+            recovered=0,
+            failed=0,
+            no_checkpoint=0,
+            task_ids=[],
+        )
     
     return await task_recovery_service.recover_interrupted_tasks()
