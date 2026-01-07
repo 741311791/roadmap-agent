@@ -223,8 +223,9 @@ class WorkflowBrain:
         # 2. 更新数据库状态（使用统一事务）
         try:
             async with AsyncSessionLocal() as session:
-                repo = RoadmapRepository(session)
-                await repo.update_task_status(
+                task_crud = get_task_crud()
+                await task_crud.update_status(
+                    session=session,
                     task_id=task_id,
                     status="processing",
                     current_step=node_name,
@@ -350,8 +351,9 @@ class WorkflowBrain:
         # 1. 更新数据库状态为失败
         try:
             async with AsyncSessionLocal() as session:
-                repo = RoadmapRepository(session)
-                await repo.update_task_status(
+                task_crud = get_task_crud()
+                await task_crud.update_status(
+                    session=session,
                     task_id=ctx.task_id,
                     status="failed",
                     current_step=ctx.node_name,
@@ -412,8 +414,8 @@ class WorkflowBrain:
             唯一的 roadmap_id
         """
         async with AsyncSessionLocal() as session:
-            repo = RoadmapRepository(session)
-            unique_id = await ensure_unique_roadmap_id(roadmap_id, repo)
+            roadmap_crud = get_roadmap_crud()
+            unique_id = await ensure_unique_roadmap_id(roadmap_id, roadmap_crud, session)
             
             logger.info(
                 "workflow_brain_roadmap_id_ensured",
@@ -450,16 +452,17 @@ class WorkflowBrain:
         )
         
         # 第一步：保存 Intent Analysis 元数据
-        # 注意：repo 方法只调用 flush()，需要手动 commit
+        # 注意：crud 方法只调用 flush()，需要手动 commit
         async with AsyncSessionLocal() as session:
-            repo = RoadmapRepository(session)
-            await repo.save_intent_analysis_metadata(task_id, intent_analysis)
+            intent_crud = get_intent_analysis_crud()
+            await intent_crud.save_intent_analysis(session, task_id, intent_analysis)
             await session.commit()  # ✅ 必须手动 commit 才能持久化
         
         # 第二步：更新任务状态和 roadmap_id
         async with AsyncSessionLocal() as session:
-            repo = RoadmapRepository(session)
-            await repo.update_task_status(
+            task_crud = get_task_crud()
+            await task_crud.update_status(
+                session=session,
                 task_id=task_id,
                 status="processing",
                 current_step="intent_analysis",
@@ -501,16 +504,17 @@ class WorkflowBrain:
         )
         
         # 第一步：保存路线图框架
-        # 注意：repo 方法只调用 flush()，需要手动 commit
+        # 注意：crud 方法只调用 flush()，需要手动 commit
         async with AsyncSessionLocal() as session:
-            repo = RoadmapRepository(session)
-            await repo.save_roadmap_metadata(roadmap_id, user_id, framework)
+            roadmap_crud = get_roadmap_crud()
+            await roadmap_crud.save_roadmap_metadata(session, roadmap_id, user_id, framework)
             await session.commit()  # ✅ 必须手动 commit 才能持久化
         
         # 第二步：更新任务状态
         async with AsyncSessionLocal() as session:
-            repo = RoadmapRepository(session)
-            await repo.update_task_status(
+            task_crud = get_task_crud()
+            await task_crud.update_status(
+                session=session,
                 task_id=task_id,
                 status="processing",
                 current_step="curriculum_design",
@@ -572,9 +576,7 @@ class WorkflowBrain:
         )
         
         async with AsyncSessionLocal() as session:
-            from app.db.repositories.validation_repo import ValidationRepository
-            
-            validation_repo = ValidationRepository(session)
+            validation_crud = get_validation_crud()
             
             # 统计问题数量
             critical_count = len([i for i in validation_result.issues if i.severity == "critical"])
@@ -582,7 +584,8 @@ class WorkflowBrain:
             suggestion_count = len(validation_result.improvement_suggestions)
             
             # 创建验证记录（传递所有新字段）
-            await validation_repo.create_validation_record(
+            await validation_crud.create_validation_record(
+                session=session,
                 task_id=task_id,
                 roadmap_id=roadmap_id,
                 is_valid=validation_result.is_valid,
@@ -639,12 +642,11 @@ class WorkflowBrain:
         )
         
         async with AsyncSessionLocal() as session:
-            from app.db.repositories.edit_repo import EditRepository
-            
-            edit_repo = EditRepository(session)
+            edit_crud = get_edit_crud()
             
             # 创建编辑记录
-            await edit_repo.create_edit_record(
+            await edit_crud.create_edit_record(
+                session=session,
                 task_id=task_id,
                 roadmap_id=roadmap_id,
                 origin_framework_data=origin_framework.model_dump(),
@@ -754,8 +756,9 @@ class WorkflowBrain:
             # 1.1 一次性保存所有教程（单个事务）
             if tutorial_refs:
                 async with safe_session_with_retry() as session:
-                    repo = RoadmapRepository(session)
-                    await repo.save_tutorials_batch(tutorial_refs, roadmap_id)
+                    from app.crud.crud_tutorial import get_tutorial_crud
+                    tutorial_crud = get_tutorial_crud()
+                    await tutorial_crud.save_tutorials_batch(session, tutorial_refs, roadmap_id)
                     await session.commit()
                 logger.debug(
                     "workflow_brain_tutorials_saved",
@@ -766,8 +769,9 @@ class WorkflowBrain:
             # 1.2 一次性保存所有资源（单个事务）
             if resource_refs:
                 async with safe_session_with_retry() as session:
-                    repo = RoadmapRepository(session)
-                    await repo.save_resources_batch(resource_refs, roadmap_id)
+                    from app.crud.crud_resource import get_resource_crud
+                    resource_crud = get_resource_crud()
+                    await resource_crud.save_resources_batch(session, resource_refs, roadmap_id)
                     await session.commit()
                 logger.debug(
                     "workflow_brain_resources_saved",
@@ -778,8 +782,9 @@ class WorkflowBrain:
             # 1.3 一次性保存所有测验（单个事务）
             if quiz_refs:
                 async with safe_session_with_retry() as session:
-                    repo = RoadmapRepository(session)
-                    await repo.save_quizzes_batch(quiz_refs, roadmap_id)
+                    from app.crud.crud_quiz import get_quiz_crud
+                    quiz_crud = get_quiz_crud()
+                    await quiz_crud.save_quizzes_batch(session, quiz_refs, roadmap_id)
                     await session.commit()
                 logger.debug(
                     "workflow_brain_quizzes_saved",
@@ -800,13 +805,13 @@ class WorkflowBrain:
             # Phase 2: 更新 framework_data（独立事务）
             # ============================================================
             async with safe_session_with_retry() as session:
-                repo = RoadmapRepository(session)
+                roadmap_crud = get_roadmap_crud()
                 
                 logger.info(
                     "workflow_brain_reading_roadmap_metadata",
                     roadmap_id=roadmap_id,
                 )
-                roadmap_metadata = await repo.get_roadmap_metadata(roadmap_id)
+                roadmap_metadata = await roadmap_crud.get_by_roadmap_id(session, roadmap_id)
                 logger.info(
                     "workflow_brain_roadmap_metadata_read",
                     roadmap_id=roadmap_id,
@@ -828,7 +833,8 @@ class WorkflowBrain:
                     from app.models.domain import RoadmapFramework
                     framework_obj = RoadmapFramework.model_validate(updated_framework)
                     
-                    await repo.save_roadmap_metadata(
+                    await roadmap_crud.save_roadmap_metadata(
+                        session=session,
                         roadmap_id=roadmap_id,
                         user_id=roadmap_metadata.user_id,
                         framework=framework_obj,
@@ -1020,8 +1026,9 @@ class WorkflowBrain:
         )
         
         async with AsyncSessionLocal() as session:
-            repo = RoadmapRepository(session)
-            await repo.update_task_status(
+            task_crud = get_task_crud()
+            await task_crud.update_status(
+                session=session,
                 task_id=task_id,
                 status="human_review_pending",
                 current_step="human_review",
@@ -1061,8 +1068,9 @@ class WorkflowBrain:
         )
         
         async with AsyncSessionLocal() as session:
-            repo = RoadmapRepository(session)
-            await repo.update_task_status(
+            task_crud = get_task_crud()
+            await task_crud.update_status(
+                session=session,
                 task_id=task_id,
                 status="processing",
                 current_step="human_review_completed",
@@ -1096,8 +1104,9 @@ class WorkflowBrain:
         )
         
         async with AsyncSessionLocal() as session:
-            repo = RoadmapRepository(session)
-            await repo.update_task_celery_id(
+            task_crud = get_task_crud()
+            await task_crud.update_celery_id(
+                session=session,
                 task_id=task_id,
                 celery_task_id=celery_task_id,
             )
