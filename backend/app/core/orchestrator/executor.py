@@ -101,8 +101,8 @@ class WorkflowExecutor:
                 roadmap_id=final_state.get("roadmap_id"),
             )
             
-            # 清除 live_step 缓存
-            self.state_manager.clear_live_step(task_id)
+            # 清除 live_step 缓存（Redis）
+            await self.state_manager.clear_live_step(task_id)
             
             # 关键修复：刷新执行日志缓冲区，确保所有日志都被写入
             # 场景：工作流快速暂停（如 human_review interrupt）时，日志可能还在缓冲区中
@@ -122,8 +122,8 @@ class WorkflowExecutor:
                 error_type=type(e).__name__,
             )
             
-            # 清除 live_step 缓存
-            self.state_manager.clear_live_step(task_id)
+            # 清除 live_step 缓存（Redis）
+            await self.state_manager.clear_live_step(task_id)
             
             # 关键修复：即使失败也要刷新日志，确保错误日志被记录
             await self.execution_logger.flush()

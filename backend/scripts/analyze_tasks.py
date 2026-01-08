@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from sqlalchemy import select
-from app.db.session import AsyncSessionLocal
+from app.db.session import async_session_maker
 from app.models.database import RoadmapTask
 import structlog
 
@@ -15,7 +15,7 @@ logger = structlog.get_logger()
 
 async def analyze_tasks():
     """分析任务状态和失败原因"""
-    async with AsyncSessionLocal() as session:
+    async with async_session_maker.begin() as session:
         # 查询所有已完成的任务
         result_completed = await session.execute(
             select(RoadmapTask)

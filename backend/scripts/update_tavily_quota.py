@@ -37,7 +37,7 @@ backend_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_dir))
 
 from app.config.settings import settings
-from app.db.session import AsyncSessionLocal
+from app.db.session import async_session_maker
 from app.models.database import TavilyAPIKey
 
 # 配置日志
@@ -237,7 +237,7 @@ async def update_all_keys_quota() -> None:
         timestamp=datetime.now().isoformat()
     )
     
-    async with AsyncSessionLocal() as session:
+    async with async_session_maker.begin() as session:
         try:
             # 查询所有 Key（条件：remaining_quota <= plan_limit，排除异常数据）
             stmt = select(TavilyAPIKey).where(

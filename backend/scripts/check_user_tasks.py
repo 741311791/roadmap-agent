@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from sqlalchemy import select, func
-from app.db.session import AsyncSessionLocal
+from app.db.session import async_session_maker
 from app.models.database import RoadmapTask
 import structlog
 
@@ -21,7 +21,7 @@ logger = structlog.get_logger()
 
 async def check_tasks():
     """检查数据库中的任务数据"""
-    async with AsyncSessionLocal() as session:
+    async with async_session_maker.begin() as session:
         # 1. 检查总任务数
         result = await session.execute(select(func.count()).select_from(RoadmapTask))
         total_count = result.scalar()

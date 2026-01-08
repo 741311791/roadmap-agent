@@ -62,7 +62,6 @@ class QuizCRUD(BaseCRUD[QuizMetadata, QuizCreate, QuizUpdate]):
             select(QuizMetadata)
             .where(QuizMetadata.roadmap_id == roadmap_id)
             .where(QuizMetadata.concept_id == concept_id)
-            .where(QuizMetadata.deleted_at.is_(None))
         )
         return result.scalar_one_or_none()
     

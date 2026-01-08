@@ -15,8 +15,9 @@ from app.models.domain import (
     QuizGenerationInput,
     RoadmapFramework,
 )
-from app.db.session import AsyncSessionLocal
-from app.db.repositories.roadmap_repo import RoadmapRepository
+from app.db.session import async_session_maker
+from app.crud.crud_roadmap import RoadmapCRUD
+from app.models.database import RoadmapMetadata
 from app.agents.tutorial_generator import TutorialGeneratorAgent
 from app.agents.resource_recommender import ResourceRecommenderAgent
 from app.agents.quiz_generator import QuizGeneratorAgent
@@ -103,10 +104,10 @@ async def execute_retry_failed_task(
         item_start_time = time.time()
         
         # 【新增】实时检查 concept_metadata 状态,避免重复生成
-        async with AsyncSessionLocal() as check_session:
-            from app.db.repositories.concept_meta_repo import ConceptMetadataRepository
-            concept_meta_repo = ConceptMetadataRepository(check_session)
-            meta = await concept_meta_repo.get_by_concept_id(concept_id)
+        async with async_session_maker.begin() as check_session:
+            from app.crud.crud_concept import get_concept_crud
+            concept_crud = get_concept_crud()
+            meta = await concept_crud.get_by_concept_id(check_session, concept_id)
             
             if meta:
                 status_field = f"{content_type}_status"
@@ -214,9 +215,9 @@ async def execute_retry_failed_task(
             item_duration_ms = int((time.time() - item_start_time) * 1000)
             
             # 【新增】更新 concept_metadata 状态
-            async with AsyncSessionLocal() as update_session:
-                from app.db.repositories.concept_meta_repo import ConceptMetadataRepository
-                concept_meta_repo = ConceptMetadataRepository(update_session)
+            async with async_session_maker.begin() as update_session:
+                from app.crud.crud_concept import get_concept_crud
+                concept_crud = get_concept_crud()
                 
                 # 提取 content_id
                 content_id = None
@@ -227,7 +228,8 @@ async def execute_retry_failed_task(
                 elif content_type == "quiz" and result:
                     content_id = result.quiz_id if hasattr(result, 'quiz_id') else None
                 
-                await concept_meta_repo.update_content_status(
+                await concept_crud.update_content_status(
+                    update_session,
                     concept_id=concept_id,
                     content_type=content_type,
                     status="completed",
@@ -284,11 +286,12 @@ async def execute_retry_failed_task(
             )
             
             # 【新增】更新 concept_metadata 状态为 failed
-            async with AsyncSessionLocal() as update_session:
-                from app.db.repositories.concept_meta_repo import ConceptMetadataRepository
-                concept_meta_repo = ConceptMetadataRepository(update_session)
+            async with async_session_maker.begin() as update_session:
+                from app.crud.crud_concept import get_concept_crud
+                concept_crud = get_concept_crud()
                 
-                await concept_meta_repo.update_content_status(
+                await concept_crud.update_content_status(
+                    update_session,
                     concept_id=concept_id,
                     content_type=content_type,
                     status="failed",
@@ -345,9 +348,9 @@ async def execute_retry_failed_task(
     }
     
     # 更新数据库中的框架数据
-    async with AsyncSessionLocal() as session:
-        repo = RoadmapRepository(session)
-        roadmap_metadata = await repo.get_roadmap_metadata(roadmap_id)
+    async with async_session_maker.begin() as session:
+        roadmap_crud = RoadmapCRUD(RoadmapMetadata)
+        roadmap_metadata = await roadmap_crud.get_by_roadmap_id(session, roadmap_id)
         
         if roadmap_metadata:
             framework_data = roadmap_metadata.framework_data
@@ -379,7 +382,7 @@ async def execute_retry_failed_task(
             
             # 保存更新后的框架
             updated_framework = RoadmapFramework.model_validate(framework_data)
-            await repo.save_roadmap_metadata(
+            await roadmap_crud.update(session, roadmap_metadata, obj_in=
                 roadmap_id=roadmap_id,
                 user_id=roadmap_metadata.user_id,
                 framework=updated_framework,
@@ -423,8 +426,8 @@ async def execute_retry_failed_task(
     final_status = "completed" if success_count > 0 else "failed"
     
     # 更新 RoadmapTask 状态
-    async with AsyncSessionLocal() as session:
-        repo = RoadmapRepository(session)
+    async with async_session_maker.begin() as session:
+        roadmap_crud = RoadmapCRUD(RoadmapMetadata)
         await repo.update_task_status(
             task_id=retry_task_id,
             status=final_status,

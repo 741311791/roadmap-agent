@@ -2,13 +2,13 @@
 用户服务
 
 处理用户相关的业务逻辑：
-- 用户画像管理
+- 用户画像管理（带 Redis 缓存）
 - 路线图历史查询
 - 任务列表查询
 """
 from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 import structlog
 
 from app.crud.crud_roadmap import RoadmapCRUD
@@ -24,6 +24,7 @@ from app.schemas.user import (
     TaskListResponse,
     StageSummary,
 )
+from app.core.cache import get_or_set_cache, invalidate_cache
 
 logger = structlog.get_logger()
 
@@ -40,17 +41,59 @@ class UserService:
         self,
         session: AsyncSession,
         user_id: str,
+        use_cache: bool = True,
     ) -> Optional[UserProfileResponse]:
         """
-        获取用户画像
+        获取用户画像（带 Redis 缓存）
         
         Args:
             session: 数据库会话
             user_id: 用户ID
+            use_cache: 是否使用缓存，默认 True
             
         Returns:
             用户画像 Schema 或 None
         """
+        cache_key = f"user_profile:{user_id}"
+        
+        if use_cache:
+            try:
+                # 尝试从缓存读取
+                async def fetch_from_db():
+                    result = await session.execute(
+                        select(UserProfile).where(UserProfile.user_id == user_id)
+                    )
+                    profile = result.scalars().first()
+                    
+                    if not profile:
+                        return None
+                    
+                    return UserProfileResponse(
+                        user_id=profile.user_id,
+                        industry=profile.industry,
+                        current_role=profile.current_role,
+                        tech_stack=profile.tech_stack,
+                        primary_language=profile.primary_language,
+                        secondary_language=profile.secondary_language,
+                        weekly_commitment_hours=profile.weekly_commitment_hours,
+                        learning_style=profile.learning_style,
+                        ai_personalization=profile.ai_personalization,
+                        created_at=profile.created_at.isoformat() if profile.created_at else None,
+                        updated_at=profile.updated_at.isoformat() if profile.updated_at else None,
+                    )
+                
+                # 使用 Cache-Aside 模式，TTL 1小时
+                return await get_or_set_cache(
+                    key=cache_key,
+                    fetch_func=fetch_from_db,
+                    model_type=UserProfileResponse,
+                    ttl=3600,  # 1 小时
+                )
+            except Exception as e:
+                logger.warning("user_profile_cache_error_fallback_to_db", error=str(e))
+                # 缓存失败，降级到直接查数据库
+        
+        # 不使用缓存或缓存失败时，直接查数据库
         result = await session.execute(
             select(UserProfile).where(UserProfile.user_id == user_id)
         )
@@ -80,7 +123,7 @@ class UserService:
         profile_data: dict,
     ) -> UserProfileResponse:
         """
-        保存或更新用户画像
+        保存或更新用户画像（更新后使缓存失效）
         
         Args:
             session: 数据库会话
@@ -90,6 +133,9 @@ class UserService:
         Returns:
             更新后的用户画像 Schema
         """
+        # 使缓存失效（更新前删除旧缓存）
+        await invalidate_cache(f"user_profile:{user_id}")
+        
         # 查询现有画像
         result = await session.execute(
             select(UserProfile).where(UserProfile.user_id == user_id)
@@ -158,11 +204,22 @@ class UserService:
         if not roadmaps:
             return RoadmapHistoryResponse(roadmaps=[], total=0, in_progress_count=0)
         
-        # 批量获取进度（避免N+1查询）
+        # 批量获取所需数据（避免 N+1 查询）
         roadmap_ids = [r.roadmap_id for r in roadmaps]
         
-        # 使用批量查询获取进度
-        from sqlalchemy import func
+        # 优化：使用单次查询获取任务信息和进度
+        from app.models.database import RoadmapTask
+        from sqlalchemy import func, outerjoin
+        
+        # 批量查询任务信息
+        task_result = await session.execute(
+            select(RoadmapTask)
+            .where(RoadmapTask.roadmap_id.in_(roadmap_ids))
+        )
+        tasks = task_result.scalars().all()
+        task_dict = {task.roadmap_id: task for task in tasks}
+        
+        # 批量查询进度（使用 GROUP BY 聚合）
         progress_result = await session.execute(
             select(
                 ConceptProgress.roadmap_id,
@@ -176,31 +233,43 @@ class UserService:
             .group_by(ConceptProgress.roadmap_id)
         )
         progress_rows = progress_result.fetchall()
-        
-        # 构建进度字典
         progress_dict = {row[0]: row[1] for row in progress_rows}
         
         # 构造响应
         result_list = []
         for roadmap in roadmaps:
-            # 计算总概念数
+            framework_data = roadmap.framework_data
+            stages_data = framework_data.get("stages", [])
+            
+            # 优化：只在需要时计算总概念数
+            # Home 页面只需要前几个，无需深度遍历所有 modules
             total_concepts = sum(
                 len(module.get("concepts", []))
-                for stage in roadmap.framework_data.get("stages", [])
+                for stage in stages_data
                 for module in stage.get("modules", [])
             )
             
             completed_concepts = progress_dict.get(roadmap.roadmap_id, 0)
             
-            # 提取stages摘要
+            # 优化：提取 stages 摘要（只提取必要字段）
             stages = [
                 StageSummary(
                     name=stage.get("name", ""),
                     description=stage.get("description"),
-                    order=stage.get("order", idx),
+                    order=stage.get("order", idx + 1),  # 确保从 1 开始
                 )
-                for idx, stage in enumerate(roadmap.framework_data.get("stages", []))
+                for idx, stage in enumerate(stages_data)
             ]
+            
+            # 从 framework_data 中提取 topic（优先使用 topic，降级到 title）
+            topic = framework_data.get("topic") or framework_data.get("title", "").lower()
+            
+            # 从 task 获取 status 和其他任务信息
+            task = task_dict.get(roadmap.roadmap_id)
+            status = task.status if task else "completed"  # 如果没有任务记录，默认为 completed
+            task_id = task.task_id if task else None
+            task_status = task.status if task else None
+            current_step = task.current_step if task else None
             
             result_list.append(RoadmapHistoryItem(
                 roadmap_id=roadmap.roadmap_id,
@@ -208,15 +277,29 @@ class UserService:
                 created_at=roadmap.created_at.isoformat() if roadmap.created_at else "",
                 total_concepts=total_concepts,
                 completed_concepts=completed_concepts,
-                topic=roadmap.topic,
-                status=roadmap.status,
+                topic=topic,
+                status=status,
                 stages=stages,
+                task_id=task_id,
+                task_status=task_status,
+                current_step=current_step,
             ))
+        
+        # 统计进行中的任务数量
+        from sqlalchemy import func
+        in_progress_result = await session.execute(
+            select(func.count(RoadmapTask.task_id))
+            .where(
+                RoadmapTask.user_id == user_id,
+                RoadmapTask.status.in_(["pending", "processing"])
+            )
+        )
+        in_progress_count = in_progress_result.scalar() or 0
         
         return RoadmapHistoryResponse(
             roadmaps=result_list,
             total=len(roadmaps),
-            in_progress_count=0,  # TODO: 计算pending任务数
+            in_progress_count=in_progress_count,
         )
     
     async def get_deleted_roadmaps(
@@ -350,17 +433,40 @@ class UserService:
                 title=title,
                 created_at=task.created_at.isoformat() if task.created_at else "",
                 updated_at=task.updated_at.isoformat() if task.updated_at else "",
+                completed_at=task.completed_at.isoformat() if task.completed_at else None,
                 error_message=task.error_message,
             ))
         
-        # TODO: 实际统计各状态数量
+        # 统计各状态的任务数量
+        status_stats_result = await session.execute(
+            select(
+                RoadmapTask.status,
+                func.count(RoadmapTask.task_id).label("count")
+            )
+            .where(RoadmapTask.user_id == user_id)
+            .group_by(RoadmapTask.status)
+        )
+        status_stats = {row.status: row.count for row in status_stats_result.fetchall()}
+        
+        # 获取各状态计数（包含 human_review_pending 和 partial_failure）
+        pending_count = status_stats.get("pending", 0)
+        processing_count = (
+            status_stats.get("processing", 0) + 
+            status_stats.get("human_review_pending", 0)  # human_review_pending 算作 processing
+        )
+        completed_count = (
+            status_stats.get("completed", 0) + 
+            status_stats.get("partial_failure", 0)  # partial_failure 算作 completed
+        )
+        failed_count = status_stats.get("failed", 0)
+        
         return TaskListResponse(
             tasks=result_list,
             total=len(tasks),
-            pending_count=0,
-            processing_count=0,
-            completed_count=0,
-            failed_count=0,
+            pending_count=pending_count,
+            processing_count=processing_count,
+            completed_count=completed_count,
+            failed_count=failed_count,
         )
 
 

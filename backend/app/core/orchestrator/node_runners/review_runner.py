@@ -18,7 +18,7 @@ import structlog
 from langgraph.types import interrupt
 
 from app.services.execution_logger import execution_logger, LogCategory
-from app.db.session import AsyncSessionLocal
+from app.db.session import async_session_maker
 from app.crud.crud_workflow import get_review_feedback_crud
 from app.crud.crud_roadmap import get_roadmap_crud
 from ..base import RoadmapState
@@ -67,11 +67,11 @@ class ReviewRunner:
         Returns:
             是否是恢复执行
         """
-        from app.db.session import AsyncSessionLocal
+        from app.db.session import async_session_maker
         from app.crud.crud_task import get_task_crud
         
         try:
-            async with AsyncSessionLocal() as session:
+            async with async_session_maker.begin() as session:
                 task_crud = get_task_crud()
                 # 使用CRUD方法获取任务
                 task = await task_crud.get(session, task_id)
@@ -203,7 +203,7 @@ class ReviewRunner:
             # 保存用户审核反馈到数据库
             # ========================================
             try:
-                async with AsyncSessionLocal() as session:
+                async with async_session_maker.begin() as session:
                     feedback_crud = get_review_feedback_crud()
                     
                     # 计算当前审核轮次

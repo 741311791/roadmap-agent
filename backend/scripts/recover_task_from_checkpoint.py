@@ -167,7 +167,10 @@ async def list_processing_tasks(max_age_hours: int = 24) -> list[RoadmapTask]:
     repo_factory = RepositoryFactory()
     async with repo_factory.create_session() as session:
         task_repo = repo_factory.create_task_repo(session)
-        tasks = await task_repo.find_interrupted_tasks(max_age_hours=max_age_hours)
+        tasks = await task_repo.find_interrupted_tasks(
+            session=session,
+            max_age_hours=max_age_hours
+        )
         return tasks
 
 

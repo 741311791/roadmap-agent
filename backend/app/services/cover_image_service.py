@@ -261,8 +261,19 @@ class CoverImageService:
                 retry_count=0
             )
         
+        # 映射数据库状态到API响应状态
+        # 数据库: pending, generating, success, failed
+        # API: not_started, processing, completed, failed
+        status_mapping = {
+            "pending": "not_started",
+            "generating": "processing",
+            "success": "completed",
+            "failed": "failed",
+        }
+        api_status = status_mapping.get(cover_image.generation_status, "not_started")
+        
         return CoverImageStatusResponse(
-            status=cover_image.generation_status,
+            status=api_status,
             url=cover_image.cover_image_url,
             error=cover_image.error_message,
             retry_count=cover_image.retry_count
@@ -298,10 +309,19 @@ class CoverImageService:
         # 构建结果字典
         result_dict: dict[str, CoverImageStatusResponse] = {}
         
+        # 状态映射函数
+        status_mapping = {
+            "pending": "not_started",
+            "generating": "processing",
+            "success": "completed",
+            "failed": "failed",
+        }
+        
         # 先处理有记录的路线图
         for cover_image in cover_images:
+            api_status = status_mapping.get(cover_image.generation_status, "not_started")
             result_dict[cover_image.roadmap_id] = CoverImageStatusResponse(
-                status=cover_image.generation_status,
+                status=api_status,
                 url=cover_image.cover_image_url,
                 error=cover_image.error_message,
                 retry_count=cover_image.retry_count

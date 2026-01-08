@@ -15,6 +15,7 @@ import structlog
 from app.models.domain import LearningPreferences
 from app.api.v1.deps import get_current_session
 from app.services.retry_service_new import RetryService, get_retry_service
+from app.core.response_schema import response_base, ResponseSchemaModel
 
 router = APIRouter(prefix="/roadmaps", tags=["retry"])
 tasks_router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -76,11 +77,11 @@ async def retry_failed_content(
         raise HTTPException(status_code=404, detail=str(e))
     
     if retry_data["total_items"] == 0:
-        return {
+        return response_base.success(data={
             "status": "no_failed_items",
             "message": "没有需要重试的失败项目",
             "failed_counts": retry_data["failed_counts"],
-        }
+        })
     
     # 启动后台重试任务
     from app.services.retry_service import execute_retry_failed_task
@@ -93,7 +94,7 @@ async def retry_failed_content(
         user_id=request.user_id,
     )
     
-    return {
+    return response_base.success(data={
         "task_id": retry_data["retry_task_id"],
         "roadmap_id": roadmap_id,
         "status": "processing",
@@ -103,7 +104,7 @@ async def retry_failed_content(
         },
         "total_items": retry_data["total_items"],
         "message": f"开始重试 {retry_data['total_items']} 个失败项目",
-    }
+    })
 
 
 @router.post("/{roadmap_id}/concepts/{concept_id}/regenerate")
@@ -136,18 +137,73 @@ async def regenerate_concept_content(
         concept_id=concept_id,
     )
     
-    # 调用Service层
+    # 调用Service层准备数据
     try:
-        result = await service.prepare_regenerate_content(session, roadmap_id, concept_id)
+        prepare_result = await service.prepare_regenerate_content(session, roadmap_id, concept_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     
-    # TODO: 实现完整的重新生成逻辑
-    return {
+    # 调用 ContentService 重新生成所有内容
+    from app.services.content_service import get_content_service
+    from app.schemas.roadmap import ConceptRetryRequest
+    
+    content_service = get_content_service()
+    
+    result = {
         "success": True,
         "concept_id": concept_id,
-        "message": "内容重新生成功能正在开发中",
+        "regenerated_items": []
     }
+    
+    # 构造重试请求
+    retry_request = ConceptRetryRequest(
+        preferences=request.preferences,
+        retry_reason="User requested regeneration",
+        force_regenerate=True,
+    )
+    
+    # 依次生成三种内容
+    for content_type in ["tutorial", "resources", "quiz"]:
+        try:
+            retry_result = await content_service.retry_concept_content(
+                session=session,
+                roadmap_id=roadmap_id,
+                concept_id=concept_id,
+                content_type=content_type,
+                request=retry_request,
+            )
+            
+            result["regenerated_items"].append({
+                "content_type": content_type,
+                "status": "completed",
+                "details": retry_result
+            })
+            
+            logger.info(
+                "content_regenerated",
+                roadmap_id=roadmap_id,
+                concept_id=concept_id,
+                content_type=content_type,
+            )
+            
+        except Exception as e:
+            logger.error(
+                "regenerate_content_failed",
+                roadmap_id=roadmap_id,
+                concept_id=concept_id,
+                content_type=content_type,
+                error=str(e),
+            )
+            result["regenerated_items"].append({
+                "content_type": content_type,
+                "status": "failed",
+                "error": str(e)
+            })
+    
+    # 提交数据库事务
+    await session.commit()
+    
+    return result
 
 
 @tasks_router.post("/{task_id}/retry")
@@ -213,7 +269,7 @@ async def retry_task(
         )
         
         task = retry_strategy["task"]
-        return {
+        return response_base.success(data={
             "success": True,
             "recovery_type": "checkpoint",
             "task_id": task_id,
@@ -221,7 +277,7 @@ async def retry_task(
             "checkpoint_step": retry_strategy.get("checkpoint_step"),
             "status": "recovering",
             "message": f"正在从 checkpoint 恢复（步骤：{retry_strategy.get('checkpoint_step')}）",
-        }
+        })
     
     # 策略 2：内容重试
     else:
@@ -264,7 +320,7 @@ async def retry_task(
             celery_task_id=celery_task.id,
         )
         
-        return {
+        return response_base.success(data={
             "success": True,
             "recovery_type": "content_retry",
             "task_id": task_id,
@@ -275,5 +331,5 @@ async def retry_task(
             "total_items": total_items,
             "status": "retrying",
             "message": f"正在重试 {total_items} 个失败项目",
-        }
+        })
 

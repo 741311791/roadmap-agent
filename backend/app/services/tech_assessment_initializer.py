@@ -48,7 +48,7 @@ async def initialize_tech_assessments() -> Dict[str, Any]:
     try:
         # 获取数据库会话
         db_gen = get_db_transaction()
-        db = await db_gen.__antml:parameter>
+        db = await db_gen.__anext__()
         
         try:
             tech_crud = get_tech_assessment_crud()

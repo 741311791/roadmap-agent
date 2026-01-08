@@ -1,0 +1,57 @@
+# Prometheus 配置文件
+#
+# 采集 FastAPI 应用暴露的 /metrics 端点
+
+global:
+  scrape_interval: 15s  # 每15秒采集一次指标
+  evaluation_interval: 15s  # 每15秒评估一次告警规则
+
+# 告警管理器配置（可选）
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           - alertmanager:9093
+
+# 规则文件配置（可选）
+# rule_files:
+#   - "alerts/*.yml"
+
+# 采集目标配置
+scrape_configs:
+  # FastAPI 应用监控
+  - job_name: 'roadmap_agent'
+    static_configs:
+      # 根据你的部署方式选择：
+      
+      # 1. 本地开发（直接运行 FastAPI）
+      - targets: ['host.docker.internal:8000']
+        labels:
+          environment: 'development'
+          app: 'roadmap_agent'
+      
+      # 2. Docker 部署（如果 FastAPI 也在 Docker 中）
+      # - targets: ['roadmap_api:8000']
+      #   labels:
+      #     environment: 'production'
+      #     app: 'roadmap_agent'
+      
+      # 3. 生产环境（多实例）
+      # - targets: 
+      #   - 'api-1.example.com:8000'
+      #   - 'api-2.example.com:8000'
+      #   labels:
+      #     environment: 'production'
+      #     app: 'roadmap_agent'
+    
+    # 指标路径
+    metrics_path: '/metrics'
+    
+    # 采集超时
+    scrape_timeout: 10s
+
+  # Prometheus 自身监控
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+

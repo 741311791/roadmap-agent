@@ -1,12 +1,14 @@
 """
 Redis 客户端封装
 """
-from typing import Any
-import json
+from typing import Any, Type, TypeVar
 import redis.asyncio as aioredis
 import structlog
 
 from app.config.settings import settings
+from app.utils.serializers import fast_dumps, fast_loads
+
+T = TypeVar('T')
 
 logger = structlog.get_logger()
 
@@ -106,15 +108,50 @@ class RedisClient:
         return await self._client.ping()
     
     async def set_json(self, key: str, value: Any, ex: int | None = None):
-        """存储 JSON 对象"""
+        """
+        存储 JSON 对象（使用msgspec加速）
+        
+        性能提升：比json.dumps()快5-10倍
+        
+        Args:
+            key: Redis键
+            value: 待存储的对象
+            ex: 过期时间（秒）
+        """
         await self.connect()
-        await self._client.set(key, json.dumps(value), ex=ex)
+        await self._client.set(key, fast_dumps(value), ex=ex)
     
-    async def get_json(self, key: str) -> Any | None:
-        """读取 JSON 对象"""
+    async def get_json(self, key: str, type_: Type[T] | None = None) -> T | Any | None:
+        """
+        读取 JSON 对象（使用msgspec解码）
+        
+        Args:
+            key: Redis键
+            type_: 目标类型（可选，用于类型安全）
+            
+        Returns:
+            反序列化后的对象，类型为T（如果指定type_）
+            
+        Examples:
+            >>> # 普通字典
+            >>> await redis_client.get_json("user:123")
+            {'user_id': '123', 'name': 'Alice'}
+            
+            >>> # 类型化解码
+            >>> from pydantic import BaseModel
+            >>> class User(BaseModel):
+            ...     user_id: str
+            ...     name: str
+            >>> user = await redis_client.get_json("user:123", type_=User)
+            >>> user.user_id
+            '123'
+        """
         await self.connect()
         data = await self._client.get(key)
-        return json.loads(data) if data else None
+        if not data:
+            return None
+        
+        return fast_loads(data, type_=type_)
     
     async def delete(self, key: str):
         """删除键"""

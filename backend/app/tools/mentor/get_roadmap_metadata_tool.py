@@ -8,7 +8,8 @@ from pydantic import BaseModel, Field
 import structlog
 
 from app.tools.base import BaseTool
-from app.db.repository_factory import get_repository_factory
+from app.db.session import async_session_maker
+from app.crud.crud_roadmap import get_roadmap_crud
 
 logger = structlog.get_logger()
 
@@ -52,7 +53,6 @@ class GetRoadmapMetadataTool(BaseTool[GetRoadmapMetadataInput, GetRoadmapMetadat
     
     def __init__(self):
         super().__init__(tool_id="get_roadmap_metadata_v1")
-        self.repo_factory = get_repository_factory()
     
     async def execute(self, input_data: GetRoadmapMetadataInput) -> GetRoadmapMetadataOutput:
         """
@@ -65,10 +65,10 @@ class GetRoadmapMetadataTool(BaseTool[GetRoadmapMetadataInput, GetRoadmapMetadat
             路线图元数据
         """
         try:
-            async with self.repo_factory.create_session() as session:
-                roadmap_repo = self.repo_factory.create_roadmap_meta_repo(session)
+            async with async_session_maker() as session:
+                roadmap_crud = get_roadmap_crud()
                 
-                roadmap = await roadmap_repo.get_by_roadmap_id(input_data.roadmap_id)
+                roadmap = await roadmap_crud.get_by_roadmap_id(input_data.roadmap_id)
                 
                 if not roadmap:
                     logger.info(
@@ -138,10 +138,10 @@ class GetRoadmapMetadataTool(BaseTool[GetRoadmapMetadataInput, GetRoadmapMetadat
             概念信息，不存在则返回 None
         """
         try:
-            async with self.repo_factory.create_session() as session:
-                roadmap_repo = self.repo_factory.create_roadmap_meta_repo(session)
+            async with async_session_maker() as session:
+                roadmap_crud = get_roadmap_crud()
                 
-                roadmap = await roadmap_repo.get_by_roadmap_id(roadmap_id)
+                roadmap = await roadmap_crud.get_by_roadmap_id(roadmap_id)
                 
                 if not roadmap:
                     return None

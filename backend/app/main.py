@@ -15,12 +15,19 @@ from app.config.settings import settings
 from app.core.dependencies import init_orchestrator, cleanup_orchestrator
 from app.db.s3_init import ensure_bucket_exists
 from app.middleware.request_id import RequestIDMiddleware
+from app.middleware.trace_middleware import TraceIDMiddleware
+from app.middleware.opera_log_middleware import OperaLogMiddleware
+from app.middleware.rbac_middleware import RBACMiddleware
+from app.middleware.prometheus_middleware import PrometheusMiddleware
+from app.core.prometheus.instruments import set_app_info
 from app.core.global_exception_handlers import (
     http_exception_handler,
     validation_exception_handler,
     sqlalchemy_exception_handler,
+    custom_api_exception_handler,
     generic_exception_handler,
 )
+from app.core.custom_exceptions import BaseAPIException
 # 延迟导入避免循环依赖
 def get_recover_interrupted_tasks_on_startup():
     from app.services.task_recovery_service import recover_interrupted_tasks_on_startup
@@ -35,6 +42,9 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     logger.info("application_startup")
     
+    # 设置 Prometheus 应用信息
+    set_app_info(version="1.0.0", environment=settings.ENVIRONMENT)
+    
     # 初始化全局 orchestrator 和 Redis 连接
     await init_orchestrator()
     
@@ -45,13 +55,13 @@ async def lifespan(app: FastAPI):
     try:
         recover_interrupted_tasks_on_startup = get_recover_interrupted_tasks_on_startup()
         recovery_result = await recover_interrupted_tasks_on_startup()
-        if recovery_result.get("total_found", 0) > 0:
+        if recovery_result.total_found > 0:
             logger.info(
                 "task_recovery_on_startup_completed",
-                total_found=recovery_result.get("total_found"),
-                recovered=recovery_result.get("recovered"),
-                failed=recovery_result.get("failed"),
-                no_checkpoint=recovery_result.get("no_checkpoint"),
+                total_found=recovery_result.total_found,
+                recovered=recovery_result.recovered,
+                failed=recovery_result.failed,
+                no_checkpoint=recovery_result.no_checkpoint,
             )
     except Exception as e:
         # 恢复失败不应阻止服务启动
@@ -115,50 +125,73 @@ app = FastAPI(
 # 中间件配置（洋葱圈模型：后添加先执行）
 # ============================================================
 # 
-# 执行顺序（请求进入）：CORS（最外层）→ RequestID → 业务逻辑
-# 执行顺序（响应返回）：业务逻辑 → RequestID → CORS（最外层）
+# 执行顺序（请求进入）：CORS → TraceID → RequestID → RBAC → OperaLog → 业务逻辑
+# 执行顺序（响应返回）：业务逻辑 → OperaLog → RBAC → RequestID → TraceID → CORS
 # 
 # ⚠️ 关键原理：
 # FastAPI/Starlette中间件是LIFO（后进先出）栈结构
 # - 先添加的中间件在内层（后执行）
 # - 后添加的中间件在外层（先执行）
 # 
-# ✅ 正确顺序：
-# 1. 先添加 RequestID（内层，晚执行）
-# 2. 后添加 CORS（外层，先执行）
+# ✅ 正确顺序（从内到外）：
+# 1. OperaLog（最内层，记录操作日志）
+# 2. RBAC（权限控制）
+# 3. RequestID（请求ID追踪）
+# 4. TraceID（分布式追踪）
+# 5. CORS（最外层，跨域处理）
 # 
-# 这样确保：
-# - CORS预检请求（OPTIONS）可以正确处理跨域头
-# - 所有请求（包括OPTIONS）都能获得RequestID
-# - RequestID可以通过expose_headers暴露给前端
+# 注意：FastAPI Users 的认证通过路由依赖注入实现，不需要全局中间件
 # ============================================================
 
-# 第1步：添加 RequestID 中间件（内层）
-app.add_middleware(RequestIDMiddleware)
-logger.info("middleware_registered", name="RequestIDMiddleware", layer="inner")
+# 第1步：添加 Prometheus 中间件（最内层，记录指标）
+app.add_middleware(PrometheusMiddleware, app_name="roadmap_agent")
+logger.info("middleware_registered", name="PrometheusMiddleware", layer="innermost")
 
-# 第2步：添加 CORS 中间件（外层）
+# 第2步：添加 OperaLog 中间件（记录所有请求）
+app.add_middleware(OperaLogMiddleware)
+logger.info("middleware_registered", name="OperaLogMiddleware", layer="inner_2")
+
+# 第3步：添加 RBAC 中间件（权限控制）
+app.add_middleware(RBACMiddleware)
+logger.info("middleware_registered", name="RBACMiddleware", layer="inner")
+
+# 第3步：添加 RequestID 中间件
+app.add_middleware(RequestIDMiddleware)
+logger.info("middleware_registered", name="RequestIDMiddleware", layer="middle_inner")
+
+# 第4步：添加 TraceID 中间件
+app.add_middleware(TraceIDMiddleware)
+logger.info("middleware_registered", name="TraceIDMiddleware", layer="middle_outer")
+
+# 第5步：添加 CORS 中间件（最外层）
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.get_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Request-ID"],  # ✅ 暴露RequestID给前端
+    expose_headers=["X-Request-ID", "X-Trace-ID"],  # ✅ 暴露RequestID和TraceID给前端
 )
-logger.info("middleware_registered", name="CORSMiddleware", layer="outer")
+logger.info("middleware_registered", name="CORSMiddleware", layer="outermost")
 
-# 注册全局异常处理器
+# 注册全局异常处理器（按优先级顺序）
 app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(SQLAlchemyError, sqlalchemy_exception_handler)
-app.add_exception_handler(Exception, generic_exception_handler)
+app.add_exception_handler(BaseAPIException, custom_api_exception_handler)  # 自定义API异常
+app.add_exception_handler(Exception, generic_exception_handler)  # 兜底处理器
 
 # 注册API路由（新的拆分结构）
 app.include_router(api_router_v1)
 
 # 注册WebSocket路由
 app.include_router(websocket_router)
+
+# 暴露 Prometheus metrics 端点
+from prometheus_client import make_asgi_app
+metrics_app = make_asgi_app()
+app.mount("/metrics", metrics_app)
+logger.info("prometheus_metrics_endpoint_registered", path="/metrics")
 
 
 @app.get("/health")
@@ -204,8 +237,6 @@ async def detailed_health_check():
                 "status": "healthy" if not pool.closed else "unhealthy",
                 "min_size": pool.min_size,
                 "max_size": pool.max_size,
-                "size": pool.size,  # 当前连接数
-                "available": pool.available,  # 可用连接数
             }
     except Exception as e:
         checkpointer_status = {

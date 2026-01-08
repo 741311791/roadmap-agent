@@ -5,8 +5,12 @@
 - 登出（Token 撤销）
 - 强制登出所有设备
 - Token 黑名单统计（管理员）
+
+重构说明：
+- ✅ 使用自定义异常替代HTTPException
+- ✅ 使用统一响应格式（ResponseSchemaModel）
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import structlog
 import time
@@ -20,6 +24,8 @@ from app.core.auth.jwt_blacklist import (
 )
 from app.models.database import User
 from app.config.settings import settings
+from app.core.custom_exceptions import errors
+from app.core.response_schema import ResponseSchemaModel, response_base
 
 # ✅ 导入 Schema（符合企业级架构规范）
 from app.schemas.auth import (
@@ -33,15 +39,11 @@ logger = structlog.get_logger()
 http_bearer = HTTPBearer()
 
 
-# ============================================================
-# 端点实现
-# ============================================================
-
-@router.post("/logout", response_model=LogoutResponse)
+@router.post("/logout", response_model=ResponseSchemaModel[LogoutResponse])
 async def logout(
     current_user: User = Depends(current_active_user),
     credentials: HTTPAuthorizationCredentials = Depends(http_bearer),
-):
+) -> ResponseSchemaModel[LogoutResponse]:
     """
     用户登出（撤销当前 Token）
     
@@ -57,6 +59,9 @@ async def logout(
     
     Returns:
         登出成功消息
+        
+    Raises:
+        RequestError: Token不包含必要字段或解码失败
     
     Example:
         ```bash
@@ -78,16 +83,10 @@ async def logout(
         exp = payload.get("exp")
         
         if not jti:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Token 不包含 jti 字段，无法撤销",
-            )
+            raise errors.RequestError(msg="Token 不包含 jti 字段，无法撤销")
         
         if not exp:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Token 不包含过期时间，无法撤销",
-            )
+            raise errors.RequestError(msg="Token 不包含过期时间，无法撤销")
         
         # 计算剩余有效期
         current_time = int(time.time())
@@ -111,10 +110,10 @@ async def logout(
                 expires_in=expires_in,
             )
         
-        return LogoutResponse(
+        return response_base.success(data=LogoutResponse(
             message="成功登出",
             user_id=current_user.id,
-        )
+        ))
         
     except JWTError as e:
         logger.error(
@@ -122,16 +121,13 @@ async def logout(
             error=str(e),
             user_id=current_user.id,
         )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Token 解码失败",
-        )
+        raise errors.RequestError(msg="Token 解码失败")
 
 
-@router.post("/logout-all-devices", response_model=LogoutResponse)
+@router.post("/logout-all-devices", response_model=ResponseSchemaModel[LogoutResponse])
 async def logout_all_devices(
     current_user: User = Depends(current_active_user),
-):
+) -> ResponseSchemaModel[LogoutResponse]:
     """
     强制登出所有设备（撤销用户所有 Token）
     
@@ -155,16 +151,16 @@ async def logout_all_devices(
         user_id=current_user.id,
     )
     
-    return LogoutResponse(
+    return response_base.success(data=LogoutResponse(
         message="已登出所有设备",
         user_id=current_user.id,
-    )
+    ))
 
 
-@router.get("/blacklist/stats", response_model=BlacklistStatsResponse)
+@router.get("/blacklist/stats", response_model=ResponseSchemaModel[BlacklistStatsResponse])
 async def get_token_blacklist_stats(
     current_user: User = Depends(current_active_user),
-):
+) -> ResponseSchemaModel[BlacklistStatsResponse]:
     """
     获取 Token 黑名单统计（管理员功能）
     
@@ -174,14 +170,13 @@ async def get_token_blacklist_stats(
     Returns:
         黑名单统计信息
     """
-    # TODO: 添加管理员权限检查
-    # if not current_user.is_superuser:
-    #     raise HTTPException(status_code=403, detail="需要管理员权限")
+    # 检查管理员权限
+    if not current_user.is_superuser:
+        raise errors.ForbiddenError(msg="需要管理员权限")
     
     stats = await get_blacklist_stats()
     
-    return BlacklistStatsResponse(
+    return response_base.success(data=BlacklistStatsResponse(
         total_tokens=stats["total_tokens"],
         sample_tokens=stats["sample_tokens"],
-    )
-
+    ))

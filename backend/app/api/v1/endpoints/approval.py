@@ -1,17 +1,23 @@
 """
 人工审核 API 端点
 
-遵循企业级架构规范
+遵循企业级架构规范。
+
+重构说明：
+- ✅ 使用自定义异常替代HTTPException
+- ✅ 使用统一响应格式（ResponseSchemaModel）
 """
 from typing import Annotated
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 import structlog
 
-from app.core.dependencies import get_repository_factory
-from app.db.repository_factory import RepositoryFactory
 from app.services.roadmap_service import RoadmapService
 from app.core.dependencies import get_workflow_executor
 from app.core.orchestrator.executor import WorkflowExecutor
+from app.core.custom_exceptions import errors
+from app.core.response_schema import ResponseSchemaModel, response_base
+from app.db.session import async_session_maker
+from app.crud.crud_task import get_task_crud
 
 # ✅ 导入 Schema（符合企业级架构规范）
 from app.schemas.approval import (
@@ -23,34 +29,44 @@ router = APIRouter(prefix="/roadmaps", tags=["approval"])
 logger = structlog.get_logger()
 
 # 依赖注入
-CurrentRepoFactory = Annotated[RepositoryFactory, Depends(get_repository_factory)]
 CurrentOrchestrator = Annotated[WorkflowExecutor, Depends(get_workflow_executor)]
 
 
-@router.post("/{task_id}/approve", response_model=ApprovalResponse)
+@router.post("/{task_id}/approve", response_model=ResponseSchemaModel[ApprovalResponse])
 async def approve_roadmap(
     task_id: str,
     request: ApprovalRequest,
-    repo_factory: CurrentRepoFactory,
     orchestrator: CurrentOrchestrator,
-):
-    """人工审核端点（Human-in-the-Loop）"""
+) -> ResponseSchemaModel[ApprovalResponse]:
+    """
+    人工审核端点（Human-in-the-Loop）
+    
+    Args:
+        task_id: 任务ID
+        request: 审核请求（包含批准/拒绝和反馈）
+        orchestrator: 工作流执行器
+        
+    Returns:
+        审核结果
+        
+    Raises:
+        NotFoundError: 任务不存在
+        RequestError: 任务状态不正确
+        InternalServerError: 处理审核结果失败
+    """
     from app.tasks.workflow_resume_tasks import resume_after_review
     
     try:
         # 验证任务状态
-        async with repo_factory.create_session() as session:
-            task_repo = repo_factory.create_task_repo(session)
-            task = await task_repo.get_task(task_id)
+        async with async_session_maker() as session:
+            task_crud = get_task_crud()
+            task = await task_crud.get_by_task_id(session, task_id)
             
             if not task:
-                raise HTTPException(status_code=404, detail="任务不存在")
+                raise errors.NotFoundError(msg="任务不存在")
             
             if task.status != "human_review_pending":
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"任务状态不正确，当前状态：{task.status}"
-                )
+                raise errors.RequestError(msg=f"任务状态不正确，当前状态：{task.status}")
         
         # 分发Celery任务恢复工作流
         celery_task = resume_after_review.delay(
@@ -62,19 +78,19 @@ async def approve_roadmap(
         logger.info(
             "human_review_submitted",
             task_id=task_id,
-            approved=approved,
+            approved=request.approved,
             celery_task_id=celery_task.id,
         )
         
-        return {
-            "status": "approved" if approved else "rejected",
-            "message": "审核通过，正在恢复工作流生成详细内容" if approved else "审核未通过，正在根据反馈修改路线图",
-            "task_id": task_id,
-            "feedback": feedback,
-        }
+        return response_base.success(data=ApprovalResponse(
+            status="approved" if request.approved else "rejected",
+            message="审核通过，正在恢复工作流生成详细内容" if request.approved else "审核未通过，正在根据反馈修改路线图",
+            task_id=task_id,
+            feedback=request.feedback,
+        ))
         
-    except HTTPException:
+    except (errors.NotFoundError, errors.RequestError):
         raise
     except Exception as e:
         logger.error("approve_roadmap_error", task_id=task_id, error=str(e), exc_info=True)
-        raise HTTPException(status_code=500, detail="处理审核结果时发生错误")
+        raise errors.InternalServerError(msg="处理审核结果时发生错误")

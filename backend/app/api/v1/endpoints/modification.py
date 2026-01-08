@@ -121,12 +121,28 @@ async def modify_resources(
         requirements_count=len(request.requirements),
     )
     
-    # TODO: 完整实现逻辑
-    return {
-        "success": True,
-        "concept_id": concept_id,
-        "message": "资源修改功能正在开发中",
-    }
+    try:
+        result = await service.modify_resources(
+            session=session,
+            roadmap_id=roadmap_id,
+            concept_id=concept_id,
+            requirements=request.requirements,
+            preferences=request.preferences,
+        )
+        await session.commit()
+        
+        return result
+        
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(
+            "modify_resources_failed",
+            roadmap_id=roadmap_id,
+            concept_id=concept_id,
+            error=str(e),
+        )
+        raise HTTPException(status_code=500, detail=f"资源修改失败: {str(e)}")
 
 
 @router.post("/{roadmap_id}/concepts/{concept_id}/quiz/modify")
@@ -160,9 +176,25 @@ async def modify_quiz(
         requirements_count=len(request.requirements),
     )
     
-    # TODO: 完整实现逻辑
-    return {
-        "success": True,
-        "concept_id": concept_id,
-        "message": "测验修改功能正在开发中",
-    }
+    try:
+        result = await service.modify_quiz(
+            session=session,
+            roadmap_id=roadmap_id,
+            concept_id=concept_id,
+            requirements=request.requirements,
+            preferences=request.preferences,
+        )
+        await session.commit()
+        
+        return result
+        
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(
+            "modify_quiz_failed",
+            roadmap_id=roadmap_id,
+            concept_id=concept_id,
+            error=str(e),
+        )
+        raise HTTPException(status_code=500, detail=f"测验修改失败: {str(e)}")

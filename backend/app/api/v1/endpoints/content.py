@@ -1,15 +1,33 @@
 """
 内容相关API（教程、资源、测验）
 
-统一管理概念相关的学习内容获取
+统一管理概念相关的学习内容获取。
+
+重构说明：
+- ✅ Schema定义移到独立文件（app/schemas/content.py）
+- ✅ 使用CurrentSession/CurrentSessionTransaction
+- ✅ 使用自定义异常替代HTTPException
+- ✅ 使用统一响应格式（ResponseSchemaModel）
 """
 from typing import Annotated
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
-from app.api.v1.deps import get_current_session, CurrentContentService
+from app.api.v1.deps import get_current_session, CurrentContentService, CurrentSessionTransaction
+from app.core.custom_exceptions import errors
+from app.core.response_schema import ResponseSchemaModel, response_base
+from app.schemas.content import (
+    TutorialVersionListResponse,
+    TutorialDetailResponse,
+    ResourcesResponse,
+    QuizResponse,
+    TutorialItemResponse,
+)
+from app.schemas.generation import RetryContentRequest, RetryContentResponse
+from app.models.database import User
+from app.core.auth.deps import current_active_user
 
 router = APIRouter(prefix="/roadmaps", tags=["content"])
 logger = structlog.get_logger()
@@ -17,13 +35,13 @@ logger = structlog.get_logger()
 
 # ===== 教程相关 =====
 
-@router.get("/{roadmap_id}/concepts/{concept_id}/tutorials")
+@router.get("/{roadmap_id}/concepts/{concept_id}/tutorials", response_model=ResponseSchemaModel[TutorialVersionListResponse])
 async def get_tutorial_versions(
     roadmap_id: str,
     concept_id: str,
     session: AsyncSession = Depends(get_current_session),
     service: CurrentContentService = None,
-):
+) -> ResponseSchemaModel[TutorialVersionListResponse]:
     """
     获取指定概念的所有教程版本历史
     
@@ -37,43 +55,40 @@ async def get_tutorial_versions(
         教程版本列表（按版本号降序，最新版本在前）
         
     Raises:
-        HTTPException: 404 - 概念没有教程
+        NotFoundError: 概念没有教程
     """
     tutorials = await service.get_tutorial_versions(session, roadmap_id, concept_id)
     
     if not tutorials:
-        raise HTTPException(
-            status_code=404,
-            detail=f"概念 {concept_id} 在路线图 {roadmap_id} 中没有教程"
-        )
+        raise errors.NotFoundError(msg=f"概念 {concept_id} 在路线图 {roadmap_id} 中没有教程")
     
-    return {
-        "roadmap_id": roadmap_id,
-        "concept_id": concept_id,
-        "total_versions": len(tutorials),
-        "tutorials": [
-            {
-                "tutorial_id": t.tutorial_id,
-                "title": t.title,
-                "summary": t.summary,
-                "content_url": t.content_url,
-                "content_version": t.content_version,
-                "is_latest": t.is_latest,
-                "content_status": t.content_status,
-                "generated_at": t.generated_at.isoformat() if t.generated_at else None,
-            }
+    return response_base.success(data=TutorialVersionListResponse(
+        roadmap_id=roadmap_id,
+        concept_id=concept_id,
+        total_versions=len(tutorials),
+        tutorials=[
+            TutorialItemResponse(
+                tutorial_id=t.tutorial_id,
+                title=t.title,
+                summary=t.summary,
+                content_url=t.content_url,
+                content_version=t.content_version,
+                is_latest=t.is_latest,
+                content_status=t.content_status,
+                generated_at=t.generated_at.isoformat() if t.generated_at else None,
+            )
             for t in tutorials
         ]
-    }
+    ))
 
 
-@router.get("/{roadmap_id}/concepts/{concept_id}/tutorials/latest")
+@router.get("/{roadmap_id}/concepts/{concept_id}/tutorials/latest", response_model=ResponseSchemaModel[TutorialDetailResponse])
 async def get_latest_tutorial(
     roadmap_id: str,
     concept_id: str,
     session: AsyncSession = Depends(get_current_session),
     service: CurrentContentService = None,
-):
+) -> ResponseSchemaModel[TutorialDetailResponse]:
     """
     获取指定概念的最新教程版本
     
@@ -87,39 +102,36 @@ async def get_latest_tutorial(
         最新版本的教程元数据
         
     Raises:
-        HTTPException: 404 - 概念没有教程
+        NotFoundError: 概念没有教程
     """
     tutorial = await service.get_latest_tutorial(session, roadmap_id, concept_id)
     
     if not tutorial:
-        raise HTTPException(
-            status_code=404,
-            detail=f"概念 {concept_id} 在路线图 {roadmap_id} 中没有教程"
-        )
+        raise errors.NotFoundError(msg=f"概念 {concept_id} 在路线图 {roadmap_id} 中没有教程")
     
-    return {
-        "roadmap_id": roadmap_id,
-        "concept_id": concept_id,
-        "tutorial_id": tutorial.tutorial_id,
-        "title": tutorial.title,
-        "summary": tutorial.summary,
-        "content_url": tutorial.content_url,
-        "content_version": tutorial.content_version,
-        "is_latest": tutorial.is_latest,
-        "content_status": tutorial.content_status,
-        "estimated_completion_time": tutorial.estimated_completion_time,
-        "generated_at": tutorial.generated_at.isoformat() if tutorial.generated_at else None,
-    }
+    return response_base.success(data=TutorialDetailResponse(
+        roadmap_id=roadmap_id,
+        concept_id=concept_id,
+        tutorial_id=tutorial.tutorial_id,
+        title=tutorial.title,
+        summary=tutorial.summary,
+        content_url=tutorial.content_url,
+        content_version=tutorial.content_version,
+        is_latest=tutorial.is_latest,
+        content_status=tutorial.content_status,
+        estimated_completion_time=tutorial.estimated_completion_time,
+        generated_at=tutorial.generated_at.isoformat() if tutorial.generated_at else None,
+    ))
 
 
-@router.get("/{roadmap_id}/concepts/{concept_id}/tutorials/v{version}")
+@router.get("/{roadmap_id}/concepts/{concept_id}/tutorials/v{version}", response_model=ResponseSchemaModel[TutorialDetailResponse])
 async def get_tutorial_by_version(
     roadmap_id: str,
     concept_id: str,
     version: int,
     session: AsyncSession = Depends(get_current_session),
     service: CurrentContentService = None,
-):
+) -> ResponseSchemaModel[TutorialDetailResponse]:
     """
     获取指定概念的特定版本教程
     
@@ -134,29 +146,26 @@ async def get_tutorial_by_version(
         指定版本的教程元数据
         
     Raises:
-        HTTPException: 404 - 指定版本的教程不存在
+        NotFoundError: 指定版本的教程不存在
     """
     tutorial = await service.get_tutorial_by_version(session, roadmap_id, concept_id, version)
     
     if not tutorial:
-        raise HTTPException(
-            status_code=404,
-            detail=f"概念 {concept_id} 的版本 v{version} 教程不存在"
-        )
+        raise errors.NotFoundError(msg=f"概念 {concept_id} 的版本 v{version} 教程不存在")
     
-    return {
-        "roadmap_id": roadmap_id,
-        "concept_id": concept_id,
-        "tutorial_id": tutorial.tutorial_id,
-        "title": tutorial.title,
-        "summary": tutorial.summary,
-        "content_url": tutorial.content_url,
-        "content_version": tutorial.content_version,
-        "is_latest": tutorial.is_latest,
-        "content_status": tutorial.content_status,
-        "estimated_completion_time": tutorial.estimated_completion_time,
-        "generated_at": tutorial.generated_at.isoformat() if tutorial.generated_at else None,
-    }
+    return response_base.success(data=TutorialDetailResponse(
+        roadmap_id=roadmap_id,
+        concept_id=concept_id,
+        tutorial_id=tutorial.tutorial_id,
+        title=tutorial.title,
+        summary=tutorial.summary,
+        content_url=tutorial.content_url,
+        content_version=tutorial.content_version,
+        is_latest=tutorial.is_latest,
+        content_status=tutorial.content_status,
+        estimated_completion_time=tutorial.estimated_completion_time,
+        generated_at=tutorial.generated_at.isoformat() if tutorial.generated_at else None,
+    ))
 
 
 @router.get("/{roadmap_id}/concepts/{concept_id}/tutorials/latest/content", response_class=PlainTextResponse)
@@ -176,26 +185,20 @@ async def download_latest_tutorial_content(
         service: 内容服务
         
     Returns:
-        教程的 Markdown 文本内容
+        教程的 Markdown 文本内容（PlainText格式）
         
     Raises:
-        HTTPException: 404 - 教程不存在或未完成
-        HTTPException: 500 - 下载失败
+        NotFoundError: 教程不存在或未完成
+        InternalServerError: 下载失败
     """
     # 获取最新教程元数据
     tutorial = await service.get_latest_tutorial(session, roadmap_id, concept_id)
     
     if not tutorial:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Concept {concept_id} in roadmap {roadmap_id} has no tutorial"
-        )
+        raise errors.NotFoundError(msg=f"Concept {concept_id} in roadmap {roadmap_id} has no tutorial")
     
     if tutorial.content_status != "completed":
-        raise HTTPException(
-            status_code=404,
-            detail=f"Tutorial is not ready yet (status: {tutorial.content_status})"
-        )
+        raise errors.NotFoundError(msg=f"Tutorial is not ready yet (status: {tutorial.content_status})")
     
     # 下载内容（S3逻辑在Service层）
     try:
@@ -213,14 +216,14 @@ async def download_latest_tutorial_content(
     except ValueError as e:
         error_msg = str(e)
         
-        if "not found" in error_msg.lower() or "nosuchwkey" in error_msg.lower():
+        if "not found" in error_msg.lower() or "nosuchkey" in error_msg.lower():
             logger.warning(
                 "tutorial_content_not_found",
                 roadmap_id=roadmap_id,
                 concept_id=concept_id,
                 error=error_msg,
             )
-            raise HTTPException(status_code=404, detail=error_msg)
+            raise errors.NotFoundError(msg=error_msg)
         
         logger.error(
             "tutorial_content_download_failed",
@@ -228,18 +231,18 @@ async def download_latest_tutorial_content(
             concept_id=concept_id,
             error=error_msg,
         )
-        raise HTTPException(status_code=500, detail=f"Failed to download tutorial content: {error_msg}")
+        raise errors.InternalServerError(msg=f"下载教程内容失败: {error_msg}")
 
 
 # ===== 资源推荐相关 =====
 
-@router.get("/{roadmap_id}/concepts/{concept_id}/resources")
+@router.get("/{roadmap_id}/concepts/{concept_id}/resources", response_model=ResponseSchemaModel[ResourcesResponse])
 async def get_concept_resources(
     roadmap_id: str,
     concept_id: str,
     session: AsyncSession = Depends(get_current_session),
     service: CurrentContentService = None,
-):
+) -> ResponseSchemaModel[ResourcesResponse]:
     """
     获取指定概念的学习资源
     
@@ -253,36 +256,33 @@ async def get_concept_resources(
         资源推荐列表
         
     Raises:
-        HTTPException: 404 - 概念没有资源推荐
+        NotFoundError: 概念没有资源推荐
     """
     resources = await service.get_concept_resources(session, roadmap_id, concept_id)
     
     if not resources:
-        raise HTTPException(
-            status_code=404,
-            detail=f"概念 {concept_id} 在路线图 {roadmap_id} 中没有资源推荐"
-        )
+        raise errors.NotFoundError(msg=f"概念 {concept_id} 在路线图 {roadmap_id} 中没有资源推荐")
     
-    return {
-        "roadmap_id": roadmap_id,
-        "concept_id": concept_id,
-        "resources_id": resources.id,
-        "resources": resources.resources,
-        "resources_count": resources.resources_count,
-        "search_queries_used": resources.search_queries_used,
-        "generated_at": resources.generated_at.isoformat() if resources.generated_at else None,
-    }
+    return response_base.success(data=ResourcesResponse(
+        roadmap_id=roadmap_id,
+        concept_id=concept_id,
+        resources_id=resources.id,
+        resources=resources.resources,
+        resources_count=resources.resources_count,
+        search_queries_used=resources.search_queries_used,
+        generated_at=resources.generated_at.isoformat() if resources.generated_at else None,
+    ))
 
 
 # ===== 测验相关 =====
 
-@router.get("/{roadmap_id}/concepts/{concept_id}/quiz")
+@router.get("/{roadmap_id}/concepts/{concept_id}/quiz", response_model=ResponseSchemaModel[QuizResponse])
 async def get_concept_quiz(
     roadmap_id: str,
     concept_id: str,
     session: AsyncSession = Depends(get_current_session),
     service: CurrentContentService = None,
-):
+) -> ResponseSchemaModel[QuizResponse]:
     """
     获取指定概念的测验
     
@@ -296,24 +296,209 @@ async def get_concept_quiz(
         测验数据，包含题目列表
         
     Raises:
-        HTTPException: 404 - 概念没有测验
+        NotFoundError: 概念没有测验
     """
     quiz = await service.get_concept_quiz(session, roadmap_id, concept_id)
     
     if not quiz:
-        raise HTTPException(
-            status_code=404,
-            detail=f"概念 {concept_id} 在路线图 {roadmap_id} 中没有测验"
-        )
+        raise errors.NotFoundError(msg=f"概念 {concept_id} 在路线图 {roadmap_id} 中没有测验")
     
-    return {
-        "roadmap_id": roadmap_id,
-        "concept_id": concept_id,
-        "quiz_id": quiz.quiz_id,
-        "questions": quiz.questions,
-        "total_questions": quiz.total_questions,
-        "easy_count": quiz.easy_count,
-        "medium_count": quiz.medium_count,
-        "hard_count": quiz.hard_count,
-        "generated_at": quiz.generated_at.isoformat() if quiz.generated_at else None,
-    }
+    return response_base.success(data=QuizResponse(
+        roadmap_id=roadmap_id,
+        concept_id=concept_id,
+        quiz_id=quiz.quiz_id,
+        questions=quiz.questions,
+        total_questions=quiz.total_questions,
+        easy_count=quiz.easy_count,
+        medium_count=quiz.medium_count,
+        hard_count=quiz.hard_count,
+        generated_at=quiz.generated_at.isoformat() if quiz.generated_at else None,
+    ))
+
+
+# ============================================================
+# 单个概念内容重试 API（激进重构版）
+# 
+# 所有辅助函数已移除，业务逻辑在Service层
+# ============================================================
+
+
+@router.post(
+    "/{roadmap_id}/concepts/{concept_id}/tutorial/retry",
+    response_model=ResponseSchemaModel[RetryContentResponse],
+)
+async def retry_tutorial(
+    roadmap_id: str,
+    concept_id: str,
+    request: RetryContentRequest,
+    content_service: CurrentContentService,
+    session: CurrentSessionTransaction,  # ✅ 写操作使用CurrentSessionTransaction
+    current_user: User = Depends(current_active_user),
+) -> ResponseSchemaModel[RetryContentResponse]:
+    """
+    重试单个概念的教程生成（异步 Celery 任务）
+    
+    激进重构版本：
+    - API层只负责HTTP适配（参数验证、响应格式化）
+    - 所有业务逻辑（任务创建、Celery调度）在Service层
+    
+    Args:
+        roadmap_id: 路线图 ID
+        concept_id: 概念 ID
+        request: 包含用户学习偏好的请求
+        content_service: 内容服务
+        session: 数据库会话（自动commit/rollback）
+        current_user: 当前用户
+        
+    Returns:
+        任务 ID，前端可通过 WebSocket 订阅进度
+        
+    Raises:
+        NotFoundError: 概念不存在
+        InternalServerError: 任务提交失败
+    """
+    try:
+        result = await content_service.retry_content_async(
+            session=session,
+            roadmap_id=roadmap_id,
+            concept_id=concept_id,
+            content_type="tutorial",
+            request=request,
+            user_id=current_user.id,
+        )
+        
+        # ✅ 自动 commit
+        
+        return response_base.success(data=RetryContentResponse(
+            success=True,
+            concept_id=concept_id,
+            content_type="tutorial",
+            message=result["message"],
+            data={"task_id": result["task_id"]},
+        ))
+        
+    except ValueError as e:
+        raise errors.NotFoundError(msg=str(e))
+    except Exception as e:
+        logger.error(
+            "retry_tutorial_failed",
+            roadmap_id=roadmap_id,
+            concept_id=concept_id,
+            error=str(e),
+            exc_info=True,
+        )
+        raise errors.InternalServerError(msg="教程重试任务提交失败")
+
+
+@router.post(
+    "/{roadmap_id}/concepts/{concept_id}/resources/retry",
+    response_model=ResponseSchemaModel[RetryContentResponse],
+)
+async def retry_resources(
+    roadmap_id: str,
+    concept_id: str,
+    request: RetryContentRequest,
+    content_service: CurrentContentService,
+    session: CurrentSessionTransaction,  # ✅ 写操作使用CurrentSessionTransaction
+    current_user: User = Depends(current_active_user),
+) -> ResponseSchemaModel[RetryContentResponse]:
+    """
+    重试单个概念的资源推荐生成（激进重构版）
+    
+    Args:
+        roadmap_id: 路线图 ID
+        concept_id: 概念 ID
+        request: 包含用户学习偏好的请求
+        content_service: 内容服务
+        session: 数据库会话（自动commit/rollback）
+        current_user: 当前用户
+        
+    Returns:
+        任务 ID，前端可通过 WebSocket 订阅进度
+        
+    Raises:
+        NotFoundError: 概念不存在
+        InternalServerError: 任务提交失败
+    """
+    try:
+        result = await content_service.retry_content_async(
+            session=session,
+            roadmap_id=roadmap_id,
+            concept_id=concept_id,
+            content_type="resources",
+            request=request,
+            user_id=current_user.id,
+        )
+        
+        # ✅ 自动 commit
+        
+        return response_base.success(data=RetryContentResponse(
+            success=True,
+            concept_id=concept_id,
+            content_type="resources",
+            message=result["message"],
+            data={"task_id": result["task_id"]},
+        ))
+        
+    except ValueError as e:
+        raise errors.NotFoundError(msg=str(e))
+    except Exception as e:
+        logger.error("retry_resources_failed", roadmap_id=roadmap_id, concept_id=concept_id, error=str(e))
+        raise errors.InternalServerError(msg="资源推荐重试任务提交失败")
+
+
+@router.post(
+    "/{roadmap_id}/concepts/{concept_id}/quiz/retry",
+    response_model=ResponseSchemaModel[RetryContentResponse],
+)
+async def retry_quiz(
+    roadmap_id: str,
+    concept_id: str,
+    request: RetryContentRequest,
+    content_service: CurrentContentService,
+    session: CurrentSessionTransaction,  # ✅ 写操作使用CurrentSessionTransaction
+    current_user: User = Depends(current_active_user),
+) -> ResponseSchemaModel[RetryContentResponse]:
+    """
+    重试单个概念的测验生成（激进重构版）
+    
+    Args:
+        roadmap_id: 路线图 ID
+        concept_id: 概念 ID
+        request: 包含用户学习偏好的请求
+        content_service: 内容服务
+        session: 数据库会话（自动commit/rollback）
+        current_user: 当前用户
+        
+    Returns:
+        任务 ID，前端可通过 WebSocket 订阅进度
+        
+    Raises:
+        NotFoundError: 概念不存在
+        InternalServerError: 任务提交失败
+    """
+    try:
+        result = await content_service.retry_content_async(
+            session=session,
+            roadmap_id=roadmap_id,
+            concept_id=concept_id,
+            content_type="quiz",
+            request=request,
+            user_id=current_user.id,
+        )
+        
+        # ✅ 自动 commit
+        
+        return response_base.success(data=RetryContentResponse(
+            success=True,
+            concept_id=concept_id,
+            content_type="quiz",
+            message=result["message"],
+            data={"task_id": result["task_id"]},
+        ))
+        
+    except ValueError as e:
+        raise errors.NotFoundError(msg=str(e))
+    except Exception as e:
+        logger.error("retry_quiz_failed", roadmap_id=roadmap_id, concept_id=concept_id, error=str(e))
+        raise errors.InternalServerError(msg="测验重试任务提交失败")

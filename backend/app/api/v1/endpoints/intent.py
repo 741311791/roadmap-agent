@@ -2,64 +2,53 @@
 需求分析元数据 API 端点
 
 提供需求分析元数据的查询功能。
+
+重构说明：
+- ✅ Schema定义移到独立文件（app/schemas/intent.py）
+- ✅ 使用CurrentSession（只读操作）
+- ✅ 使用自定义异常替代HTTPException
+- ✅ 使用统一响应格式（ResponseSchemaModel）
 """
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel
-from typing import Optional
+from fastapi import APIRouter
 import structlog
 
-from app.db.session import get_db_transaction
+from app.api.v1.deps import CurrentSession
 from app.services.intent_service import IntentService
+from app.core.custom_exceptions import errors
+from app.core.response_schema import ResponseSchemaModel, response_base
+from app.schemas.intent import IntentAnalysisResponse
 
 router = APIRouter(prefix="/intent-analysis", tags=["intent-analysis"])
 logger = structlog.get_logger()
 
 
-# ============================================================
-# Pydantic 模型
-# ============================================================
-
-class IntentAnalysisResponse(BaseModel):
-    """需求分析响应"""
-    id: str
-    task_id: str
-    roadmap_id: Optional[str] = None
-    parsed_goal: str
-    key_technologies: list[str]
-    difficulty_profile: str
-    time_constraint: str
-    recommended_focus: list[str]
-    user_profile_summary: Optional[str] = None
-    skill_gap_analysis: list[str]
-    personalized_suggestions: list[str]
-    estimated_learning_path_type: Optional[str] = None
-    content_format_weights: Optional[dict] = None
-    language_preferences: Optional[dict] = None
-    created_at: Optional[str] = None
-
-
-# ============================================================
-# 路由端点
-# ============================================================
-
-@router.get("/{task_id}", response_model=IntentAnalysisResponse)
+@router.get("/{task_id}", response_model=ResponseSchemaModel[IntentAnalysisResponse])
 async def get_intent_analysis(
     task_id: str,
-    db: AsyncSession = Depends(get_db_transaction),
-):
+    db: CurrentSession,  # ✅ 只读操作使用CurrentSession
+) -> ResponseSchemaModel[IntentAnalysisResponse]:
     """
     获取指定task_id的需求分析元数据
     
     用于查询路线图生成过程中的需求分析结果。
+    
+    Args:
+        task_id: 任务ID
+        db: 数据库会话
+        
+    Returns:
+        需求分析元数据
+        
+    Raises:
+        NotFoundError: 需求分析元数据不存在
     """
     service = IntentService()
     metadata = await service.get_intent_analysis_metadata(db, task_id)
     
     if not metadata:
-        raise HTTPException(status_code=404, detail="Intent analysis metadata not found")
+        raise errors.NotFoundError(msg="未找到需求分析元数据")
     
-    return IntentAnalysisResponse(
+    return response_base.success(data=IntentAnalysisResponse(
         id=metadata.id,
         task_id=metadata.task_id,
         roadmap_id=metadata.roadmap_id,
@@ -75,4 +64,4 @@ async def get_intent_analysis(
         content_format_weights=metadata.content_format_weights,
         language_preferences=metadata.language_preferences,
         created_at=metadata.created_at.isoformat() if metadata.created_at else None,
-    )
+    ))

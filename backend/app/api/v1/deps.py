@@ -156,6 +156,7 @@ try:
     from app.services.retry_service_new import RetryService, get_retry_service
     from app.services.management_service import ManagementService, get_management_service
     from app.services.mentor_service import MentorService, get_mentor_service
+    from app.services.generation_service import GenerationService, get_generation_service
     
     # 定义依赖注入别名
     CurrentRetrievalService = Annotated[RetrievalService, Depends(get_retrieval_service)]
@@ -165,6 +166,7 @@ try:
     CurrentRetryService = Annotated[RetryService, Depends(get_retry_service)]
     CurrentManagementService = Annotated[ManagementService, Depends(get_management_service)]
     CurrentMentorService = Annotated[MentorService, Depends(get_mentor_service)]
+    CurrentGenerationService = Annotated[GenerationService, Depends(get_generation_service)]
     
 except ImportError as e:
     # 如果Service还未创建，提供占位符

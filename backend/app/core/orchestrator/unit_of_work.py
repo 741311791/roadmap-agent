@@ -16,8 +16,9 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.db.session import AsyncSessionLocal
-from app.db.repositories.roadmap_repo import RoadmapRepository
+from app.db.session import async_session_maker
+from app.crud.crud_roadmap import RoadmapCRUD
+from app.models.database import RoadmapMetadata
 
 logger = structlog.get_logger()
 
@@ -150,7 +151,7 @@ class UnitOfWork:
         self._session = session
         self._timeout = timeout or 30.0  # 默认 30 秒超时
         self._is_nested = is_nested
-        self._repo: Optional[RoadmapRepository] = None
+        self._roadmap_crud = RoadmapCRUD(RoadmapMetadata)
         self._start_time: Optional[float] = None
         self._savepoint_name: Optional[str] = None
         self._timeout_task: Optional[asyncio.Task] = None
@@ -163,11 +164,14 @@ class UnitOfWork:
         return self._session
     
     @property
-    def repo(self) -> RoadmapRepository:
-        """获取 Repository 实例"""
-        if self._repo is None:
-            raise RuntimeError("UnitOfWork 未初始化，请在 async with 块中使用")
-        return self._repo
+    def repo(self) -> RoadmapCRUD:
+        """获取 CRUD 实例（保持向后兼容的属性名）"""
+        return self._roadmap_crud
+    
+    @property
+    def roadmap_crud(self) -> RoadmapCRUD:
+        """获取 RoadmapCRUD 实例（新命名）"""
+        return self._roadmap_crud
     
     async def __aenter__(self):
         """进入上下文：开始事务"""
@@ -175,7 +179,7 @@ class UnitOfWork:
         
         if self._session is None:
             # 顶层事务：创建新会话
-            self._session = AsyncSessionLocal()
+            self._session = async_session_maker()
             await self._session.__aenter__()
             
             logger.debug(
@@ -194,8 +198,7 @@ class UnitOfWork:
                 is_nested=True,
             )
         
-        # 创建 Repository
-        self._repo = RoadmapRepository(self._session)
+        # CRUD实例在__init__时已创建，这里不需要再初始化
         
         # 启动超时监控
         if self._timeout:

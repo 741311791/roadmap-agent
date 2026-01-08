@@ -15,7 +15,8 @@
 """
 from app.core.celery_app import celery_app
 from app.services.cover_image_service import CoverImageService
-from app.db.repository_factory import get_repository_factory
+from app.db.session import async_session_maker
+from app.crud.crud_roadmap import get_roadmap_crud
 import structlog
 import asyncio
 
@@ -60,11 +61,9 @@ def generate_cover_image_task(self, roadmap_id: str, prompt: str = None):
         )
         
         # ✅ 在 Worker 进程中创建独立 Session
-        repo_factory = get_repository_factory()
-        
         # 使用 asyncio.run() 执行异步逻辑
         # 注意：Celery worker 运行在独立线程，可以安全创建新的事件循环
-        result = asyncio.run(_generate_cover_image_async(repo_factory, roadmap_id, prompt))
+        result = asyncio.run(_generate_cover_image_async(roadmap_id, prompt))
         
         logger.info(
             "cover_image_task_completed",
@@ -91,19 +90,18 @@ def generate_cover_image_task(self, roadmap_id: str, prompt: str = None):
         raise
 
 
-async def _generate_cover_image_async(repo_factory, roadmap_id: str, prompt: str = None) -> dict:
+async def _generate_cover_image_async(roadmap_id: str, prompt: str = None) -> dict:
     """
     异步生成封面图（内部辅助函数）
     
     Args:
-        repo_factory: Repository 工厂实例
         roadmap_id: 路线图 ID
         prompt: 图片生成提示词（可选）
     
     Returns:
         dict: 生成结果
     """
-    async with repo_factory.create_session() as session:
+    async with async_session_maker.begin() as session:
         # 创建服务实例（使用独立 Session）
         service = CoverImageService(session)
         

@@ -15,6 +15,7 @@ from app.models.domain import LearningPreferences
 class GenerateRoadmapResponse(BaseModel):
     """路线图生成响应"""
     task_id: str = Field(..., description="任务ID")
+    status: str = Field(..., description="任务状态（pending/processing/completed/failed）")
     message: str = Field(..., description="响应消息")
 
 

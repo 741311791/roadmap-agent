@@ -21,7 +21,7 @@ import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from app.db.session import AsyncSessionLocal
+from app.db.session import async_session_maker
 from app.models.database import RoadmapTask, RoadmapMetadata
 
 
@@ -122,7 +122,7 @@ async def main(timeout_seconds: int = 300, dry_run: bool = True):
     print(f"超时阈值: {timeout_seconds} 秒 ({timeout_seconds / 60:.1f} 分钟)")
     print()
     
-    async with AsyncSessionLocal() as session:
+    async with async_session_maker.begin() as session:
         # 查找卡住的任务
         print("查找卡住的任务...")
         stuck_tasks = await find_stuck_tasks(session, timeout_seconds)

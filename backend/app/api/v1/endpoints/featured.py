@@ -94,20 +94,17 @@ async def get_featured_roadmaps(
     
     roadmap_items = []
     
-    # 4. 转换路线图数据
+    # 4. 转换路线图数据（优化版）
     for roadmap in roadmaps:
-        # 从 framework_data 中提取概念信息
         framework_data = roadmap.framework_data or {}
         stages = framework_data.get("stages", [])
         
-        total_concepts = 0
-        
-        # 统计总概念数
-        for stage in stages:
-            modules = stage.get("modules", [])
-            for module in modules:
-                concepts = module.get("concepts", [])
-                total_concepts += len(concepts)
+        # 优化：快速计算总概念数
+        total_concepts = sum(
+            len(module.get("concepts", []))
+            for stage in stages
+            for module in stage.get("modules", [])
+        )
         
         # 从批量获取的 tasks 中获取 topic（无需额外查询）
         task = tasks_by_roadmap.get(roadmap.roadmap_id)
@@ -116,14 +113,15 @@ async def get_featured_roadmaps(
             learning_goal = task.user_request.get("preferences", {}).get("learning_goal", "")
             topic = learning_goal.lower()[:50] if learning_goal else None
         
-        # 提取 stages 信息
-        stage_summaries = []
-        for stage in stages:
-            stage_summaries.append(StageSummary(
+        # 优化：提取 stages 摘要（使用列表推导式）
+        stage_summaries = [
+            StageSummary(
                 name=stage.get("name", ""),
                 description=stage.get("description"),
-                order=stage.get("order", len(stage_summaries) + 1),
-            ))
+                order=stage.get("order", idx + 1),
+            )
+            for idx, stage in enumerate(stages)
+        ]
         
         # Featured路线图默认为completed状态（因为是精选内容）
         roadmap_items.append(FeaturedRoadmapItem(

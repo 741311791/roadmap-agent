@@ -16,7 +16,7 @@ import os
 # 添加项目根目录到 Python 路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.db.session import AsyncSessionLocal
+from app.db.session import async_session_maker
 from passlib.context import CryptContext
 
 # ✅ 使用与 FastAPI Users 相同的密码哈希配置
@@ -31,7 +31,7 @@ async def fix_admin_password(email: str, password: str):
         email: 管理员邮箱
         password: 新密码（明文）
     """
-    async with AsyncSessionLocal() as session:
+    async with async_session_maker.begin() as session:
         # 检查用户是否存在
         result = await session.execute(
             text("SELECT id, email, username, is_superuser FROM users WHERE email = :email"),

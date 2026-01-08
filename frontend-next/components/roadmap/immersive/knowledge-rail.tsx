@@ -52,7 +52,7 @@ export function KnowledgeRail({
 
   // 计算包含活跃概念的模块ID列表
   const modulesWithActiveConcept = useMemo(() => {
-    if (!roadmap || !activeConceptId) return new Set<string>();
+    if (!roadmap || !roadmap.stages || !activeConceptId) return new Set<string>();
     
     const moduleIds = new Set<string>();
     for (const stage of roadmap.stages) {
@@ -88,7 +88,7 @@ export function KnowledgeRail({
     });
   };
 
-  if (!roadmap) {
+  if (!roadmap || !roadmap.stages) {
     return (
       <div className={cn("h-full flex items-center justify-center text-muted-foreground", className)}>
         <span className="font-serif">Loading...</span>

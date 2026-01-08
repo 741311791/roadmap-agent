@@ -19,7 +19,7 @@ import os
 # 添加项目根目录到 Python 路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.db.session import AsyncSessionLocal
+from app.db.session import async_session_maker
 from datetime import datetime, timezone, timedelta
 import uuid
 from passlib.context import CryptContext
@@ -43,7 +43,7 @@ async def create_admin_user(
         user_id: 用户 ID（可选，不提供则自动生成）
         username: 用户名（可选，默认为 email 的本地部分）
     """
-    async with AsyncSessionLocal() as session:
+    async with async_session_maker.begin() as session:
         # 检查用户是否已存在
         result = await session.execute(
             text("SELECT id, email FROM users WHERE email = :email"),

@@ -10,8 +10,8 @@ Tavily API Key 分配器服务
 from typing import Optional
 import structlog
 
-from app.db.repositories.tavily_key_repo import TavilyKeyRepository
-from app.db.celery_session import celery_safe_session_with_retry
+from app.core.tavily_key_manager import TavilyKeyManager
+from app.db.celery_session import get_celery_session
 
 logger = structlog.get_logger(__name__)
 
@@ -54,9 +54,10 @@ async def allocate_keys_for_concepts(
     
     try:
         # 一次性从数据库获取所有可用 Keys
-        async with celery_safe_session_with_retry() as session:
-            repo = TavilyKeyRepository(session)
-            all_keys = await repo.get_all_keys()
+        async with get_celery_session() as session:
+            from app.models.database import TavilyAPIKey
+            manager = TavilyKeyManager(TavilyAPIKey)
+            all_keys = await manager.get_all_keys(session)
         
         # 过滤出满足最小配额要求的 Keys
         available_keys = [

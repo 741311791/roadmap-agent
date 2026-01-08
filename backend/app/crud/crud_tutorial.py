@@ -59,7 +59,6 @@ class TutorialCRUD(BaseCRUD[TutorialMetadata, TutorialCreate, TutorialUpdate]):
         result = await session.execute(
             select(TutorialMetadata)
             .where(TutorialMetadata.concept_id == concept_id)
-            .where(TutorialMetadata.deleted_at.is_(None))
             .order_by(TutorialMetadata.content_version.desc())
             .limit(1)
         )
@@ -87,7 +86,6 @@ class TutorialCRUD(BaseCRUD[TutorialMetadata, TutorialCreate, TutorialUpdate]):
             .where(TutorialMetadata.roadmap_id == roadmap_id)
             .where(TutorialMetadata.concept_id == concept_id)
             .where(TutorialMetadata.is_latest == True)
-            .where(TutorialMetadata.deleted_at.is_(None))
         )
         return result.scalar_one_or_none()
     

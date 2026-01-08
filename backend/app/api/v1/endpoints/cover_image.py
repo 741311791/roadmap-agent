@@ -15,6 +15,7 @@ from app.core.auth.deps import current_active_user
 from app.models.database import User
 from app.services.cover_image_service import CoverImageService
 from app.tasks.cover_image_tasks import generate_cover_image_task, batch_generate_cover_images_task
+from app.core.response_schema import response_base, ResponseSchemaModel
 import structlog
 
 logger = structlog.get_logger()
@@ -65,10 +66,10 @@ async def get_roadmap_cover_image(
     
     return CoverImageResponse(
         roadmap_id=roadmap_id,
-        cover_image_url=status_info["url"],
-        status=status_info["status"],
-        error=status_info.get("error"),
-        retry_count=status_info.get("retry_count")
+        cover_image_url=status_info.url,
+        status=status_info.status,
+        error=status_info.error,
+        retry_count=status_info.retry_count
     )
 
 
@@ -225,12 +226,12 @@ async def batch_generate_cover_images(
             skipped_count=len(skipped),
         )
     
-    return {
+    return response_base.success(data={
         "triggered": len(triggered_ids),
         "skipped": len(skipped),
         "roadmap_ids": triggered_ids,
         "message": f"Triggered {len(triggered_ids)} cover image generation tasks, skipped {len(skipped)} already successful"
-    }
+    })
 
 
 class BatchGetCoverImagesRequest(BaseModel):
@@ -268,10 +269,10 @@ async def batch_get_cover_images(
     return [
         BatchCoverImageResponse(
             roadmap_id=roadmap_id,
-            cover_image_url=status_info["url"],
-            status=status_info["status"],
-            error=status_info.get("error"),
-            retry_count=status_info.get("retry_count")
+            cover_image_url=status_info.url,
+            status=status_info.status,
+            error=status_info.error,
+            retry_count=status_info.retry_count
         )
         for roadmap_id, status_info in results.items()
     ]

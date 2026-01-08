@@ -15,13 +15,13 @@ import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from app.db.session import AsyncSessionLocal
+from app.db.session import async_session_maker
 from app.models.database import RoadmapTask
 
 
 async def check_task(task_id: str):
     """检查任务状态"""
-    async with AsyncSessionLocal() as session:
+    async with async_session_maker.begin() as session:
         result = await session.execute(
             select(RoadmapTask).where(RoadmapTask.task_id == task_id)
         )
@@ -66,7 +66,7 @@ async def check_task(task_id: str):
 
 async def list_processing_tasks():
     """列出所有正在运行的任务"""
-    async with AsyncSessionLocal() as session:
+    async with async_session_maker.begin() as session:
         result = await session.execute(
             select(RoadmapTask).where(
                 RoadmapTask.status.in_(["pending", "processing", "human_review_pending"])

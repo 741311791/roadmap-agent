@@ -37,85 +37,86 @@ export function TaskList({ tasks, isLoading, onRetry, onDelete, onCancel }: Task
     message: string;
   } | null>(null);
 
-  // 格式化日期时间
+  // 格式化日期时间（超紧凑格式，避免换行）
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
+    const date = new Date(dateString);
+    const month = date.toLocaleString('en-US', { month: 'short' });
+    const day = date.getDate();
+    const hours = date.getHours().toString().padStart(2, '0');
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    
+    // 格式: Jan 5, 01:04 （移除年份和 AM/PM，更紧凑）
+    return `${month} ${day}, ${hours}:${minutes}`;
   };
 
-  // 获取状态显示配置
+  // 获取状态显示配置（优化后的 sage 主题色系）
   const getStatusConfig = (status: string) => {
     const config = {
       pending: { 
         variant: 'secondary' as const, 
         label: 'Pending', 
         icon: Clock,
-        className: 'border-amber-300 text-amber-600 bg-amber-50'
+        className: 'border-sage-200 text-sage-700 bg-sage-50 dark:border-sage-800 dark:text-sage-300 dark:bg-sage-950'
       },
       processing: { 
         variant: 'default' as const, 
         label: 'Processing', 
         icon: Loader2,
-        className: 'border-blue-300 text-blue-600 bg-blue-50 animate-pulse'
+        className: 'border-sage-300 text-sage-700 bg-sage-100 dark:border-sage-700 dark:text-sage-300 dark:bg-sage-900 animate-pulse'
       },
       running: { 
         variant: 'default' as const, 
         label: 'Running', 
         icon: Loader2,
-        className: 'border-blue-300 text-blue-600 bg-blue-50 animate-pulse'
+        className: 'border-sage-300 text-sage-700 bg-sage-100 dark:border-sage-700 dark:text-sage-300 dark:bg-sage-900 animate-pulse'
       },
       human_review_pending: { 
         variant: 'secondary' as const, 
-        label: 'Review Pending', 
+        label: 'Pending', 
         icon: Clock,
-        className: 'border-purple-300 text-purple-600 bg-purple-50'
+        className: 'border-amber-200 text-amber-700 bg-amber-50 dark:border-amber-800 dark:text-amber-300 dark:bg-amber-950 whitespace-nowrap'
       },
       human_review_required: { 
         variant: 'secondary' as const, 
-        label: 'Review Required', 
+        label: 'Pending', 
         icon: Clock,
-        className: 'border-purple-300 text-purple-600 bg-purple-50'
+        className: 'border-amber-200 text-amber-700 bg-amber-50 dark:border-amber-800 dark:text-amber-300 dark:bg-amber-950 whitespace-nowrap'
       },
       approved: { 
         variant: 'default' as const, 
         label: 'Approved', 
         icon: CheckCircle2,
-        className: 'border-green-300 text-green-600 bg-green-50'
+        className: 'border-emerald-200 text-emerald-700 bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300 dark:bg-emerald-950'
       },
       rejected: { 
         variant: 'secondary' as const, 
         label: 'Rejected', 
         icon: AlertCircle,
-        className: 'border-orange-300 text-orange-600 bg-orange-50'
+        className: 'border-orange-200 text-orange-700 bg-orange-50 dark:border-orange-800 dark:text-orange-300 dark:bg-orange-950'
       },
       completed: { 
         variant: 'default' as const, 
         label: 'Completed', 
         icon: CheckCircle2,
-        className: 'border-green-300 text-green-600 bg-green-50'
+        className: 'border-emerald-200 text-emerald-700 bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300 dark:bg-emerald-950'
       },
       partial_failure: { 
         variant: 'default' as const, 
-        label: 'Completed',  // ✅ 简化：显示为 Completed
-        icon: CheckCircle2,  // ✅ 使用绿色对勾图标
-        className: 'border-green-300 text-green-600 bg-green-50'  // ✅ 使用绿色样式
+        label: 'Completed',
+        icon: CheckCircle2,
+        className: 'border-emerald-200 text-emerald-700 bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300 dark:bg-emerald-950'
       },
       failed: { 
         variant: 'destructive' as const, 
         label: 'Failed', 
         icon: AlertCircle,
-        className: 'border-red-300 text-red-600 bg-red-50'
+        className: 'border-red-200 text-red-700 bg-red-50 dark:border-red-800 dark:text-red-300 dark:bg-red-950'
       },
       cancelled: { 
         variant: 'destructive' as const, 
         label: 'Cancelled', 
         icon: XCircle,
-        className: 'border-red-300 text-red-600 bg-red-50'
+        className: 'border-stone-200 text-stone-700 bg-stone-50 dark:border-stone-800 dark:text-stone-300 dark:bg-stone-950'
       },
     };
     
@@ -155,34 +156,36 @@ export function TaskList({ tasks, isLoading, onRetry, onDelete, onCancel }: Task
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-[300px]">Task Title</TableHead>
+              <TableHead className="w-[50px]">#</TableHead>
+              <TableHead className="w-[240px]">Task Title</TableHead>
               <TableHead className="w-[120px]">Status</TableHead>
-              <TableHead className="w-[150px]">Current Step</TableHead>
-              <TableHead className="w-[180px]">Created</TableHead>
-              <TableHead className="w-[180px]">Completed</TableHead>
-              <TableHead className="w-[150px] text-right">Actions</TableHead>
+              <TableHead className="w-[140px]">Current Step</TableHead>
+              <TableHead className="w-[130px]">Created</TableHead>
+              <TableHead className="w-[130px]">Completed</TableHead>
+              <TableHead className="w-[120px] text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {tasks.map((task) => {
+            {tasks.map((task, index) => {
               const statusConfig = getStatusConfig(task.status);
               const StatusIcon = statusConfig.icon;
 
               return (
                 <TableRow key={task.task_id}>
+                  {/* Index Number */}
+                  <TableCell className="text-sm text-muted-foreground font-medium">
+                    {index + 1}
+                  </TableCell>
+
                   {/* Task Title */}
                   <TableCell className="font-medium">
-                    <div className="flex flex-col gap-1">
-                      <Link
-                        href={`/tasks/${task.task_id}`}
-                        className="truncate max-w-[280px] hover:text-sage-600 hover:underline transition-colors"
-                      >
-                        {task.title}
-                      </Link>
-                      <span className="text-xs text-muted-foreground font-mono">
-                        ID: {task.task_id.substring(0, 8)}...
-                      </span>
-                    </div>
+                    <Link
+                      href={`/tasks/${task.task_id}`}
+                      className="block truncate max-w-[220px] hover:text-sage-600 hover:underline transition-colors"
+                      title={task.title}
+                    >
+                      {task.title}
+                    </Link>
                   </TableCell>
 
                   {/* Status Badge */}

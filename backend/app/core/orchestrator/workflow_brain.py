@@ -19,7 +19,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 import structlog
 
-from app.db.session import AsyncSessionLocal, safe_session
+from app.db.session import async_session_maker
 from app.crud.crud_task import get_task_crud
 from app.crud.crud_roadmap import get_roadmap_crud
 from app.crud.crud_workflow import get_intent_analysis_crud, get_validation_crud, get_edit_crud
@@ -217,12 +217,12 @@ class WorkflowBrain:
             roadmap_id=roadmap_id,
         )
         
-        # 1. 更新 live_step 缓存
-        self.state_manager.set_live_step(task_id, node_name)
+        # 1. 更新 live_step 缓存（Redis）
+        await self.state_manager.set_live_step(task_id, node_name)
         
         # 2. 更新数据库状态（使用统一事务）
         try:
-            async with AsyncSessionLocal() as session:
+            async with async_session_maker.begin() as session:
                 task_crud = get_task_crud()
                 await task_crud.update_status(
                     session=session,
@@ -350,7 +350,7 @@ class WorkflowBrain:
         
         # 1. 更新数据库状态为失败
         try:
-            async with AsyncSessionLocal() as session:
+            async with async_session_maker.begin() as session:
                 task_crud = get_task_crud()
                 await task_crud.update_status(
                     session=session,
@@ -413,7 +413,7 @@ class WorkflowBrain:
         Returns:
             唯一的 roadmap_id
         """
-        async with AsyncSessionLocal() as session:
+        async with async_session_maker.begin() as session:
             roadmap_crud = get_roadmap_crud()
             unique_id = await ensure_unique_roadmap_id(roadmap_id, roadmap_crud, session)
             
@@ -453,13 +453,13 @@ class WorkflowBrain:
         
         # 第一步：保存 Intent Analysis 元数据
         # 注意：crud 方法只调用 flush()，需要手动 commit
-        async with AsyncSessionLocal() as session:
+        async with async_session_maker.begin() as session:
             intent_crud = get_intent_analysis_crud()
             await intent_crud.save_intent_analysis(session, task_id, intent_analysis)
             await session.commit()  # ✅ 必须手动 commit 才能持久化
         
         # 第二步：更新任务状态和 roadmap_id
-        async with AsyncSessionLocal() as session:
+        async with async_session_maker.begin() as session:
             task_crud = get_task_crud()
             await task_crud.update_status(
                 session=session,
@@ -505,13 +505,13 @@ class WorkflowBrain:
         
         # 第一步：保存路线图框架
         # 注意：crud 方法只调用 flush()，需要手动 commit
-        async with AsyncSessionLocal() as session:
+        async with async_session_maker.begin() as session:
             roadmap_crud = get_roadmap_crud()
             await roadmap_crud.save_roadmap_metadata(session, roadmap_id, user_id, framework)
             await session.commit()  # ✅ 必须手动 commit 才能持久化
         
         # 第二步：更新任务状态
-        async with AsyncSessionLocal() as session:
+        async with async_session_maker.begin() as session:
             task_crud = get_task_crud()
             await task_crud.update_status(
                 session=session,
@@ -532,7 +532,7 @@ class WorkflowBrain:
         # 异步触发封面图生成（不阻塞主流程）
         try:
             from app.services.cover_image_service import CoverImageService
-            async with AsyncSessionLocal() as session:
+            async with async_session_maker.begin() as session:
                 cover_service = CoverImageService(session)
                 # 使用路线图标题作为提示词
                 prompt = framework.title if framework else None
@@ -575,7 +575,7 @@ class WorkflowBrain:
             is_valid=validation_result.is_valid,
         )
         
-        async with AsyncSessionLocal() as session:
+        async with async_session_maker.begin() as session:
             validation_crud = get_validation_crud()
             
             # 统计问题数量
@@ -641,7 +641,7 @@ class WorkflowBrain:
             modified_framework
         )
         
-        async with AsyncSessionLocal() as session:
+        async with async_session_maker.begin() as session:
             edit_crud = get_edit_crud()
             
             # 创建编辑记录
@@ -731,9 +731,9 @@ class WorkflowBrain:
             - 使用短生命周期会话，减少连接占用时间
             - 分批保存，每批10个概念，独立事务
             - 处理客户端断开连接（GeneratorExit）和数据库连接超时异常
-            - 使用带重试的会话管理器应对连接池压力
+            - 使用短生命周期会话，减少连接占用时间
         """
-        from app.db.session import safe_session_with_retry
+        from app.db.session import async_session_maker
         
         logger.info(
             "workflow_brain_save_content_results",
@@ -755,7 +755,7 @@ class WorkflowBrain:
             
             # 1.1 一次性保存所有教程（单个事务）
             if tutorial_refs:
-                async with safe_session_with_retry() as session:
+                async with async_session_maker.begin() as session:
                     from app.crud.crud_tutorial import get_tutorial_crud
                     tutorial_crud = get_tutorial_crud()
                     await tutorial_crud.save_tutorials_batch(session, tutorial_refs, roadmap_id)
@@ -768,7 +768,7 @@ class WorkflowBrain:
             
             # 1.2 一次性保存所有资源（单个事务）
             if resource_refs:
-                async with safe_session_with_retry() as session:
+                async with async_session_maker.begin() as session:
                     from app.crud.crud_resource import get_resource_crud
                     resource_crud = get_resource_crud()
                     await resource_crud.save_resources_batch(session, resource_refs, roadmap_id)
@@ -781,7 +781,7 @@ class WorkflowBrain:
             
             # 1.3 一次性保存所有测验（单个事务）
             if quiz_refs:
-                async with safe_session_with_retry() as session:
+                async with async_session_maker.begin() as session:
                     from app.crud.crud_quiz import get_quiz_crud
                     quiz_crud = get_quiz_crud()
                     await quiz_crud.save_quizzes_batch(session, quiz_refs, roadmap_id)
@@ -804,7 +804,7 @@ class WorkflowBrain:
             # ============================================================
             # Phase 2: 更新 framework_data（独立事务）
             # ============================================================
-            async with safe_session_with_retry() as session:
+            async with get_celery_session() as session:
                 roadmap_crud = get_roadmap_crud()
                 
                 logger.info(
@@ -862,7 +862,7 @@ class WorkflowBrain:
             final_status = "partial_failure" if failed_concepts else "completed"
             final_step = "content_generation" if failed_concepts else "completed"
             
-            async with safe_session_with_retry() as session:
+            async with get_celery_session() as session:
                 repo = RoadmapRepository(session)
                 await repo.update_task_status(
                     task_id=task_id,
@@ -1025,7 +1025,7 @@ class WorkflowBrain:
             stages_count=stages_count,
         )
         
-        async with AsyncSessionLocal() as session:
+        async with async_session_maker.begin() as session:
             task_crud = get_task_crud()
             await task_crud.update_status(
                 session=session,
@@ -1067,7 +1067,7 @@ class WorkflowBrain:
             task_id=task_id,
         )
         
-        async with AsyncSessionLocal() as session:
+        async with async_session_maker.begin() as session:
             task_crud = get_task_crud()
             await task_crud.update_status(
                 session=session,
@@ -1103,7 +1103,7 @@ class WorkflowBrain:
             celery_task_id=celery_task_id,
         )
         
-        async with AsyncSessionLocal() as session:
+        async with async_session_maker.begin() as session:
             task_crud = get_task_crud()
             await task_crud.update_celery_id(
                 session=session,

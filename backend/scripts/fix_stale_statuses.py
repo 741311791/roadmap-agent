@@ -22,7 +22,7 @@ import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from app.db.session import AsyncSessionLocal
+from app.db.session import async_session_maker
 from app.models.database import RoadmapMetadata, RoadmapTask
 
 
@@ -228,7 +228,7 @@ async def main(dry_run: bool = True, timeout_seconds: int = 3600):
     print(f"超时阈值: {timeout_seconds} 秒 ({timeout_seconds / 60:.1f} 分钟)")
     print()
     
-    async with AsyncSessionLocal() as session:
+    async with async_session_maker.begin() as session:
         # 1. 获取活跃任务
         print("步骤 1/4: 获取活跃任务...")
         active_task_ids = await get_active_task_ids(session)

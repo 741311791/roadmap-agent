@@ -74,14 +74,14 @@ class WebSearchRouter(BaseTool[SearchQuery, SearchResult]):
         """
         try:
             import asyncio
-            # 特殊处理：TavilyKeyRepository包含复杂的分布式锁逻辑，暂时保留
-            from app.db.repositories.tavily_key_repo import TavilyKeyRepository
+            from app.core.tavily_key_manager import TavilyKeyManager
+            from app.models.database import TavilyAPIKey
             
-            repo = TavilyKeyRepository(db_session)
+            manager = TavilyKeyManager(TavilyAPIKey)
             
             # 设置超时保护（5秒），避免在连接池耗尽时长时间阻塞
             key_record = await asyncio.wait_for(
-                repo.get_best_key(),
+                manager.get_best_key(db_session),
                 timeout=5.0
             )
             return key_record is not None

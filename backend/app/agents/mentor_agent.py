@@ -153,12 +153,13 @@ class MentorAgent(BaseAgent):
         
         # 查询是否已有测验
         try:
-            from app.db.repository_factory import get_repository_factory
+            from app.db.session import async_session_maker
+            from app.crud.crud_quiz import get_quiz_crud
             
-            repo_factory = get_repository_factory()
-            async with repo_factory.create_session() as session:
-                quiz_repo = repo_factory.create_quiz_repo(session)
-                quiz = await quiz_repo.get_by_concept_id(
+            async with async_session_maker() as session:
+                quiz_crud = get_quiz_crud()
+                quiz = await quiz_crud.get_by_concept_id(
+                    session,
                     roadmap_id=input_data.roadmap_id,
                     concept_id=input_data.concept_id,
                 )

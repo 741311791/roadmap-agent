@@ -21,7 +21,7 @@ sys.path.insert(0, str(project_root))
 
 from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.db.session import AsyncSessionLocal
+from app.db.session import async_session_maker
 from app.models.database import IntentAnalysisMetadata
 import structlog
 
@@ -139,7 +139,7 @@ async def main():
     """主函数"""
     logger.info("fix_duplicate_intent_analysis_started")
     
-    async with AsyncSessionLocal() as session:
+    async with async_session_maker.begin() as session:
         try:
             # 1. 查找重复记录
             logger.info("step_1_finding_duplicates")

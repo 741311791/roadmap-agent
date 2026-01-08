@@ -132,7 +132,8 @@ export default function MyRoadmapsPage() {
     if (!userId) return;
     
       try {
-        await deleteRoadmap(roadmapToDelete, userId);
+        // ✅ 不再传递userId，后端从JWT Token自动提取
+        await deleteRoadmap(roadmapToDelete);
         
         // Refresh the list
         const response = await getUserRoadmaps(userId);

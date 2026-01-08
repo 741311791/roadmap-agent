@@ -224,7 +224,7 @@ async def generate_single_concept(
             concept_id=concept_id,
         )
         
-        from app.db.celery_session import celery_safe_session_with_retry as safe_session_with_retry
+        from app.db.celery_session import get_celery_session
         
         # 🔧 使用信号量限制并发数据库连接数
         # 防止 30+ 个 Concept 同时打开数据库会话导致连接池耗尽
@@ -235,13 +235,14 @@ async def generate_single_concept(
                 message="获取数据库操作许可",
             )
             
-            async with safe_session_with_retry() as session:
+            async with get_celery_session() as session:
                 # 保存教程
                 if tutorial:
                     try:
-                        from app.db.repositories.tutorial_repo import TutorialRepository
-                        tutorial_repo = TutorialRepository(session)
-                        await tutorial_repo.save_tutorial(
+                        from app.crud.crud_tutorial import get_tutorial_crud
+                        tutorial_crud = get_tutorial_crud()
+                        await tutorial_crud.save_tutorial(
+                            session,
                             tutorial_output=tutorial,
                             roadmap_id=roadmap_id,
                         )
@@ -256,9 +257,10 @@ async def generate_single_concept(
                 # 保存资源
                 if resource:
                     try:
-                        from app.db.repositories.resource_repo import ResourceRepository
-                        resource_repo = ResourceRepository(session)
-                        await resource_repo.save_resource_recommendation(
+                        from app.crud.crud_resource import get_resource_crud
+                        resource_crud = get_resource_crud()
+                        await resource_crud.save_resource_recommendation(
+                            session,
                             resource_output=resource,
                             roadmap_id=roadmap_id,
                         )
@@ -273,9 +275,10 @@ async def generate_single_concept(
                 # 保存测验
                 if quiz:
                     try:
-                        from app.db.repositories.quiz_repo import QuizRepository
-                        quiz_repo = QuizRepository(session)
-                        await quiz_repo.save_quiz(
+                        from app.crud.crud_quiz import get_quiz_crud
+                        quiz_crud = get_quiz_crud()
+                        await quiz_crud.save_quiz(
+                            session,
                             quiz_output=quiz,
                             roadmap_id=roadmap_id,
                         )
@@ -288,23 +291,26 @@ async def generate_single_concept(
                         logger.error("quiz_save_failed", concept_id=concept_id, error=str(e))
                 
                 # 🆕 更新 ConceptMetadata（追踪内容生成状态）
-                from app.db.repositories.concept_meta_repo import ConceptMetadataRepository
-                concept_meta_repo = ConceptMetadataRepository(session)
+                from app.crud.crud_concept import get_concept_crud
+                concept_crud = get_concept_crud()
                 
                 # 更新三项内容的状态
-                await concept_meta_repo.update_content_status(
+                await concept_crud.update_content_status(
+                    session,
                     concept_id=concept_id,
                     content_type="tutorial",
                     status="completed" if tutorial else "failed",
                     content_id=tutorial.tutorial_id if tutorial and hasattr(tutorial, 'tutorial_id') else None,
                 )
-                await concept_meta_repo.update_content_status(
+                await concept_crud.update_content_status(
+                    session,
                     concept_id=concept_id,
                     content_type="resources",
                     status="completed" if resource else "failed",
                     content_id=resource.id if resource and hasattr(resource, 'id') else None,
                 )
-                await concept_meta_repo.update_content_status(
+                await concept_crud.update_content_status(
+                    session,
                     concept_id=concept_id,
                     content_type="quiz",
                     status="completed" if quiz else "failed",
@@ -312,7 +318,7 @@ async def generate_single_concept(
                 )
                 
                 # 检查是否全部完成
-                concept_meta = await concept_meta_repo.get_by_concept_id(concept_id)
+                concept_meta = await concept_crud.get_by_concept_id(session, concept_id)
                 is_all_complete = (concept_meta and concept_meta.overall_status == "completed")
                 
                 await session.commit()
@@ -401,23 +407,26 @@ async def generate_single_concept(
         
         # 🆕 更新 ConceptMetadata 为失败状态
         try:
-            from app.db.celery_session import celery_safe_session_with_retry as safe_session_with_retry
-            from app.db.repositories.concept_meta_repo import ConceptMetadataRepository
+            from app.db.celery_session import get_celery_session
+            from app.crud.crud_concept import get_concept_crud
             
-            async with safe_session_with_retry() as session:
-                concept_meta_repo = ConceptMetadataRepository(session)
+            async with get_celery_session() as session:
+                concept_crud = get_concept_crud()
                 # 标记所有三项为失败（因为整个 Concept 生成失败了）
-                await concept_meta_repo.update_content_status(
+                await concept_crud.update_content_status(
+                    session,
                     concept_id=concept_id,
                     content_type="tutorial",
                     status="failed",
                 )
-                await concept_meta_repo.update_content_status(
+                await concept_crud.update_content_status(
+                    session,
                     concept_id=concept_id,
                     content_type="resources",
                     status="failed",
                 )
-                await concept_meta_repo.update_content_status(
+                await concept_crud.update_content_status(
+                    session,
                     concept_id=concept_id,
                     content_type="quiz",
                     status="failed",

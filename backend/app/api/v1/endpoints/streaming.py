@@ -3,8 +3,11 @@
 
 提供学习路线图的流式生成功能，使用 Server-Sent Events (SSE) 实时推送生成过程。
 包含需求分析、框架设计、教程生成、聊天修改等流式功能。
+
+性能优化：
+- SSE反压机制：检测客户端断开，防止资源浪费
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from typing import AsyncIterator
 from pydantic import BaseModel, Field
@@ -12,6 +15,7 @@ import structlog
 import uuid
 import json
 import time
+import asyncio
 
 from app.models.domain import (
     UserRequest,
@@ -21,7 +25,7 @@ from app.models.domain import (
     LearningPreferences,
     TutorialGenerationOutput,
 )
-from app.db.session import AsyncSessionLocal
+from app.db.session import async_session_maker
 from app.services.streaming_service import StreamingService
 from app.agents.intent_analyzer import IntentAnalyzerAgent
 from app.agents.curriculum_architect import CurriculumArchitectAgent
@@ -552,7 +556,7 @@ async def _generate_sse_stream(
                     message="Saving roadmap to database",
                 )
                 
-                async with AsyncSessionLocal() as session:
+                async with async_session_maker.begin() as session:
                     service = StreamingService()
                     
                     # 1. 创建任务记录
@@ -588,7 +592,7 @@ async def _generate_sse_stream(
                         roadmap_id=framework_obj.roadmap_id,
                     )
                     
-                    await session.commit()
+                    # ✅ 使用 .begin() 自动 commit
                     
                     logger.info(
                         "sse_stream_saved_to_db",
@@ -718,7 +722,7 @@ async def _chat_modification_stream(
             "message": "Loading roadmap data...",
         })
         
-        async with AsyncSessionLocal() as session:
+        async with async_session_maker() as session:
             service = StreamingService()
             roadmap_metadata = await service.get_roadmap_metadata(session, roadmap_id)
             
@@ -853,15 +857,20 @@ async def _chat_modification_stream(
 
 @router.post("/generate-stream")
 async def generate_stream(
+    http_request: Request,  # ✅ 注入FastAPI Request对象
     request: UserRequest,
     include_tutorials: bool = False,
 ):
     """
-    流式生成学习路线图
+    流式生成学习路线图（带反压机制）
     
     使用 Server-Sent Events (SSE) 实时推送生成过程。
     
+    性能优化：
+    - 反压机制：检测客户端断开，立即停止生成，防止资源浪费
+    
     Args:
+        http_request: FastAPI Request对象（用于检测客户端断开）
         request: 用户请求
         include_tutorials: 是否包含教程生成阶段（默认 False）
         
@@ -894,8 +903,34 @@ async def generate_stream(
         include_tutorials=include_tutorials,
     )
     
+    # ✅ 包装生成器，添加反压检测
+    async def backpressure_wrapper():
+        """反压包装器：检测客户端断开"""
+        try:
+            async for chunk in _generate_sse_stream(request, include_tutorials=include_tutorials):
+                # ✅ 检查客户端是否断开
+                if await http_request.is_disconnected():
+                    logger.info(
+                        "client_disconnected_stopping_generation",
+                        user_id=request.user_id,
+                    )
+                    break
+                
+                yield chunk
+                
+                # ✅ 让出控制权，检测取消
+                await asyncio.sleep(0)
+                
+        except asyncio.CancelledError:
+            # ✅ 客户端断开时清理资源
+            logger.info(
+                "stream_cancelled",
+                user_id=request.user_id,
+            )
+            raise
+    
     return StreamingResponse(
-        _generate_sse_stream(request, include_tutorials=include_tutorials),
+        backpressure_wrapper(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -907,17 +942,22 @@ async def generate_stream(
 
 @router.post("/generate-full-stream")
 async def generate_full_stream(
+    http_request: Request,  # ✅ 注入FastAPI Request对象
     request: UserRequest,
 ):
     """
-    完整流式生成学习路线图（包含教程生成）
+    完整流式生成学习路线图（包含教程生成，带反压机制）
     
     这是 /generate-stream?include_tutorials=true 的便捷端点。
     使用 Server-Sent Events (SSE) 实时推送整个生成过程。
     
     流程：需求分析 → 框架设计 → 批次教程生成 → 保存数据库
     
+    性能优化：
+    - 反压机制：检测客户端断开，立即停止生成，防止LLM Token浪费
+    
     Args:
+        http_request: FastAPI Request对象（用于检测客户端断开）
         request: 用户请求
         
     Returns:
@@ -929,8 +969,31 @@ async def generate_full_stream(
         learning_goal=request.preferences.learning_goal[:50],
     )
     
+    # ✅ 包装生成器，添加反压检测
+    async def backpressure_wrapper():
+        """反压包装器：检测客户端断开"""
+        try:
+            async for chunk in _generate_sse_stream(request, include_tutorials=True):
+                # ✅ 检查客户端是否断开
+                if await http_request.is_disconnected():
+                    logger.info(
+                        "client_disconnected_stopping_full_generation",
+                        user_id=request.user_id,
+                    )
+                    break
+                
+                yield chunk
+                await asyncio.sleep(0)
+                
+        except asyncio.CancelledError:
+            logger.info(
+                "full_stream_cancelled",
+                user_id=request.user_id,
+            )
+            raise
+    
     return StreamingResponse(
-        _generate_sse_stream(request, include_tutorials=True),
+        backpressure_wrapper(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -942,15 +1005,20 @@ async def generate_full_stream(
 
 @router.post("/{roadmap_id}/chat-stream")
 async def chat_stream(
+    http_request: Request,  # ✅ 注入FastAPI Request对象
     roadmap_id: str,
     request: ChatModificationRequest,
 ):
     """
-    聊天式修改入口（流式返回）
+    聊天式修改入口（流式返回，带反压机制）
     
     分析用户自然语言修改意见 → 执行修改 → 流式返回结果
     
+    性能优化：
+    - 反压机制：检测客户端断开，立即停止生成
+    
     Args:
+        http_request: FastAPI Request对象（用于检测客户端断开）
         roadmap_id: 路线图 ID
         request: 聊天修改请求（包含用户消息、上下文、偏好）
         
@@ -974,8 +1042,33 @@ async def chat_stream(
         has_context=request.context is not None,
     )
     
+    # ✅ 包装生成器，添加反压检测
+    async def backpressure_wrapper():
+        """反压包装器：检测客户端断开"""
+        try:
+            async for chunk in _chat_modification_stream(roadmap_id, request):
+                # ✅ 检查客户端是否断开
+                if await http_request.is_disconnected():
+                    logger.info(
+                        "client_disconnected_stopping_chat_stream",
+                        roadmap_id=roadmap_id,
+                        user_id=request.user_id,
+                    )
+                    break
+                
+                yield chunk
+                await asyncio.sleep(0)
+                
+        except asyncio.CancelledError:
+            logger.info(
+                "chat_stream_cancelled",
+                roadmap_id=roadmap_id,
+                user_id=request.user_id,
+            )
+            raise
+    
     return StreamingResponse(
-        _chat_modification_stream(roadmap_id, request),
+        backpressure_wrapper(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

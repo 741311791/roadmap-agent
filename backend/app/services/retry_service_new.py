@@ -122,10 +122,44 @@ class RetryService:
         if not roadmap_metadata:
             raise ValueError(f"路线图 {roadmap_id} 不存在")
         
-        # TODO: 实现完整的重新生成逻辑
+        # 检查概念元数据是否存在
+        concept_metadata = await self.concept_crud.get_by_concept_id(session, concept_id)
+        if not concept_metadata:
+            # 尝试从 roadmap framework_data 中获取
+            framework_data = roadmap_metadata.framework_data or {}
+            concept_data = None
+            
+            for stage in framework_data.get("stages", []):
+                for module in stage.get("modules", []):
+                    for concept in module.get("concepts", []):
+                        if concept.get("concept_id") == concept_id:
+                            concept_data = concept
+                            break
+                    if concept_data:
+                        break
+                if concept_data:
+                    break
+            
+            if not concept_data:
+                raise ValueError(f"概念 {concept_id} 不存在")
+        else:
+            concept_data = {
+                "concept_id": concept_metadata.concept_id,
+                "name": concept_metadata.name,
+                "description": concept_metadata.description,
+                "estimated_hours": concept_metadata.estimated_hours,
+                "prerequisites": concept_metadata.prerequisites or [],
+                "difficulty": concept_metadata.difficulty,
+                "keywords": concept_metadata.keywords or [],
+            }
+        
+        # 返回准备好的数据
         return {
             "roadmap_id": roadmap_id,
             "concept_id": concept_id,
+            "concept_data": concept_data,
+            "roadmap_title": roadmap_metadata.title,
+            "topic": roadmap_metadata.topic,
         }
     
     async def prepare_retry_task(

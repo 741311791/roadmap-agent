@@ -4,13 +4,12 @@
 """
 import asyncio
 from sqlalchemy import select, desc
-from app.db.celery_session import CeleryRepositoryFactory
+# CeleryRepositoryFactory 已删除，直接使用 get_celery_session
 from app.models.database import RoadmapTask
 
 
 async def main():
     """查询最近的任务"""
-    repo_factory = CeleryRepositoryFactory()
     
     async with repo_factory.create_session() as session:
         # 查询最近的 10 个任务

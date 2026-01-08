@@ -266,12 +266,78 @@ class ManagementService:
         )
         
         # 3. 删除其他关联数据
-        # TODO: 根据实际需求添加其他表的删除逻辑
+        # 删除 ExecutionLog（通过 task_id）
+        from app.models.database import ExecutionLog
+        task_result = await session.execute(
+            select(RoadmapTask.task_id).where(RoadmapTask.roadmap_id == roadmap_id)
+        )
+        task_ids = [row[0] for row in task_result.fetchall()]
+        if task_ids:
+            await session.execute(
+                delete(ExecutionLog).where(ExecutionLog.task_id.in_(task_ids))
+            )
+        
+        # 删除 ValidationRecord
+        from app.models.database import ValidationRecord
+        await session.execute(
+            delete(ValidationRecord).where(ValidationRecord.roadmap_id == roadmap_id)
+        )
+        
+        # 删除 EditRecord
+        from app.models.database import EditRecord
+        await session.execute(
+            delete(EditRecord).where(EditRecord.roadmap_id == roadmap_id)
+        )
+        
+        # 删除 IntentAnalysisRecord
+        from app.models.database import IntentAnalysisRecord
+        await session.execute(
+            delete(IntentAnalysisRecord).where(IntentAnalysisRecord.roadmap_id == roadmap_id)
+        )
+        
+        # 删除概念相关数据
+        from app.models.database import (
+            ConceptMetadata, TutorialMetadata, ResourceRecommendationMetadata, QuizMetadata, ConceptProgress
+        )
+        
+        # 先获取所有概念ID
+        concept_result = await session.execute(
+            select(ConceptMetadata.concept_id).where(ConceptMetadata.roadmap_id == roadmap_id)
+        )
+        concept_ids = [row[0] for row in concept_result.fetchall()]
+        
+        if concept_ids:
+            # 删除教程
+            await session.execute(
+                delete(TutorialMetadata).where(TutorialMetadata.concept_id.in_(concept_ids))
+            )
+            # 删除资源
+            await session.execute(
+                delete(ResourceRecommendationMetadata).where(ResourceRecommendationMetadata.concept_id.in_(concept_ids))
+            )
+            # 删除测验
+            await session.execute(
+                delete(QuizMetadata).where(QuizMetadata.concept_id.in_(concept_ids))
+            )
+            # 删除进度
+            await session.execute(
+                delete(ConceptProgress).where(ConceptProgress.concept_id.in_(concept_ids))
+            )
+        
+        # 最后删除概念元数据
+        await session.execute(
+            delete(ConceptMetadata).where(ConceptMetadata.roadmap_id == roadmap_id)
+        )
         
         logger.info(
             "roadmap_permanently_deleted",
             roadmap_id=roadmap_id,
             user_id=user_id,
+            deleted_tables=[
+                "RoadmapMetadata", "RoadmapTask", "ExecutionLog", "ValidationRecord",
+                "EditRecord", "IntentAnalysisRecord", "ConceptMetadata", "TutorialMetadata",
+                "ResourceRecommendationMetadata", "QuizMetadata", "ConceptProgress"
+            ],
         )
         
         return {

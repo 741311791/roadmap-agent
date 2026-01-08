@@ -6,7 +6,7 @@
 import structlog
 
 from app.core.celery_app import celery_app
-from app.db.celery_session import CeleryRepositoryFactory
+# CeleryRepositoryFactory 已删除，直接使用 CRUD
 from app.tasks.content_utils import run_async
 
 logger = structlog.get_logger()
@@ -64,7 +64,7 @@ async def _execute_content_retry(
     
     try:
         # 使用ContentService统一处理
-        async with CeleryRepositoryFactory().create_session() as session:
+        async with get_celery_session() as session:
             request = ConceptRetryRequest(
                 preferences=preferences,
                 retry_reason=f"Retry via task {task_id}",
@@ -82,7 +82,7 @@ async def _execute_content_retry(
         
         if result.success:
             # 更新任务状态为completed
-            async with CeleryRepositoryFactory().create_session() as session:
+            async with get_celery_session() as session:
                 from app.crud.crud_task import get_task_crud
                 task_crud = get_task_crud()
                 task = await task_crud.get_by_task_id(session, task_id)
@@ -141,7 +141,7 @@ async def _execute_content_retry(
         
         # 更新任务状态为failed
         try:
-            async with CeleryRepositoryFactory().create_session() as session:
+            async with get_celery_session() as session:
                 from app.crud.crud_task import get_task_crud
                 task_crud = get_task_crud()
                 task = await task_crud.get_by_task_id(session, task_id)

@@ -2,59 +2,54 @@
 验证记录 API 端点
 
 提供路线图验证历史记录的查询功能。
+
+重构说明：
+- ✅ Schema定义移到独立文件（app/schemas/validation.py）
+- ✅ 使用CurrentSession（只读操作）
+- ✅ 使用自定义异常替代HTTPException
+- ✅ 使用统一响应格式（ResponseSchemaModel）
 """
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel
-from typing import Optional
+from fastapi import APIRouter
 import structlog
 
-from app.db.session import get_db_transaction
+from app.api.v1.deps import CurrentSession
 from app.services.validation_service import ValidationService
+from app.core.custom_exceptions import errors
+from app.core.response_schema import ResponseSchemaModel, response_base
+from app.schemas.validation import (
+    ValidationRecordResponse,
+    ValidationRecordListResponse,
+)
 
 router = APIRouter(prefix="/tasks", tags=["validation"])
 logger = structlog.get_logger()
 
 
-# ============================================================
-# Pydantic 模型
-# ============================================================
-
-class ValidationRecordResponse(BaseModel):
-    """验证记录响应"""
-    id: str
-    task_id: str
-    version: int
-    validation_status: str
-    issues_found: int
-    issues_details: Optional[list] = None
-    suggestions: Optional[list] = None
-    created_at: str
-
-
-class ValidationRecordListResponse(BaseModel):
-    """验证记录列表响应"""
-    records: list[ValidationRecordResponse]
-    total: int
-
-
-# ============================================================
-# 路由端点
-# ============================================================
-
-@router.get("/{task_id}/validation-records/latest", response_model=ValidationRecordResponse)
+@router.get("/{task_id}/validation-records/latest", response_model=ResponseSchemaModel[ValidationRecordResponse])
 async def get_latest_validation_record(
     task_id: str,
-    db: AsyncSession = Depends(get_db_transaction),
-):
-    """获取最新的验证记录"""
+    db: CurrentSession,  # ✅ 只读操作使用CurrentSession
+) -> ResponseSchemaModel[ValidationRecordResponse]:
+    """
+    获取最新的验证记录
+    
+    Args:
+        task_id: 任务ID
+        db: 数据库会话
+        
+    Returns:
+        最新版本的验证记录
+        
+    Raises:
+        NotFoundError: 没有找到验证记录
+    """
     service = ValidationService()
     record = await service.get_latest_validation_record(db, task_id)
     
     if not record:
-        raise HTTPException(status_code=404, detail="No validation records found")
+        raise errors.NotFoundError(msg="未找到验证记录")
     
-    return ValidationRecordResponse(
+    return response_base.success(data=ValidationRecordResponse(
         id=record.id,
         task_id=record.task_id,
         version=record.version,
@@ -63,15 +58,24 @@ async def get_latest_validation_record(
         issues_details=record.issues,
         suggestions=record.suggestions,
         created_at=record.created_at.isoformat(),
-    )
+    ))
 
 
-@router.get("/{task_id}/validation-records", response_model=ValidationRecordListResponse)
+@router.get("/{task_id}/validation-records", response_model=ResponseSchemaModel[ValidationRecordListResponse])
 async def get_all_validation_records(
     task_id: str,
-    db: AsyncSession = Depends(get_db_transaction),
-):
-    """获取所有验证记录"""
+    db: CurrentSession,  # ✅ 只读操作使用CurrentSession
+) -> ResponseSchemaModel[ValidationRecordListResponse]:
+    """
+    获取所有验证记录
+    
+    Args:
+        task_id: 任务ID
+        db: 数据库会话
+        
+    Returns:
+        验证记录列表（按版本号降序）
+    """
     service = ValidationService()
     records = await service.get_all_validation_records(db, task_id)
     
@@ -89,7 +93,7 @@ async def get_all_validation_records(
         for r in records
     ]
     
-    return ValidationRecordListResponse(
+    return response_base.success(data=ValidationRecordListResponse(
         records=record_responses,
         total=len(record_responses),
-    )
+    ))

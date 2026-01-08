@@ -17,9 +17,11 @@ from datetime import datetime
 from app.core.celery_app import celery_app
 from app.core.orchestrator_factory import OrchestratorFactory
 # 使用 Celery 专用的数据库连接管理，避免 Fork 进程继承问题
-from app.db.celery_session import CeleryRepositoryFactory
+# CeleryRepositoryFactory 已删除，直接使用 CRUD
 from app.services.notification_service import notification_service
 from app.models.constants import TaskStatus
+from app.db.celery_session import get_celery_session
+from app.crud.crud_task import get_task_crud
 
 logger = structlog.get_logger()
 
@@ -248,14 +250,14 @@ async def _resume_workflow_after_review(
     
     try:
         # 更新任务状态为 processing
-        repo_factory = CeleryRepositoryFactory()
-        async with repo_factory.create_session() as session:
-            task_repo = repo_factory.create_task_repo(session)
-            await task_repo.update_task_status(
+        task_crud = get_task_crud()
+        async with get_celery_session() as session:
+            await task_crud.update_task_status(
                 task_id=task_id,
                 status=TaskStatus.PROCESSING.value,
                 current_step="resuming",
             )
+            await session.commit()
         
         # 发送 WebSocket 通知
         await notification_service.publish_progress(
@@ -352,14 +354,14 @@ async def _resume_workflow_from_checkpoint(
     
     try:
         # 更新任务状态为 processing
-        repo_factory = CeleryRepositoryFactory()
-        async with repo_factory.create_session() as session:
-            task_repo = repo_factory.create_task_repo(session)
-            await task_repo.update_task_status(
+        task_crud = get_task_crud()
+        async with get_celery_session() as session:
+            await task_crud.update_task_status(
                 task_id=task_id,
                 status=TaskStatus.PROCESSING.value,
                 current_step="resuming",
             )
+            await session.commit()
         
         # 发送 WebSocket 通知
         await notification_service.publish_progress(
@@ -455,15 +457,15 @@ async def _mark_task_failed(
     """
     # 1. 先更新数据库状态（关键操作）
     try:
-        repo_factory = CeleryRepositoryFactory()
-        async with repo_factory.create_session() as session:
-            task_repo = repo_factory.create_task_repo(session)
-            await task_repo.update_task_status(
+        task_crud = get_task_crud()
+        async with get_celery_session() as session:
+            await task_crud.update_task_status(
                 task_id=task_id,
                 status=TaskStatus.FAILED.value,
                 current_step="failed",
                 error_message=error_message,
             )
+            await session.commit()
         logger.info(
             "task_marked_as_failed",
             task_id=task_id,

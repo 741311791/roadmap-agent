@@ -4,6 +4,7 @@
 使用新的模块化架构：
 - OrchestratorFactory 管理组件创建
 - WorkflowExecutor 替代原有的 RoadmapOrchestrator
+- Redis 客户端管理缓存和会话
 """
 import asyncio
 import structlog
@@ -12,19 +13,38 @@ from app.core.orchestrator_factory import (
     get_workflow_executor as _get_workflow_executor,
 )
 from app.core.orchestrator.executor import WorkflowExecutor
-from app.db.repository_factory import RepositoryFactory
+from app.db.redis_client import redis_client
 
 logger = structlog.get_logger()
 
 
 async def init_orchestrator():
     """
-    初始化 Orchestrator（在应用启动时调用）
+    初始化 Orchestrator 和 Redis（在应用启动时调用）
     
     流程：
-    1. 初始化 OrchestratorFactory（创建 Checkpointer 和 StateManager）
-    2. 记录初始化成功
+    1. 初始化 Redis 客户端
+    2. 初始化 OrchestratorFactory（创建 Checkpointer 和 StateManager）
+    3. 记录初始化成功
     """
+    logger.info("services_initializing")
+    
+    # 初始化 Redis 客户端
+    try:
+        await redis_client.connect()
+        # 测试连接
+        await redis_client.ping()
+        logger.info("redis_client_connected")
+    except Exception as e:
+        logger.error(
+            "redis_connection_failed",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+        # Redis 连接失败不应阻止应用启动（降级运行）
+        logger.warning("redis_unavailable_running_in_degraded_mode")
+    
+    # 初始化 Orchestrator
     logger.info("orchestrator_initializing")
     
     try:
@@ -56,12 +76,21 @@ async def init_orchestrator():
 
 async def cleanup_orchestrator():
     """
-    清理 Orchestrator（在应用关闭时调用）
+    清理 Orchestrator 和 Redis（在应用关闭时调用）
     
     流程：
-    1. 关闭 PostgreSQL 连接池
-    2. 清空全局实例
+    1. 关闭 Redis 连接
+    2. 关闭 PostgreSQL 连接池
+    3. 清空全局实例
     """
+    # 关闭 Redis 连接
+    try:
+        await redis_client.close()
+        logger.info("redis_client_closed")
+    except Exception as e:
+        logger.warning("redis_cleanup_error", error=str(e))
+    
+    # 关闭 Orchestrator
     try:
         await OrchestratorFactory.cleanup()
         logger.info("orchestrator_shutdown_completed")
@@ -82,17 +111,3 @@ def get_workflow_executor() -> WorkflowExecutor:
         WorkflowExecutor 实例（每次调用创建新实例，但共享 StateManager 和 Checkpointer）
     """
     return _get_workflow_executor()
-
-
-def get_repository_factory() -> RepositoryFactory:
-    """
-    获取 RepositoryFactory 实例
-    
-    用作 FastAPI 依赖注入：
-        repo_factory: RepositoryFactory = Depends(get_repository_factory)
-    
-    Returns:
-        RepositoryFactory 实例（每次调用创建新实例）
-    """
-    logger.debug("repository_factory_created")
-    return RepositoryFactory()

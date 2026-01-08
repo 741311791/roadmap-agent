@@ -8,7 +8,8 @@ from pydantic import BaseModel, Field
 import structlog
 
 from app.tools.base import BaseTool
-from app.db.repository_factory import get_repository_factory
+from app.db.session import async_session_maker
+from app.crud.crud_tutorial import get_tutorial_crud
 
 logger = structlog.get_logger()
 
@@ -41,7 +42,6 @@ class GetConceptTutorialTool(BaseTool[GetConceptTutorialInput, GetConceptTutoria
     
     def __init__(self):
         super().__init__(tool_id="get_concept_tutorial_v1")
-        self.repo_factory = get_repository_factory()
     
     async def execute(self, input_data: GetConceptTutorialInput) -> GetConceptTutorialOutput:
         """
@@ -54,11 +54,11 @@ class GetConceptTutorialTool(BaseTool[GetConceptTutorialInput, GetConceptTutoria
             教程信息
         """
         try:
-            async with self.repo_factory.create_session() as session:
-                tutorial_repo = self.repo_factory.create_tutorial_repo(session)
+            async with async_session_maker() as session:
+                tutorial_crud = get_tutorial_crud()
                 
                 # 获取最新版本的教程
-                tutorial = await tutorial_repo.get_latest_tutorial(
+                tutorial = await tutorial_crud.get_latest_tutorial(
                     roadmap_id=input_data.roadmap_id,
                     concept_id=input_data.concept_id,
                 )

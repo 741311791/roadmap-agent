@@ -2,76 +2,53 @@
 执行日志追踪 API 端点
 
 提供路线图生成过程的执行日志查询功能，用于调试和监控。
+
+重构说明：
+- ✅ Schema定义移到独立文件（app/schemas/trace.py）
+- ✅ 使用CurrentSession（只读操作）
+- ✅ 使用统一响应格式（ResponseSchemaModel）
 """
-from fastapi import APIRouter, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel
 from typing import Optional
+from fastapi import APIRouter
 import structlog
 
-from app.db.session import get_db_readonly
+from app.api.v1.deps import CurrentSession
 from app.services.trace_service import TraceService
+from app.core.response_schema import ResponseSchemaModel, response_base
+from app.schemas.trace import (
+    ExecutionLogResponse,
+    ExecutionLogListResponse,
+    TraceSummaryResponse,
+)
 
 router = APIRouter(prefix="/trace", tags=["trace"])
 logger = structlog.get_logger()
 
 
-# ============================================================
-# Pydantic 模型
-# ============================================================
-
-class ExecutionLogResponse(BaseModel):
-    """执行日志响应"""
-    id: str
-    task_id: str
-    roadmap_id: Optional[str] = None
-    concept_id: Optional[str] = None
-    level: str
-    category: str
-    step: Optional[str] = None
-    agent_name: Optional[str] = None
-    message: str
-    details: Optional[dict] = None
-    duration_ms: Optional[int] = None
-    created_at: str
-
-
-class ExecutionLogListResponse(BaseModel):
-    """执行日志列表响应"""
-    logs: list[ExecutionLogResponse]
-    total: int
-    offset: int
-    limit: int
-
-
-class TraceSummaryResponse(BaseModel):
-    """追踪摘要响应"""
-    task_id: str
-    level_stats: dict[str, int]
-    category_stats: dict[str, int]
-    total_duration_ms: int
-    first_log_at: Optional[str] = None
-    last_log_at: Optional[str] = None
-    total_logs: int
-
-
-# ============================================================
-# 路由端点
-# ============================================================
-
-@router.get("/{task_id}/logs", response_model=ExecutionLogListResponse)
+@router.get("/{task_id}/logs", response_model=ResponseSchemaModel[ExecutionLogListResponse])
 async def get_logs(
     task_id: str,
+    db: CurrentSession,  # ✅ 只读操作使用CurrentSession
     level: Optional[str] = None,
     category: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
-    db: AsyncSession = Depends(get_db_readonly),
-):
+) -> ResponseSchemaModel[ExecutionLogListResponse]:
     """
     获取指定task_id的执行日志
     
     用于查询路线图生成过程的详细日志，支持按日志级别和分类过滤。
+    
+    Args:
+        task_id: 任务ID
+        db: 数据库会话
+        level: 日志级别筛选（可选）
+        category: 日志分类筛选（可选）
+        limit: 返回数量限制
+        offset: 分页偏移
+        
+    Returns:
+        日志列表和分页信息
     """
     logger.info(
         "get_logs_requested",
@@ -109,19 +86,19 @@ async def get_logs(
         for log in logs
     ]
     
-    return ExecutionLogListResponse(
+    return response_base.success(data=ExecutionLogListResponse(
         logs=log_responses,
         total=total,
         offset=offset,
         limit=limit,
-    )
+    ))
 
 
-@router.get("/{task_id}/summary", response_model=TraceSummaryResponse)
+@router.get("/{task_id}/summary", response_model=ResponseSchemaModel[TraceSummaryResponse])
 async def get_summary(
     task_id: str,
-    db: AsyncSession = Depends(get_db_readonly),
-):
+    db: CurrentSession,  # ✅ 只读操作使用CurrentSession
+) -> ResponseSchemaModel[TraceSummaryResponse]:
     """
     获取执行日志摘要统计
     
@@ -130,25 +107,40 @@ async def get_summary(
     - 日志分类分布
     - 总耗时
     - 时间范围
+    
+    Args:
+        task_id: 任务ID
+        db: 数据库会话
+        
+    Returns:
+        日志统计摘要
     """
     logger.info("get_summary_requested", task_id=task_id)
     
     service = TraceService()
     summary = await service.get_execution_logs_summary(db, task_id)
     
-    return TraceSummaryResponse(**summary)
+    return response_base.success(data=TraceSummaryResponse(**summary))
 
 
-@router.get("/{task_id}/errors", response_model=ExecutionLogListResponse)
+@router.get("/{task_id}/errors", response_model=ResponseSchemaModel[ExecutionLogListResponse])
 async def get_errors(
     task_id: str,
+    db: CurrentSession,  # ✅ 只读操作使用CurrentSession
     limit: int = 50,
-    db: AsyncSession = Depends(get_db_readonly),
-):
+) -> ResponseSchemaModel[ExecutionLogListResponse]:
     """
     获取错误日志
     
     仅返回级别为error的日志，用于快速定位问题。
+    
+    Args:
+        task_id: 任务ID
+        db: 数据库会话
+        limit: 返回数量限制
+        
+    Returns:
+        错误日志列表
     """
     logger.info("get_errors_requested", task_id=task_id, limit=limit)
     
@@ -174,9 +166,9 @@ async def get_errors(
         for log in logs
     ]
     
-    return ExecutionLogListResponse(
+    return response_base.success(data=ExecutionLogListResponse(
         logs=log_responses,
         total=len(log_responses),
         offset=0,
         limit=limit,
-    )
+    ))

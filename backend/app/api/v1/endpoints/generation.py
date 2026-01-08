@@ -1,29 +1,36 @@
 """
 路线图生成 API 端点
 
-遵循企业级架构：API层瘦身，业务逻辑在Service层
+遵循企业级架构：API层瘦身，业务逻辑在Service层。
+
+重构说明：
+- ✅ 业务逻辑移到GenerationService（从100+行减少到20行）
+- ✅ 使用自定义异常替代HTTPException
+- ✅ 使用统一响应格式（ResponseSchemaModel）
+- ✅ 符合企业级架构规范
 """
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
-from typing import Annotated
+from fastapi import APIRouter, Depends
+from typing import Annotated, Dict, Any
 import structlog
-import uuid
 
 from app.models.domain import UserRequest
 from app.models.database import User
 from app.core.auth.deps import current_active_user
-from app.core.dependencies import get_workflow_executor, get_repository_factory
+from app.core.dependencies import get_workflow_executor
 from app.core.orchestrator.executor import WorkflowExecutor
-from app.db.repository_factory import RepositoryFactory
-from app.api.v1.deps import CurrentContentService, CurrentSessionTransaction
 from app.services.roadmap_service import RoadmapService
+from app.services.generation_service import GenerationService, get_generation_service
+from app.core.custom_exceptions import errors
+from app.core.response_schema import ResponseSchemaModel, response_base
+from app.db.session import async_session_maker
+from app.crud.crud_task import get_task_crud
 
 # ✅ 导入 Schema（符合企业级架构规范）
 from app.schemas.generation import (
     GenerateRoadmapResponse,
-    RetryContentRequest,
-    RetryContentResponse,
     CancelTaskResponse,
 )
+from app.schemas.task import TaskStatusDetailResponse
 
 router = APIRouter(prefix="/roadmaps", tags=["generation"])
 logger = structlog.get_logger()
@@ -31,168 +38,115 @@ logger = structlog.get_logger()
 # 依赖注入类型别名
 CurrentUser = Annotated[User, Depends(current_active_user)]
 CurrentOrchestrator = Annotated[WorkflowExecutor, Depends(get_workflow_executor)]
-CurrentRepoFactory = Annotated[RepositoryFactory, Depends(get_repository_factory)]
+CurrentGenerationService = Annotated[GenerationService, Depends(get_generation_service)]
 
 
-@router.post("/generate", response_model=GenerateRoadmapResponse)
+@router.post("/generate", response_model=ResponseSchemaModel[GenerateRoadmapResponse])
 async def generate_roadmap_async(
     request: UserRequest,
-    repo_factory: CurrentRepoFactory,
-):
+    generation_service: CurrentGenerationService,
+) -> ResponseSchemaModel[GenerateRoadmapResponse]:
     """
     生成学习路线图（Celery 异步任务）
     
     将任务分发到 Celery Worker 执行，FastAPI 进程立即返回。
     
+    激进重构版本：
+    - API层只负责HTTP适配（从100+行减少到20行）
+    - 所有业务逻辑（任务创建、持久化验证、Celery调度）在Service层
+    
     Args:
         request: 用户请求，包含学习目标和偏好
-        repo_factory: Repository 工厂
+        generation_service: 生成服务
         
     Returns:
         任务 ID，roadmap_id将在需求分析完成后通过WebSocket发送给前端
         
+    Raises:
+        RequestError: 请求参数错误或任务创建失败
+        InternalServerError: 服务器内部错误
+        
     Example:
         ```json
         {
-            "task_id": "550e8400-e29b-41d4-a716-446655440000",
-            "status": "pending",
-            "message": "路线图生成任务已创建"
+            "code": 200,
+            "msg": "Success",
+            "data": {
+                "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                "status": "pending",
+                "message": "路线图生成任务已创建"
+            }
         }
         ```
     """
-    from app.tasks.roadmap_generation_tasks import generate_roadmap
-    import asyncio
-    
-    task_id = str(uuid.uuid4())
-    
     logger.info(
         "roadmap_generation_requested",
         user_id=request.user_id,
-        task_id=task_id,
         learning_goal=request.preferences.learning_goal,
     )
     
-    # ============================================================
-    # 第一步：创建任务记录并 commit
-    # ============================================================
-    async with repo_factory.create_session() as session:
-        task_repo = repo_factory.create_task_repo(session)
-        await task_repo.create_task(
-            task_id=task_id,
-            user_id=request.user_id,
-            user_request=request.model_dump(mode='json'),
-        )
-        await session.commit()
+    try:
+        # ✅ 业务逻辑在Service层
+        task_id, celery_task_id = await generation_service.create_and_verify_task(request)
         
-        logger.debug(
-            "task_created_and_committed",
+        logger.info(
+            "roadmap_generation_task_created",
             task_id=task_id,
+            celery_task_id=celery_task_id,
             user_id=request.user_id,
         )
-    
-    # ============================================================
-    # 第二步：验证任务已持久化（使用新的 session 验证可见性）
-    # 
-    # 背景：由于数据库连接池和事务隔离，刚 commit 的数据可能
-    # 在另一个连接中不可见。这里使用独立的 session 验证，
-    # 确保在分发 Celery 任务之前数据已完全可见。
-    # ============================================================
-    max_verify_retries = 5
-    task_verified = False
-    
-    for attempt in range(max_verify_retries):
-        async with repo_factory.create_session() as session:
-            task_repo = repo_factory.create_task_repo(session)
-            task = await task_repo.get_by_task_id(task_id)
-            
-            if task:
-                task_verified = True
-                logger.debug(
-                    "task_persistence_verified",
-                    task_id=task_id,
-                    attempt=attempt + 1,
-                )
-                break
         
-        if attempt < max_verify_retries - 1:
-            logger.warning(
-                "task_not_visible_retrying",
-                task_id=task_id,
-                attempt=attempt + 1,
-                max_retries=max_verify_retries,
-            )
-            # 指数退避等待：50ms, 100ms, 150ms, 200ms
-            await asyncio.sleep(0.05 * (attempt + 1))
-    
-    if not task_verified:
-        # 任务创建失败，这是一个严重错误
+        return response_base.success(data=GenerateRoadmapResponse(
+            task_id=task_id,
+            status="pending",
+            message="路线图生成任务已创建，正在队列中等待执行",
+        ))
+        
+    except ValueError as e:
+        raise errors.RequestError(msg=str(e))
+    except Exception as e:
         logger.error(
-            "task_persistence_verification_failed",
-            task_id=task_id,
-            max_retries=max_verify_retries,
+            "generate_roadmap_failed",
+            user_id=request.user_id,
+            error=str(e),
+            exc_info=True,
         )
-        raise HTTPException(
-            status_code=500,
-            detail=f"任务创建失败：数据库持久化验证失败（task_id={task_id}）",
-        )
-    
-    # ============================================================
-    # 第三步：分发 Celery 任务（此时任务已确认存在）
-    # ============================================================
-    celery_task = generate_roadmap.delay(
-        task_id=task_id,
-        user_request=request.preferences.learning_goal,
-        user_id=request.user_id,
-        learning_preferences=request.preferences.model_dump(mode='json'),
-    )
-    
-    # ============================================================
-    # 第四步：更新任务记录中的 celery_task_id
-    # ============================================================
-    async with repo_factory.create_session() as session:
-        task_repo = repo_factory.create_task_repo(session)
-        await task_repo.update_task_celery_id(
-            task_id=task_id,
-            celery_task_id=celery_task.id,
-        )
-        await session.commit()
-    
-    logger.info(
-        "celery_task_dispatched",
-        task_id=task_id,
-        celery_task_id=celery_task.id,
-    )
-    
-    return {
-        "task_id": task_id,
-        "status": "pending",
-        "message": "路线图生成任务已创建，正在队列中等待执行",
-    }
+        raise errors.InternalServerError(msg="任务创建失败")
 
 
-@router.get("/{task_id}/status")
+@router.get("/{task_id}/status", response_model=ResponseSchemaModel[TaskStatusDetailResponse])
 async def get_generation_status(
     task_id: str,
     orchestrator: CurrentOrchestrator,
-    repo_factory: CurrentRepoFactory,
-):
-    """查询路线图生成任务状态"""
-    service = RoadmapService(repo_factory, orchestrator)
+) -> ResponseSchemaModel[TaskStatusDetailResponse]:
+    """
+    查询路线图生成任务状态
+    
+    Args:
+        task_id: 任务ID
+        orchestrator: 工作流执行器
+        
+    Returns:
+        任务状态信息
+        
+    Raises:
+        NotFoundError: 任务不存在
+    """
+    service = RoadmapService(orchestrator)
     status = await service.get_task_status(task_id)
     
     if not status:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise errors.NotFoundError(msg="任务不存在")
     
-    return status
+    return response_base.success(data=status)
 
 
-@router.post("/tasks/{task_id}/cancel", response_model=CancelTaskResponse)
+@router.post("/tasks/{task_id}/cancel", response_model=ResponseSchemaModel[CancelTaskResponse])
 async def cancel_task(
     task_id: str,
-    db: CurrentSessionTransaction,
     current_user: CurrentUser,
-    repo_factory: CurrentRepoFactory,
-):
+    generation_service: CurrentGenerationService,
+) -> ResponseSchemaModel[CancelTaskResponse]:
     """
     取消路线图生成任务
     
@@ -208,25 +162,29 @@ async def cancel_task(
     
     Args:
         task_id: 任务 ID
-        db: 数据库会话
         current_user: 当前登录用户
-        repo_factory: Repository 工厂
+        generation_service: 生成服务
         
     Returns:
         取消结果
         
     Raises:
-        HTTPException: 404 - 任务不存在
-        HTTPException: 403 - 无权限取消此任务
-        HTTPException: 400 - 任务状态不允许取消
+        NotFoundError: 任务不存在
+        ForbiddenError: 无权限取消此任务
+        RequestError: 任务状态不允许取消
+        InternalServerError: 取消失败
         
     Example:
         ```json
         {
-            "success": true,
-            "task_id": "550e8400-e29b-41d4-a716-446655440000",
-            "message": "Task cancelled successfully",
-            "previous_status": "processing"
+            "code": 200,
+            "msg": "Success",
+            "data": {
+                "success": true,
+                "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                "message": "任务已取消",
+                "previous_status": "processing"
+            }
         }
         ```
     """
@@ -236,136 +194,35 @@ async def cancel_task(
         user_id=current_user.id,
     )
     
-    # 1. 获取任务记录
-    async with repo_factory.create_session() as session:
-        task_repo = repo_factory.create_task_repo(session)
-        task = await task_repo.get_by_task_id(task_id)
-    
-    if not task:
-        logger.warning(
-            "cancel_task_not_found",
+    try:
+        # ✅ 业务逻辑在Service层
+        result = await generation_service.cancel_task(task_id, current_user.id)
+        
+        return response_base.success(data=CancelTaskResponse(**result))
+        
+    except ValueError as e:
+        error_msg = str(e)
+        if "不存在" in error_msg:
+            raise errors.NotFoundError(msg=error_msg)
+        else:
+            raise errors.RequestError(msg=error_msg)
+    except PermissionError as e:
+        raise errors.ForbiddenError(msg=str(e))
+    except Exception as e:
+        logger.error(
+            "cancel_task_failed",
             task_id=task_id,
             user_id=current_user.id,
-        )
-        raise HTTPException(status_code=404, detail="Task not found")
-    
-    # 2. 验证用户权限
-    if task.user_id != current_user.id:
-        logger.warning(
-            "cancel_task_forbidden",
-            task_id=task_id,
-            task_user_id=task.user_id,
-            current_user_id=current_user.id,
-        )
-        raise HTTPException(
-            status_code=403,
-            detail="You don't have permission to cancel this task"
-        )
-    
-    # 3. 检查任务状态（仅支持取消 processing 状态）
-    if task.status != "processing":
-        logger.warning(
-            "cancel_task_invalid_status",
-            task_id=task_id,
-            current_status=task.status,
-        )
-        raise HTTPException(
-            status_code=400,
-            detail=f"Cannot cancel task with status '{task.status}'. Only 'processing' tasks can be cancelled."
-        )
-    
-    previous_status = task.status
-    
-    # 4. 如果有 Celery 任务，尝试终止
-    if task.celery_task_id:
-        try:
-            from celery.result import AsyncResult
-            from app.core.celery_app import celery_app
-            
-            result = AsyncResult(task.celery_task_id, app=celery_app)
-            # 使用 terminate=True 强制终止，signal='SIGKILL' 确保立即停止
-            result.revoke(terminate=True, signal='SIGKILL')
-            
-            logger.info(
-                "celery_task_revoked",
-                task_id=task_id,
-                celery_task_id=task.celery_task_id,
-            )
-        except Exception as e:
-            # Celery 取消失败不影响数据库状态更新
-            logger.error(
-                "celery_task_revoke_failed",
-                task_id=task_id,
-                celery_task_id=task.celery_task_id,
-                error=str(e),
-                error_type=type(e).__name__,
-            )
-    
-    # 5. 更新数据库状态为 cancelled（保留原 current_step，只更新 status）
-    try:
-        async with repo_factory.create_session() as session:
-            task_repo = repo_factory.create_task_repo(session)
-            # 保留原来的 current_step，只更新 status
-            await task_repo.update_task_status(
-                task_id=task_id,
-                status="cancelled",
-                current_step=task.current_step,  # 保留原来的步骤
-                error_message="Task cancelled by user",
-            )
-            await session.commit()
-        
-        logger.info(
-            "task_status_updated_to_cancelled",
-            task_id=task_id,
-            previous_status=previous_status,
-            preserved_current_step=task.current_step,
-        )
-    except Exception as e:
-        logger.error(
-            "cancel_task_db_update_failed",
-            task_id=task_id,
             error=str(e),
-            error_type=type(e).__name__,
+            exc_info=True,
         )
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to update task status: {str(e)}"
-        )
-    
-    # 6. 发送 WebSocket 取消通知
-    try:
-        await notification_service.publish_failed(
-            task_id=task_id,
-            error="Task cancelled by user",
-            step=task.current_step,
-        )
-        
-        logger.info(
-            "cancel_notification_sent",
-            task_id=task_id,
-        )
-    except Exception as e:
-        # WebSocket 通知失败不影响取消操作
-        logger.error(
-            "cancel_notification_failed",
-            task_id=task_id,
-            error=str(e),
-            error_type=type(e).__name__,
-        )
-    
-    return CancelTaskResponse(
-        success=True,
-        task_id=task_id,
-        message="Task cancelled successfully",
-        previous_status=previous_status,
-    )
+        raise errors.InternalServerError(msg="取消任务失败")
 
 
-@router.get("/{task_id}/content-status")
+@router.get("/{task_id}/content-status", response_model=ResponseSchemaModel[Dict[str, Any]])
 async def get_content_generation_status(
     task_id: str,
-    repo_factory: RepositoryFactory = Depends(get_repository_factory),
-):
+) -> ResponseSchemaModel[Dict[str, Any]]:
     """
     查询内容生成进度（Celery 任务状态）
     
@@ -379,46 +236,50 @@ async def get_content_generation_status(
         内容生成状态信息
         
     Raises:
-        HTTPException: 404 - 任务不存在或内容生成未启动
+        NotFoundError: 任务不存在
         
     Example:
         ```json
         {
-            "task_id": "550e8400-e29b-41d4-a716-446655440000",
-            "celery_task_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-            "status": "PROGRESS",
-            "progress": {
-                "current": 15,
-                "total": 30,
-                "percentage": 50.0
-            },
-            "result": null
+            "code": 200,
+            "msg": "Success",
+            "data": {
+                "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                "celery_task_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                "status": "PROGRESS",
+                "progress": {
+                    "current": 15,
+                    "total": 30,
+                    "percentage": 50.0
+                },
+                "result": null
+            }
         }
         ```
     """
     from celery.result import AsyncResult
     
     # 从数据库获取任务和 Celery task ID
-    async with repo_factory.create_session() as session:
-        task_repo = repo_factory.create_task_repo(session)
-        task = await task_repo.get_by_task_id(task_id)
+    async with async_session_maker() as session:
+        task_crud = get_task_crud()
+        task = await task_crud.get_by_task_id(session, task_id)
     
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise errors.NotFoundError(msg="任务不存在")
     
     if not task.celery_task_id:
         # 内容生成尚未启动
-        return {
+        return response_base.success(data={
             "task_id": task_id,
             "celery_task_id": None,
             "status": "NOT_STARTED",
-            "message": "Content generation has not been queued yet",
-        }
+            "message": "内容生成尚未开始",
+        })
     
     # 查询 Celery 任务状态
     result = AsyncResult(task.celery_task_id)
     
-    response = {
+    response_data = {
         "task_id": task_id,
         "celery_task_id": task.celery_task_id,
         "status": result.status,
@@ -426,189 +287,17 @@ async def get_content_generation_status(
     
     # 根据任务状态添加额外信息
     if result.status == "PENDING":
-        response["message"] = "Content generation task is queued"
+        response_data["message"] = "内容生成任务排队中"
     elif result.status == "PROGRESS":
-        response["progress"] = result.info
+        response_data["progress"] = result.info
     elif result.status == "SUCCESS":
-        response["result"] = result.result
-        response["message"] = "Content generation completed successfully"
+        response_data["result"] = result.result
+        response_data["message"] = "内容生成完成"
     elif result.status == "FAILURE":
-        response["error"] = str(result.info)
-        response["message"] = "Content generation failed"
+        response_data["error"] = str(result.info)
+        response_data["message"] = "内容生成失败"
     elif result.status == "RETRY":
-        response["message"] = "Content generation task is being retried"
-        response["retry_count"] = result.info.get("retry_count") if result.info else 0
+        response_data["message"] = "内容生成任务重试中"
+        response_data["retry_count"] = result.info.get("retry_count") if result.info else 0
     
-    return response
-
-
-@router.post("/{roadmap_id}/retry-failed")
-async def retry_failed_concepts(
-    roadmap_id: str,
-    repo_factory: RepositoryFactory = Depends(get_repository_factory),
-):
-    """
-    重试失败的概念内容生成
-    
-    Args:
-        roadmap_id: 路线图 ID
-        repo_factory: Repository 工厂
-        
-    Returns:
-        重试结果
-    """
-    # 获取路线图元数据
-    async with repo_factory.create_session() as session:
-        roadmap_repo = repo_factory.create_roadmap_meta_repo(session)
-        roadmap = await roadmap_repo.get_by_roadmap_id(roadmap_id)
-    
-    if not roadmap:
-        raise HTTPException(status_code=404, detail="路线图不存在")
-    
-    # TODO: 实现重试逻辑
-    return {"message": "重试功能待实现"}
-
-
-# ============================================================
-# 单个概念内容重试 API（激进重构版）
-# 
-# 所有辅助函数已移除，业务逻辑在Service层
-# ============================================================
-
-
-@router.post(
-    "/{roadmap_id}/concepts/{concept_id}/tutorial/retry",
-    response_model=RetryContentResponse,
-)
-async def retry_tutorial(
-    roadmap_id: str,
-    concept_id: str,
-    request: RetryContentRequest,
-    content_service: CurrentContentService,
-    session: CurrentSessionTransaction,
-    current_user: User = Depends(current_active_user),
-):
-    """
-    重试单个概念的教程生成（异步 Celery 任务）
-    
-    激进重构版本：
-    - API层只负责HTTP适配（参数验证、响应格式化）
-    - 所有业务逻辑（任务创建、Celery调度）在Service层
-    - 代码从70行精简到15行
-    
-    Args:
-        roadmap_id: 路线图 ID
-        concept_id: 概念 ID
-        request: 包含用户学习偏好的请求
-        content_service: 内容服务
-        session: 数据库会话
-        current_user: 当前用户
-        
-    Returns:
-        任务 ID，前端可通过 WebSocket 订阅进度
-    """
-    try:
-        result = await content_service.retry_content_async(
-            session=session,
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            content_type="tutorial",
-            request=request,
-            user_id=current_user.id,
-        )
-        await session.commit()
-        
-        return RetryContentResponse(
-            success=True,
-            concept_id=concept_id,
-            content_type="tutorial",
-            message=result["message"],
-            data={"task_id": result["task_id"]},
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        logger.error(
-            "retry_tutorial_failed",
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            error=str(e),
-            exc_info=True,
-        )
-        raise HTTPException(status_code=500, detail=f"Failed to submit retry task: {str(e)}")
-
-
-@router.post(
-    "/{roadmap_id}/concepts/{concept_id}/resources/retry",
-    response_model=RetryContentResponse,
-)
-async def retry_resources(
-    roadmap_id: str,
-    concept_id: str,
-    request: RetryContentRequest,
-    content_service: CurrentContentService,
-    session: CurrentSessionTransaction,
-    current_user: User = Depends(current_active_user),
-):
-    """重试单个概念的资源推荐生成（激进重构版）"""
-    try:
-        result = await content_service.retry_content_async(
-            session=session,
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            content_type="resources",
-            request=request,
-            user_id=current_user.id,
-        )
-        await session.commit()
-        
-        return RetryContentResponse(
-            success=True,
-            concept_id=concept_id,
-            content_type="resources",
-            message=result["message"],
-            data={"task_id": result["task_id"]},
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        logger.error("retry_resources_failed", roadmap_id=roadmap_id, concept_id=concept_id, error=str(e))
-        raise HTTPException(status_code=500, detail=f"Failed to submit retry task: {str(e)}")
-
-
-@router.post(
-    "/{roadmap_id}/concepts/{concept_id}/quiz/retry",
-    response_model=RetryContentResponse,
-)
-async def retry_quiz(
-    roadmap_id: str,
-    concept_id: str,
-    request: RetryContentRequest,
-    content_service: CurrentContentService,
-    session: CurrentSessionTransaction,
-    current_user: User = Depends(current_active_user),
-):
-    """重试单个概念的测验生成（激进重构版）"""
-    try:
-        result = await content_service.retry_content_async(
-            session=session,
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            content_type="quiz",
-            request=request,
-            user_id=current_user.id,
-        )
-        await session.commit()
-        
-        return RetryContentResponse(
-            success=True,
-            concept_id=concept_id,
-            content_type="quiz",
-            message=result["message"],
-            data={"task_id": result["task_id"]},
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        logger.error("retry_quiz_failed", roadmap_id=roadmap_id, concept_id=concept_id, error=str(e))
-        raise HTTPException(status_code=500, detail=f"Failed to submit retry task: {str(e)}")
+    return response_base.success(data=response_data)

@@ -171,7 +171,8 @@ export default function TasksPage() {
     if (!userId) return;
     
     try {
-      await deleteTask(taskId, userId);
+      // ✅ 不再传递userId，后端从JWT Token自动提取
+      await deleteTask(taskId);
       // 刷新列表
       await fetchTasks(activeFilter);
     } catch (error) {

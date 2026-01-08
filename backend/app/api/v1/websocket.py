@@ -25,7 +25,7 @@ from jose import jwt, JWTError
 from app.services.notification_service import notification_service, TaskEvent
 from app.crud.crud_task import TaskCRUD, get_task_crud
 from app.models.database import RoadmapTask
-from app.db.session import AsyncSessionLocal
+from app.db.session import async_session_maker
 from app.config.settings import settings
 
 router = APIRouter(prefix="/api/v1")
@@ -175,7 +175,7 @@ async def websocket_endpoint(
     
     # ===== 步骤2: 验证用户有权访问该任务 =====
     task_crud = get_task_crud()
-    async with AsyncSessionLocal() as session:
+    async with async_session_maker() as session:
         task = await task_crud.get_by_task_id(session, task_id)
         
         if not task:
@@ -243,7 +243,7 @@ async def websocket_endpoint(
 async def _send_current_status(websocket: WebSocket, task_id: str):
     """发送任务的当前状态"""
     try:
-        async with AsyncSessionLocal() as session:
+        async with async_session_maker() as session:
             repo = RoadmapRepository(session)
             task = await repo.get_task(task_id)
             

@@ -24,7 +24,7 @@ import structlog
 import asyncio
 from app.core.celery_app import celery_app
 # 使用 Celery 专用的数据库连接管理，避免 Fork 进程继承问题
-from app.db.celery_session import celery_safe_session as safe_session
+from app.db.celery_session import get_celery_session
 from app.models.database import ExecutionLog
 
 logger = structlog.get_logger()
@@ -121,10 +121,10 @@ async def _async_batch_write_logs(logs: list[dict]):
     
     注意：
     - 每次调用都会创建新的数据库会话
-    - 会话在 safe_session 上下文管理器中自动管理
-    - 不需要手动清理连接，safe_session 会处理
+    - 会话由 get_celery_session() 自动管理
+    - SQLAlchemy 自动处理 commit/rollback/close
     """
-    async with safe_session() as session:
+    async with get_celery_session() as session:
         log_entries = [
             ExecutionLog(**log_data)
             for log_data in logs

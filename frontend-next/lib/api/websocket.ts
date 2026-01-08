@@ -265,7 +265,8 @@ export class TaskWebSocket {
     }
 
     // ✅ 强制要求 Token（未登录用户直接失败）
-    const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
+    // 注意：使用与 AuthService 相同的 TOKEN_KEY
+    const token = typeof window !== 'undefined' ? localStorage.getItem('fast_learning_token') : null;
     
     if (!token) {
       const error = new Error('Authentication required: No access token found');

@@ -77,7 +77,6 @@ class UserCRUD(BaseCRUD[User, UserCreate, UserUpdate]):
         result = await session.execute(
             select(User)
             .where(User.is_active == True)
-            .where(User.deleted_at.is_(None))
             .order_by(User.created_at.desc())
             .offset(skip)
             .limit(limit)

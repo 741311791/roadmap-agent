@@ -21,8 +21,8 @@ export type { TutorialWithContent };
  */
 export interface GenerateRoadmapResponse {
   task_id: string;
-  roadmap_id: string;
-  framework: RoadmapFramework;
+  message: string;
+  status?: string;
 }
 
 /**

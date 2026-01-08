@@ -198,3 +198,4 @@ def get_user_friendly_message(exception: Exception) -> str:
     # 返回映射的消息，或返回原始消息
     return friendly_messages.get(exception_type, str(exception))
 
+

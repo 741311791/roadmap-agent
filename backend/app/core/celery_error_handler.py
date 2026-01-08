@@ -29,10 +29,10 @@ async def update_task_status_failed(task_id: str, error: Exception) -> None:
         error: 异常对象
     """
     try:
-        from app.db.session import AsyncSessionLocal
+        from app.db.session import async_session_maker
         from app.crud.crud_task import get_task_crud
         
-        async with AsyncSessionLocal() as session:
+        async with async_session_maker.begin() as session:
             task_crud = get_task_crud()
             
             # 清理错误消息（移除敏感信息）

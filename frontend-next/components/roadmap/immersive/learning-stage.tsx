@@ -444,7 +444,7 @@ function ResourceList({
     );
   }
 
-  if (!resources || resources.length === 0) {
+  if (!resources || !Array.isArray(resources) || resources.length === 0) {
     // 如果有重试所需的参数，显示重试按钮
     if (roadmapId && conceptId && userPreferences) {
       return (
@@ -800,7 +800,7 @@ function QuizList({
     );
   }
 
-  if (!quiz || quiz.questions.length === 0) {
+  if (!quiz || !quiz.questions || quiz.questions.length === 0) {
     // 如果有重试所需的参数，显示重试按钮
     if (roadmapId && conceptId && userPreferences) {
       return (

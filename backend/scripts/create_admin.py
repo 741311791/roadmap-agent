@@ -11,7 +11,7 @@ from getpass import getpass
 from app.core.auth.user_manager import get_user_manager
 from app.core.auth.schemas import UserCreate
 from app.core.auth.backend import get_user_db
-from app.db.session import AsyncSessionLocal
+from app.db.session import async_session_maker
 import structlog
 
 logger = structlog.get_logger()
@@ -27,7 +27,7 @@ async def create_admin(email: str, username: str, password: str):
         password: 管理员密码
     """
     try:
-        async with AsyncSessionLocal() as session:
+        async with async_session_maker.begin() as session:
             # 获取用户数据库适配器
             user_db_gen = get_user_db(session)
             user_db = await anext(user_db_gen)

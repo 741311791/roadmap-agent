@@ -97,7 +97,9 @@ export default function HomePage() {
       
       try {
         setIsLoading(true);
-        const response = await getUserRoadmaps(userId);
+        // Home 页面只需要显示最新的 3 个路线图（+ 1个 Create 卡片）
+        // 为了判断是否有更多路线图（显示 View All），多获取 1 个
+        const response = await getUserRoadmaps(userId, 4, 0);
         // Map API response to store format
         const historyData = response.roadmaps.map((item) => {
           let status = item.status || 'completed';
@@ -161,7 +163,9 @@ export default function HomePage() {
     const fetchFeaturedRoadmaps = async () => {
       try {
         setIsFeaturedLoading(true);
-        const response = await getFeaturedRoadmaps(8, 0); // 获取8个，以便判断是否需要 View All
+        // Home 页面显示 4 个精选路线图
+        // 为了判断是否有更多（显示 View All），多获取 1 个
+        const response = await getFeaturedRoadmaps(5, 0);
         const featuredData: FeaturedRoadmap[] = response.roadmaps
           .filter(item => item.status === 'completed') // 只显示已完成的路线图
           .map((item) => ({

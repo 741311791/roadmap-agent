@@ -12,7 +12,7 @@ backend_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_dir))
 
 from sqlmodel import select
-from app.db.session import AsyncSessionLocal
+from app.db.session import async_session_maker
 from app.models.database import RoadmapMetadata
 from app.services.cover_image_service import CoverImageService
 import logging
@@ -33,7 +33,7 @@ async def generate_cover_images_for_user(user_id: str):
     """
     logger.info(f"开始为用户 {user_id} 生成封面图")
     
-    async with AsyncSessionLocal() as db:
+    async with async_session_maker.begin() as db:
         # 查询用户的所有路线图（未软删除）
         result = await db.execute(
             select(RoadmapMetadata).where(

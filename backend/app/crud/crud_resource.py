@@ -62,7 +62,6 @@ class ResourceCRUD(BaseCRUD[ResourceRecommendationMetadata, ResourceCreate, Reso
             select(ResourceRecommendationMetadata)
             .where(ResourceRecommendationMetadata.roadmap_id == roadmap_id)
             .where(ResourceRecommendationMetadata.concept_id == concept_id)
-            .where(ResourceRecommendationMetadata.deleted_at.is_(None))
         )
         return result.scalar_one_or_none()
     

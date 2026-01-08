@@ -105,7 +105,15 @@ class UserManager(BaseUserManager[User, str]):
             user_id=user.id,
             email=user.email,
         )
-        # TODO: 发送重置密码邮件
+        # 发送重置密码邮件
+        # MVP 阶段暂不实现邮件功能
+        # 建议在 Phase 2 使用 Resend 或 SendGrid 实现
+        logger.info(
+            "password_reset_requested",
+            user_id=user.id,
+            email=user.email,
+            note="Email sending not implemented in MVP"
+        )
     
     async def on_after_request_verify(
         self,

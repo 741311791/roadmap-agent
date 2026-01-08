@@ -1,14 +1,20 @@
 /**
  * 错误拦截器
  * 统一处理 API 错误
+ * 
+ * 重构说明：
+ * - ✅ 支持新的错误格式 {error: {...}}
+ * - ✅ 兼容旧格式 {detail: ...}（过渡期）
+ * - ✅ 使用APIException统一错误类型
  */
 
 import type { AxiosError } from 'axios';
 import { logger } from '@/lib/utils/logger';
 import { authService } from '@/lib/services/auth-service';
+import { APIException, type APIError } from '@/types/custom/api-response';
 
 /**
- * 错误响应接口
+ * 错误响应接口（兼容旧格式）
  */
 interface ErrorResponse {
   detail?: string;
@@ -16,12 +22,21 @@ interface ErrorResponse {
 }
 
 /**
+ * 联合类型：新旧错误格式
+ */
+type ErrorResponseUnion = ErrorResponse | APIError;
+
+/**
  * 错误拦截器
  * 
  * 处理 API 错误，特别是 401 未授权错误时自动登出并跳转到登录页。
- * 优化：正确处理请求取消（AbortError），避免误报网络错误
+ * 
+ * 重构说明：
+ * - ✅ 支持新的错误格式 {error: {...}}
+ * - ✅ 自动转换为APIException
+ * - ✅ 兼容旧格式（过渡期）
  */
-export function errorInterceptor(error: AxiosError<ErrorResponse>) {
+export function errorInterceptor(error: AxiosError<ErrorResponseUnion>) {
   const { response, config } = error;
   
   // ========================================
@@ -30,7 +45,7 @@ export function errorInterceptor(error: AxiosError<ErrorResponse>) {
   if (error.name === 'AbortError' || error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
     // 请求被取消，不作为错误处理
     logger.debug('[API] Request cancelled');
-    return Promise.reject(error); // 直接返回原始错误，让调用方处理
+    return Promise.reject(error);
   }
   
   if (!response) {
@@ -40,7 +55,41 @@ export function errorInterceptor(error: AxiosError<ErrorResponse>) {
   }
   
   const { status, data } = response;
-  const errorMessage = data?.detail || '未知错误';
+  
+  // ========================================
+  // 新格式：{error: {...}}
+  // ========================================
+  if (data && 'error' in data) {
+    const apiError = (data as APIError).error;
+    
+    logger.error('[API] Error', {
+      code: apiError.code,
+      message: apiError.message,
+      request_id: apiError.request_id,
+      status,
+    });
+    
+    // 处理401未授权
+    if (status === 401 || apiError.code === 'UNAUTHORIZED') {
+      logger.error('[API] 未授权，请重新登录');
+      authService.logout();
+      
+      if (typeof window !== 'undefined' && !config?.url?.includes('/auth/')) {
+        const currentPath = window.location.pathname;
+        if (currentPath !== '/login') {
+          window.location.href = `/login?redirect=${encodeURIComponent(currentPath)}`;
+        }
+      }
+    }
+    
+    // 转换为APIException并返回
+    return Promise.reject(new APIException(apiError, status));
+  }
+  
+  // ========================================
+  // 旧格式兼容：{detail: ...}（过渡期）
+  // ========================================
+  const errorMessage = (data as ErrorResponse)?.detail || '未知错误';
   
   switch (status) {
     case 400:
@@ -49,12 +98,9 @@ export function errorInterceptor(error: AxiosError<ErrorResponse>) {
       
     case 401:
       logger.error('[API] 未授权，请重新登录');
-      // 清除本地认证信息
       authService.logout();
-      // 跳转到登录页（排除登录相关请求）
       if (typeof window !== 'undefined' && !config?.url?.includes('/auth/')) {
         const currentPath = window.location.pathname;
-        // 避免在登录页重复跳转
         if (currentPath !== '/login') {
           window.location.href = `/login?redirect=${encodeURIComponent(currentPath)}`;
         }

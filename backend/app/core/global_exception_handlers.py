@@ -18,6 +18,7 @@ from app.core.exceptions import (
     sanitize_error_message,
     get_user_friendly_message,
 )
+from app.core.custom_exceptions import BaseAPIException
 
 logger = structlog.get_logger()
 
@@ -169,6 +170,51 @@ async def sqlalchemy_exception_handler(request: Request, exc: SQLAlchemyError) -
     )
 
 
+async def custom_api_exception_handler(request: Request, exc: BaseAPIException) -> JSONResponse:
+    """
+    处理自定义API异常
+    
+    捕获继承自 BaseAPIException 的所有业务异常。
+    
+    Args:
+        request: FastAPI 请求对象
+        exc: 自定义API异常对象
+        
+    Returns:
+        JSONResponse: 统一格式的错误响应
+    """
+    request_id = getattr(request.state, "request_id", None)
+    
+    # 记录日志
+    log_level = "warning" if exc.code < 500 else "error"
+    log_func = getattr(logger, log_level)
+    
+    log_func(
+        "custom_api_exception",
+        request_id=request_id,
+        url=str(request.url),
+        method=request.method,
+        error_code=exc.error_code.value,
+        status_code=exc.code,
+        message=exc.msg,
+        details=exc.details,
+    )
+    
+    # 格式化错误响应
+    error_response = format_error_response(
+        code=exc.error_code,
+        message=exc.msg,
+        exception=exc,
+        details=exc.details,
+        request_id=request_id,
+    )
+    
+    return JSONResponse(
+        status_code=exc.code,
+        content=error_response.model_dump(),
+    )
+
+
 async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """
     通用异常处理器（兜底）
@@ -222,4 +268,5 @@ async def generic_exception_handler(request: Request, exc: Exception) -> JSONRes
         status_code=500,
         content=error_response.model_dump(),
     )
+
 

@@ -11,7 +11,7 @@ from typing import AsyncIterator, Any, Dict, Optional
 from app.services.notification_service import notification_service
 from app.services.execution_logger import execution_logger, LogCategory
 from app.crud.crud_task import get_task_crud
-from app.db.session import AsyncSessionLocal
+from app.db.session import async_session_maker
 
 logger = structlog.get_logger()
 
@@ -152,7 +152,7 @@ class WorkflowErrorHandler:
             node_name: 节点名称
         """
         try:
-            async with AsyncSessionLocal() as session:
+            async with async_session_maker.begin() as session:
                 task_crud = get_task_crud()
                 await task_crud.update_status(
                     session=session,

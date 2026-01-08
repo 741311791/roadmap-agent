@@ -182,14 +182,14 @@ async def update_concept_status_in_framework(
         result: 生成结果数据（可选）
     """
     # 使用 Celery 专用的数据库连接管理，避免 Fork 进程继承问题
-    from app.db.celery_session import CeleryRepositoryFactory
+    # CeleryRepositoryFactory 已删除，直接使用 CRUD
     from app.crud.crud_roadmap import RoadmapCRUD
     from app.models.database import RoadmapMetadata
     from app.models.domain import RoadmapFramework
     
     roadmap_crud = RoadmapCRUD(RoadmapMetadata)
     
-    async with CeleryRepositoryFactory().create_session() as session:
+    async with get_celery_session() as session:
         # 获取当前路线图
         metadata = await roadmap_crud.get_by_roadmap_id(session, roadmap_id)
         if not metadata or not metadata.framework_data:

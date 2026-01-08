@@ -37,7 +37,13 @@ class TaskCRUD(BaseCRUD[RoadmapTask, TaskCreate, TaskUpdate]):
     """
     任务CRUD操作
     
-    继承BaseCRUD，自动获得通用的CRUD方法
+    继承BaseCRUD，自动获得通用的CRUD方法。
+    
+    使用全局单例模式：
+    ```python
+    task_crud = get_task_crud()
+    task = await task_crud.get_by_task_id(session, task_id)
+    ```
     """
     
     async def get_by_task_id(
@@ -270,6 +276,51 @@ class TaskCRUD(BaseCRUD[RoadmapTask, TaskCreate, TaskUpdate]):
             "tasks": tasks,
             "status_counts": status_counts,
         }
+    
+    async def find_interrupted_tasks(
+        self,
+        session: AsyncSession,
+        max_age_hours: int = 24,
+    ) -> List[RoadmapTask]:
+        """
+        查找被中断的任务
+        
+        被中断的任务定义：
+        - 状态为 "processing"（正在处理中）
+        - updated_at 时间距离现在超过 max_age_hours 小时
+        
+        Args:
+            session: 数据库会话
+            max_age_hours: 最大年龄（小时），超过此时间未更新的任务被认为是中断的
+            
+        Returns:
+            被中断的任务列表
+        """
+        from datetime import timedelta
+        
+        # 计算截止时间（北京时间）
+        cutoff_time = beijing_now() - timedelta(hours=max_age_hours)
+        
+        # 查询状态为 processing 且长时间未更新的任务
+        result = await session.execute(
+            select(RoadmapTask)
+            .where(
+                RoadmapTask.status == "processing",
+                RoadmapTask.updated_at < cutoff_time,
+            )
+            .order_by(RoadmapTask.updated_at.asc())
+        )
+        
+        interrupted_tasks = list(result.scalars().all())
+        
+        logger.info(
+            "find_interrupted_tasks_completed",
+            max_age_hours=max_age_hours,
+            cutoff_time=cutoff_time.isoformat(),
+            count=len(interrupted_tasks),
+        )
+        
+        return interrupted_tasks
 
 
 # 工厂函数

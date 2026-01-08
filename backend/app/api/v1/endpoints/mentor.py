@@ -19,6 +19,7 @@ from app.schemas.mentor import (
     LearningNoteUpdate,
     LearningNoteResponse,
 )
+from app.core.response_schema import response_base, ResponseSchemaModel
 
 logger = structlog.get_logger()
 
@@ -176,6 +177,6 @@ async def delete_note(
     try:
         success = await service.delete_note(session, note_id, user_id)
         await session.commit()
-        return {"success": success, "message": "笔记已删除"}
+        return response_base.success(data={"success": success, "message": "笔记已删除"})
     except ValueError as e:
         raise HTTPException(status_code=404 if "不存在" in str(e) else 403, detail=str(e))

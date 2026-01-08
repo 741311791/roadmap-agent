@@ -43,7 +43,7 @@ import structlog
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 
-from app.db.session import AsyncSessionLocal
+from app.db.session import async_session_maker
 from app.models.database import (
     RoadmapMetadata,
     RoadmapTask,
@@ -264,7 +264,7 @@ async def main(dry_run: bool, roadmap_id: str | None = None):
     
     print()
     
-    async with AsyncSessionLocal() as session:
+    async with async_session_maker.begin() as session:
         # 获取所有内容元数据
         print("📥 Fetching content metadata...")
         content_refs = await get_content_refs_by_roadmap(session, roadmap_id)

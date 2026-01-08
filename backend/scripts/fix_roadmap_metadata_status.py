@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
-from app.db.session import AsyncSessionLocal
+from app.db.session import async_session_maker
 from app.models.database import (
     RoadmapMetadata,
     TutorialMetadata,
@@ -40,7 +40,7 @@ async def fix_roadmap_metadata_status(
         roadmap_id: 如果指定，只修复该路线图；否则修复所有路线图
         dry_run: 如果为 True，只显示将要修改的内容，不实际保存
     """
-    async with AsyncSessionLocal() as session:
+    async with async_session_maker.begin() as session:
         # 查询需要修复的路线图
         query = select(RoadmapMetadata)
         if roadmap_id:

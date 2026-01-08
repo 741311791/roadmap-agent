@@ -167,10 +167,10 @@ class EditorRunner:
                         new_concept_ids.append(concept.concept_id)
             
             if new_concept_ids:
-                from app.db.celery_session import celery_safe_session_with_retry
+                from app.db.celery_session import get_celery_session
                 from app.crud.crud_concept import get_concept_crud
                 
-                async with celery_safe_session_with_retry() as session:
+                async with get_celery_session() as session:
                     concept_crud = get_concept_crud()
                     # 批量初始化（只会创建不存在的 concept）
                     await concept_crud.batch_initialize_concepts(

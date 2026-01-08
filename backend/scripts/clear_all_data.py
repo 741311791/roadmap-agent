@@ -1,7 +1,7 @@
 """清空所有表数据（保留表结构）"""
 import asyncio
 from sqlalchemy import text
-from app.db.session import AsyncSessionLocal
+from app.db.session import async_session_maker
 import structlog
 
 logger = structlog.get_logger()
@@ -19,7 +19,7 @@ TABLES_TO_CLEAR = [
 
 async def clear_all_tables():
     """清空所有表数据"""
-    async with AsyncSessionLocal() as session:
+    async with async_session_maker.begin() as session:
         try:
             for table in TABLES_TO_CLEAR:
                 logger.info(f"清空表: {table}")

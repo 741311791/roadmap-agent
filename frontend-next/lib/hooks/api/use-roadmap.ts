@@ -37,7 +37,9 @@ export function useRoadmap(roadmapId: string | undefined) {
         throw new Error(error.detail || 'Failed to fetch roadmap');
       }
 
-      const data: RoadmapFramework = await response.json();
+      const responseData = await response.json();
+      // 后端返回格式为 ResponseSchemaModel，实际数据在 data 字段中
+      const data: RoadmapFramework = responseData.data || responseData;
       
       // 同步到 Store
       setRoadmap(data);

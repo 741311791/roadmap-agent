@@ -2,7 +2,7 @@
 import asyncio
 import sys
 from sqlalchemy import text
-from app.db.session import AsyncSessionLocal
+from app.db.session import async_session_maker
 import structlog
 
 logger = structlog.get_logger()
@@ -12,7 +12,7 @@ async def verify_migration():
     """验证迁移的完整性"""
     issues = []
     
-    async with AsyncSessionLocal() as session:
+    async with async_session_maker.begin() as session:
         # 1. 验证数据库字段
         logger.info("🔍 检查数据库 schema...")
         result = await session.execute(text("""

@@ -97,6 +97,8 @@ class RoadmapCRUD(BaseCRUD[RoadmapMetadata, RoadmapCreate, RoadmapUpdate]):
         """
         获取路线图及其所有概念元数据（避免N+1查询）
         
+        使用selectinload预加载关联数据，消除N+1查询问题。
+        
         Args:
             session: 数据库会话
             roadmap_id: 路线图ID
@@ -107,6 +109,52 @@ class RoadmapCRUD(BaseCRUD[RoadmapMetadata, RoadmapCreate, RoadmapUpdate]):
         result = await session.execute(
             select(RoadmapMetadata)
             .options(selectinload(RoadmapMetadata.concept_metas))
+            .where(RoadmapMetadata.roadmap_id == roadmap_id)
+        )
+        return result.scalar_one_or_none()
+    
+    async def get_with_all_relations(
+        self,
+        session: AsyncSession,
+        roadmap_id: str,
+    ) -> Optional[RoadmapMetadata]:
+        """
+        获取路线图及其所有关联数据（避免N+1查询）
+        
+        使用多级selectinload预加载：
+        - concept_metas（概念元数据）
+        - concept_metas.tutorial_metas（教程元数据）
+        - concept_metas.resource_metas（资源元数据）
+        - concept_metas.quiz_metas（测验元数据）
+        
+        性能优势：100个概念时，从101次查询降低到4次查询（约25倍提升）
+        
+        Args:
+            session: 数据库会话
+            roadmap_id: 路线图ID
+            
+        Returns:
+            路线图元数据（包含所有关联数据）
+        """
+        from app.models.database import ConceptMetadata
+        
+        result = await session.execute(
+            select(RoadmapMetadata)
+            .options(
+                # ✅ 预加载concepts
+                selectinload(RoadmapMetadata.concept_metas).selectinload(
+                    # ✅ 预加载tutorial_metas
+                    ConceptMetadata.tutorial_metas
+                ),
+                selectinload(RoadmapMetadata.concept_metas).selectinload(
+                    # ✅ 预加载resource_metas
+                    ConceptMetadata.resource_metas
+                ),
+                selectinload(RoadmapMetadata.concept_metas).selectinload(
+                    # ✅ 预加载quiz_metas
+                    ConceptMetadata.quiz_metas
+                ),
+            )
             .where(RoadmapMetadata.roadmap_id == roadmap_id)
         )
         return result.scalar_one_or_none()
@@ -174,6 +222,7 @@ class RoadmapCRUD(BaseCRUD[RoadmapMetadata, RoadmapCreate, RoadmapUpdate]):
         user_id: str,
         skip: int = 0,
         limit: int = 50,
+        with_concepts: bool = False,
     ) -> List[RoadmapMetadata]:
         """
         获取用户的所有路线图列表（排除已删除的）
@@ -183,16 +232,22 @@ class RoadmapCRUD(BaseCRUD[RoadmapMetadata, RoadmapCreate, RoadmapUpdate]):
             user_id: 用户ID
             skip: 跳过的记录数
             limit: 返回数量限制
+            with_concepts: 是否预加载概念元数据（避免N+1查询）
             
         Returns:
             路线图元数据列表（按创建时间降序）
         """
+        query = select(RoadmapMetadata).where(
+            RoadmapMetadata.user_id == user_id,
+            RoadmapMetadata.deleted_at.is_(None)
+        )
+        
+        # ✅ 可选：预加载概念元数据（避免N+1查询）
+        if with_concepts:
+            query = query.options(selectinload(RoadmapMetadata.concept_metas))
+        
         result = await session.execute(
-            select(RoadmapMetadata)
-            .where(
-                RoadmapMetadata.user_id == user_id,
-                RoadmapMetadata.deleted_at.is_(None)
-            )
+            query
             .order_by(RoadmapMetadata.created_at.desc())
             .offset(skip)
             .limit(limit)

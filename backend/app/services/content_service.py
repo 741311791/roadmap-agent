@@ -690,6 +690,220 @@ class ContentService:
             "modification_summary": result.modification_summary,
             "changes_made": result.changes_made,
         }
+    
+    async def modify_resources(
+        self,
+        session: AsyncSession,
+        roadmap_id: str,
+        concept_id: str,
+        requirements: list[str],
+        preferences: LearningPreferences,
+    ) -> dict:
+        """
+        修改指定概念的资源推荐
+        
+        Args:
+            session: 数据库会话
+            roadmap_id: 路线图 ID
+            concept_id: 概念 ID
+            requirements: 修改要求列表
+            preferences: 用户学习偏好
+            
+        Returns:
+            修改结果字典
+            
+        Raises:
+            ValueError: 路线图、概念或资源不存在
+        """
+        # 获取现有资源
+        resources = await self.resource_crud.get_by_concept_id(session, concept_id)
+        if not resources:
+            raise ValueError(f"概念 {concept_id} 的资源推荐不存在")
+        
+        # 获取概念数据
+        concept_metadata = await self.concept_crud.get_by_concept_id(session, concept_id)
+        if not concept_metadata:
+            raise ValueError(f"概念 {concept_id} 不存在")
+        
+        concept_data = {
+            "concept_id": concept_metadata.concept_id,
+            "name": concept_metadata.name,
+            "description": concept_metadata.description,
+            "keywords": concept_metadata.keywords or [],
+        }
+        
+        # 构建 Concept 对象
+        from app.models.domain import Concept
+        concept = Concept(
+            concept_id=concept_data["concept_id"],
+            name=concept_data["name"],
+            description=concept_data["description"],
+            estimated_hours=concept_metadata.estimated_hours,
+            prerequisites=concept_metadata.prerequisites or [],
+            difficulty=concept_metadata.difficulty,
+            keywords=concept_data["keywords"],
+        )
+        
+        # 获取上下文
+        roadmap = await self.roadmap_crud.get_by_roadmap_id(session, roadmap_id)
+        context = {
+            "roadmap_topic": roadmap.topic,
+            "roadmap_title": roadmap.title,
+        }
+        
+        # 添加版本信息到上下文
+        context["content_version"] = resources.content_version
+        
+        # 调用修改Agent
+        from app.agents.resource_modifier import ResourceModifierAgent
+        from app.models.domain import ResourceModificationInput
+        
+        modifier = ResourceModifierAgent()
+        
+        modification_input = ResourceModificationInput(
+            concept=concept,
+            context=context,
+            user_preferences=preferences,
+            existing_content_url=resources.content_url,
+            modification_requirements=requirements,
+        )
+        
+        result = await modifier.modify(modification_input)
+        
+        # 保存新版本到数据库
+        from app.models.domain import ResourceRecommendationOutput
+        resource_output = ResourceRecommendationOutput(
+            concept_id=result.concept_id,
+            resources_id=result.resources_id,
+            resources=result.resources,
+            content_url=result.content_url,
+            content_status="completed",
+            content_version=result.content_version,
+            generated_at=result.generated_at,
+        )
+        
+        # 使用concept_service保存
+        await self.concept_service.save_resources_metadata(
+            session, resource_output, roadmap_id
+        )
+        
+        return {
+            "success": True,
+            "concept_id": result.concept_id,
+            "resources_id": result.resources_id,
+            "resources_count": len(result.resources),
+            "content_url": result.content_url,
+            "content_version": result.content_version,
+            "modification_summary": result.modification_summary,
+            "changes_made": result.changes_made,
+        }
+    
+    async def modify_quiz(
+        self,
+        session: AsyncSession,
+        roadmap_id: str,
+        concept_id: str,
+        requirements: list[str],
+        preferences: LearningPreferences,
+    ) -> dict:
+        """
+        修改指定概念的测验内容
+        
+        Args:
+            session: 数据库会话
+            roadmap_id: 路线图 ID
+            concept_id: 概念 ID
+            requirements: 修改要求列表
+            preferences: 用户学习偏好
+            
+        Returns:
+            修改结果字典
+            
+        Raises:
+            ValueError: 路线图、概念或测验不存在
+        """
+        # 获取现有测验
+        quiz = await self.quiz_crud.get_by_concept_id(session, concept_id)
+        if not quiz:
+            raise ValueError(f"概念 {concept_id} 的测验不存在")
+        
+        # 获取概念数据
+        concept_metadata = await self.concept_crud.get_by_concept_id(session, concept_id)
+        if not concept_metadata:
+            raise ValueError(f"概念 {concept_id} 不存在")
+        
+        concept_data = {
+            "concept_id": concept_metadata.concept_id,
+            "name": concept_metadata.name,
+            "description": concept_metadata.description,
+            "keywords": concept_metadata.keywords or [],
+        }
+        
+        # 构建 Concept 对象
+        from app.models.domain import Concept
+        concept = Concept(
+            concept_id=concept_data["concept_id"],
+            name=concept_data["name"],
+            description=concept_data["description"],
+            estimated_hours=concept_metadata.estimated_hours,
+            prerequisites=concept_metadata.prerequisites or [],
+            difficulty=concept_metadata.difficulty,
+            keywords=concept_data["keywords"],
+        )
+        
+        # 获取上下文
+        roadmap = await self.roadmap_crud.get_by_roadmap_id(session, roadmap_id)
+        context = {
+            "roadmap_topic": roadmap.topic,
+            "roadmap_title": roadmap.title,
+        }
+        
+        # 添加版本信息到上下文
+        context["content_version"] = quiz.content_version
+        
+        # 调用修改Agent
+        from app.agents.quiz_modifier import QuizModifierAgent
+        from app.models.domain import QuizModificationInput
+        
+        modifier = QuizModifierAgent()
+        
+        modification_input = QuizModificationInput(
+            concept=concept,
+            context=context,
+            user_preferences=preferences,
+            existing_content_url=quiz.content_url,
+            modification_requirements=requirements,
+        )
+        
+        result = await modifier.modify(modification_input)
+        
+        # 保存新版本到数据库
+        from app.models.domain import QuizGenerationOutput
+        quiz_output = QuizGenerationOutput(
+            concept_id=result.concept_id,
+            quiz_id=result.quiz_id,
+            total_questions=result.total_questions,
+            content_url=result.content_url,
+            content_status="completed",
+            content_version=result.content_version,
+            generated_at=result.generated_at,
+        )
+        
+        # 使用concept_service保存
+        await self.concept_service.save_quiz_metadata(
+            session, quiz_output, roadmap_id
+        )
+        
+        return {
+            "success": True,
+            "concept_id": result.concept_id,
+            "quiz_id": result.quiz_id,
+            "total_questions": result.total_questions,
+            "content_url": result.content_url,
+            "content_version": result.content_version,
+            "modification_summary": result.modification_summary,
+            "changes_made": result.changes_made,
+        }
 
 
 # 全局单例（可选）

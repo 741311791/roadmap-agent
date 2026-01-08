@@ -22,7 +22,12 @@ from datetime import datetime
 from app.config.settings import settings
 from app.core.orchestrator_factory import OrchestratorFactory
 from app.core.orchestrator.executor import WorkflowExecutor
-from app.db.repository_factory import RepositoryFactory
+from app.db.session import async_session_maker
+from app.crud.crud_task import get_task_crud
+from app.crud.crud_roadmap import get_roadmap_crud
+from app.crud.crud_tutorial import get_tutorial_crud
+from app.crud.crud_resource import get_resource_crud
+from app.crud.crud_quiz import get_quiz_crud
 from app.models.database import RoadmapTask, beijing_now
 from app.services.notification_service import notification_service
 from app.schemas.task_recovery import TaskRecoveryReport
@@ -55,7 +60,6 @@ class TaskRecoveryService:
         self.max_age_hours = max_age_hours
         self.max_concurrent_recoveries = max_concurrent_recoveries
         self.recovery_delay_seconds = recovery_delay_seconds
-        self.repo_factory = RepositoryFactory()
         self._recovery_tasks: dict[str, asyncio.Task] = {}
     
     async def recover_interrupted_tasks(self) -> TaskRecoveryReport:
@@ -81,9 +85,10 @@ class TaskRecoveryService:
         
         try:
             # 1. 查找被中断的任务
-            async with self.repo_factory.create_session() as session:
-                task_repo = self.repo_factory.create_task_repo(session)
-                interrupted_tasks = await task_repo.find_interrupted_tasks(
+            async with async_session_maker.begin() as session:
+                task_crud = get_task_crud()
+                interrupted_tasks = await task_crud.find_interrupted_tasks(
+                    session=session,
                     max_age_hours=self.max_age_hours
                 )
             
@@ -275,8 +280,8 @@ class TaskRecoveryService:
             # 关键修复：保存工作流生成的数据到数据库
             await self._save_workflow_results(task_id, final_state)
             
-            # 清除 live_step 缓存
-            executor.state_manager.clear_live_step(task_id)
+            # 清除 live_step 缓存（Redis）
+            await executor.state_manager.clear_live_step(task_id)
             
         except Exception as e:
             logger.error(
@@ -315,14 +320,16 @@ class TaskRecoveryService:
                 )
                 return
             
-            async with self.repo_factory.create_session() as session:
+            # 使用 CRUD 直接操作
+            roadmap_crud = get_roadmap_crud()
+            task_crud = get_task_crud()
+            
+            async with get_celery_session() as session:
                 # 1. 保存/更新路线图元数据
                 # save_roadmap 方法内部会自动判断是更新还是插入
-                roadmap_repo = self.repo_factory.create_roadmap_meta_repo(session)
-                task_repo = self.repo_factory.create_task_repo(session)
                 
                 # 获取 user_id
-                task = await task_repo.get_by_task_id(task_id)
+                task = await task_crud.get_by_task_id(session, task_id)
                 if not task:
                     logger.error(
                         "task_recovery_task_not_found",
@@ -330,7 +337,7 @@ class TaskRecoveryService:
                     )
                     return
                 
-                await roadmap_repo.save_roadmap(
+                await roadmap_crud.save_roadmap(
                     roadmap_id=framework.roadmap_id,
                     user_id=task.user_id,
                     framework=framework,
@@ -349,8 +356,8 @@ class TaskRecoveryService:
                         task_id=task_id,
                         count=len(tutorial_refs),
                     )
-                    tutorial_repo = self.repo_factory.create_tutorial_repo(session)
-                    await tutorial_repo.save_tutorials_batch(
+                    tutorial_crud = get_tutorial_crud()
+                    await tutorial_crud.save_tutorials_batch(
                         tutorial_refs=tutorial_refs,
                         roadmap_id=framework.roadmap_id,
                     )
@@ -368,8 +375,8 @@ class TaskRecoveryService:
                         task_id=task_id,
                         count=len(resource_refs),
                     )
-                    resource_repo = self.repo_factory.create_resource_repo(session)
-                    await resource_repo.save_resources_batch(
+                    resource_crud = get_resource_crud()
+                    await resource_crud.save_resources_batch(
                         resource_refs=resource_refs,
                         roadmap_id=framework.roadmap_id,
                     )
@@ -387,8 +394,8 @@ class TaskRecoveryService:
                         task_id=task_id,
                         count=len(quiz_refs),
                     )
-                    quiz_repo = self.repo_factory.create_quiz_repo(session)
-                    await quiz_repo.save_quizzes_batch(
+                    quiz_crud = get_quiz_crud()
+                    await quiz_crud.save_quizzes_batch(
                         quiz_refs=quiz_refs,
                         roadmap_id=framework.roadmap_id,
                     )
@@ -428,9 +435,9 @@ class TaskRecoveryService:
             reason: 失败原因
         """
         try:
-            async with self.repo_factory.create_session() as session:
-                task_repo = self.repo_factory.create_task_repo(session)
-                await task_repo.mark_task_recovery_failed(
+            async with async_session_maker.begin() as session:
+                task_crud = get_task_crud()
+                await task_crud.mark_task_recovery_failed(
                     task_id=task_id,
                     reason=reason,
                 )

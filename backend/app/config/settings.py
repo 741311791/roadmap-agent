@@ -98,6 +98,30 @@ class Settings(BaseSettings):
     )
     
     @property
+    def get_pool_config(self) -> dict:
+        """
+        根据运行环境动态返回数据库连接池配置
+        
+        不同环境推荐配置：
+        - 开发环境: pool_size=4, max_overflow=3, pool_recycle=1800
+        - 生产环境: pool_size=6, max_overflow=4, pool_recycle=900
+        
+        Returns:
+            连接池配置字典
+        """
+        if self.ENVIRONMENT == "production":
+            return {
+                "pool_size": 6,
+                "max_overflow": 4,
+                "pool_recycle": 900,  # 15分钟
+            }
+        return {
+            "pool_size": 4,
+            "max_overflow": 3,
+            "pool_recycle": 1800,  # 30分钟
+        }
+    
+    @property
     def DATABASE_URL(self) -> str:
         """
         构建异步数据库连接 URL

@@ -1045,53 +1045,74 @@ export async function getFeaturedRoadmaps(
 
 // ============================================================
 // 路线图删除与回收站相关接口
+// 
+// 重构说明：
+// - ✅ 移除user_id参数（后端从JWT Token自动提取）
+// - ✅ 后端会验证路线图所有权，防止越权操作
 // ============================================================
 
 /**
  * 软删除路线图（移至回收站）
+ * 
+ * 重构说明：
+ * - 移除了userId参数，后端从JWT Token中自动提取user_id
+ * - 后端会验证用户权限（必须是路线图所有者）
+ * 
+ * @param roadmapId - 路线图 ID
+ * @returns 删除结果
  */
 export async function deleteRoadmap(
-  roadmapId: string,
-  userId: string
+  roadmapId: string
 ): Promise<{ success: boolean; roadmap_id: string; deleted_at: string | null }> {
   const response = await apiClient.delete(
-    `/roadmaps/${roadmapId}`,
-    {
-      params: { user_id: userId },
-    }
+    `/roadmaps/${roadmapId}`
+    // ✅ 不再需要user_id参数，从JWT自动提取
   );
   return response.data;
 }
 
 /**
  * 从回收站恢复路线图
+ * 
+ * 重构说明：
+ * - 移除了userId参数，后端从JWT Token中自动提取user_id
+ * - 后端会验证用户权限（必须是路线图所有者）
+ * 
+ * @param roadmapId - 路线图 ID
+ * @returns 恢复结果
  */
 export async function restoreRoadmap(
-  roadmapId: string,
-  userId: string
+  roadmapId: string
 ): Promise<{ success: boolean; roadmap_id: string }> {
   const response = await apiClient.post(
-    `/roadmaps/${roadmapId}/restore`,
-    null,
-    {
-      params: { user_id: userId },
-    }
+    `/roadmaps/${roadmapId}/restore`
+    // ✅ 不再需要user_id参数，从JWT自动提取
   );
   return response.data;
 }
 
 /**
  * 永久删除路线图（不可恢复）
+ * 
+ * ⚠️ 警告：此操作会永久删除所有数据，包括：
+ * - 路线图元数据
+ * - 所有概念
+ * - 教程、资源、测验
+ * - 学习进度
+ * 
+ * 重构说明：
+ * - 移除了userId参数，后端从JWT Token中自动提取user_id
+ * - 后端会验证用户权限（必须是路线图所有者）
+ * 
+ * @param roadmapId - 路线图 ID
+ * @returns 删除结果
  */
 export async function permanentDeleteRoadmap(
-  roadmapId: string,
-  userId: string
+  roadmapId: string
 ): Promise<{ success: boolean; roadmap_id: string }> {
   const response = await apiClient.delete(
-    `/roadmaps/${roadmapId}/permanent`,
-    {
-      params: { user_id: userId },
-    }
+    `/roadmaps/${roadmapId}/permanent`
+    // ✅ 不再需要user_id参数，从JWT自动提取
   );
   return response.data;
 }
@@ -1214,19 +1235,19 @@ export async function retryTask(
  * 根据任务格式自动判断删除方式：
  * - 对于进行中的任务（task-{uuid}格式），物理删除任务记录
  * - 对于完成的路线图，软删除（可恢复）
+ * 
+ * 重构说明：
+ * - 移除了userId参数，后端从JWT Token中自动提取user_id
  */
 export async function deleteTask(
-  taskId: string,
-  userId: string
+  taskId: string
 ): Promise<{ success: boolean; roadmap_id: string; task_id?: string; deleted_at?: string | null }> {
   // 如果taskId不是以task-开头，需要加上前缀
   const roadmapId = taskId.startsWith('task-') ? taskId : `task-${taskId}`;
   
   const response = await apiClient.delete(
-    `/roadmaps/${roadmapId}`,
-    {
-      params: { user_id: userId },
-    }
+    `/roadmaps/${roadmapId}`
+    // ✅ 不再需要user_id参数，从JWT自动提取
   );
   return response.data;
 }

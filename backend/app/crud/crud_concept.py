@@ -74,8 +74,7 @@ class ConceptCRUD(BaseCRUD[ConceptMetadata, ConceptCreate, ConceptUpdate]):
         result = await session.execute(
             select(ConceptMetadata)
             .where(ConceptMetadata.roadmap_id == roadmap_id)
-            .where(ConceptMetadata.deleted_at.is_(None))
-            .order_by(ConceptMetadata.order_index)
+            .order_by(ConceptMetadata.created_at)
             .offset(skip)
             .limit(limit)
         )

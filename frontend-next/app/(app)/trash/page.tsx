@@ -185,7 +185,8 @@ export default function TrashPage() {
     if (!userId) return;
     
     try {
-      await restoreRoadmap(roadmapId, userId);
+      // ✅ 不再传递userId，后端从JWT Token自动提取
+      await restoreRoadmap(roadmapId);
       await fetchDeletedRoadmaps();
       
       // Reset to page 1 if current page becomes empty
@@ -212,7 +213,8 @@ export default function TrashPage() {
     if (!userId) return;
     
     try {
-      await permanentDeleteRoadmap(roadmapToDelete, userId);
+      // ✅ 不再传递userId，后端从JWT Token自动提取
+      await permanentDeleteRoadmap(roadmapToDelete);
       await fetchDeletedRoadmaps();
       
       // Reset to page 1 if current page becomes empty

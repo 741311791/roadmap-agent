@@ -135,7 +135,8 @@ export async function fetchCoverImageFromAPI(roadmapId: string): Promise<string 
     const data = await response.json();
     
     // 只有在成功生成的情况下才返回 URL
-    if (data.status === 'success' && data.cover_image_url) {
+    // 注意：status 可能是 'completed'（新版）或 'success'（旧版）
+    if ((data.status === 'completed' || data.status === 'success') && data.cover_image_url) {
       const url = data.cover_image_url;
       coverImageCache.set(roadmapId, url);
       return url;
@@ -201,7 +202,8 @@ export async function batchFetchCoverImagesFromAPI(
     
     // 处理批量获取的结果
     for (const item of data) {
-      const url = item.status === 'success' && item.cover_image_url 
+      // 注意：status 可能是 'completed'（新版）或 'success'（旧版）
+      const url = (item.status === 'completed' || item.status === 'success') && item.cover_image_url 
         ? item.cover_image_url 
         : null;
       coverImageCache.set(item.roadmap_id, url);

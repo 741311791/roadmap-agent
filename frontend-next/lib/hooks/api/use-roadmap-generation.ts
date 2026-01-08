@@ -11,6 +11,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import type { UserRequest, GenerateRoadmapResponse } from '@/types/generated';
+import type { APIResponse } from '@/types/custom/api-response';
 
 /**
  * 生成路线图 Hook
@@ -37,7 +38,9 @@ export function useRoadmapGeneration() {
         throw new Error(error.detail || 'Failed to generate roadmap');
       }
 
-      return response.json();
+      // ✅ 后端返回 APIResponse<GenerateRoadmapResponse> 结构
+      const apiResponse: APIResponse<GenerateRoadmapResponse> = await response.json();
+      return apiResponse.data;
     },
     onMutate: () => {
       // 乐观更新：立即更新 UI 状态
@@ -48,10 +51,8 @@ export function useRoadmapGeneration() {
       // 保存 task_id 到 Store
       setActiveTask(data.task_id);
       
-      // 可选：预填充查询缓存
-      if (data.roadmap_id) {
-        queryClient.invalidateQueries({ queryKey: ['roadmap', data.roadmap_id] });
-      }
+      // 注意：新版本API在生成完成后才返回roadmap_id（通过WebSocket推送）
+      // 此处不再有roadmap_id字段
     },
     onError: (error: Error) => {
       setError(error.message);

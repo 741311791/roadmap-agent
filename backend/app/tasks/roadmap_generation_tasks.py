@@ -23,10 +23,12 @@ from datetime import datetime
 from app.core.celery_app import celery_app
 from app.core.orchestrator_factory import OrchestratorFactory
 # 使用 Celery 专用的数据库连接管理，避免 Fork 进程继承问题
-from app.db.celery_session import CeleryRepositoryFactory
+# CeleryRepositoryFactory 已删除，直接使用 CRUD
 from app.services.notification_service import notification_service
 from app.models.constants import TaskStatus
 from app.models.domain import UserRequest, LearningPreferences
+from app.db.celery_session import get_celery_session
+from app.crud.crud_task import get_task_crud
 
 logger = structlog.get_logger()
 
@@ -58,7 +60,15 @@ def run_async(coro):
 @celery_app.task(
     name="roadmap_generation.generate_roadmap",
     bind=True,
-    max_retries=0,  # 不自动重试，由用户手动触发重试
+    max_retries=3,  # ✅ 自动重试最多3次
+    default_retry_delay=10,  # ✅ 默认延迟10秒后重试
+    autoretry_for=(  # ✅ 自动重试的异常类型
+        # LLM相关错误
+        Exception,  # 暂时使用通用异常，后续可细化
+    ),
+    retry_backoff=True,  # ✅ 指数退避策略
+    retry_backoff_max=300,  # ✅ 最大退避5分钟
+    retry_jitter=True,  # ✅ 随机抖动（避免雪崩）
     acks_late=True,
     reject_on_worker_lost=True,
     time_limit=1800,  # 30 分钟硬超时（路线图生成工作流包含多个阶段和 LLM 调用）
@@ -175,7 +185,6 @@ async def _execute_roadmap_workflow(
         # - 使用更长的初始等待时间
         # - 使用指数退避 + 抖动避免雷群效应
         # ============================================================
-        repo_factory = CeleryRepositoryFactory()
         max_retries = 10  # 增加重试次数
         task_found = False
         
@@ -189,6 +198,8 @@ async def _execute_roadmap_workflow(
         import random
         import traceback
         
+        task_crud = get_task_crud()
+        
         for attempt in range(max_retries):
             session_acquired = False
             query_executed = False
@@ -200,7 +211,7 @@ async def _execute_roadmap_workflow(
                     attempt=attempt + 1,
                 )
                 
-                async with repo_factory.create_session() as session:
+                async with get_celery_session() as session:
                     session_acquired = True
                     logger.debug(
                         "task_query_session_acquired",
@@ -209,10 +220,8 @@ async def _execute_roadmap_workflow(
                         session_id=id(session),
                     )
                     
-                    task_repo = repo_factory.create_task_repo(session)
-                    
-                    # 直接使用 Repository 查询（简化逻辑）
-                    task = await task_repo.get_by_task_id(task_id)
+                    # 使用 CRUD 查询
+                    task = await task_crud.get_by_task_id(session, task_id)
                     query_executed = True
                     
                     if task:
@@ -278,13 +287,14 @@ async def _execute_roadmap_workflow(
             raise ValueError(error_msg)
         
         # 更新任务状态为 processing
-        async with repo_factory.create_session() as session:
-            task_repo = repo_factory.create_task_repo(session)
-            await task_repo.update_task_status(
+        task_crud = get_task_crud()
+        async with get_celery_session() as session:
+            await task_crud.update_task_status(
                 task_id=task_id,
                 status=TaskStatus.PROCESSING.value,
                 current_step="queued",
             )
+            await session.commit()
         
         # 发送 WebSocket 通知
         await notification_service.publish_progress(
@@ -390,15 +400,15 @@ async def _mark_task_failed(
     """
     try:
         # 使用 Celery 专用的数据库连接
-        repo_factory = CeleryRepositoryFactory()
-        async with repo_factory.create_session() as session:
-            task_repo = repo_factory.create_task_repo(session)
-            await task_repo.update_task_status(
+        task_crud = get_task_crud()
+        async with get_celery_session() as session:
+            await task_crud.update_task_status(
                 task_id=task_id,
                 status=TaskStatus.FAILED.value,
                 current_step="failed",
                 error_message=error_message,
             )
+            await session.commit()
         
         # 发送 WebSocket 通知（传递异常对象以获取完整堆栈）
         await notification_service.publish_failed(

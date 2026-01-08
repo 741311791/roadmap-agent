@@ -1,0 +1,115 @@
+# Prometheus 远程监控配置模板
+# 
+# 使用场景：Prometheus 部署在独立监控服务器
+# FastAPI 应用分布在不同的容器/服务器
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  
+  # 外部标签（会添加到所有指标）
+  external_labels:
+    cluster: 'production'
+    region: 'cn-north-1'  # 修改为你的区域
+
+# 告警管理器配置（可选）
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           - alertmanager.example.com:9093
+
+# 规则文件（可选）
+# rule_files:
+#   - "/etc/prometheus/rules/*.yml"
+
+scrape_configs:
+  # ============================================================
+  # FastAPI 应用实例（静态配置）
+  # ============================================================
+  - job_name: 'roadmap_api'
+    
+    # 静态目标配置（修改为你的实际地址）
+    static_configs:
+      # 生产环境实例
+      - targets:
+          - 'api-1.your-domain.com:8000'
+          - 'api-2.your-domain.com:8000'
+          - 'api-3.your-domain.com:8000'
+        labels:
+          app: 'roadmap_agent'
+          env: 'production'
+          instance_type: 'api'
+      
+      # 如果使用内网 IP（同一 VPC）
+      # - targets:
+      #     - '10.0.1.10:8000'
+      #     - '10.0.1.11:8000'
+      #   labels:
+      #     app: 'roadmap_agent'
+      #     env: 'production'
+      #     zone: 'vpc-private'
+    
+    # 指标端点路径
+    metrics_path: '/metrics'
+    
+    # 采集超时
+    scrape_timeout: 10s
+    
+    # 如果使用 HTTPS
+    # scheme: 'https'
+    # tls_config:
+    #   insecure_skip_verify: false
+    
+    # 如果需要认证
+    # basic_auth:
+    #   username: 'prometheus'
+    #   password: 'your_password'
+    
+    # 或使用 Bearer Token
+    # authorization:
+    #   type: Bearer
+    #   credentials: 'your_token'
+
+  # ============================================================
+  # Celery Worker 实例
+  # ============================================================
+  - job_name: 'roadmap_celery'
+    static_configs:
+      - targets:
+          - 'worker-1.your-domain.com:8000'
+          - 'worker-2.your-domain.com:8000'
+        labels:
+          app: 'roadmap_agent'
+          env: 'production'
+          instance_type: 'celery_worker'
+
+  # ============================================================
+  # 负载均衡器后的应用（通过域名）
+  # ============================================================
+  - job_name: 'roadmap_lb'
+    static_configs:
+      - targets:
+          - 'api.your-domain.com:443'
+        labels:
+          app: 'roadmap_agent'
+          env: 'production'
+          instance_type: 'load_balanced'
+    
+    scheme: 'https'
+    metrics_path: '/metrics'
+
+  # ============================================================
+  # Prometheus 自身监控
+  # ============================================================
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+# ============================================================
+# 数据保留配置
+# ============================================================
+# 通过启动参数配置：
+# --storage.tsdb.retention.time=30d  # 保留 30 天
+# --storage.tsdb.retention.size=50GB # 或限制大小
+

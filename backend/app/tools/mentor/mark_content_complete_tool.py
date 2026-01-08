@@ -10,7 +10,7 @@ import structlog
 
 from app.tools.base import BaseTool
 from app.crud.crud_progress import ProgressCRUD, get_progress_crud
-from app.db.session import AsyncSessionLocal
+from app.db.session import async_session_maker
 from app.models.database import ConceptProgress, beijing_now
 
 logger = structlog.get_logger()
@@ -59,7 +59,7 @@ class MarkContentCompleteTool(BaseTool[MarkContentCompleteInput, MarkContentComp
         """
         try:
             # 使用ProgressCRUD更新学习进度
-            async with AsyncSessionLocal() as session:
+            async with async_session_maker.begin() as session:
                 from sqlalchemy import select
                 
                 # 查找或创建进度记录

@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from sqlalchemy import select, text, func
-from app.db.session import AsyncSessionLocal
+from app.db.session import async_session_maker
 from app.models.database import RoadmapTask, RoadmapMetadata, TutorialMetadata
 from app.core.orchestrator import RoadmapOrchestrator
 import structlog
@@ -28,7 +28,7 @@ async def diagnose_database():
     print("数据库写入诊断工具")
     print("="*70 + "\n")
     
-    async with AsyncSessionLocal() as session:
+    async with async_session_maker.begin() as session:
         # 1. 检查 checkpoint 表（LangGraph）
         print("1️⃣  检查 LangGraph Checkpoint 表")
         print("-" * 70)
@@ -211,7 +211,7 @@ async def test_specific_task(task_id: str = None):
     
     print(f"\n检查任务: {task_id}\n")
     
-    async with AsyncSessionLocal() as session:
+    async with async_session_maker.begin() as session:
         # 检查任务
         result = await session.execute(
             select(RoadmapTask).where(RoadmapTask.task_id == task_id)

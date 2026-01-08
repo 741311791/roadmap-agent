@@ -22,7 +22,7 @@ from typing import Any
 from app.core.celery_app import celery_app
 from app.models.domain import RoadmapFramework, LearningPreferences, Concept
 # 使用 Celery 专用的数据库连接管理，避免 Fork 进程继承问题
-from app.db.celery_session import CeleryRepositoryFactory
+# CeleryRepositoryFactory 已删除，直接使用 CRUD
 from app.services.notification_service import notification_service
 
 # 从工具模块导入
@@ -113,13 +113,14 @@ def generate_roadmap_content(
         
         # 更新任务状态为 failed
         try:
-            from app.db.celery_session import celery_safe_session_with_retry as safe_session_with_retry
-            from app.db.repositories.task_repo import TaskRepository
+            from app.db.celery_session import get_celery_session
+            from app.crud.crud_task import get_task_crud
             
             async def _update_failed_status():
-                async with safe_session_with_retry() as session:
-                    task_repo = TaskRepository(session)
-                    await task_repo.update_task_status(
+                async with get_celery_session() as session:
+                    task_crud = get_task_crud()
+                    await task_crud.update_task_status(
+                        session,
                         task_id=task_id,
                         status="failed",
                         current_step="content_generation",
@@ -184,14 +185,15 @@ async def _async_generate_content(
     )
     
     # 2.5. 初始化 ConceptMetadata (如果不存在)
-    from app.db.celery_session import celery_safe_session_with_retry as safe_session_with_retry
-    from app.db.repositories.roadmap_repo import RoadmapRepository
-    from app.db.repositories.concept_meta_repo import ConceptMetadataRepository
+    from app.db.celery_session import get_celery_session
+    from app.crud.crud_roadmap import get_roadmap_crud
+    from app.crud.crud_concept import get_concept_crud
     
-    async with safe_session_with_retry() as session:
-        concept_meta_repo = ConceptMetadataRepository(session)
+    async with get_celery_session() as session:
+        concept_crud = get_concept_crud()
         concept_ids = [concept.concept_id for concept in all_concepts]
-        await concept_meta_repo.batch_initialize_concepts(
+        await concept_crud.batch_initialize_concepts(
+            session,
             roadmap_id=roadmap_id,
             concept_ids=concept_ids,
         )
@@ -207,8 +209,8 @@ async def _async_generate_content(
     # 3. 断点续传：查询已完成的 Concept
     
     completed_concept_ids = set()
-    async with safe_session_with_retry() as session:
-        repo = RoadmapRepository(session)
+    async with get_celery_session() as session:
+        roadmap_crud = get_roadmap_crud()
         completed_tutorials = await repo.get_tutorials_by_roadmap(
             roadmap_id=roadmap_id,
             latest_only=True,
@@ -257,7 +259,6 @@ async def _async_generate_content(
         }
     
     # 5. 创建服务和工具
-    repo_factory = CeleryRepositoryFactory()
     agent_factory = get_agent_factory()
     config = WorkflowConfig()
     
@@ -331,7 +332,6 @@ async def _async_generate_content(
         resource_refs=resource_refs,
         quiz_refs=quiz_refs,
         failed_concepts=failed_concepts,
-        repo_factory=repo_factory,
     )
     
     # 9. 发布完成通知
@@ -471,7 +471,6 @@ async def _save_content_results(
     resource_refs: dict,
     quiz_refs: dict,
     failed_concepts: list,
-    repo_factory: Any,
 ):
     """
     保存内容生成结果（分批事务操作，带容错机制）
@@ -488,10 +487,9 @@ async def _save_content_results(
         resource_refs: 资源引用字典
         quiz_refs: 测验引用字典
         failed_concepts: 失败的概念 ID 列表（会被修改）
-        repo_factory: Repository 工厂
     """
-    from app.db.celery_session import celery_safe_session_with_retry as safe_session_with_retry
-    from app.db.repositories.roadmap_repo import RoadmapRepository
+    from app.db.celery_session import get_celery_session
+    # RoadmapCRUD已在函数内部通过get_roadmap_crud()获取
     from sqlalchemy.exc import IntegrityError, DBAPIError
     
     logger.info(
@@ -513,8 +511,8 @@ async def _save_content_results(
         for i in range(0, len(tutorial_items), BATCH_SIZE):
             batch = dict(tutorial_items[i:i + BATCH_SIZE])
             try:
-                async with safe_session_with_retry() as session:
-                    repo = RoadmapRepository(session)
+                async with get_celery_session() as session:
+                    roadmap_crud = get_roadmap_crud()
                     await repo.save_tutorials_batch(batch, roadmap_id)
                     await session.commit()
             except (IntegrityError, DBAPIError) as e:
@@ -540,8 +538,8 @@ async def _save_content_results(
         for i in range(0, len(resource_items), BATCH_SIZE):
             batch = dict(resource_items[i:i + BATCH_SIZE])
             try:
-                async with safe_session_with_retry() as session:
-                    repo = RoadmapRepository(session)
+                async with get_celery_session() as session:
+                    roadmap_crud = get_roadmap_crud()
                     await repo.save_resources_batch(batch, roadmap_id)
                     await session.commit()
             except (IntegrityError, DBAPIError) as e:
@@ -566,8 +564,8 @@ async def _save_content_results(
         for i in range(0, len(quiz_items), BATCH_SIZE):
             batch = dict(quiz_items[i:i + BATCH_SIZE])
             try:
-                async with safe_session_with_retry() as session:
-                    repo = RoadmapRepository(session)
+                async with get_celery_session() as session:
+                    roadmap_crud = get_roadmap_crud()
                     await repo.save_quizzes_batch(batch, roadmap_id)
                     await session.commit()
             except (IntegrityError, DBAPIError) as e:
@@ -600,8 +598,8 @@ async def _save_content_results(
     # Phase 2: 更新 framework_data（必须执行，即使 Phase 1 有失败）
     framework_update_success = False
     try:
-        async with safe_session_with_retry() as session:
-            repo = RoadmapRepository(session)
+        async with get_celery_session() as session:
+            roadmap_crud = get_roadmap_crud()
             roadmap_metadata = await repo.get_roadmap_metadata(roadmap_id)
             
             if roadmap_metadata and roadmap_metadata.framework_data:
@@ -674,8 +672,8 @@ async def _save_content_results(
     final_step = "content_generation" if failed_concepts else "completed"
     
     try:
-        async with safe_session_with_retry() as session:
-            repo = RoadmapRepository(session)
+        async with get_celery_session() as session:
+            roadmap_crud = get_roadmap_crud()
             await repo.update_task_status(
                 task_id=task_id,
                 status=final_status,
@@ -756,7 +754,6 @@ def retry_failed_content_task(
     """
     from app.services.retry_service import execute_retry_failed_task
     from app.api.v1.endpoints.utils import get_failed_content_items
-    # 注意：这里使用 CeleryRepositoryFactory（已在文件顶部导入）
     
     logger.info(
         "celery_retry_task_started",
@@ -773,9 +770,9 @@ def retry_failed_content_task(
         # 如果没有提供items_to_retry，则查询失败的内容项目
         if items_to_retry is None:
             async def _get_failed_items():
-                async with CeleryRepositoryFactory().create_session() as session:
-                    from app.db.repositories.roadmap_repo import RoadmapRepository
-                    repo = RoadmapRepository(session)
+                async with get_celery_session() as session:
+                    # RoadmapCRUD已在函数内部通过get_roadmap_crud()获取
+                    roadmap_crud = get_roadmap_crud()
                     roadmap_metadata = await repo.get_roadmap_metadata(roadmap_id)
                     
                     if not roadmap_metadata:
@@ -846,13 +843,14 @@ def retry_failed_content_task(
         
         # 更新任务状态为 failed
         try:
-            from app.db.celery_session import celery_safe_session_with_retry as safe_session_with_retry
-            from app.db.repositories.task_repo import TaskRepository
+            from app.db.celery_session import get_celery_session
+            from app.crud.crud_task import get_task_crud
             
             async def _update_failed_status():
-                async with safe_session_with_retry() as session:
-                    task_repo = TaskRepository(session)
-                    await task_repo.update_task_status(
+                async with get_celery_session() as session:
+                    task_crud = get_task_crud()
+                    await task_crud.update_task_status(
+                        session,
                         task_id=task_id,
                         status="failed",
                         current_step="content_retry",

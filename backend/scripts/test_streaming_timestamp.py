@@ -15,7 +15,7 @@ from datetime import datetime
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from sqlalchemy import select
-from app.db.session import AsyncSessionLocal
+from app.db.session import async_session_maker
 from app.models.database import RoadmapTask, RoadmapMetadata, TutorialMetadata
 
 
@@ -30,7 +30,7 @@ async def test_with_timestamp():
     print(f"📅 测试开始时间: {test_start_time}")
     
     # 检查测试前的数据库状态
-    async with AsyncSessionLocal() as session:
+    async with async_session_maker.begin() as session:
         result = await session.execute(
             select(RoadmapTask).where(RoadmapTask.created_at >= test_start_time)
         )
@@ -112,7 +112,7 @@ async def test_with_timestamp():
         print("检查数据库写入...")
         print("-"*70 + "\n")
         
-        async with AsyncSessionLocal() as session:
+        async with async_session_maker.begin() as session:
             # 检查测试后的新记录
             result = await session.execute(
                 select(RoadmapTask).where(RoadmapTask.created_at >= test_start_time)

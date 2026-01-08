@@ -21,7 +21,7 @@ import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from app.db.session import AsyncSessionLocal
+from app.db.session import async_session_maker
 from app.models.database import RoadmapMetadata, RoadmapTask
 
 
@@ -226,7 +226,7 @@ async def main(roadmap_id: str | None = None, dry_run: bool = True):
         print("路线图: 全部")
     print()
     
-    async with AsyncSessionLocal() as session:
+    async with async_session_maker.begin() as session:
         result = await find_and_fix_stale_statuses(
             session,
             roadmap_id=roadmap_id,

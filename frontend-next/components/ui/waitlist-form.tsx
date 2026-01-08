@@ -25,9 +25,12 @@ const childVariants = {
 
 // Hook to track window width
 function useWindowWidth() {
-  const [width, setWidth] = useState(0);
+  // 使用 undefined 作为初始值，避免 hydration 错误
+  // 在服务器端和客户端首次渲染时都返回 undefined
+  const [width, setWidth] = useState<number | undefined>(undefined);
 
   useEffect(() => {
+    // 只在客户端执行
     setWidth(window.innerWidth);
     const handleResize = () => setWidth(window.innerWidth);
 
@@ -55,6 +58,9 @@ const WaitlistForm: React.FC<WaitlistFormProps> = ({
   const [submitted, setSubmitted] = useState(false);
   const [localSubmitting, setLocalSubmitting] = useState(false);
   const width = useWindowWidth();
+  
+  // 在客户端 hydration 完成前，默认使用桌面版布局
+  const isSmallScreen = width !== undefined && width <= SMALL_BREAKPOINT;
 
   const triggerSageConfetti = () => {
     // Sage-themed confetti
@@ -147,7 +153,7 @@ const WaitlistForm: React.FC<WaitlistFormProps> = ({
       {showTitle && (
         <motion.div
           className={`${
-            width <= SMALL_BREAKPOINT ? "text-left mb-6" : "text-center mb-8"
+            isSmallScreen ? "text-left mb-6" : "text-center mb-8"
           }`}
           variants={childVariants}
         >
@@ -155,7 +161,7 @@ const WaitlistForm: React.FC<WaitlistFormProps> = ({
             Join the Waitlist for
             <span
               className={`pl-2 ${
-                width <= SMALL_BREAKPOINT ? "" : "block"
+                isSmallScreen ? "" : "block"
               } bg-gradient-to-r from-sage-500 to-sage-700 bg-clip-text text-transparent`}
             >
               Fast Learning
@@ -167,12 +173,12 @@ const WaitlistForm: React.FC<WaitlistFormProps> = ({
       <motion.form
         onSubmit={handleSubmit}
         className={
-          width <= SMALL_BREAKPOINT
+          isSmallScreen
             ? "flex flex-col gap-3 items-start w-full"
             : "relative w-full"
         }
         style={
-          width > SMALL_BREAKPOINT
+          !isSmallScreen
             ? { maxWidth: '600px', margin: '0 auto', textAlign: 'center', verticalAlign: 'middle' }
             : undefined
         }
@@ -180,12 +186,12 @@ const WaitlistForm: React.FC<WaitlistFormProps> = ({
       >
         <div
           className={
-            width <= SMALL_BREAKPOINT
+            isSmallScreen
               ? "flex flex-col gap-3 w-full"
               : "flex flex-row items-center w-full space-x-3 rounded-full border-2 border-sage-200/50 bg-white/95 backdrop-blur-md p-0.5 shadow-lg hover:border-sage-300/60 transition-all"
           }
           style={
-            width > SMALL_BREAKPOINT
+            !isSmallScreen
               ? { textAlign: 'center', verticalAlign: 'middle' }
               : undefined
           }
@@ -196,12 +202,12 @@ const WaitlistForm: React.FC<WaitlistFormProps> = ({
             onChange={(e) => setEmail(e.target.value)}
             placeholder="Enter your email"
             className={`${
-              width <= SMALL_BREAKPOINT
+              isSmallScreen
                 ? "px-5 py-4 w-full text-base focus:outline-none rounded-full border-2 border-sage-200/50 bg-white/95 backdrop-blur-md shadow-md focus:border-sage-400 focus:ring-2 focus:ring-sage-400/20 transition-all"
                 : "flex-1 rounded-full bg-transparent px-5 text-base focus:outline-none placeholder:text-muted-foreground"
             }`}
             style={
-              width > SMALL_BREAKPOINT
+              !isSmallScreen
                 ? { height: '46px' }
                 : undefined
             }
@@ -212,12 +218,12 @@ const WaitlistForm: React.FC<WaitlistFormProps> = ({
             type="submit"
             disabled={isLoading}
             className={`${
-              width <= SMALL_BREAKPOINT
+              isSmallScreen
                 ? "rounded-full bg-gradient-to-r from-sage-600 to-sage-700 px-6 py-4 text-base font-semibold text-white hover:from-sage-700 hover:to-sage-800 transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed w-full flex items-center justify-center gap-2"
                 : "rounded-full bg-gradient-to-r from-sage-600 to-sage-700 px-8 text-base font-semibold text-white hover:from-sage-700 hover:to-sage-800 transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 whitespace-nowrap"
             }`}
             style={
-              width > SMALL_BREAKPOINT
+              !isSmallScreen
                 ? { height: '46px', justifyContent: 'flex-start', gap: '18px' }
                 : undefined
             }

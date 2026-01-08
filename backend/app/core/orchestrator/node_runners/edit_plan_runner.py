@@ -15,7 +15,7 @@ import time
 from app.agents.factory import AgentFactory
 from app.models.domain import EditPlanAnalyzerInput
 from app.services.execution_logger import execution_logger, LogCategory
-from app.db.session import AsyncSessionLocal
+from app.db.session import async_session_maker
 from app.crud.crud_workflow import get_edit_plan_crud
 from ..base import RoadmapState
 from ..workflow_brain import WorkflowBrain
@@ -173,7 +173,7 @@ class EditPlanRunner:
             # ========================================
             edit_plan_record_id = None
             try:
-                async with AsyncSessionLocal() as session:
+                async with async_session_maker.begin() as session:
                     edit_plan_crud = get_edit_plan_crud()
                     
                     # 获取关联的 feedback_id（从上一步 review_runner 传递）

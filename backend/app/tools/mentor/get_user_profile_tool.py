@@ -8,7 +8,8 @@ from pydantic import BaseModel, Field
 import structlog
 
 from app.tools.base import BaseTool
-from app.db.repository_factory import get_repository_factory
+from app.db.session import async_session_maker
+from app.crud.crud_tech_assessment import get_user_profile_crud
 
 logger = structlog.get_logger()
 
@@ -45,7 +46,6 @@ class GetUserProfileTool(BaseTool[GetUserProfileInput, GetUserProfileOutput]):
     
     def __init__(self):
         super().__init__(tool_id="get_user_profile_v1")
-        self.repo_factory = get_repository_factory()
     
     async def execute(self, input_data: GetUserProfileInput) -> GetUserProfileOutput:
         """
@@ -58,10 +58,10 @@ class GetUserProfileTool(BaseTool[GetUserProfileInput, GetUserProfileOutput]):
             用户画像信息
         """
         try:
-            async with self.repo_factory.create_session() as session:
-                user_profile_repo = self.repo_factory.create_user_profile_repo(session)
+            async with async_session_maker() as session:
+                user_profile_crud = get_user_profile_crud()
                 
-                profile = await user_profile_repo.get_by_user_id(input_data.user_id)
+                profile = await user_profile_crud.get_by_user_id(input_data.user_id)
                 
                 if not profile:
                     logger.info(

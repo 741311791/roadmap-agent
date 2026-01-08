@@ -1,5 +1,7 @@
 """
 路线图生成服务
+
+已重构：移除 RepositoryFactory 依赖，直接使用各个 CRUD 和 safe_session_with_retry()
 """
 import uuid
 import structlog
@@ -7,7 +9,10 @@ import structlog
 from app.models.domain import UserRequest, RoadmapFramework
 from app.models.database import beijing_now
 from app.core.orchestrator.executor import WorkflowExecutor
-from app.db.repository_factory import RepositoryFactory
+from app.db.session import async_session_maker
+from app.crud.crud_task import get_task_crud
+from app.crud.crud_roadmap import get_roadmap_crud
+from app.crud.crud_tech_assessment import get_user_profile_crud
 from app.services.notification_service import notification_service
 from app.schemas.task import TaskStatusDetailResponse
 from app.schemas.roadmap import RoadmapDetail
@@ -18,8 +23,13 @@ logger = structlog.get_logger()
 class RoadmapService:
     """路线图生成服务"""
     
-    def __init__(self, repo_factory: RepositoryFactory, orchestrator: WorkflowExecutor):
-        self.repo_factory = repo_factory
+    def __init__(self, orchestrator: WorkflowExecutor):
+        """
+        初始化路线图服务
+        
+        Args:
+            orchestrator: 工作流执行器
+        """
         self.orchestrator = orchestrator
     
     def _get_current_timestamp(self) -> str:
@@ -39,10 +49,10 @@ class RoadmapService:
             丰富后的用户请求（包含语言偏好）
         """
         try:
-            # 使用新的Repository系统
-            async with self.repo_factory.create_session() as session:
-                user_profile_repo = self.repo_factory.create_user_profile_repo(session)
-                user_profile = await user_profile_repo.get_by_user_id(user_request.user_id)
+            # 使用 CRUD 系统
+            async with async_session_maker.begin() as session:
+                user_profile_crud = get_user_profile_crud()
+                user_profile = await user_profile_crud.get_by_user_id(session, user_request.user_id)
             
             if user_profile:
                 # 创建更新后的偏好配置
@@ -126,12 +136,17 @@ class RoadmapService:
         if task_id is None:
             task_id = str(uuid.uuid4())
             # 如果没有提供 task_id，则创建任务记录
-            async with self.repo_factory.create_session() as session:
-                task_repo = self.repo_factory.create_task_repo(session)
-                await task_repo.create_task(
-                    task_id=task_id,
-                    user_id=enriched_request.user_id,
-                    user_request=enriched_request.model_dump(mode='json'),
+            async with async_session_maker.begin() as session:
+                task_crud = get_task_crud()
+                await task_crud.create(
+                    session,
+                    obj_in={
+                        "task_id": task_id,
+                        "user_id": enriched_request.user_id,
+                        "user_request": enriched_request.model_dump(mode='json'),
+                        "status": "pending",
+                        "task_type": "creation",
+                    }
                 )
                 await session.commit()
         
@@ -144,9 +159,10 @@ class RoadmapService:
             secondary_language=enriched_request.preferences.secondary_language,
         )
         
-        async with self.repo_factory.create_session() as session:
-            task_repo = self.repo_factory.create_task_repo(session)
-            await task_repo.update_task_status(
+        async with get_celery_session() as session:
+            task_crud = get_task_crud()
+            await task_crud.update_task_status(
+                session,
                 task_id=task_id,
                 status="processing",
                 current_step="intent_analysis",
@@ -200,9 +216,10 @@ class RoadmapService:
                 # 先保存路线图框架（如果存在），方便用户审核
                 if final_state.get("roadmap_framework"):
                     framework: RoadmapFramework = final_state["roadmap_framework"]
-                    async with self.repo_factory.create_session() as session:
-                        roadmap_repo = self.repo_factory.create_roadmap_meta_repo(session)
-                        await roadmap_repo.save_roadmap(
+                    async with async_session_maker.begin() as session:
+                        roadmap_crud = get_roadmap_crud()
+                        await roadmap_crud.save_roadmap(
+                            session,
                             roadmap_id=framework.roadmap_id,
                             user_id=enriched_request.user_id,
                             framework=framework,
@@ -210,9 +227,10 @@ class RoadmapService:
                         await session.commit()
                 
                 # 更新任务状态为等待人工审核
-                async with self.repo_factory.create_session() as session:
-                    task_repo = self.repo_factory.create_task_repo(session)
-                    await task_repo.update_task_status(
+                async with async_session_maker.begin() as session:
+                    task_crud = get_task_crud()
+                    await task_crud.update_task_status(
+                        session,
                         task_id=task_id,
                         status="human_review_pending",
                         current_step="human_review",
@@ -237,7 +255,7 @@ class RoadmapService:
             # - 完成通知已由 brain.save_content_results() 发布
             # - 此处只处理 framework 不存在的异常情况
             # ============================================================
-            async with self.repo_factory.create_session() as session:
+            async with async_session_maker.begin() as session:
                 if final_state.get("roadmap_framework"):
                     framework: RoadmapFramework = final_state["roadmap_framework"]
                     
@@ -257,8 +275,9 @@ class RoadmapService:
                     # 不再重复发布，避免前端收到多次完成事件
                 else:
                     # 如果没有生成框架，标记为失败
-                    task_repo = self.repo_factory.create_task_repo(session)
-                    await task_repo.update_task_status(
+                    task_crud = get_task_crud()
+                    await task_crud.update_task_status(
+                        session,
                         task_id=task_id,
                         status="failed",
                         current_step="failed",
@@ -275,9 +294,9 @@ class RoadmapService:
             
         except Exception as e:
             # 更新任务状态为失败
-            async with self.repo_factory.create_session() as session:
-                task_repo = self.repo_factory.create_task_repo(session)
-                await task_repo.update_task_status(
+            async with async_session_maker.begin() as session:
+                task_crud = get_task_crud()
+                await task_crud.update_task_status(
                     task_id=task_id,
                     status="failed",
                     current_step="failed",
@@ -317,9 +336,9 @@ class RoadmapService:
         Returns:
             任务状态 Schema，如果不存在则返回 None
         """
-        async with self.repo_factory.create_session() as session:
-            task_repo = self.repo_factory.create_task_repo(session)
-            task = await task_repo.get_by_task_id(task_id)
+        async with get_celery_session() as session:
+            task_crud = get_task_crud()
+            task = await task_crud.get_by_task_id(session, task_id)
         
         if not task:
             return None
@@ -403,17 +422,17 @@ class RoadmapService:
         Returns:
             路线图框架字典（包含 concept_metadata 状态），如果不存在则返回 None
         """
-        async with self.repo_factory.create_session() as session:
-            roadmap_repo = self.repo_factory.create_roadmap_meta_repo(session)
-            metadata = await roadmap_repo.get_by_roadmap_id(roadmap_id)
+        async with get_celery_session() as session:
+            roadmap_crud = get_roadmap_crud()
+            metadata = await roadmap_crud.get_by_roadmap_id(session, roadmap_id)
             
             if not metadata:
                 return None
             
             # 获取所有 concept_metadata
-            from app.db.repositories.concept_meta_repo import ConceptMetadataRepository
-            concept_meta_repo = ConceptMetadataRepository(session)
-            concept_metas = await concept_meta_repo.get_by_roadmap_id(roadmap_id)
+            from app.crud.crud_concept import get_concept_crud
+            concept_crud = get_concept_crud()
+            concept_metas = await concept_crud.get_by_roadmap_id(session, roadmap_id)
         
         # 构建 concept_id -> ConceptMetadata 映射
         concept_meta_map = {cm.concept_id: cm for cm in concept_metas}
@@ -477,9 +496,9 @@ class RoadmapService:
             处理结果
         """
         # 获取任务状态
-        async with self.repo_factory.create_session() as session:
-            task_repo = self.repo_factory.create_task_repo(session)
-            task = await task_repo.get_by_task_id(task_id)
+        async with get_celery_session() as session:
+            task_crud = get_task_crud()
+            task = await task_crud.get_by_task_id(session, task_id)
         
         if not task:
             raise ValueError(f"任务 {task_id} 不存在")
@@ -501,7 +520,7 @@ class RoadmapService:
             # 注意：内容元数据（tutorial/resource/quiz）已由 ContentRunner
             # 通过 brain.save_content_results() 保存，此处只保存非内容类元数据
             # ============================================================
-            async with self.repo_factory.create_session() as session:
+            async with async_session_maker.begin() as session:
                 if approved:
                     # 用户批准
                     if final_state.get("roadmap_framework"):
@@ -538,8 +557,8 @@ class RoadmapService:
                             # 任务状态会由 Celery 任务完成后更新，此处不做任何操作
                         elif not final_state.get("tutorial_refs"):
                             # 工作流未执行内容生成（可能是跳过了），需要手动更新状态
-                            task_repo = self.repo_factory.create_task_repo(session)
-                            await task_repo.update_task_status(
+                            task_crud = get_task_crud()
+                            await task_crud.update_task_status(
                                 task_id=task_id,
                                 status="completed",
                                 current_step="completed",
@@ -574,8 +593,8 @@ class RoadmapService:
                             )
                     else:
                         # 如果没有生成框架，标记为失败
-                        task_repo = self.repo_factory.create_task_repo(session)
-                        await task_repo.update_task_status(
+                        task_crud = get_task_crud()
+                        await task_crud.update_task_status(
                             task_id=task_id,
                             status="failed",
                             current_step="failed",
@@ -595,7 +614,7 @@ class RoadmapService:
                     # - 如果在这里错误地设置 current_step，会导致数据库状态与实际工作流状态不一致
                     # 
                     # 原代码（已删除）：
-                    # await task_repo.update_task_status(
+                    # await task_crud.update_task_status(
                     #     task_id=task_id,
                     #     status="processing",
                     #     current_step="curriculum_design",  # ❌ 旧逻辑，不再适用

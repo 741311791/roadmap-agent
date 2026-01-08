@@ -23,7 +23,7 @@ import structlog
 from sqlalchemy import select
 
 from app.config.settings import settings
-from app.db.session import AsyncSessionLocal
+from app.db.session import async_session_maker
 from app.models.database import TavilyAPIKey
 
 # 配置日志（简化输出）
@@ -46,7 +46,7 @@ async def test_database_connection():
     """
     logger.info("Testing database connection...")
     try:
-        async with AsyncSessionLocal() as session:
+        async with async_session_maker.begin() as session:
             stmt = select(TavilyAPIKey)
             result = await session.execute(stmt)
             keys = result.scalars().all()
