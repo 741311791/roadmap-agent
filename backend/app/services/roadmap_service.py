@@ -159,7 +159,7 @@ class RoadmapService:
             secondary_language=enriched_request.preferences.secondary_language,
         )
         
-        async with get_celery_session() as session:
+        async with async_session_maker.begin() as session:
             task_crud = get_task_crud()
             await task_crud.update_task_status(
                 session,
@@ -167,7 +167,7 @@ class RoadmapService:
                 status="processing",
                 current_step="intent_analysis",
             )
-            await session.commit()
+            # begin() 会自动commit
         
         # 发布任务开始通知（WebSocket 会收到此事件）
         await notification_service.publish_progress(
@@ -336,7 +336,7 @@ class RoadmapService:
         Returns:
             任务状态 Schema，如果不存在则返回 None
         """
-        async with get_celery_session() as session:
+        async with async_session_maker() as session:
             task_crud = get_task_crud()
             task = await task_crud.get_by_task_id(session, task_id)
         
@@ -422,7 +422,7 @@ class RoadmapService:
         Returns:
             路线图框架字典（包含 concept_metadata 状态），如果不存在则返回 None
         """
-        async with get_celery_session() as session:
+        async with async_session_maker() as session:
             roadmap_crud = get_roadmap_crud()
             metadata = await roadmap_crud.get_by_roadmap_id(session, roadmap_id)
             
@@ -496,7 +496,7 @@ class RoadmapService:
             处理结果
         """
         # 获取任务状态
-        async with get_celery_session() as session:
+        async with async_session_maker() as session:
             task_crud = get_task_crud()
             task = await task_crud.get_by_task_id(session, task_id)
         

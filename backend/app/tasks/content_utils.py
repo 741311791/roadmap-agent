@@ -232,3 +232,183 @@ async def update_concept_status_in_framework(
         )
         await session.commit()
 
+
+# ============================================================
+# 单 Concept 重试任务（LangGraph 1.0 子图模式）
+# ============================================================
+
+from app.core.celery_app import celery_app
+from app.models.domain import Concept, LearningPreferences
+from app.db.celery_session import get_celery_session
+
+
+@celery_app.task(
+    name="content.retry_single_content",
+    bind=True,
+    acks_late=True,
+    reject_on_worker_lost=True,
+    time_limit=600,  # 10 分钟硬超时
+    soft_time_limit=540,  # 9 分钟软超时
+)
+def retry_single_content(
+    self,
+    task_id: str,
+    roadmap_id: str,
+    concept_dict: dict,
+    context: dict,
+    preferences_dict: dict,
+) -> dict:
+    """
+    单个 Concept 内容重试任务（调用子图）
+    
+    执行流程：
+    1. 初始化 OrchestratorFactory
+    2. 创建 WorkflowBrain 和 AgentFactory
+    3. 构建内容生成子图
+    4. 执行子图生成内容
+    5. 批量保存数据库
+    6. 更新 ConceptMetadata 状态
+    
+    Args:
+        task_id: 任务 ID
+        roadmap_id: 路线图 ID
+        concept_dict: Concept 数据（字典格式）
+        context: 上下文信息
+        preferences_dict: 用户偏好（字典格式）
+        
+    Returns:
+        dict: 执行结果
+    """
+    logger.info(
+        "retry_single_content_started",
+        task_id=task_id,
+        roadmap_id=roadmap_id,
+        concept_id=concept_dict.get("concept_id"),
+    )
+    
+    try:
+        result = run_async(
+            _retry_single_content_async(
+                task_id, roadmap_id, concept_dict, context, preferences_dict
+            )
+        )
+        
+        logger.info(
+            "retry_single_content_completed",
+            task_id=task_id,
+            success=result.get("success"),
+        )
+        
+        return result
+        
+    except Exception as e:
+        logger.error(
+            "retry_single_content_failed",
+            task_id=task_id,
+            error=str(e),
+            exc_info=True,
+        )
+        
+        return {
+            "success": False,
+            "error": str(e),
+        }
+
+
+async def _retry_single_content_async(
+    task_id: str,
+    roadmap_id: str,
+    concept_dict: dict,
+    context: dict,
+    preferences_dict: dict,
+) -> dict:
+    """
+    异步执行单个 Concept 重试
+    
+    Args:
+        task_id: 任务 ID
+        roadmap_id: 路线图 ID
+        concept_dict: Concept 数据
+        context: 上下文信息
+        preferences_dict: 用户偏好
+        
+    Returns:
+        dict: 执行结果
+    """
+    from app.core.orchestrator_factory import OrchestratorFactory
+    from app.core.orchestrator.workflow_brain import WorkflowBrain
+    from app.core.orchestrator.subgraphs.content_generation import build_content_generation_subgraph
+    from app.services.notification_service import notification_service
+    from app.services.execution_logger import execution_logger
+    
+    # 初始化 Orchestrator
+    factory = OrchestratorFactory()
+    await factory.initialize()
+    
+    try:
+        # 获取共享组件
+        state_manager = factory.get_state_manager()
+        agent_factory = factory._agent_factory
+        
+        # 创建 WorkflowBrain
+        brain = WorkflowBrain(
+            state_manager=state_manager,
+            notification_service=notification_service,
+            execution_logger=execution_logger,
+            agent_factory=agent_factory,
+        )
+        
+        # 构建子图
+        subgraph = build_content_generation_subgraph()
+        
+        # 构造 Concept 对象
+        concept = Concept(**concept_dict)
+        preferences = LearningPreferences(**preferences_dict)
+        
+        # 准备子图输入状态
+        sub_state = {
+            "roadmap_id": roadmap_id,
+            "concepts": [concept],  # 仅重试单个 Concept
+            "user_preferences": preferences,
+            "task_id": task_id,
+            "brain": brain,
+            "agent_factory": agent_factory,
+            "concept": None,  # 用于 Send API
+            "context": None,  # 用于 Send API
+            "tutorials": [],
+            "resources": [],
+            "quizzes": [],
+            "errors": [],
+        }
+        
+        # 执行子图
+        result = await subgraph.ainvoke(sub_state)
+        
+        # 批量保存数据库（重用 ContentRunner 的逻辑）
+        from app.core.orchestrator.node_runners.content_runner import ContentRunner
+        runner = ContentRunner(brain)
+        await runner._save_all_content_metadata(roadmap_id, result)
+        await runner._update_concept_metadata(roadmap_id, result)
+        
+        logger.info(
+            "retry_single_content_db_saved",
+            task_id=task_id,
+            roadmap_id=roadmap_id,
+            tutorial_count=len(result["tutorials"]),
+            resource_count=len(result["resources"]),
+            quiz_count=len(result["quizzes"]),
+            error_count=len(result["errors"]),
+        )
+        
+        return {
+            "success": True,
+            "tutorial_count": len(result["tutorials"]),
+            "resource_count": len(result["resources"]),
+            "quiz_count": len(result["quizzes"]),
+            "error_count": len(result["errors"]),
+        }
+        
+    finally:
+        # 清理 Orchestrator Factory
+        await factory.cleanup()
+

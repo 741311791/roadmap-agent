@@ -324,7 +324,7 @@ class TaskRecoveryService:
             roadmap_crud = get_roadmap_crud()
             task_crud = get_task_crud()
             
-            async with get_celery_session() as session:
+            async with async_session_maker.begin() as session:
                 # 1. 保存/更新路线图元数据
                 # save_roadmap 方法内部会自动判断是更新还是插入
                 

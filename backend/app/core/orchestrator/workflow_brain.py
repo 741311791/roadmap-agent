@@ -90,6 +90,7 @@ class WorkflowBrain:
         state_manager: StateManager,
         notification_service: NotificationService,
         execution_logger: ExecutionLogger,
+        agent_factory: "AgentFactory" = None,
     ):
         """
         初始化 WorkflowBrain
@@ -98,10 +99,12 @@ class WorkflowBrain:
             state_manager: 状态管理器，维护 live_step 缓存
             notification_service: 通知服务，发布 WebSocket 消息
             execution_logger: 执行日志服务，记录结构化日志
+            agent_factory: Agent 工厂，用于创建各类 Agent（新增）
         """
         self.state_manager = state_manager
         self.notification_service = notification_service
         self.execution_logger = execution_logger
+        self.agent_factory = agent_factory
         self._current_context: NodeContext | None = None
     
     @asynccontextmanager

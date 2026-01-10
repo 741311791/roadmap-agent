@@ -64,10 +64,9 @@ class Settings(BaseSettings):
     # ⚠️ 关键计算：
     # 总连接数 = (DB_POOL_SIZE + DB_MAX_OVERFLOW) × 总进程数
     # 
-    # 阿里云数据库配置：
-    # - 总连接数: 400
-    # - 研发环境: 120 个连接
-    # - 生产环境: 280 个连接
+    # 数据库连接配额：
+    # - 研发环境最大连接数: 300
+    # - 生产环境最大连接数: 350
     # 
     # 研发环境进程数（推荐配置）：
     # - FastAPI (uvicorn --workers 4): 4 个进程
@@ -75,8 +74,8 @@ class Settings(BaseSettings):
     # - Celery content_generation (--concurrency=6): 7 个进程
     # - Celery workflow (--concurrency=4): 5 个进程
     # 总计: 21 个进程
-    # 每进程连接: 4 + 3 = 7
-    # 总需求: 21 × 7 = 147（实际峰值 60% ≈ 88）
+    # 每进程连接: 8 + 6 = 14
+    # 总需求: 21 × 14 = 294（实际峰值 60% ≈ 176）
     #
     # 生产环境进程数（默认配置）：
     # - FastAPI (uvicorn --workers 8): 8 个进程
@@ -84,17 +83,18 @@ class Settings(BaseSettings):
     # - Celery content_generation (--concurrency=10): 11 个进程
     # - Celery workflow (--concurrency=6): 7 个进程
     # 总计: 35 个进程
-    # 每进程连接: 6 + 4 = 10
+    # 每进程连接: 7 + 3 = 10
     # 总需求: 35 × 10 = 350（实际峰值 60% ≈ 210）
     #
-    # 默认值为生产环境配置，研发环境通过 .env 覆盖为 DB_POOL_SIZE=4, DB_MAX_OVERFLOW=3
+    # 优化后的连接池配置
+    # 研发环境默认值，生产环境通过 .env 覆盖
     DB_POOL_SIZE: int = Field(
-        6, 
-        description="数据库连接池基础大小（生产环境默认 6，研发环境建议 4）"
+        8, 
+        description="数据库连接池基础大小（研发环境默认 8，生产环境建议 7）"
     )
     DB_MAX_OVERFLOW: int = Field(
-        4, 
-        description="数据库连接池最大溢出数（生产环境默认 4，研发环境建议 3）"
+        6, 
+        description="数据库连接池最大溢出数（研发环境默认 6，生产环境建议 3）"
     )
     
     @property
@@ -102,22 +102,27 @@ class Settings(BaseSettings):
         """
         根据运行环境动态返回数据库连接池配置
         
-        不同环境推荐配置：
-        - 开发环境: pool_size=4, max_overflow=3, pool_recycle=1800
-        - 生产环境: pool_size=6, max_overflow=4, pool_recycle=900
+        优化后的配置：
+        - 研发环境: pool_size=8, max_overflow=6, pool_recycle=1800（总配额 300 连接）
+        - 生产环境: pool_size=7, max_overflow=3, pool_recycle=900（总配额 350 连接）
+        
+        计算说明：
+        - 研发环境：21 进程 × 14 连接 = 294 个峰值（总配额 300，使用率 98%）
+        - 生产环境：35 进程 × 10 连接 = 350 个峰值（总配额 350，使用率 100%）
+        - Celery Worker 使用 NullPool，不占用连接池配额
         
         Returns:
             连接池配置字典
         """
         if self.ENVIRONMENT == "production":
             return {
-                "pool_size": 6,
-                "max_overflow": 4,
+                "pool_size": 7,
+                "max_overflow": 3,
                 "pool_recycle": 900,  # 15分钟
             }
         return {
-            "pool_size": 4,
-            "max_overflow": 3,
+            "pool_size": 8,
+            "max_overflow": 6,
             "pool_recycle": 1800,  # 30分钟
         }
     

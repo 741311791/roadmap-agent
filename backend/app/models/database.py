@@ -1078,10 +1078,6 @@ class RoadmapCoverImage(SQLModel, table=True):
         sa_column=Column(Text, nullable=True),
         description="生成失败时的错误信息"
     )
-    retry_count: int = Field(
-        default=0,
-        description="重试次数"
-    )
     created_at: datetime = Field(
         default_factory=beijing_now,
         sa_column=Column(DateTime(timezone=False)),

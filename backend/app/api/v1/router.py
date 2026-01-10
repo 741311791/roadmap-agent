@@ -11,7 +11,6 @@ from .endpoints import (
     approval,
     content,  # ✅ 替代: tutorial, resource, quiz已合并到content
     modification,
-    retry,
     progress,
     mentor,
     waitlist,
@@ -52,10 +51,6 @@ router.include_router(content.router)
 
 # 内容修改相关
 router.include_router(modification.router)
-
-# 失败重试相关
-router.include_router(retry.router)
-router.include_router(retry.tasks_router)
 
 # 学习进度相关
 router.include_router(progress.router)

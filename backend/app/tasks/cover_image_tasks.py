@@ -15,7 +15,7 @@
 """
 from app.core.celery_app import celery_app
 from app.services.cover_image_service import CoverImageService
-from app.db.session import async_session_maker
+from app.db.celery_session import get_celery_session
 from app.crud.crud_roadmap import get_roadmap_crud
 import structlog
 import asyncio
@@ -101,7 +101,7 @@ async def _generate_cover_image_async(roadmap_id: str, prompt: str = None) -> di
     Returns:
         dict: 生成结果
     """
-    async with async_session_maker.begin() as session:
+    async with get_celery_session() as session:
         # 创建服务实例（使用独立 Session）
         service = CoverImageService(session)
         
@@ -111,8 +111,7 @@ async def _generate_cover_image_async(roadmap_id: str, prompt: str = None) -> di
             prompt=prompt,
         )
         
-        # 提交事务（确保数据持久化）
-        await session.commit()
+        # get_celery_session() 会自动 commit/rollback
         
         if cover_image_url:
             return {

@@ -1,5 +1,5 @@
 """
-技术栈能力测试题目生成服务
+技术栈能力测试题目生成Agent
 
 功能：
 - 使用 Plan & Execute 模式生成题目
@@ -23,7 +23,7 @@ logger = structlog.get_logger()
 
 class TechAssessmentGenerator(BaseAgent):
     """
-    技术栈能力测试题目生成器
+    技术栈能力测试题目生成Agent
     
     复用quiz_generator的LLM配置和基础设施
     """
@@ -36,6 +36,7 @@ class TechAssessmentGenerator(BaseAgent):
         base_url: str | None = None,
         api_key: str | None = None,
     ):
+        """初始化题目生成器，使用QUIZ配置"""
         super().__init__(
             agent_id=agent_id,
             model_provider=model_provider or settings.QUIZ_PROVIDER,
@@ -43,7 +44,7 @@ class TechAssessmentGenerator(BaseAgent):
             base_url=base_url or settings.QUIZ_BASE_URL,
             api_key=api_key or settings.QUIZ_API_KEY,
             temperature=0.7,
-            max_tokens=8192,  # 需要生成20道题，给足token
+            max_tokens=8192,
         )
         
         # 初始化Jinja2环境
@@ -53,7 +54,18 @@ class TechAssessmentGenerator(BaseAgent):
         )
     
     def _parse_response(self, response: str) -> Dict[str, Any]:
-        """解析LLM响应，提取JSON"""
+        """
+        解析LLM响应，提取JSON
+        
+        Args:
+            response: LLM返回的原始文本
+            
+        Returns:
+            解析后的JSON对象
+            
+        Raises:
+            ValueError: 如果无法解析JSON
+        """
         # 尝试直接解析
         try:
             return json.loads(response)
@@ -284,7 +296,6 @@ class TechAssessmentGenerator(BaseAgent):
         Returns:
             生成的测试题目数据
         """
-        # 使用新的 Plan & Execute 模式
         return await self.generate_assessment_with_plan(
             technology=input_data["technology"],
             proficiency_level=input_data["proficiency_level"],

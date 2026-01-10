@@ -7,6 +7,8 @@ from app.agents.structure_validator import StructureValidatorAgent
 from app.agents.tutorial_generator import TutorialGeneratorAgent
 from app.agents.resource_recommender import ResourceRecommenderAgent
 from app.agents.quiz_generator import QuizGeneratorAgent
+from app.agents.tech_assessment_generator import TechAssessmentGenerator
+from app.agents.tech_capability_analyzer import TechCapabilityAnalyzer
 
 __all__ = [
     "IntentAnalyzerAgent",
@@ -16,4 +18,6 @@ __all__ = [
     "TutorialGeneratorAgent",
     "ResourceRecommenderAgent",
     "QuizGeneratorAgent",
+    "TechAssessmentGenerator",
+    "TechCapabilityAnalyzer",
 ]

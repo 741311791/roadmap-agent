@@ -212,6 +212,7 @@ class OrchestratorFactory:
             state_manager=state_manager,
             notification_service=notification_service,
             execution_logger=execution_logger,
+            agent_factory=agent_factory,
         )
         
         # 创建所有 Runners

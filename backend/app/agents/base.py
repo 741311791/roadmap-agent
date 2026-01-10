@@ -4,12 +4,6 @@ Agent 基类（封装 LiteLLM 调用）
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, AsyncIterator
 import litellm
-from tenacity import (
-    retry,
-    stop_after_attempt,
-    wait_exponential,
-    retry_if_exception_type,
-)
 import structlog
 
 from app.utils.prompt_loader import PromptLoader
@@ -52,11 +46,6 @@ class BaseAgent(ABC):
         self.prompt_loader = PromptLoader()
         self.cost_tracker = cost_tracker
     
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type(litellm.RateLimitError),
-    )
     async def _call_llm(
         self,
         messages: List[Dict[str, str]],
@@ -65,6 +54,11 @@ class BaseAgent(ABC):
     ) -> Any:
         """
         调用 LLM（通过 LiteLLM）
+        
+        重试策略说明（LangGraph 1.0 迁移）：
+        - 不在 Agent 层配置重试（删除 @retry 装饰器）
+        - 完全依赖 LangGraph Node 级 RetryPolicy
+        - Node 级重试配置在 builder.add_node(retry=LLM_RETRY_POLICY)
         
         Args:
             messages: 对话消息列表

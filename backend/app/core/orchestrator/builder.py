@@ -16,6 +16,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from .base import RoadmapState, WorkflowConfig
 from .routers import WorkflowRouter
+from .retry_policies import LLM_RETRY_POLICY, NO_RETRY_POLICY
 
 logger = structlog.get_logger()
 
@@ -80,36 +81,82 @@ class WorkflowBuilder:
         self._add_edges(workflow)
         
         # 编译工作流（使用 AsyncPostgresSaver 进行状态持久化）
-        return workflow.compile(checkpointer=checkpointer)
+        # 声明中断点：human_review 节点使用 interrupt() API
+        interrupt_before_nodes = (
+            ["human_review"] if not self.config.skip_human_review else []
+        )
+        return workflow.compile(
+            checkpointer=checkpointer,
+            interrupt_before=interrupt_before_nodes,
+        )
     
     def _add_nodes(self, workflow: StateGraph):
-        """添加工作流节点"""
+        """
+        添加工作流节点（含 RetryPolicy）
+        
+        LangGraph 1.0 最佳实践：
+        - 每个节点独立配置 RetryPolicy
+        - LLM 调用节点使用 LLM_RETRY_POLICY（5 次重试）
+        - 纯逻辑节点使用 NO_RETRY_POLICY（不重试）
+        """
         # 核心节点（始终添加）
         if self.intent_runner:
-            workflow.add_node("intent_analysis", self.intent_runner.run)
+            workflow.add_node(
+                "intent_analysis",
+                self.intent_runner.run,
+                retry=LLM_RETRY_POLICY,
+            )
         if self.curriculum_runner:
-            workflow.add_node("curriculum_design", self.curriculum_runner.run)
+            workflow.add_node(
+                "curriculum_design",
+                self.curriculum_runner.run,
+                retry=LLM_RETRY_POLICY,
+            )
         
         # 结构验证和路线图编辑（始终添加）
         if self.validation_runner:
-            workflow.add_node("structure_validation", self.validation_runner.run)
+            workflow.add_node(
+                "structure_validation",
+                self.validation_runner.run,
+                retry=NO_RETRY_POLICY,  # 纯逻辑节点，失败是确定性的
+            )
         if self.editor_runner:
-            workflow.add_node("roadmap_edit", self.editor_runner.run)
+            workflow.add_node(
+                "roadmap_edit",
+                self.editor_runner.run,
+                retry=LLM_RETRY_POLICY,
+            )
         # 验证结果修改计划分析节点（验证失败时触发）
         if self.validation_edit_plan_runner:
-            workflow.add_node("validation_edit_plan_analysis", self.validation_edit_plan_runner.run)
+            workflow.add_node(
+                "validation_edit_plan_analysis",
+                self.validation_edit_plan_runner.run,
+                retry=LLM_RETRY_POLICY,
+            )
         
         # 可选节点：人工审核
         if not self.config.skip_human_review:
             if self.review_runner:
-                workflow.add_node("human_review", self.review_runner.run)
+                workflow.add_node(
+                    "human_review",
+                    self.review_runner.run,
+                    retry=NO_RETRY_POLICY,  # 使用 interrupt，不需要重试
+                )
             # 修改计划分析节点（仅在有人工审核时添加）
             if self.edit_plan_runner:
-                workflow.add_node("edit_plan_analysis", self.edit_plan_runner.run)
+                workflow.add_node(
+                    "edit_plan_analysis",
+                    self.edit_plan_runner.run,
+                    retry=LLM_RETRY_POLICY,
+                )
         
         # 内容生成（始终添加）
         if self.content_runner:
-            workflow.add_node("tutorial_generation", self.content_runner.run)
+            workflow.add_node(
+                "tutorial_generation",
+                self.content_runner.run,
+                retry=NO_RETRY_POLICY,  # 子图内部已有 RetryPolicy
+            )
     
     def _add_edges(self, workflow: StateGraph):
         """

@@ -153,7 +153,7 @@ try:
     from app.services.status_service import StatusService, get_status_service
     from app.services.progress_service import ProgressService, get_progress_service
     from app.services.user_service import UserService, get_user_service
-    from app.services.retry_service_new import RetryService, get_retry_service
+    from app.services.retry_service import RetryService, get_retry_service
     from app.services.management_service import ManagementService, get_management_service
     from app.services.mentor_service import MentorService, get_mentor_service
     from app.services.generation_service import GenerationService, get_generation_service

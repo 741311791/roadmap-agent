@@ -317,84 +317,51 @@ async def get_concept_quiz(
 
 
 # ============================================================
-# 单个概念内容重试 API（激进重构版）
+# 单个概念内容重试 API（已废弃 - LangGraph 1.0 迁移）
 # 
-# 所有辅助函数已移除，业务逻辑在Service层
+# 注意：这些端点已废弃，不再使用。
+# 原因：LangGraph 子图模式 + Checkpointer 自动处理重试。
+# 保留这些端点仅为了向后兼容，返回 501 Not Implemented。
 # ============================================================
 
 
 @router.post(
     "/{roadmap_id}/concepts/{concept_id}/tutorial/retry",
     response_model=ResponseSchemaModel[RetryContentResponse],
+    deprecated=True,
 )
-async def retry_tutorial(
+async def retry_tutorial_deprecated(
     roadmap_id: str,
     concept_id: str,
     request: RetryContentRequest,
     content_service: CurrentContentService,
-    session: CurrentSessionTransaction,  # ✅ 写操作使用CurrentSessionTransaction
+    session: CurrentSessionTransaction,
     current_user: User = Depends(current_active_user),
 ) -> ResponseSchemaModel[RetryContentResponse]:
     """
-    重试单个概念的教程生成（异步 Celery 任务）
+    ⚠️ 已废弃：重试单个概念的教程生成
     
-    激进重构版本：
-    - API层只负责HTTP适配（参数验证、响应格式化）
-    - 所有业务逻辑（任务创建、Celery调度）在Service层
+    废弃原因：
+    - LangGraph 1.0 迁移后，使用子图模式 + Checkpointer 自动处理重试
+    - 不再需要手动重试端点
     
-    Args:
-        roadmap_id: 路线图 ID
-        concept_id: 概念 ID
-        request: 包含用户学习偏好的请求
-        content_service: 内容服务
-        session: 数据库会话（自动commit/rollback）
-        current_user: 当前用户
-        
-    Returns:
-        任务 ID，前端可通过 WebSocket 订阅进度
-        
-    Raises:
-        NotFoundError: 概念不存在
-        InternalServerError: 任务提交失败
+    替代方案：
+    - LangGraph Node RetryPolicy 自动重试（5 次）
+    - Checkpointer 断点续传（用户可重新生成整个路线图）
     """
-    try:
-        result = await content_service.retry_content_async(
-            session=session,
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            content_type="tutorial",
-            request=request,
-            user_id=current_user.id,
-        )
-        
-        # ✅ 自动 commit
-        
-        return response_base.success(data=RetryContentResponse(
-            success=True,
-            concept_id=concept_id,
-            content_type="tutorial",
-            message=result["message"],
-            data={"task_id": result["task_id"]},
-        ))
-        
-    except ValueError as e:
-        raise errors.NotFoundError(msg=str(e))
-    except Exception as e:
-        logger.error(
-            "retry_tutorial_failed",
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            error=str(e),
-            exc_info=True,
-        )
-        raise errors.InternalServerError(msg="教程重试任务提交失败")
+    from fastapi import HTTPException
+    raise HTTPException(
+        status_code=501,
+        detail="This endpoint is deprecated. Content retry is now handled automatically by LangGraph Checkpointer. Please regenerate the entire roadmap if needed."
+    )
 
 
 @router.post(
     "/{roadmap_id}/concepts/{concept_id}/resources/retry",
     response_model=ResponseSchemaModel[RetryContentResponse],
+    deprecated=True,
 )
-async def retry_resources(
+async def retry_resources_deprecated(
     roadmap_id: str,
     concept_id: str,
     request: RetryContentRequest,
@@ -403,55 +370,23 @@ async def retry_resources(
     current_user: User = Depends(current_active_user),
 ) -> ResponseSchemaModel[RetryContentResponse]:
     """
-    重试单个概念的资源推荐生成（激进重构版）
+    ⚠️ 已废弃：重试单个概念的资源推荐生成
     
-    Args:
-        roadmap_id: 路线图 ID
-        concept_id: 概念 ID
-        request: 包含用户学习偏好的请求
-        content_service: 内容服务
-        session: 数据库会话（自动commit/rollback）
-        current_user: 当前用户
-        
-    Returns:
-        任务 ID，前端可通过 WebSocket 订阅进度
-        
-    Raises:
-        NotFoundError: 概念不存在
-        InternalServerError: 任务提交失败
+    废弃原因：LangGraph 1.0 迁移，使用 Checkpointer 自动处理重试
     """
-    try:
-        result = await content_service.retry_content_async(
-            session=session,
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            content_type="resources",
-            request=request,
-            user_id=current_user.id,
-        )
-        
-        # ✅ 自动 commit
-        
-        return response_base.success(data=RetryContentResponse(
-            success=True,
-            concept_id=concept_id,
-            content_type="resources",
-            message=result["message"],
-            data={"task_id": result["task_id"]},
-        ))
-        
-    except ValueError as e:
-        raise errors.NotFoundError(msg=str(e))
-    except Exception as e:
-        logger.error("retry_resources_failed", roadmap_id=roadmap_id, concept_id=concept_id, error=str(e))
-        raise errors.InternalServerError(msg="资源推荐重试任务提交失败")
+    from fastapi import HTTPException
+    raise HTTPException(
+        status_code=501,
+        detail="This endpoint is deprecated. Content retry is now handled automatically by LangGraph Checkpointer."
+    )
 
 
 @router.post(
     "/{roadmap_id}/concepts/{concept_id}/quiz/retry",
     response_model=ResponseSchemaModel[RetryContentResponse],
+    deprecated=True,
 )
-async def retry_quiz(
+async def retry_quiz_deprecated(
     roadmap_id: str,
     concept_id: str,
     request: RetryContentRequest,
@@ -460,45 +395,12 @@ async def retry_quiz(
     current_user: User = Depends(current_active_user),
 ) -> ResponseSchemaModel[RetryContentResponse]:
     """
-    重试单个概念的测验生成（激进重构版）
+    ⚠️ 已废弃：重试单个概念的测验生成
     
-    Args:
-        roadmap_id: 路线图 ID
-        concept_id: 概念 ID
-        request: 包含用户学习偏好的请求
-        content_service: 内容服务
-        session: 数据库会话（自动commit/rollback）
-        current_user: 当前用户
-        
-    Returns:
-        任务 ID，前端可通过 WebSocket 订阅进度
-        
-    Raises:
-        NotFoundError: 概念不存在
-        InternalServerError: 任务提交失败
+    废弃原因：LangGraph 1.0 迁移，使用 Checkpointer 自动处理重试
     """
-    try:
-        result = await content_service.retry_content_async(
-            session=session,
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            content_type="quiz",
-            request=request,
-            user_id=current_user.id,
-        )
-        
-        # ✅ 自动 commit
-        
-        return response_base.success(data=RetryContentResponse(
-            success=True,
-            concept_id=concept_id,
-            content_type="quiz",
-            message=result["message"],
-            data={"task_id": result["task_id"]},
-        ))
-        
-    except ValueError as e:
-        raise errors.NotFoundError(msg=str(e))
-    except Exception as e:
-        logger.error("retry_quiz_failed", roadmap_id=roadmap_id, concept_id=concept_id, error=str(e))
-        raise errors.InternalServerError(msg="测验重试任务提交失败")
+    from fastapi import HTTPException
+    raise HTTPException(
+        status_code=501,
+        detail="This endpoint is deprecated. Content retry is now handled automatically by LangGraph Checkpointer."
+    )

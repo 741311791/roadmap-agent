@@ -60,15 +60,6 @@ def run_async(coro):
 @celery_app.task(
     name="roadmap_generation.generate_roadmap",
     bind=True,
-    max_retries=3,  # ✅ 自动重试最多3次
-    default_retry_delay=10,  # ✅ 默认延迟10秒后重试
-    autoretry_for=(  # ✅ 自动重试的异常类型
-        # LLM相关错误
-        Exception,  # 暂时使用通用异常，后续可细化
-    ),
-    retry_backoff=True,  # ✅ 指数退避策略
-    retry_backoff_max=300,  # ✅ 最大退避5分钟
-    retry_jitter=True,  # ✅ 随机抖动（避免雪崩）
     acks_late=True,
     reject_on_worker_lost=True,
     time_limit=1800,  # 30 分钟硬超时（路线图生成工作流包含多个阶段和 LLM 调用）
@@ -173,118 +164,20 @@ async def _execute_roadmap_workflow(
     factory = None
     
     try:
-        # ============================================================
-        # 验证任务记录是否存在（增强版重试机制）
-        # 
-        # 背景：FastAPI 和 Celery Worker 使用不同的数据库连接。
-        # 虽然 FastAPI 端点现在会在分发任务前验证持久化，
-        # 但在高并发或网络延迟情况下仍可能出现短暂的不可见窗口。
-        # 
-        # 策略：更激进的重试机制
-        # - 增加重试次数：5 → 10
-        # - 使用更长的初始等待时间
-        # - 使用指数退避 + 抖动避免雷群效应
-        # ============================================================
-        max_retries = 10  # 增加重试次数
-        task_found = False
-        
-        # 调试日志：记录任务查询开始
-        logger.info(
-            "task_lookup_started",
-            task_id=task_id,
-            max_retries=max_retries,
-        )
-        
-        import random
-        import traceback
-        
+        # 验证任务记录是否存在（直接查询，不重试）
         task_crud = get_task_crud()
-        
-        for attempt in range(max_retries):
-            session_acquired = False
-            query_executed = False
+        async with get_celery_session() as session:
+            task = await task_crud.get_by_task_id(session, task_id)
+            if not task:
+                error_msg = f"Task {task_id} not found in database"
+                logger.error("task_not_found", task_id=task_id)
+                raise ValueError(error_msg)
             
-            try:
-                logger.debug(
-                    "task_query_attempt_start",
-                    task_id=task_id,
-                    attempt=attempt + 1,
-                )
-                
-                async with get_celery_session() as session:
-                    session_acquired = True
-                    logger.debug(
-                        "task_query_session_acquired",
-                        task_id=task_id,
-                        attempt=attempt + 1,
-                        session_id=id(session),
-                    )
-                    
-                    # 使用 CRUD 查询
-                    task = await task_crud.get_by_task_id(session, task_id)
-                    query_executed = True
-                    
-                    if task:
-                        task_found = True
-                        logger.info(
-                            "task_record_found",
-                            task_id=task_id,
-                            attempt=attempt + 1,
-                            task_status=task.status,
-                        )
-                        break
-                    else:
-                        logger.warning(
-                            "task_query_returned_none",
-                            task_id=task_id,
-                            attempt=attempt + 1,
-                        )
-                    
-            except Exception as query_error:
-                # 详细记录错误信息
-                error_traceback = traceback.format_exc()
-                logger.error(
-                    "task_query_exception",
-                    task_id=task_id,
-                    attempt=attempt + 1,
-                    session_acquired=session_acquired,
-                    query_executed=query_executed,
-                    error=str(query_error),
-                    error_type=type(query_error).__name__,
-                    error_traceback=error_traceback[:1000],  # 截断避免日志过长
-                )
-                
-            if attempt < max_retries - 1:
-                # 使用指数退避 + 随机抖动
-                base_wait = 0.2 * (attempt + 1)  # 200ms, 400ms, 600ms...
-                jitter = random.uniform(0, 0.1)  # 0-100ms 随机抖动
-                wait_time = base_wait + jitter
-                
-                logger.warning(
-                    "task_not_found_retrying",
-                    task_id=task_id,
-                    attempt=attempt + 1,
-                    max_retries=max_retries,
-                    wait_seconds=round(wait_time, 3),
-                    session_acquired=session_acquired,
-                    query_executed=query_executed,
-                )
-                await asyncio.sleep(wait_time)
-        
-        if not task_found:
-            # 任务在数据库中不存在，这是一个严重的问题
-            error_msg = (
-                f"Task {task_id} not found in database after {max_retries} retries. "
-                f"Total wait time: ~10s. This indicates a database persistence or "
-                f"connectivity issue between FastAPI and Celery Worker."
-            )
-            logger.error(
-                "task_not_found_fatal",
+            logger.info(
+                "task_record_found",
                 task_id=task_id,
-                max_retries=max_retries,
-                total_wait_seconds=sum(0.2 * (i + 1) for i in range(max_retries - 1)),
+                task_status=task.status,
             )
-            raise ValueError(error_msg)
         
         # 更新任务状态为 processing
         task_crud = get_task_crud()

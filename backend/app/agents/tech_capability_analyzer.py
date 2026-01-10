@@ -1,11 +1,10 @@
 """
-技术栈能力测试评分服务
+技术栈能力分析Agent
 
 功能：
-- 计算加权分数
-- 判定能力级别匹配度
-- 提供建议
-- 基于LLM的能力分析
+- 基于LLM分析用户的答题情况
+- 重点分析错题，判断知识薄弱点
+- 提供详细的能力剖析报告
 """
 from typing import List, Dict, Any
 import structlog
@@ -17,138 +16,9 @@ from app.agents.base import BaseAgent
 logger = structlog.get_logger()
 
 
-def evaluate_answers(questions: List[dict], answers: List[str]) -> Dict[str, Any]:
-    """
-    计算加权分数并给出评估建议（基于 proficiency_level）
-
-    评分标准：
-    - Beginner题: 1分
-    - Intermediate题: 2分
-    - Expert题: 3分
-    - 总分根据题目分布动态计算
-
-    判定逻辑：
-    - ≥80%: confirmed - 确认当前级别
-    - 60-79%: adjust - 建议保持当前级别，加强学习
-    - <60%: downgrade - 建议降低级别
-
-    Args:
-        questions: 题目列表（每个题目包含 proficiency_level 和 correct_answer）
-        answers: 用户的答案列表
-
-    Returns:
-        {
-            "score": 31,
-            "max_score": 40,
-            "percentage": 77.5,
-            "correct_count": 15,
-            "total_questions": 20,
-            "recommendation": "adjust",
-            "message": "建议保持当前级别，加强薄弱环节的学习",
-            "level_stats": {
-                "beginner": {"correct": 3, "total": 4},
-                "intermediate": {"correct": 10, "total": 12},
-                "expert": {"correct": 2, "total": 4}
-            }
-        }
-    """
-    if len(questions) != len(answers):
-        raise ValueError(f"Questions count ({len(questions)}) != Answers count ({len(answers)})")
-
-    score = 0
-    correct_count = 0
-    
-    # 统计各级别的答题情况
-    level_stats = {
-        "beginner": {"correct": 0, "total": 0},
-        "intermediate": {"correct": 0, "total": 0},
-        "expert": {"correct": 0, "total": 0},
-    }
-
-    # 计算分数
-    for question, answer in zip(questions, answers):
-        correct_answer = question.get("correct_answer")
-        level = question.get("proficiency_level", "intermediate")
-        
-        # 统计该级别题目总数
-        if level in level_stats:
-            level_stats[level]["total"] += 1
-
-        # 判断答案是否正确
-        is_correct = False
-        if isinstance(correct_answer, list):
-            # 多选题：答案必须完全匹配
-            if isinstance(answer, list):
-                is_correct = set(answer) == set(correct_answer)
-            else:
-                is_correct = False
-        else:
-            # 单选题或判断题
-            is_correct = str(answer) == str(correct_answer)
-
-        if is_correct:
-            correct_count += 1
-            
-            # 统计该级别答对数
-            if level in level_stats:
-                level_stats[level]["correct"] += 1
-            
-            # 根据级别加分
-            if level == "beginner":
-                score += 1
-            elif level == "intermediate":
-                score += 2
-            else:  # expert
-                score += 3
-
-    # 计算最大分数（根据题目分布）
-    max_score = sum(
-        stats["total"] * (1 if level == "beginner" else 2 if level == "intermediate" else 3)
-        for level, stats in level_stats.items()
-    )
-    
-    # 计算百分比
-    percentage = (score / max_score) * 100 if max_score > 0 else 0
-
-    # 判定建议
-    if percentage >= 80:
-        recommendation = "confirmed"
-        message = "Your ability matches the current level, continue to maintain!"
-    elif percentage >= 60:
-        recommendation = "adjust"
-        message = "It is recommended to keep the current level and strengthen the learning of薄弱环节"
-    else:
-        recommendation = "downgrade"
-        message = "It is recommended to choose a more basic level and gradually improve your ability"
-
-    result = {
-        "score": score,
-        "max_score": max_score,
-        "percentage": round(percentage, 1),
-        "correct_count": correct_count,
-        "total_questions": len(questions),
-        "recommendation": recommendation,
-        "message": message,
-        "level_stats": level_stats,  # 新增：各级别统计
-    }
-    
-    logger.info(
-        "tech_assessment_evaluated",
-        score=score,
-        max_score=max_score,
-        percentage=result["percentage"],
-        correct_count=correct_count,
-        total_questions=len(questions),
-        recommendation=recommendation,
-        level_stats=level_stats,
-    )
-    
-    return result
-
-
 class TechCapabilityAnalyzer(BaseAgent):
     """
-    技术栈能力分析器
+    技术栈能力分析Agent
     
     功能：
     - 基于LLM分析用户的答题情况
@@ -299,7 +169,16 @@ class TechCapabilityAnalyzer(BaseAgent):
         questions: List[dict],
         user_answers: List[str]
     ) -> List[Dict[str, Any]]:
-        """收集答错的题目详情"""
+        """
+        收集答错的题目详情
+        
+        Args:
+            questions: 题目列表
+            user_answers: 用户答案列表
+            
+        Returns:
+            错题列表，包含题目详情
+        """
         wrong_questions = []
         
         for idx, (question, answer) in enumerate(zip(questions, user_answers)):
@@ -331,7 +210,16 @@ class TechCapabilityAnalyzer(BaseAgent):
         questions: List[dict],
         user_answers: List[str]
     ) -> List[Dict[str, Any]]:
-        """收集答对的题目（用于分析优势）"""
+        """
+        收集答对的题目（用于分析优势）
+        
+        Args:
+            questions: 题目列表
+            user_answers: 用户答案列表
+            
+        Returns:
+            正确题目列表
+        """
         correct_questions = []
         
         for idx, (question, answer) in enumerate(zip(questions, user_answers)):
@@ -353,46 +241,6 @@ class TechCapabilityAnalyzer(BaseAgent):
         
         return correct_questions
     
-    def _calculate_score_breakdown(
-        self,
-        questions: List[dict],
-        user_answers: List[str]
-    ) -> Dict[str, Dict[str, Any]]:
-        """计算各级别的得分情况"""
-        breakdown = {
-            "beginner": {"correct": 0, "total": 0},
-            "intermediate": {"correct": 0, "total": 0},
-            "expert": {"correct": 0, "total": 0},
-        }
-        
-        for question, answer in zip(questions, user_answers):
-            level = question.get("proficiency_level", "intermediate")
-            correct_answer = question.get("correct_answer")
-            
-            # 判断是否答对
-            is_correct = False
-            if isinstance(correct_answer, list):
-                if isinstance(answer, list):
-                    is_correct = set(answer) == set(correct_answer)
-            else:
-                is_correct = str(answer) == str(correct_answer)
-            
-            if level in breakdown:
-                breakdown[level]["total"] += 1
-                if is_correct:
-                    breakdown[level]["correct"] += 1
-        
-        # 计算百分比
-        for level in breakdown:
-            total = breakdown[level]["total"]
-            correct = breakdown[level]["correct"]
-            if total > 0:
-                breakdown[level]["percentage"] = round((correct / total) * 100, 1)
-            else:
-                breakdown[level]["percentage"] = 0.0
-        
-        return breakdown
-    
     def _build_analysis_prompt(
         self,
         technology: str,
@@ -402,7 +250,20 @@ class TechCapabilityAnalyzer(BaseAgent):
         correct_questions: List[Dict[str, Any]],
         level_stats: Dict[str, Dict[str, Any]],
     ) -> str:
-        """构建能力分析prompt"""
+        """
+        构建能力分析prompt
+        
+        Args:
+            technology: 技术栈名称
+            proficiency_level: 能力级别
+            evaluation_result: 评估结果
+            wrong_questions: 错题列表
+            correct_questions: 正确题目列表
+            level_stats: 各级别统计数据
+            
+        Returns:
+            完整的分析prompt
+        """
         template = self.jinja_env.get_template("tech_capability_analyzer.j2")
         return template.render(
             technology=technology,
@@ -414,7 +275,15 @@ class TechCapabilityAnalyzer(BaseAgent):
         )
     
     async def _call_llm_for_analysis(self, prompt: str) -> str:
-        """调用LLM进行能力分析"""
+        """
+        调用LLM进行能力分析
+        
+        Args:
+            prompt: 分析提示词
+            
+        Returns:
+            LLM返回的分析结果文本
+        """
         messages = [
             {
                 "role": "system",
@@ -429,7 +298,18 @@ class TechCapabilityAnalyzer(BaseAgent):
         return response.choices[0].message.content
     
     def _parse_analysis_response(self, response: str) -> Dict[str, Any]:
-        """解析LLM响应"""
+        """
+        解析LLM响应
+        
+        Args:
+            response: LLM返回的原始文本
+            
+        Returns:
+            解析后的分析结果字典
+            
+        Raises:
+            ValueError: 如果无法解析JSON
+        """
         import json
         
         # 尝试直接解析

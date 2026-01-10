@@ -1,46 +1,55 @@
 """
-内容生成节点执行器（Celery 迁移版）
+内容生成节点执行器（LangGraph 1.0 子图模式）
 
 负责执行内容生成节点（Step 5: Content Generation）
-已迁移到 Celery 独立进程，避免阻塞 FastAPI 主应用。
+使用 LangGraph 子图模式，实现细粒度 Checkpoint 和容错。
 
-架构变化：
-- 旧方案: 在 FastAPI BackgroundTasks 中并行生成（阻塞事件循环）
-- 新方案: 发送任务到 Celery 队列，由独立 Worker 进程执行
+架构变化（LangGraph 1.0 迁移）：
+- 旧方案: 发送独立 Celery 任务到 content_generation 队列
+- 新方案: 调用 LangGraph 子图（在主 Graph 内执行）
 
-职责变化：
-- 不再直接执行 Agent 并行生成
-- 转而发送 Celery 任务到 content_generation 队列
-- 立即返回，不等待内容生成完成
+优势：
+- ✅ 细粒度 Checkpoint：每个 Concept 独立保存状态
+- ✅ 单独重试：Tutorial 失败不影响 Resource 和 Quiz
+- ✅ 统一容错：Node 级 RetryPolicy 自动处理失败
+- ✅ 动态并行：Send API 根据 Concept 数量动态创建并行任务
 """
 import structlog
 
 from ..base import RoadmapState
 from ..workflow_brain import WorkflowBrain
+from ..subgraphs.content_generation import build_content_generation_subgraph
 
 logger = structlog.get_logger()
 
 
+def extract_concepts_from_framework(framework) -> list:
+    """
+    从路线图框架中提取所有 Concept
+    
+    Args:
+        framework: RoadmapFramework 对象
+        
+    Returns:
+        list[Concept]: Concept 列表
+    """
+    concepts = []
+    for stage in framework.stages:
+        for module in stage.modules:
+            concepts.extend(module.concepts)
+    return concepts
+
+
 class ContentRunner:
     """
-    内容生成节点执行器（Celery 迁移版）
+    内容生成节点执行器（LangGraph 1.0 子图模式）
     
-    职责（已简化）：
-    1. 从 state 中提取必要数据
-    2. 发送 Celery 任务到 content_generation 队列
-    3. 立即返回，标记内容生成已启动
-    
-    已移除职责：
-    - ❌ 不再直接执行 Agent 并行生成
-    - ❌ 不再使用信号量控制并发
-    - ❌ 不再处理部分失败场景
-    - ❌ 不再批量保存结果
-    
-    新增优势：
-    - ✅ FastAPI 进程不被阻塞
-    - ✅ 内容生成在独立进程中执行
-    - ✅ 支持任务重试和故障恢复
-    - ✅ 更好的资源隔离和监控
+    职责：
+    1. 从 state 中提取路线图框架和用户偏好
+    2. 提取所有 Concept 列表
+    3. 调用内容生成子图（同步执行，在主 Graph 内）
+    4. 处理子图返回的结果（tutorials、resources、quizzes、errors）
+    5. 返回状态更新
     """
     
     def __init__(
@@ -55,13 +64,14 @@ class ContentRunner:
     
     async def run(self, state: RoadmapState) -> dict:
         """
-        执行内容生成节点（Celery 迁移版）
+        执行内容生成节点（子图模式）
         
-        简化后的逻辑：
-        1. 使用 brain.node_execution() 自动处理状态/日志/通知
-        2. 提取 roadmap_framework 和 user_request
-        3. 发送 Celery 任务（异步，立即返回）
-        4. 返回状态更新（标记内容生成已启动）
+        流程：
+        1. 提取路线图框架和 Concept 列表
+        2. 构造子图输入状态
+        3. 调用子图执行（ainvoke）
+        4. 处理子图返回的结果
+        5. 返回主图状态更新
         
         Args:
             state: 当前工作流状态
@@ -69,7 +79,6 @@ class ContentRunner:
         Returns:
             状态更新字典
         """
-        # 使用 WorkflowBrain 统一管理执行生命周期
         async with self.brain.node_execution("content_generation", state):
             framework = state.get("roadmap_framework")
             if not framework:
@@ -82,41 +91,71 @@ class ContentRunner:
             task_id = state["task_id"]
             user_request = state["user_request"]
             
-            logger.info(
-                "content_runner_dispatching_celery_task",
-                task_id=task_id,
-                roadmap_id=roadmap_id,
-            )
-            
-            # 发送 Celery 任务（异步，立即返回）
-            from app.tasks.content_generation_tasks import generate_roadmap_content
-            
-            celery_task = generate_roadmap_content.delay(
-                task_id=task_id,
-                roadmap_id=roadmap_id,
-                roadmap_framework_data=framework.model_dump(mode="json"),
-                user_preferences_data=user_request.preferences.model_dump(mode="json"),
-            )
+            # 提取所有 Concept
+            concepts = extract_concepts_from_framework(framework)
             
             logger.info(
-                "content_runner_celery_task_queued",
+                "content_runner_starting_subgraph",
                 task_id=task_id,
                 roadmap_id=roadmap_id,
-                celery_task_id=celery_task.id,
+                concept_count=len(concepts),
             )
             
-            # 更新任务状态，记录 Celery task ID
-            await self.brain.save_celery_task_id(
+            # 构建子图
+            subgraph = build_content_generation_subgraph()
+            
+            # 准备子图输入状态（传递 brain 和 agent_factory）
+            sub_state = {
+                "roadmap_id": roadmap_id,
+                "concepts": concepts,
+                "user_preferences": user_request.preferences,
+                "task_id": task_id,
+                "brain": self.brain,  # 传递 WorkflowBrain 实例
+                "agent_factory": self.brain.agent_factory,  # 传递 AgentFactory 实例
+                "concept": None,  # 用于 Send API
+                "context": None,  # 用于 Send API
+                "tutorials": [],
+                "resources": [],
+                "quizzes": [],
+                "errors": [],
+            }
+            
+            # 执行子图（会自动继承父图的 Checkpointer）
+            result = await subgraph.ainvoke(sub_state)
+            
+            # 批量保存所有内容元数据到数据库
+            await self._save_all_content_metadata(roadmap_id, result)
+            
+            # 更新 ConceptMetadata 状态字段
+            await self._update_concept_metadata(roadmap_id, result)
+            
+            logger.info(
+                "content_runner_subgraph_completed",
                 task_id=task_id,
-                celery_task_id=celery_task.id,
+                tutorial_count=len(result["tutorials"]),
+                resource_count=len(result["resources"]),
+                quiz_count=len(result["quizzes"]),
+                error_count=len(result["errors"]),
             )
             
-            # 返回纯状态更新
-            return {
-                "content_generation_status": "queued",
-                "celery_task_id": celery_task.id,
-                "current_step": "content_generation_queued",
+            # 构造主图状态更新
+            state_update = {
+                "tutorial_refs": {
+                    t.concept_id: t for t in result["tutorials"]
+                },
+                "resource_refs": {
+                    r.concept_id: r for r in result["resources"]
+                },
+                "quiz_refs": {
+                    q.concept_id: q for q in result["quizzes"]
+                },
+                "failed_concepts": [
+                    e["concept_id"] for e in result["errors"]
+                ],
+                "current_step": "content_generation_completed",
                 "execution_history": [
-                    f"内容生成任务已发送到 Celery 队列（Task ID: {celery_task.id}）"
+                    f"内容生成完成：教程 {len(result['tutorials'])}，资源 {len(result['resources'])}，测验 {len(result['quizzes'])}，失败 {len(result['errors'])}"
                 ],
             }
+            
+            return state_update

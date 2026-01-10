@@ -46,13 +46,13 @@ celery_app.conf.update(
     # 批量处理配置
     task_acks_late=True,
     task_reject_on_worker_lost=True,
-    # 任务路由配置（不同任务类型使用不同队列）
+    # 任务路由配置（简化为 2 个队列）
     task_routes={
         "app.tasks.log_tasks.batch_write_logs": {"queue": "logs"},
-        "app.tasks.content_generation_tasks.*": {"queue": "content_generation"},
-        "app.tasks.content_retry_tasks.*": {"queue": "content_generation"},
-        "roadmap_generation.*": {"queue": "roadmap_workflow"},
-        "workflow_resume.*": {"queue": "roadmap_workflow"},
+        "roadmap_generation.*": {"queue": "default"},
+        "workflow_resume.*": {"queue": "default"},
+        "maintenance.*": {"queue": "default"},
+        "content.*": {"queue": "default"},  # 内容重试任务
     },
     # Worker 配置
     worker_prefetch_multiplier=1,
@@ -85,11 +85,11 @@ celery_app.conf.update(
     # 自动发现任务模块
     imports=(
         "app.tasks.log_tasks",
-        "app.tasks.content_generation_tasks",
-        "app.tasks.content_retry_tasks",
         "app.tasks.roadmap_generation_tasks",
         "app.tasks.workflow_resume_tasks",
-        "app.tasks.cover_image_tasks",  # ✅ 新增：封面图生成任务
+        "app.tasks.cover_image_tasks",
+        "app.tasks.maintenance_tasks",
+        "app.tasks.content_utils",  # 内容重试任务
     ),
 )
 
@@ -177,4 +177,23 @@ def on_task_retry(sender=None, task_id=None, **kwargs):
     """
     from app.core.celery_error_handler import handle_task_retry
     handle_task_retry(sender, task_id, **kwargs)
+
+
+# ============================================================
+# Celery Beat 定时任务配置
+# ============================================================
+from celery.schedules import crontab
+
+celery_app.conf.beat_schedule = {
+    # 每天凌晨 3 点清理旧的 Checkpoint
+    'cleanup-old-checkpoints': {
+        'task': 'maintenance.cleanup_old_checkpoints',
+        'schedule': crontab(hour=3, minute=0),
+    },
+    # 每小时监控 Checkpoint 表大小
+    'monitor-checkpoint-size': {
+        'task': 'maintenance.monitor_checkpoint_size',
+        'schedule': crontab(minute=0),  # 每小时整点执行
+    },
+}
 

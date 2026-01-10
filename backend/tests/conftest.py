@@ -4,8 +4,19 @@
 提供所有测试所需的通用 fixtures 和 mock 对象。
 """
 import pytest
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime
+
+# 设置测试环境变量（必须在导入app之前）
+os.environ["ENVIRONMENT"] = "test"
+os.environ["DATABASE_URL"] = os.getenv(
+    "TEST_DATABASE_URL",
+    "postgresql+asyncpg://postgres:postgres@localhost:5432/roadmap_test"
+)
+os.environ["SECRET_KEY"] = "test_secret_key_12345"
+os.environ["ENABLE_TASK_RECOVERY"] = "false"
+os.environ["ENABLE_TECH_ASSESSMENT_INIT"] = "false"
 
 from app.models.domain import (
     UserRequest,
@@ -263,23 +274,210 @@ def mock_web_search_tool():
 
 
 # ============================================================
+# 高级 Mock Fixtures（用于E2E测试）
+# ============================================================
+
+@pytest.fixture
+def mock_all_llm_calls():
+    """
+    Mock所有LLM调用
+    
+    根据system_prompt自动判断是哪个Agent并返回相应的Mock响应
+    """
+    import json
+    from tests.factories import MockResponseFactory
+    
+    async def async_mock_response(*args, **kwargs):
+        """异步Mock响应"""
+        messages = kwargs.get("messages", [])
+        system_content = messages[0]["content"] if messages else ""
+        
+        # 根据system_prompt判断Agent类型
+        if "意图分析" in system_content or "Intent Analysis" in system_content:
+            response_data = MockResponseFactory.create_llm_intent_response()
+        elif "课程架构师" in system_content or "Curriculum Architect" in system_content:
+            response_data = MockResponseFactory.create_llm_curriculum_response()
+        elif "验证" in system_content or "Validation" in system_content:
+            response_data = MockResponseFactory.create_llm_validation_response()
+        else:
+            # 默认响应
+            response_data = {"status": "success", "data": {}}
+        
+        # 创建Mock响应对象
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps(response_data, ensure_ascii=False)
+        return mock_response
+    
+    with patch("litellm.acompletion") as mock_completion:
+        mock_completion.side_effect = async_mock_response
+        yield mock_completion
+
+
+@pytest.fixture
+def mock_redis_pubsub():
+    """Mock Redis Pub/Sub通知服务"""
+    with patch("app.services.notification_service.notification_service") as mock:
+        mock.publish_progress = AsyncMock()
+        mock.publish_completed = AsyncMock()
+        mock.publish_failed = AsyncMock()
+        mock.send_human_review_request = AsyncMock()
+        mock.send_concept_progress_event = AsyncMock()
+        yield mock
+
+
+@pytest.fixture
+def mock_celery_task():
+    """Mock Celery任务"""
+    with patch("app.tasks.content_generation_tasks.generate_roadmap_content.delay") as mock:
+        mock_result = MagicMock()
+        mock_result.id = "test-celery-task-id"
+        mock.return_value = mock_result
+        yield mock
+
+
+@pytest.fixture
+def mock_s3_operations():
+    """
+    Mock S3操作（上传和下载）
+    
+    用于Mock教程、资源等内容的S3存储操作
+    """
+    with patch("app.tools.s3_storage_tool.S3StorageTool") as mock_s3:
+        mock_instance = AsyncMock()
+        
+        # Mock上传操作
+        async def mock_upload(*args, **kwargs):
+            content = kwargs.get("content", "")
+            key = kwargs.get("key", "test-key.md")
+            return MagicMock(
+                success=True,
+                url=f"s3://test-bucket/{key}",
+                key=key,
+                size_bytes=len(content),
+                etag="mock-etag",
+            )
+        
+        # Mock下载操作
+        async def mock_download(*args, **kwargs):
+            return MagicMock(
+                success=True,
+                content="# 测试教程内容\n\n这是Mock的教程内容。",
+                key="test-key.md",
+            )
+        
+        mock_instance.upload.side_effect = mock_upload
+        mock_instance.download.side_effect = mock_download
+        mock_s3.return_value = mock_instance
+        yield mock_instance
+
+
+@pytest.fixture
+def mock_tavily_search():
+    """
+    Mock Tavily搜索工具
+    
+    用于Mock资源推荐的搜索操作
+    """
+    with patch("app.tools.tavily_search_tool.TavilySearchTool") as mock_tavily:
+        mock_instance = AsyncMock()
+        
+        async def mock_search(*args, **kwargs):
+            return MagicMock(
+                results=[
+                    {
+                        "title": "Mock搜索结果1",
+                        "url": "https://example.com/1",
+                        "content": "这是Mock的搜索结果内容1",
+                        "score": 0.95,
+                    },
+                    {
+                        "title": "Mock搜索结果2",
+                        "url": "https://example.com/2",
+                        "content": "这是Mock的搜索结果内容2",
+                        "score": 0.88,
+                    },
+                ],
+                query="test query",
+            )
+        
+        mock_instance.search.side_effect = mock_search
+        mock_tavily.return_value = mock_instance
+        yield mock_instance
+
+
+@pytest.fixture
+def mock_tutorial_agent():
+    """Mock教程生成Agent"""
+    from tests.factories import ContentFactory
+    
+    with patch("app.agents.tutorial_generator.TutorialGeneratorAgent") as mock:
+        mock_instance = AsyncMock()
+        
+        async def mock_generate(*args, **kwargs):
+            concept = kwargs.get("concept") or args[0].concept
+            return ContentFactory.create_tutorial_output(concept.concept_id)
+        
+        mock_instance.generate.side_effect = mock_generate
+        mock.return_value = mock_instance
+        yield mock_instance
+
+
+@pytest.fixture
+def mock_resource_agent():
+    """Mock资源推荐Agent"""
+    from tests.factories import ContentFactory
+    
+    with patch("app.agents.resource_recommender.ResourceRecommenderAgent") as mock:
+        mock_instance = AsyncMock()
+        
+        async def mock_recommend(*args, **kwargs):
+            concept = kwargs.get("concept") or args[0].concept
+            return ContentFactory.create_resource_output(concept.concept_id)
+        
+        mock_instance.recommend.side_effect = mock_recommend
+        mock.return_value = mock_instance
+        yield mock_instance
+
+
+@pytest.fixture
+def mock_quiz_agent():
+    """Mock测验生成Agent"""
+    from tests.factories import ContentFactory
+    
+    with patch("app.agents.quiz_generator.QuizGeneratorAgent") as mock:
+        mock_instance = AsyncMock()
+        
+        async def mock_generate(*args, **kwargs):
+            concept = kwargs.get("concept") or args[0].concept
+            return ContentFactory.create_quiz_output(concept.concept_id)
+        
+        mock_instance.generate.side_effect = mock_generate
+        mock.return_value = mock_instance
+        yield mock_instance
+
+
+# ============================================================
 # OrchestratorFactory 初始化 Fixture
 # ============================================================
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session", autouse=False)
 async def initialize_orchestrator_factory():
     """
     初始化 OrchestratorFactory（测试会话级别）
     
-    这个 fixture 会在所有测试开始前自动运行一次。
+    这个 fixture 会在需要时运行，用于测试需要orchestrator的场景。
+    大多数测试不需要初始化orchestrator。
     """
     from app.core.orchestrator_factory import OrchestratorFactory
     
     # 初始化 OrchestratorFactory
-    await OrchestratorFactory.initialize()
-    
-    yield
-    
-    # 清理（关闭 checkpointer）
-    await OrchestratorFactory.cleanup()
-
+    try:
+        await OrchestratorFactory.initialize()
+        yield
+        # 清理（关闭 checkpointer）
+        await OrchestratorFactory.cleanup()
+    except Exception as e:
+        # 如果初始化失败（比如数据库未启动），跳过这个fixture
+        print(f"Warning: OrchestratorFactory initialization failed: {e}")
+        yield

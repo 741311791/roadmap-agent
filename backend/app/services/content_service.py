@@ -382,21 +382,22 @@ class ContentService:
         user_id: str,
     ) -> dict:
         """
-        异步重试内容（Celery任务）
+        异步重试内容（Celery 任务）
         
-        激进重构：将Celery任务创建和调度也封装在Service层
-        API层只负责HTTP适配
+        重构说明（LangGraph 1.0 迁移）：
+        - 旧版本：调用 retry_tutorial_task/retry_resources_task/retry_quiz_task
+        - 新版本：统一调用 retry_single_content 任务（调用子图）
         
         Args:
             session: 数据库会话
-            roadmap_id: 路线图ID
-            concept_id: 概念ID
+            roadmap_id: 路线图 ID
+            concept_id: 概念 ID
             content_type: 内容类型
             request: 重试请求
-            user_id: 用户ID
+            user_id: 用户 ID
             
         Returns:
-            包含task_id的字典
+            包含 task_id 的字典
         """
         # 1. 获取概念（验证存在性）
         concept, context, roadmap_metadata = await self.concept_service.get_concept_from_roadmap(
@@ -411,7 +412,7 @@ class ContentService:
             )
             raise ValueError(f"Concept {concept_id} not found in roadmap {roadmap_id}")
         
-        # 2. 生成任务ID
+        # 2. 生成任务 ID
         task_id = self._generate_retry_task_id(roadmap_id, concept_id, content_type)
         
         # 3. 创建任务记录
@@ -433,33 +434,21 @@ class ContentService:
         })
         await session.flush()
         
-        # 4. 提交Celery任务
-        from app.tasks.content_retry_tasks import (
-            retry_tutorial_task,
-            retry_resources_task,
-            retry_quiz_task,
-        )
+        # 4. 调用统一的重试任务（LangGraph 1.0 子图模式）
+        from app.tasks.content_utils import retry_single_content
         
-        # 准备Celery任务参数
+        # 准备任务参数
         concept_obj = Concept.model_validate(concept)
-        celery_args = [
-            task_id,
-            roadmap_id,
-            concept_id,
-            concept_obj.model_dump(mode='json'),
-            context,
-            request.preferences.model_dump(mode='json'),
-        ]
-        
-        # 根据类型调度不同的任务
-        if content_type == "tutorial":
-            retry_tutorial_task.apply_async(args=celery_args, task_id=task_id)
-        elif content_type == "resources":
-            retry_resources_task.apply_async(args=celery_args, task_id=task_id)
-        elif content_type == "quiz":
-            retry_quiz_task.apply_async(args=celery_args, task_id=task_id)
-        else:
-            raise ValueError(f"Unknown content type: {content_type}")
+        retry_single_content.apply_async(
+            args=[
+                task_id,
+                roadmap_id,
+                concept_obj.model_dump(mode='json'),
+                context,
+                request.preferences.model_dump(mode='json'),
+            ],
+            task_id=task_id,
+        )
         
         logger.info(
             "content_retry_task_submitted",

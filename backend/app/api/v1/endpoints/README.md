@@ -108,14 +108,7 @@
 - 按内容类型筛选
 - 批量并发处理
 
-### 9. utils.py - 辅助工具
-
-**功能**：提供各端点共用的辅助函数
-
-**主要函数**：
-- `get_failed_content_items()` - 提取失败项目
-- `find_concept_in_framework()` - 查找概念
-- `extract_concepts_from_framework()` - 提取所有概念
+**注意**：辅助函数已迁移至 `app.services.content_retry_service.ContentRetryService`
 
 ## 架构优势
 

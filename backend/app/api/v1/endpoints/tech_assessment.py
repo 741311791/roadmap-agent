@@ -11,9 +11,9 @@ import structlog
 
 from app.db.session import get_db_transaction
 from app.db.redis_client import redis_client
-from app.services.tech_assessment_service import TechAssessmentService
-from app.services.tech_assessment_evaluator import evaluate_answers, TechCapabilityAnalyzer
-from app.services.tech_assessment_generator import TechAssessmentGenerator
+from app.services.tech_assessment_service import TechAssessmentService, evaluate_answers
+from app.agents.tech_assessment_generator import TechAssessmentGenerator
+from app.agents.tech_capability_analyzer import TechCapabilityAnalyzer
 
 # ✅ 导入 Schema（符合企业级架构规范）
 from app.schemas.tech_assessment import (

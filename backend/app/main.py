@@ -143,7 +143,12 @@ app = FastAPI(
 # 注意：FastAPI Users 的认证通过路由依赖注入实现，不需要全局中间件
 # ============================================================
 
-# 第1步：添加 Prometheus 中间件（最内层，记录指标）
+# 第0步：添加连接池监控中间件（最内层，保护资源）
+from app.middleware.pool_monitor_middleware import PoolMonitorMiddleware
+app.add_middleware(PoolMonitorMiddleware)
+logger.info("middleware_registered", name="PoolMonitorMiddleware", layer="innermost_protection")
+
+# 第1步：添加 Prometheus 中间件（记录指标）
 app.add_middleware(PrometheusMiddleware, app_name="roadmap_agent")
 logger.info("middleware_registered", name="PrometheusMiddleware", layer="innermost")
 

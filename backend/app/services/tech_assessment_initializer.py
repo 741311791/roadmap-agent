@@ -10,7 +10,7 @@ import structlog
 
 from app.db.session import get_db_transaction
 from app.crud.crud_tech_assessment import get_tech_assessment_crud
-from app.services.tech_assessment_generator import TechAssessmentGenerator
+from app.agents.tech_assessment_generator import TechAssessmentGenerator
 
 logger = structlog.get_logger()
 
