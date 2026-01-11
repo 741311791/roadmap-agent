@@ -46,13 +46,10 @@ celery_app.conf.update(
     # 批量处理配置
     task_acks_late=True,
     task_reject_on_worker_lost=True,
-    # 任务路由配置（与实际运行的 Worker 队列匹配）
+    # 任务路由配置（简化为 2 个队列：logs 和 default）
     task_routes={
         "app.tasks.log_tasks.batch_write_logs": {"queue": "logs"},
-        "roadmap_generation.*": {"queue": "workflow"},  # 修复：发送到 workflow 队列
-        "workflow_resume.*": {"queue": "workflow"},     # 修复：发送到 workflow 队列
-        "maintenance.*": {"queue": "workflow"},         # 修复：发送到 workflow 队列
-        "content.*": {"queue": "content"},              # 内容重试任务发送到 content 队列
+        # 所有其他任务使用 default 队列（包括路线图生成、恢复、维护等）
     },
     # Worker 配置
     worker_prefetch_multiplier=1,

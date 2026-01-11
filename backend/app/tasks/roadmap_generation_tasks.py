@@ -14,6 +14,11 @@
 3. Structure Validation（结构验证，可能循环）
 4. Human Review（人工审核，可选，会暂停）
 5. Content Generation（内容生成）
+
+架构优化（方案2 - Celery Signal）：
+- 使用 Celery Signal 实现事件驱动的封面图生成
+- 路线图生成成功后自动触发封面图生成
+- 完全解耦，符合关注点分离原则
 """
 import asyncio
 import structlog
@@ -24,11 +29,12 @@ from app.core.celery_app import celery_app
 from app.core.orchestrator_factory import OrchestratorFactory
 # 使用 Celery 专用的数据库连接管理，避免 Fork 进程继承问题
 # CeleryRepositoryFactory 已删除，直接使用 CRUD
-from app.services.notification_service import notification_service
+from app.services.shared.notification_service import notification_service
 from app.models.constants import TaskStatus
 from app.models.domain import UserRequest, LearningPreferences
 from app.db.celery_session import get_celery_session
 from app.crud.crud_task import get_task_crud
+from celery.signals import task_success
 
 logger = structlog.get_logger()
 
@@ -121,6 +127,10 @@ def generate_roadmap(
             status=result.get("status"),
         )
         
+        # 关键修复：Celery 任务完成后，更新数据库中的任务状态
+        # 这样前端就不需要持续轮询，可以通过单次查询获取最终状态
+        run_async(_update_task_final_status(task_id, result))
+        
         return result
         
     except Exception as e:
@@ -183,6 +193,7 @@ async def _execute_roadmap_workflow(
         task_crud = get_task_crud()
         async with get_celery_session() as session:
             await task_crud.update_task_status(
+                session=session,
                 task_id=task_id,
                 status=TaskStatus.PROCESSING.value,
                 current_step="queued",
@@ -278,6 +289,52 @@ async def _execute_roadmap_workflow(
             await factory.cleanup()
 
 
+async def _update_task_final_status(
+    task_id: str,
+    result: dict,
+):
+    """
+    更新任务最终状态（完成或部分失败）
+    
+    关键修复：Celery 任务执行完成后，必须更新数据库中的任务状态，
+    否则前端会持续轮询状态而无法获取最终结果。
+    
+    Args:
+        task_id: 任务 ID
+        result: 执行结果字典
+    """
+    try:
+        task_crud = get_task_crud()
+        async with get_celery_session() as session:
+            # 更新任务状态和 roadmap_id
+            task = await task_crud.get_by_task_id(session, task_id)
+            if task:
+                task.status = result.get("status", TaskStatus.COMPLETED.value)
+                task.current_step = result.get("current_step", "completed")
+                task.roadmap_id = result.get("roadmap_id")
+                session.add(task)
+                await session.commit()
+                
+                logger.info(
+                    "task_final_status_updated",
+                    task_id=task_id,
+                    status=task.status,
+                    roadmap_id=task.roadmap_id,
+                )
+            else:
+                logger.error(
+                    "task_not_found_for_status_update",
+                    task_id=task_id,
+                )
+    except Exception as e:
+        logger.error(
+            "failed_to_update_task_final_status",
+            task_id=task_id,
+            error=str(e),
+            exc_info=True,
+        )
+
+
 async def _mark_task_failed(
     task_id: str,
     error_message: str,
@@ -296,6 +353,7 @@ async def _mark_task_failed(
         task_crud = get_task_crud()
         async with get_celery_session() as session:
             await task_crud.update_task_status(
+                session=session,
                 task_id=task_id,
                 status=TaskStatus.FAILED.value,
                 current_step="failed",
@@ -317,5 +375,83 @@ async def _mark_task_failed(
             task_id=task_id,
             error=str(e),
             exc_info=True,
+        )
+
+
+# ============================================================
+# Celery Signal 处理器：事件驱动的封面图生成
+# ============================================================
+
+@task_success.connect(sender=generate_roadmap)
+def on_roadmap_generated(sender, result, **kwargs):
+    """
+    路线图生成成功后自动触发封面图生成
+    
+    架构优势（方案2 - Celery Signal）：
+    - 完全解耦：路线图生成任务不关心封面图
+    - 事件驱动：符合现代架构模式
+    - 失败隔离：封面图生成失败不影响路线图创建
+    - 易于扩展：可添加其他后处理任务（邮件通知、分享卡片等）
+    
+    Args:
+        sender: 触发 Signal 的任务（generate_roadmap）
+        result: 任务执行结果
+        **kwargs: 其他 Signal 参数
+            - task_id: Celery 任务 ID
+            - args: 任务参数
+            - kwargs: 任务关键字参数
+    """
+    # 仅在路线图生成成功时触发封面图生成
+    if not result.get("success"):
+        logger.debug(
+            "skip_cover_image_generation_on_failure",
+            result=result,
+        )
+        return
+    
+    roadmap_id = result.get("roadmap_id")
+    if not roadmap_id:
+        logger.warning(
+            "skip_cover_image_generation_no_roadmap_id",
+            result=result,
+        )
+        return
+    
+    # 从任务参数中提取 task_id（用于日志追踪）
+    task_args = kwargs.get("args", [])
+    task_id = task_args[0] if task_args else None
+    
+    logger.info(
+        "auto_trigger_cover_image_generation",
+        roadmap_id=roadmap_id,
+        task_id=task_id,
+        trigger_source="celery_signal",
+    )
+    
+    try:
+        # 异步触发封面图生成任务
+        from app.tasks.cover_image_tasks import generate_cover_image_task
+        
+        celery_task = generate_cover_image_task.delay(
+            roadmap_id=roadmap_id,
+            prompt=None,  # 使用默认提示词（CoverImageService 会从路线图标题生成）
+        )
+        
+        logger.info(
+            "cover_image_task_dispatched",
+            roadmap_id=roadmap_id,
+            task_id=task_id,
+            celery_task_id=celery_task.id,
+            trigger_source="celery_signal",
+        )
+        
+    except Exception as e:
+        # 封面图生成失败不影响路线图（仅记录警告）
+        logger.warning(
+            "cover_image_task_dispatch_failed",
+            roadmap_id=roadmap_id,
+            task_id=task_id,
+            error=str(e),
+            error_type=type(e).__name__,
         )
 
