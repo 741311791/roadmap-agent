@@ -19,12 +19,8 @@ import {
 import { EmptyState } from '@/components/common/empty-state';
 import { ChevronLeft, Trash2, RotateCcw, AlertTriangle } from 'lucide-react';
 import { useAuthStore } from '@/lib/store/auth-store';
-import { 
-  getDeletedRoadmaps, 
-  restoreRoadmap, 
-  permanentDeleteRoadmap 
-} from '@/lib/api/endpoints';
-import { RoadmapHistoryItem } from '@/lib/api/endpoints';
+import { roadmapsApi } from '@/lib/api/endpoints';
+import type { RoadmapSummary, RoadmapHistoryItem } from '@/lib/api/endpoints';
 import { getCoverImage, getGradientFallback, getTopicInitial } from '@/lib/cover-image';
 
 // 计算剩余天数
@@ -152,16 +148,10 @@ export default function TrashPage() {
   
   // Fetch deleted roadmaps
   const fetchDeletedRoadmaps = async () => {
-    const userId = getUserId();
-    if (!userId) {
-      setIsLoading(false);
-      return;
-    }
-    
     try {
       setIsLoading(true);
-      const response = await getDeletedRoadmaps(userId);
-      setDeletedRoadmaps(response.roadmaps);
+      const response = await roadmapsApi.getMyTrash();
+      setDeletedRoadmaps(response.items);
     } catch (error) {
       console.error('Failed to fetch deleted roadmaps:', error);
     } finally {
@@ -186,7 +176,7 @@ export default function TrashPage() {
     
     try {
       // ✅ 不再传递userId，后端从JWT Token自动提取
-      await restoreRoadmap(roadmapId);
+      await roadmapsApi.restore(roadmapId);
       await fetchDeletedRoadmaps();
       
       // Reset to page 1 if current page becomes empty
@@ -214,7 +204,7 @@ export default function TrashPage() {
     
     try {
       // ✅ 不再传递userId，后端从JWT Token自动提取
-      await permanentDeleteRoadmap(roadmapToDelete);
+      await roadmapsApi.permanentDelete(roadmapToDelete);
       await fetchDeletedRoadmaps();
       
       // Reset to page 1 if current page becomes empty

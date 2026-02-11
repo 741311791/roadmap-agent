@@ -339,31 +339,31 @@ function ResourceCard({
   };
 
   // 计算星级评分（基于 relevance_score）
-  const starRating = Math.round((resource.relevance_score ?? 0) * 5);
+  const starRating = Math.round(((resource as any).relevance_score ?? 0) * 5);
 
   return (
     <a
-      href={resource.url}
+      href={(resource as any).url}
       target="_blank"
       rel="noopener noreferrer"
       className="group flex gap-3 p-3 rounded-lg glass-panel hover:border-sage-500/50 hover:scale-[1.01] transition-all cursor-pointer"
     >
       {/* 左侧：资源类型图标 */}
       <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-sage-600/10 flex items-center justify-center">
-        {getResourceIcon(resource.type)}
+        {getResourceIcon((resource as any).type)}
       </div>
 
       {/* 中间：内容区域 */}
       <div className="flex-1 min-w-0">
         {/* 标题 */}
         <p className="text-sm font-medium text-foreground line-clamp-1 group-hover:text-sage-600 transition-colors">
-          {resource.title}
+          {(resource as any).title}
         </p>
 
         {/* 资源描述 */}
-        {resource.description && (
+        {(resource as any).description && (
           <p className="text-xs text-muted-foreground line-clamp-2 mt-1 leading-relaxed">
-            {resource.description}
+            {(resource as any).description}
           </p>
         )}
 
@@ -371,9 +371,9 @@ function ResourceCard({
         <div className="flex items-center gap-3 mt-2">
           {/* 来源信息 */}
           <span className="text-xs text-muted-foreground">
-            {resource.type === 'video' ? 'Video' : 
-             resource.type === 'book' ? 'Book' : 
-             resource.type === 'course' ? 'Course' : 
+            {(resource as any).type === 'video' ? 'Video' : 
+             (resource as any).type === 'book' ? 'Book' : 
+             (resource as any).type === 'course' ? 'Course' : 
              'Article'}
           </span>
 
@@ -391,7 +391,7 @@ function ResourceCard({
               />
             ))}
             <span className="text-xs text-muted-foreground ml-1">
-              {(resource.relevance_score ?? 0).toFixed(1)}
+              {((resource as any).relevance_score ?? 0).toFixed(1)}
             </span>
           </div>
         </div>
@@ -487,7 +487,7 @@ function ResourceList({
       {/* 资源列表 */}
       <div className="space-y-2.5">
         {resources.map((resource, index) => (
-          <ResourceCard key={`${resource.url}-${index}`} resource={resource} index={index} />
+          <ResourceCard key={`${(resource as any).url}-${index}`} resource={resource} index={index} />
         ))}
       </div>
     </div>
@@ -764,11 +764,8 @@ function QuizList({
       
       try {
         await submitQuizAttempt(roadmapId, conceptId, {
-          quiz_id: quiz.quiz_id,
-          total_questions: quiz.total_questions,
-          correct_answers: score.correct,
-          score_percentage: (score.correct / quiz.total_questions) * 100,
-          incorrect_question_indices: incorrectIndices
+          answers: answers,
+          time_spent: 0
         });
         console.log('[QuizList] Quiz attempt submitted successfully');
       } catch (error) {
@@ -993,15 +990,15 @@ export function LearningStage({ concept, className, tutorialContent, tutorialLoa
   // 检测内容生成状态
   // 注意：不再使用本地重试状态，完全依赖后端状态和WebSocket更新
   const tutorialFailed = concept?.content_status === 'failed';
-  const tutorialGenerating = concept?.content_status === 'generating';
+  const tutorialGenerating = concept?.content_status === 'pending';
   const tutorialPending = concept?.content_status === 'pending';
   
   const resourcesFailed = concept?.resources_status === 'failed';
-  const resourcesGenerating = concept?.resources_status === 'generating';
+  const resourcesGenerating = concept?.resources_status === 'pending';
   const resourcesPending = concept?.resources_status === 'pending';
   
   const quizFailed = concept?.quiz_status === 'failed';
-  const quizGenerating = concept?.quiz_status === 'generating';
+  const quizGenerating = concept?.quiz_status === 'pending';
   const quizPending = concept?.quiz_status === 'pending';
   
   // Extract TOC from markdown content
@@ -1041,19 +1038,19 @@ export function LearningStage({ concept, className, tutorialContent, tutorialLoa
           // 更新各个content type的状态
           currentConceptTasks.forEach((task: any) => {
             if (task.content_type === 'tutorial' && task.status === 'processing') {
-              if (concept.content_status !== 'generating') {
+              if (concept.content_status !== 'pending') {
                 console.log('[LearningStage] Found active tutorial task, updating status to generating');
-                updateConceptStatus(concept.concept_id, { content_status: 'generating' });
+                updateConceptStatus(concept.concept_id, { content_status: 'pending' });
               }
             } else if (task.content_type === 'resources' && task.status === 'processing') {
-              if (concept.resources_status !== 'generating') {
+              if (concept.resources_status !== 'pending') {
                 console.log('[LearningStage] Found active resources task, updating status to generating');
-                updateConceptStatus(concept.concept_id, { resources_status: 'generating' });
+                updateConceptStatus(concept.concept_id, { resources_status: 'pending' });
               }
             } else if (task.content_type === 'quiz' && task.status === 'processing') {
-              if (concept.quiz_status !== 'generating') {
+              if (concept.quiz_status !== 'pending') {
                 console.log('[LearningStage] Found active quiz task, updating status to generating');
-                updateConceptStatus(concept.concept_id, { quiz_status: 'generating' });
+                updateConceptStatus(concept.concept_id, { quiz_status: 'pending' });
               }
             }
           });
@@ -1103,7 +1100,7 @@ export function LearningStage({ concept, className, tutorialContent, tutorialLoa
     setIsTogglingProgress(true);
     try {
       const newStatus = !isConceptCompleted;
-      await updateConceptProgress(roadmapId, concept.concept_id, newStatus);
+      await updateConceptProgress(roadmapId, concept.concept_id, { is_completed: newStatus });
       updateProgressInStore(concept.concept_id, newStatus);
     } catch (error) {
       console.error('Failed to toggle concept completion:', error);
@@ -1269,7 +1266,7 @@ export function LearningStage({ concept, className, tutorialContent, tutorialLoa
               />
             ) : (
               <ResourceList 
-                resources={resources?.resources || []}
+                resources={(resources?.resources || []) as any}
                 isLoading={resourcesLoading}
                 error={resourcesError?.message || null}
                 roadmapId={roadmapId}
@@ -1295,7 +1292,7 @@ export function LearningStage({ concept, className, tutorialContent, tutorialLoa
               />
             ) : (
               <QuizList 
-                quiz={quiz ?? null}
+                quiz={(quiz ?? null) as any}
                 isLoading={quizLoading}
                 error={quizError?.message || null}
                 roadmapId={roadmapId}

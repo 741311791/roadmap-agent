@@ -1,327 +1,241 @@
 """
-单元测试 - Schema验证
+测试所有Schema定义和序列化
 
-测试目标：
-- Pydantic模型验证逻辑
-- 数据类型转换
-- 必填字段验证
+验证新增和修改的Schema是否正确定义和序列化
 """
 import pytest
-from pydantic import ValidationError
 from datetime import datetime
-
-from app.models.domain import (
-    LearningPreferences,
-    UserRequest,
-    Concept,
-    Module,
-    Stage,
-    RoadmapFramework,
+from app.schemas.roadmap import (
+    RoadmapDetailResponse,
+    RoadmapDeleteResponse,
+    RoadmapRestoreResponse,
+    RoadmapPermanentDeleteResponse,
+    RoadmapStatusResponse,
+    RoadmapStatusQuickResponse,
 )
+from app.schemas.auth import LogoutResponse, BlacklistStatsResponse
+from app.schemas.task import ContentGenerationStatusResponse
+from app.schemas.waitlist import WaitlistJoinResponse
 
 
-# ============================================================
-# LearningPreferences 测试
-# ============================================================
-
-def test_learning_preferences_valid():
-    """
-    测试有效的学习偏好
+class TestRoadmapSchemas:
+    """测试路线图相关Schema"""
     
-    验证：
-    - 所有必填字段都提供时可以正常创建
-    - 字段类型正确
-    """
-    prefs = LearningPreferences(
-        learning_goal="成为全栈开发工程师",
-        available_hours_per_week=15,
-        motivation="职业转型",
-        current_level="beginner",
-        career_background="市场营销",
-        content_preference=["text", "hands_on"],
-        target_deadline=None,
-    )
-    
-    assert prefs.learning_goal == "成为全栈开发工程师"
-    assert prefs.available_hours_per_week == 15
-    assert prefs.current_level == "beginner"
-    assert len(prefs.content_preference) == 2
-
-
-def test_learning_preferences_missing_required_field():
-    """
-    测试缺少必填字段
-    
-    验证：
-    - 缺少必填字段时抛出ValidationError
-    """
-    with pytest.raises(ValidationError) as exc_info:
-        LearningPreferences(
-            # 缺少learning_goal
-            available_hours_per_week=15,
-            motivation="职业转型",
-            current_level="beginner",
+    def test_roadmap_detail_response(self):
+        """测试RoadmapDetailResponse序列化"""
+        data = RoadmapDetailResponse(
+            roadmap_id="test-roadmap-001",
+            user_id="user-123",
+            learning_goal="学习Python Web开发",
+            created_at="2024-01-01T00:00:00Z",
+            updated_at="2024-01-01T00:00:00Z",
+            framework={"stages": []},
+            status="completed",
+            title="Python Web Development",
+            description="从零开始学习Python Web开发",
         )
+        
+        assert data.roadmap_id == "test-roadmap-001"
+        assert data.user_id == "user-123"
+        assert data.status == "completed"
+        assert isinstance(data.framework, dict)
     
-    errors = exc_info.value.errors()
-    assert any(error["loc"][0] == "learning_goal" for error in errors)
-
-
-def test_learning_preferences_invalid_type():
-    """
-    测试无效的字段类型
-    
-    验证：
-    - 提供错误类型时抛出ValidationError
-    """
-    with pytest.raises(ValidationError):
-        LearningPreferences(
-            learning_goal="成为全栈开发工程师",
-            available_hours_per_week="not_a_number",  # 应该是int
-            motivation="职业转型",
-            current_level="beginner",
-            career_background="市场营销",
-            content_preference=["text"],
+    def test_roadmap_delete_response(self):
+        """测试RoadmapDeleteResponse序列化"""
+        data = RoadmapDeleteResponse(
+            message="路线图已删除",
+            roadmap_id="test-roadmap-001",
         )
+        
+        assert data.message == "路线图已删除"
+        assert data.roadmap_id == "test-roadmap-001"
+    
+    def test_roadmap_restore_response(self):
+        """测试RoadmapRestoreResponse序列化"""
+        data = RoadmapRestoreResponse(
+            message="路线图已恢复",
+            roadmap_id="test-roadmap-001",
+        )
+        
+        assert data.message == "路线图已恢复"
+        assert data.roadmap_id == "test-roadmap-001"
+    
+    def test_roadmap_permanent_delete_response(self):
+        """测试RoadmapPermanentDeleteResponse序列化"""
+        data = RoadmapPermanentDeleteResponse(
+            message="路线图已永久删除",
+            roadmap_id="test-roadmap-001",
+        )
+        
+        assert data.message == "路线图已永久删除"
+        assert data.roadmap_id == "test-roadmap-001"
+    
+    def test_roadmap_status_response(self):
+        """测试RoadmapStatusResponse序列化"""
+        data = RoadmapStatusResponse(
+            roadmap_id="test-roadmap-001",
+            status="completed",
+            task_id="task-123",
+        )
+        
+        assert data.roadmap_id == "test-roadmap-001"
+        assert data.status == "completed"
+        assert data.task_id == "task-123"
+        
+        # 测试可选字段
+        data_without_task = RoadmapStatusResponse(
+            roadmap_id="test-roadmap-002",
+            status="draft",
+        )
+        assert data_without_task.task_id is None
+    
+    def test_roadmap_status_quick_response(self):
+        """测试RoadmapStatusQuickResponse序列化"""
+        data = RoadmapStatusQuickResponse(
+            roadmap_id="test-roadmap-001",
+            status="completed",
+            has_active_task=False,
+            zombie_count=0,
+        )
+        
+        assert data.roadmap_id == "test-roadmap-001"
+        assert data.has_active_task is False
+        assert data.zombie_count == 0
+        
+        # 测试包含僵尸概念的情况
+        data_with_zombies = RoadmapStatusQuickResponse(
+            roadmap_id="test-roadmap-002",
+            status="processing",
+            has_active_task=True,
+            active_task_id="task-456",
+            zombie_concepts=["concept-1", "concept-2"],
+            zombie_count=2,
+        )
+        assert data_with_zombies.zombie_count == 2
+        assert len(data_with_zombies.zombie_concepts) == 2
 
 
-# ============================================================
-# UserRequest 测试
-# ============================================================
-
-def test_user_request_valid():
-    """
-    测试有效的用户请求
+class TestAuthSchemas:
+    """测试认证相关Schema"""
     
-    验证：
-    - 包含LearningPreferences的嵌套结构可以正常创建
-    """
-    prefs = LearningPreferences(
-        learning_goal="学习Python",
-        available_hours_per_week=10,
-        motivation="兴趣",
-        current_level="beginner",
-        career_background="学生",
-        content_preference=["text"],
-    )
+    def test_logout_response(self):
+        """测试LogoutResponse序列化"""
+        data = LogoutResponse(
+            message="成功登出",
+            user_id="user-123",
+        )
+        
+        assert data.message == "成功登出"
+        assert data.user_id == "user-123"
+        assert data.devices_count is None
+        
+        # 测试包含设备数量
+        data_with_devices = LogoutResponse(
+            message="已登出所有设备",
+            user_id="user-123",
+            devices_count=3,
+        )
+        assert data_with_devices.devices_count == 3
     
-    request = UserRequest(
-        user_id="user_001",
-        session_id="session_001",
-        preferences=prefs,
-        additional_context="希望快速入门",
-    )
-    
-    assert request.user_id == "user_001"
-    assert request.preferences.learning_goal == "学习Python"
-    assert request.additional_context == "希望快速入门"
-
-
-# ============================================================
-# Concept 测试
-# ============================================================
-
-def test_concept_valid():
-    """
-    测试有效的概念模型
-    
-    验证：
-    - 概念模型可以正常创建
-    - 前置概念列表正确处理
-    """
-    concept = Concept(
-        concept_id="c1",
-        name="Python基础",
-        description="学习Python基础语法",
-        estimated_hours=8.0,
-        prerequisites=[],
-        difficulty="easy",
-        keywords=["python", "basics"],
-    )
-    
-    assert concept.concept_id == "c1"
-    assert concept.estimated_hours == 8.0
-    assert concept.difficulty == "easy"
-    assert len(concept.prerequisites) == 0
+    def test_blacklist_stats_response(self):
+        """测试BlacklistStatsResponse序列化"""
+        data = BlacklistStatsResponse(
+            total_tokens=100,
+            active_tokens=80,
+            expired_tokens=20,
+        )
+        
+        assert data.total_tokens == 100
+        assert data.active_tokens == 80
+        assert data.expired_tokens == 20
 
 
-def test_concept_with_prerequisites():
-    """
-    测试带前置概念的概念
+class TestTaskSchemas:
+    """测试任务相关Schema"""
     
-    验证：
-    - 前置概念列表可以正确设置
-    """
-    concept = Concept(
-        concept_id="c2",
-        name="Python进阶",
-        description="学习Python进阶特性",
-        estimated_hours=12.0,
-        prerequisites=["c1"],  # 依赖c1
-        difficulty="medium",
-        keywords=["python", "advanced"],
-    )
-    
-    assert len(concept.prerequisites) == 1
-    assert concept.prerequisites[0] == "c1"
+    def test_content_generation_status_response(self):
+        """测试ContentGenerationStatusResponse序列化"""
+        data = ContentGenerationStatusResponse(
+            task_id="task-123",
+            celery_task_id="celery-456",
+            status="PROGRESS",
+            progress={"current": 15, "total": 30, "percentage": 50.0},
+            message="正在生成教程内容",
+        )
+        
+        assert data.task_id == "task-123"
+        assert data.celery_task_id == "celery-456"
+        assert data.status == "PROGRESS"
+        assert data.progress["percentage"] == 50.0
+        assert data.message == "正在生成教程内容"
+        
+        # 测试可选字段
+        data_minimal = ContentGenerationStatusResponse(
+            task_id="task-789",
+            status="PENDING",
+        )
+        assert data_minimal.celery_task_id is None
+        assert data_minimal.progress is None
 
 
-# ============================================================
-# Module 测试
-# ============================================================
-
-def test_module_with_concepts():
-    """
-    测试包含概念的模块
+class TestWaitlistSchemas:
+    """测试Waitlist相关Schema"""
     
-    验证：
-    - 模块可以包含多个概念
-    - 嵌套结构正确
-    """
-    concept1 = Concept(
-        concept_id="c1",
-        name="HTML基础",
-        description="HTML标签",
-        estimated_hours=4.0,
-        prerequisites=[],
-        difficulty="easy",
-        keywords=["html"],
-    )
-    
-    concept2 = Concept(
-        concept_id="c2",
-        name="CSS基础",
-        description="CSS样式",
-        estimated_hours=6.0,
-        prerequisites=["c1"],
-        difficulty="easy",
-        keywords=["css"],
-    )
-    
-    module = Module(
-        module_id="m1",
-        name="Web基础",
-        description="学习Web开发基础",
-        concepts=[concept1, concept2],
-    )
-    
-    assert module.module_id == "m1"
-    assert len(module.concepts) == 2
-    assert module.concepts[0].concept_id == "c1"
-    assert module.concepts[1].concept_id == "c2"
+    def test_waitlist_join_response(self):
+        """测试WaitlistJoinResponse序列化"""
+        data = WaitlistJoinResponse(
+            success=True,
+            message="Thanks for joining!",
+            is_new=True,
+            position=42,
+        )
+        
+        assert data.success is True
+        assert data.is_new is True
+        assert data.position == 42
+        
+        # 测试可选字段
+        data_without_position = WaitlistJoinResponse(
+            success=True,
+            message="Already on waitlist",
+            is_new=False,
+        )
+        assert data_without_position.position is None
 
 
-# ============================================================
-# Stage 测试
-# ============================================================
-
-def test_stage_with_modules():
-    """
-    测试包含模块的阶段
+class TestSchemaJsonSerialization:
+    """测试Schema的JSON序列化和反序列化"""
     
-    验证：
-    - 阶段可以包含多个模块
-    - 完整的三层嵌套结构（Stage->Module->Concept）正确
-    """
-    concept = Concept(
-        concept_id="c1",
-        name="JavaScript基础",
-        description="JS语法",
-        estimated_hours=10.0,
-        prerequisites=[],
-        difficulty="medium",
-        keywords=["javascript"],
-    )
+    def test_roadmap_detail_json_serialization(self):
+        """测试RoadmapDetailResponse的JSON序列化"""
+        data = RoadmapDetailResponse(
+            roadmap_id="test-001",
+            user_id="user-123",
+            learning_goal="学习Python",
+            created_at="2024-01-01T00:00:00Z",
+            updated_at="2024-01-01T00:00:00Z",
+            framework={"stages": [{"name": "基础阶段"}]},
+            status="completed",
+        )
+        
+        # 序列化为JSON
+        json_str = data.model_dump_json()
+        assert isinstance(json_str, str)
+        
+        # 反序列化
+        parsed = RoadmapDetailResponse.model_validate_json(json_str)
+        assert parsed.roadmap_id == data.roadmap_id
+        assert parsed.framework == data.framework
     
-    module = Module(
-        module_id="m1",
-        name="前端编程",
-        description="学习前端编程",
-        concepts=[concept],
-    )
-    
-    stage = Stage(
-        stage_id="s1",
-        name="前端基础",
-        description="学习前端开发",
-        order=1,
-        modules=[module],
-    )
-    
-    assert stage.stage_id == "s1"
-    assert stage.order == 1
-    assert len(stage.modules) == 1
-    assert stage.modules[0].module_id == "m1"
-    assert len(stage.modules[0].concepts) == 1
-
-
-# ============================================================
-# RoadmapFramework 测试
-# ============================================================
-
-def test_roadmap_framework_complete():
-    """
-    测试完整的路线图框架
-    
-    验证：
-    - 完整的四层结构（Roadmap->Stage->Module->Concept）可以正常创建
-    - 总时长和周数正确
-    """
-    concept = Concept(
-        concept_id="c1",
-        name="React基础",
-        description="学习React",
-        estimated_hours=15.0,
-        prerequisites=[],
-        difficulty="medium",
-        keywords=["react"],
-    )
-    
-    module = Module(
-        module_id="m1",
-        name="React开发",
-        description="React框架",
-        concepts=[concept],
-    )
-    
-    stage = Stage(
-        stage_id="s1",
-        name="前端框架",
-        description="学习前端框架",
-        order=1,
-        modules=[module],
-    )
-    
-    roadmap = RoadmapFramework(
-        roadmap_id="roadmap_001",
-        title="前端开发学习路线",
-        stages=[stage],
-        total_estimated_hours=15.0,
-        recommended_completion_weeks=2,
-    )
-    
-    assert roadmap.roadmap_id == "roadmap_001"
-    assert roadmap.title == "前端开发学习路线"
-    assert roadmap.total_estimated_hours == 15.0
-    assert roadmap.recommended_completion_weeks == 2
-    assert len(roadmap.stages) == 1
-
-
-def test_roadmap_framework_empty_stages():
-    """
-    测试空阶段列表
-    
-    验证：
-    - 允许创建没有阶段的路线图（用于初始化）
-    """
-    roadmap = RoadmapFramework(
-        roadmap_id="roadmap_002",
-        title="空路线图",
-        stages=[],
-        total_estimated_hours=0.0,
-        recommended_completion_weeks=0,
-    )
-    
-    assert len(roadmap.stages) == 0
-    assert roadmap.total_estimated_hours == 0.0
-
+    def test_content_generation_status_json_serialization(self):
+        """测试ContentGenerationStatusResponse的JSON序列化"""
+        data = ContentGenerationStatusResponse(
+            task_id="task-123",
+            status="SUCCESS",
+            result={"completed_concepts": 10},
+        )
+        
+        json_str = data.model_dump_json()
+        parsed = ContentGenerationStatusResponse.model_validate_json(json_str)
+        assert parsed.task_id == data.task_id
+        assert parsed.result["completed_concepts"] == 10

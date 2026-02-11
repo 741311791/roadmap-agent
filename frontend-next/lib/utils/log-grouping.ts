@@ -5,18 +5,10 @@
  * 确保每个阶段的日志都能完整显示，不会被某个阶段的大量日志占满限额。
  */
 
-export interface ExecutionLog {
-  id: string;
-  task_id: string;
-  level: 'debug' | 'info' | 'success' | 'warning' | 'error';
-  category: string;
-  step: string | null;
-  agent_name: string | null;
-  message: string;
-  details: any;
-  duration_ms: number | null;
-  created_at: string;
-}
+import type { ExecutionLogResponse } from '@/types/generated/models';
+
+// 使用生成的类型
+export type ExecutionLog = ExecutionLogResponse;
 
 /**
  * 按 step 分组日志，每个 step 最多保留指定数量的日志

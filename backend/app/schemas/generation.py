@@ -48,3 +48,15 @@ class CancelTaskResponse(BaseModel):
     message: str
     previous_status: Optional[str] = None
 
+
+# ============================================================
+# 任务删除相关
+# ============================================================
+
+class DeleteTaskResponse(BaseModel):
+    """任务删除响应"""
+    success: bool
+    task_id: str
+    message: str
+    previous_status: Optional[str] = None
+

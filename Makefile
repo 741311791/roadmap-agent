@@ -181,6 +181,51 @@ lint:
 	@echo ""
 	@echo "✅ Linting passed!"
 
+# ============================================================
+# Celery Worker 启动命令
+# ============================================================
+
+# 检测操作系统，macOS 使用 solo pool 避免 fork 问题
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+    # macOS 开发环境：使用 solo pool（单进程模式）
+    CELERY_POOL := solo
+    CELERY_CONCURRENCY_WORKFLOW := 1
+    CELERY_CONCURRENCY_CONTENT := 1
+else
+    # Linux 生产环境：使用 prefork pool（多进程模式）
+    CELERY_POOL := prefork
+    CELERY_CONCURRENCY_WORKFLOW := 8
+    CELERY_CONCURRENCY_CONTENT := 20
+endif
+
+# 启动主 Celery Worker（处理工作流任务）
+celery-workflow:
+	@echo "🚀 Starting Celery Worker (Workflow Queue) - Pool: $(CELERY_POOL)..."
+	cd backend && uv run celery -A app.core.celery_app worker \
+		--loglevel=info \
+		--pool=$(CELERY_POOL) \
+		--concurrency=$(CELERY_CONCURRENCY_WORKFLOW) \
+		--hostname=workflow@%h \
+		--max-tasks-per-child=500 \
+		--queues=celery
+
+# 启动内容生成 Worker（独立队列）
+celery-content:
+	@echo "🚀 Starting Celery Worker (Content Generation Queue) - Pool: $(CELERY_POOL)..."
+	cd backend && uv run celery -A app.core.celery_app worker \
+		--loglevel=info \
+		--pool=$(CELERY_POOL) \
+		--concurrency=$(CELERY_CONCURRENCY_CONTENT) \
+		--hostname=content@%h \
+		--max-tasks-per-child=100 \
+		--queues=content_generation
+
+# 启动所有 Worker（同时启动两个队列）
+celery-all:
+	@echo "🚀 Starting All Celery Workers - Pool: $(CELERY_POOL)..."
+	@make -j2 celery-workflow celery-content
+
 # 查看系统状态
 status:
 	@echo "📊 System Status"

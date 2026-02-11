@@ -38,14 +38,14 @@ async def update_task_status_failed(task_id: str, error: Exception) -> None:
             # 清理错误消息（移除敏感信息）
             error_message = sanitize_error_message(str(error), error)
             
-            await task_crud.update_status(
+            await task_crud.update_task_status(
                 session=session,
                 task_id=task_id,
                 status="failed",
-                current_step="failed",
+                current_step=None,  # 不更新current_step，保留失败时的阶段信息
                 error_message=error_message[:500],  # 限制长度
             )
-            await session.commit()
+            # ✅ 不需要手动 commit，async_session_maker.begin() 自动处理
             
             logger.debug(
                 "task_status_updated_to_failed",
@@ -161,17 +161,20 @@ def safe_task(**celery_kwargs):
                 return result
                 
             except Exception as e:
-                # 记录结构化日志
+                # ✅ 简化错误日志（使用格式化工具）
+                from app.utils.log_formatters import truncate_string
+                
                 log_data = {
                     "task_id": task_id,
                     "task_name": func.__name__,
                     "error_type": type(e).__name__,
-                    "error_message": str(e),
+                    "error": truncate_string(str(e), max_length=200),  # 截断错误消息
                 }
                 
-                # 仅在开发环境记录完整堆栈
-                if settings.DEBUG or settings.ENVIRONMENT == "development":
-                    log_data["traceback"] = traceback.format_exc()
+                # ⚠️ 仅在调试模式记录堆栈（最多10行）
+                if settings.DEBUG:
+                    tb_lines = traceback.format_exc().split('\n')
+                    log_data["traceback"] = '\n'.join(tb_lines[-10:])  # 只保留最后10行
                 
                 logger.error("celery_task_failed", **log_data)
                 
@@ -213,7 +216,7 @@ def safe_task(**celery_kwargs):
 def handle_task_failure(sender: Optional[Task] = None, task_id: Optional[str] = None, 
                        exception: Optional[Exception] = None, **kwargs) -> None:
     """
-    Celery 任务失败信号处理器
+    Celery 任务失败信号处理器（优化版）
     
     捕获所有未被 @safe_task 装饰器处理的任务异常。
     
@@ -223,22 +226,27 @@ def handle_task_failure(sender: Optional[Task] = None, task_id: Optional[str] = 
         exception: 异常对象
         **kwargs: 其他信号参数
     """
+    from app.utils.log_formatters import truncate_string
+    
     task_name = sender.name if sender else "Unknown"
+    error_msg = str(exception) if exception else "No error message"
     
     log_data = {
         "task_id": task_id,
         "task_name": task_name,
         "error_type": type(exception).__name__ if exception else "Unknown",
-        "error_message": str(exception) if exception else "No error message",
+        "error": truncate_string(error_msg, max_length=200),  # ✅ 截断错误消息
         "signal": "task_failure",
     }
     
-    # 仅在开发环境记录完整堆栈
-    if settings.DEBUG or settings.ENVIRONMENT == "development":
-        if exception:
-            log_data["traceback"] = "".join(
-                traceback.format_exception(type(exception), exception, exception.__traceback__)
-            )
+    # ⚠️ 仅在调试模式记录简化堆栈（最多10行）
+    if settings.DEBUG and exception:
+        tb_lines = traceback.format_exception(
+            type(exception), exception, exception.__traceback__
+        )
+        log_data["traceback"] = '\n'.join(
+            [line.strip() for line in tb_lines[-10:]]  # 只保留最后10行
+        )
     
     logger.error("celery_task_failure_signal", **log_data)
 

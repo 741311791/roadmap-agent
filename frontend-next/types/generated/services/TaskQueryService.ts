@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ResponseSchemaModel } from '../models/ResponseSchemaModel';
 import type { ResponseSchemaModel_ContentGenerationStatusResponse_ } from '../models/ResponseSchemaModel_ContentGenerationStatusResponse_';
 import type { ResponseSchemaModel_Dict_str__Any__ } from '../models/ResponseSchemaModel_Dict_str__Any__';
 import type { ResponseSchemaModel_TaskListResponse_ } from '../models/ResponseSchemaModel_TaskListResponse_';
@@ -235,4 +236,61 @@ export class TaskQueryService {
                                         },
                                     });
                                 }
-                            }
+                                /**
+                                 * Get Task Edit History Full
+                                 * 获取任务关联路线图的完整编辑历史（包含详细diff和修改内容）
+                                 *
+                                 * 这是一个便捷端点，根据 task_id 查找关联的 roadmap_id，然后返回编辑历史。
+                                 *
+                                 * Args:
+                                 * task_id: 任务ID
+                                 * db: 数据库会话
+                                 *
+                                 * Returns:
+                                 * 完整编辑历史列表（按时间倒序）
+                                 *
+                                 * Raises:
+                                 * NotFoundError: 任务不存在或任务未关联路线图
+                                 *
+                                 * Example:
+                                 * ```json
+                                 * {
+                                     * "code": 200,
+                                     * "msg": "Success",
+                                     * "data": {
+                                         * "roadmap_id": "xxx",
+                                         * "edit_history": [
+                                             * {
+                                                 * "id": 1,
+                                                 * "timestamp": "2026-01-23T12:00:00Z",
+                                                 * "edit_source": "validation_failed",
+                                                 * "edit_plan_id": "xxx",
+                                                 * "changes_made": {...},
+                                                 * "diff_summary": "修改了3个模块...",
+                                                 * "version": 2
+                                                 * }
+                                                 * ],
+                                                 * "total": 3
+                                                 * }
+                                                 * }
+                                                 * ```
+                                                 * @returns ResponseSchemaModel Successful Response
+                                                 * @throws ApiError
+                                                 */
+                                                public static getTaskEditHistoryFullApiV1TasksTaskIdEditHistoryFullGet({
+                                                    taskId,
+                                                }: {
+                                                    taskId: string,
+                                                }): CancelablePromise<ResponseSchemaModel> {
+                                                    return __request(OpenAPI, {
+                                                        method: 'GET',
+                                                        url: '/api/v1/tasks/{task_id}/edit/history-full',
+                                                        path: {
+                                                            'task_id': taskId,
+                                                        },
+                                                        errors: {
+                                                            422: `Validation Error`,
+                                                        },
+                                                    });
+                                                }
+                                            }

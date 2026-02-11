@@ -3,6 +3,7 @@ import { Inter, Playfair_Display } from 'next/font/google';
 import './globals.css';
 import './fonts.css'; // 本地字体配置
 import { Providers } from './providers';
+import { LocaleProvider } from '@/components/providers/locale-provider';
 
 const inter = Inter({
   subsets: ['latin'],
@@ -38,11 +39,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="zh-CN" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <body
         className={`${inter.variable} ${playfair.variable} font-sans antialiased`}
       >
-        <Providers>{children}</Providers>
+        <LocaleProvider>
+          <Providers>{children}</Providers>
+        </LocaleProvider>
       </body>
     </html>
   );

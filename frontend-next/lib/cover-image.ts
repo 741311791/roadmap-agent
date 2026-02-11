@@ -121,7 +121,7 @@ export async function fetchCoverImageFromAPI(roadmapId: string): Promise<string 
   }
   
   try {
-    const response = await fetch(`${API_BASE_URL}/api/v1/roadmap/${roadmapId}/cover-image`, {
+    const response = await fetch(`${API_BASE_URL}/api/v1/roadmaps/${roadmapId}/cover-image`, {
       credentials: 'include',
       // 添加超时和缓存控制
       signal: AbortSignal.timeout(5000), // 5秒超时
@@ -177,7 +177,7 @@ export async function batchFetchCoverImagesFromAPI(
   }
   
   try {
-    const response = await fetch(`${API_BASE_URL}/api/v1/cover-images/batch-get`, {
+    const response = await fetch(`${API_BASE_URL}/api/v1/roadmaps/cover-images/batch-get`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -250,7 +250,7 @@ export async function batchGenerateCoverImages(
   message: string;
 }> {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/v1/cover-images/batch-generate`, {
+    const response = await fetch(`${API_BASE_URL}/api/v1/roadmaps/cover-images/batch-generate`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

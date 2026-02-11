@@ -3,49 +3,11 @@
 
 提供内容生成任务的通用工具和辅助方法。
 """
-import asyncio
 import structlog
 
+from app.tasks.utils import run_async
+
 logger = structlog.get_logger()
-
-# 每个 Worker 进程的事件循环（懒加载）
-_worker_loop = None
-
-
-def get_worker_loop():
-    """
-    获取或创建 Worker 进程的事件循环
-    
-    每个 Worker 进程维护一个独立的事件循环，
-    不在任务结束时关闭，避免连接清理问题。
-    
-    Returns:
-        asyncio.AbstractEventLoop: Worker 进程的事件循环
-    """
-    global _worker_loop
-    
-    if _worker_loop is None or _worker_loop.is_closed():
-        _worker_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(_worker_loop)
-        logger.debug("celery_worker_loop_created", loop_id=id(_worker_loop))
-    
-    return _worker_loop
-
-
-def run_async(coro):
-    """
-    在同步上下文中运行异步协程
-    
-    使用 Worker 进程级别的事件循环，避免频繁创建/销毁循环。
-    
-    Args:
-        coro: 异步协程对象
-        
-    Returns:
-        协程的返回值
-    """
-    loop = get_worker_loop()
-    return loop.run_until_complete(coro)
 
 
 def parse_failed_concept(failed_item: str) -> tuple[str, str | None]:
@@ -230,7 +192,7 @@ async def update_concept_status_in_framework(
             user_id=metadata.user_id,
             framework=framework_obj,
         )
-        await session.commit()
+        # ✅ 不需要手动 commit，get_celery_session() 自动处理
 
 
 # ============================================================
@@ -338,8 +300,8 @@ async def _retry_single_content_async(
     from app.core.orchestrator_factory import OrchestratorFactory
     from app.core.orchestrator.workflow_brain import WorkflowBrain
     from app.core.orchestrator.subgraphs.content_generation import build_content_generation_subgraph
-    from app.services.notification_service import notification_service
-    from app.services.execution_logger import execution_logger
+    from app.services.shared.notification_service import notification_service
+    from app.services.shared.execution_logger import execution_logger
     
     # 初始化 Orchestrator
     factory = OrchestratorFactory()
@@ -358,8 +320,11 @@ async def _retry_single_content_async(
             agent_factory=agent_factory,
         )
         
-        # 构建子图
-        subgraph = build_content_generation_subgraph()
+        # 获取子图专用的 checkpointer
+        child_checkpointer = factory.get_child_checkpointer()
+        
+        # 构建子图（带 checkpointer）
+        subgraph = build_content_generation_subgraph(checkpointer=child_checkpointer)
         
         # 构造 Concept 对象
         concept = Concept(**concept_dict)
@@ -381,8 +346,16 @@ async def _retry_single_content_async(
             "errors": [],
         }
         
+        # 为重试任务创建独立的 thread_id（避免与主工作流冲突）
+        # 格式: {task_id}:retry:{concept_id}
+        retry_config = {
+            "configurable": {
+                "thread_id": f"{task_id}:retry:{concept.concept_id}",
+            }
+        }
+        
         # 执行子图
-        result = await subgraph.ainvoke(sub_state)
+        result = await subgraph.ainvoke(sub_state, retry_config)
         
         # 批量保存数据库（重用 ContentRunner 的逻辑）
         from app.core.orchestrator.node_runners.content_runner import ContentRunner
@@ -407,8 +380,21 @@ async def _retry_single_content_async(
             "quiz_count": len(result["quizzes"]),
             "error_count": len(result["errors"]),
         }
+    
+    except Exception as e:
+        logger.error(
+            "retry_single_content_failed",
+            task_id=task_id,
+            roadmap_id=roadmap_id,
+            concept_id=concept_dict.get("concept_id"),
+            error=str(e),
+        )
+        return {
+            "success": False,
+            "error": str(e),
+        }
         
-    finally:
-        # 清理 Orchestrator Factory
-        await factory.cleanup()
+    # ⚠️ 不要在这里清理 Factory！
+    # OrchestratorFactory 是全局单例，应该在应用生命周期内保持
+    # 只在应用关闭时清理（main.py 的 shutdown 事件）
 

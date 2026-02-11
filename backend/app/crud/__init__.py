@@ -20,18 +20,40 @@ from app.crud.crud_tech_assessment import (
     get_user_profile_crud,
 )
 
-# 工作流相关
-from app.crud.crud_workflow import (
+# 意图分析相关
+from app.crud.crud_intent_analysis import (
     IntentAnalysisCRUD,
     get_intent_analysis_crud,
-    ExecutionLogCRUD,
-    get_execution_log_crud,
+)
+
+# 验证相关
+from app.crud.crud_validation import (
     ValidationCRUD,
     get_validation_crud,
-    EditCRUD,
-    get_edit_crud,
+)
+
+# 编辑计划相关
+from app.crud.crud_edit_plan import (
     EditPlanCRUD,
     get_edit_plan_crud,
+)
+
+# 审核反馈相关
+from app.crud.crud_review_feedback import (
+    ReviewFeedbackCRUD,
+    get_review_feedback_crud,
+)
+
+# 执行日志相关
+from app.crud.crud_execution_log import (
+    ExecutionLogCRUD,
+    get_execution_log_crud,
+)
+
+# 编辑记录相关
+from app.crud.crud_edit import (
+    EditCRUD,
+    get_edit_crud,
 )
 
 __all__ = [
@@ -66,16 +88,23 @@ __all__ = [
     "get_tech_assessment_crud",
     "UserProfileCRUD",
     "get_user_profile_crud",
-    # 工作流CRUD
+    # 意图分析CRUD
     "IntentAnalysisCRUD",
     "get_intent_analysis_crud",
-    "ExecutionLogCRUD",
-    "get_execution_log_crud",
+    # 验证CRUD
     "ValidationCRUD",
     "get_validation_crud",
-    "EditCRUD",
-    "get_edit_crud",
+    # 编辑计划CRUD
     "EditPlanCRUD",
     "get_edit_plan_crud",
+    # 审核反馈CRUD
+    "ReviewFeedbackCRUD",
+    "get_review_feedback_crud",
+    # 执行日志CRUD
+    "ExecutionLogCRUD",
+    "get_execution_log_crud",
+    # 编辑记录CRUD
+    "EditCRUD",
+    "get_edit_crud",
 ]
 

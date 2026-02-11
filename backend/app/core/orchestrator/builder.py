@@ -3,12 +3,14 @@
 
 负责构建 LangGraph 工作流图，定义节点和边。
 
-工作流结构：
+工作流结构（优化版 - 内容生成已独立）：
 START → intent_analysis → curriculum_design 
       → [structure_validation ↔ roadmap_edit] 
       → human_review 
-      → tutorial_generation 
       → END
+      
+注意：内容生成已从主工作流中移除，改为独立的 Celery Worker。
+框架完成后，在 human_review 通过时触发内容生成任务。
 """
 import structlog
 from langgraph.graph import StateGraph, END
@@ -23,37 +25,37 @@ logger = structlog.get_logger()
 
 class WorkflowBuilder:
     """
-    工作流构建器
+    工作流构建器（重构版 - 纯函数Node）
     
     负责根据配置构建 LangGraph 工作流图。
+    
+    重构改进：
+    - 接受纯函数 Node 替代 Runner 类
+    - Node 通过 config 获取依赖（RuntimeContext）
     """
     
     def __init__(
         self,
         config: WorkflowConfig,
         router: WorkflowRouter,
-        # Node runners - 将在任务1.4中实现
-        intent_runner=None,
-        curriculum_runner=None,
-        validation_runner=None,
-        editor_runner=None,
-        review_runner=None,
-        content_runner=None,
-        edit_plan_runner=None,  # 修改计划分析节点（人工审核触发）
-        validation_edit_plan_runner=None,  # 验证结果修改计划分析节点（验证失败触发）
+        # 纯函数 Node
+        intent_node=None,
+        curriculum_node=None,
+        validation_node=None,
+        editor_node=None,
+        review_node=None,
+        edit_plan_node=None,  # ✅ 共享的编辑计划分析节点（由edit_source区分来源）
     ):
         self.config = config
         self.router = router
         
-        # Node runners
-        self.intent_runner = intent_runner
-        self.curriculum_runner = curriculum_runner
-        self.validation_runner = validation_runner
-        self.editor_runner = editor_runner
-        self.review_runner = review_runner
-        self.content_runner = content_runner
-        self.edit_plan_runner = edit_plan_runner
-        self.validation_edit_plan_runner = validation_edit_plan_runner  # 新增
+        # 纯函数 Node
+        self.intent_node = intent_node
+        self.curriculum_node = curriculum_node
+        self.validation_node = validation_node
+        self.editor_node = editor_node
+        self.review_node = review_node
+        self.edit_plan_node = edit_plan_node  # ✅ 共享节点
     
     def build(self, checkpointer) -> CompiledStateGraph:
         """
@@ -81,82 +83,71 @@ class WorkflowBuilder:
         self._add_edges(workflow)
         
         # 编译工作流（使用 AsyncPostgresSaver 进行状态持久化）
-        # 声明中断点：human_review 节点使用 interrupt() API
-        interrupt_before_nodes = (
-            ["human_review"] if not self.config.skip_human_review else []
-        )
+        # ✅ 修复：不使用 interrupt_before，因为 human_review 节点内部已经使用了 interrupt() API
+        # 使用 interrupt_before 会导致节点在执行前就中断，ReviewHandler.on_start() 不会被调用，
+        # 因此前端无法收到 human_review_required 通知，UI 不会更新
         return workflow.compile(
             checkpointer=checkpointer,
-            interrupt_before=interrupt_before_nodes,
         )
     
     def _add_nodes(self, workflow: StateGraph):
         """
         添加工作流节点（含 RetryPolicy）
         
-        LangGraph 1.0 最佳实践：
-        - 每个节点独立配置 RetryPolicy
+        重构版：
+        - 使用纯函数 Node 替代 Runner 类
+        - Node 通过 config 获取依赖（RuntimeContext）
         - LLM 调用节点使用 LLM_RETRY_POLICY（5 次重试）
         - 纯逻辑节点使用 NO_RETRY_POLICY（不重试）
         """
         # 核心节点（始终添加）
-        if self.intent_runner:
+        if self.intent_node:
             workflow.add_node(
                 "intent_analysis",
-                self.intent_runner.run,
-                retry=LLM_RETRY_POLICY,
+                self.intent_node,
+                retry_policy=LLM_RETRY_POLICY,
             )
-        if self.curriculum_runner:
+        if self.curriculum_node:
             workflow.add_node(
                 "curriculum_design",
-                self.curriculum_runner.run,
-                retry=LLM_RETRY_POLICY,
+                self.curriculum_node,
+                retry_policy=LLM_RETRY_POLICY,
             )
         
         # 结构验证和路线图编辑（始终添加）
-        if self.validation_runner:
+        if self.validation_node:
             workflow.add_node(
                 "structure_validation",
-                self.validation_runner.run,
-                retry=NO_RETRY_POLICY,  # 纯逻辑节点，失败是确定性的
+                self.validation_node,
+                retry_policy=NO_RETRY_POLICY,  # 纯逻辑节点
             )
-        if self.editor_runner:
+        # ✅ 共享的编辑计划分析节点（validation和review都使用此节点，由edit_source区分）
+        if self.edit_plan_node:
+            workflow.add_node(
+                "edit_plan_analysis",
+                self.edit_plan_node,
+                retry_policy=LLM_RETRY_POLICY,
+            )
+        
+        # ✅ 共享的路线图编辑节点（由edit_source区分来源）
+        if self.editor_node:
             workflow.add_node(
                 "roadmap_edit",
-                self.editor_runner.run,
-                retry=LLM_RETRY_POLICY,
-            )
-        # 验证结果修改计划分析节点（验证失败时触发）
-        if self.validation_edit_plan_runner:
-            workflow.add_node(
-                "validation_edit_plan_analysis",
-                self.validation_edit_plan_runner.run,
-                retry=LLM_RETRY_POLICY,
+                self.editor_node,
+                retry_policy=LLM_RETRY_POLICY,
             )
         
         # 可选节点：人工审核
-        if not self.config.skip_human_review:
-            if self.review_runner:
-                workflow.add_node(
-                    "human_review",
-                    self.review_runner.run,
-                    retry=NO_RETRY_POLICY,  # 使用 interrupt，不需要重试
-                )
-            # 修改计划分析节点（仅在有人工审核时添加）
-            if self.edit_plan_runner:
-                workflow.add_node(
-                    "edit_plan_analysis",
-                    self.edit_plan_runner.run,
-                    retry=LLM_RETRY_POLICY,
-                )
-        
-        # 内容生成（始终添加）
-        if self.content_runner:
+        if not self.config.skip_human_review and self.review_node:
             workflow.add_node(
-                "tutorial_generation",
-                self.content_runner.run,
-                retry=NO_RETRY_POLICY,  # 子图内部已有 RetryPolicy
+                "human_review",
+                self.review_node,
+                retry_policy=NO_RETRY_POLICY,  # 使用 interrupt
             )
+        
+        # ✅ 内容生成已移除：改为独立的 Celery Worker
+        # 在 human_review_node 批准后触发 Celery 任务
+        # 不再作为 LangGraph 节点（避免主工作流 checkpoint 包含大量内容数据）
     
     def _add_edges(self, workflow: StateGraph):
         """
@@ -164,7 +155,7 @@ class WorkflowBuilder:
         
         简化后的流程（所有核心节点始终执行）：
         intent_analysis → curriculum_design → structure_validation 
-        → [验证循环] → human_review（可选） → tutorial_generation → END
+        → [验证循环] → human_review（可选） → content_generation → END
         """
         # 设置入口点
         workflow.set_entry_point("intent_analysis")
@@ -178,22 +169,21 @@ class WorkflowBuilder:
             "structure_validation",
             self.router.route_after_validation,
             {
-                # 验证失败后先进入修改计划分析
-                "validation_edit_plan_analysis": "validation_edit_plan_analysis",
-                # 验证通过后进入人工审核（或跳过）
-                "human_review": "human_review" if not self.config.skip_human_review else "tutorial_generation",
-                # 或直接进入内容生成
-                "tutorial_generation": "tutorial_generation",
+                # ✅ 验证失败后进入共享的编辑计划分析节点（edit_source会被设置为validation_failed）
+                "edit_plan_analysis": "edit_plan_analysis",
+                # 验证通过后进入人工审核（或直接结束主工作流）
+                "human_review": "human_review" if not self.config.skip_human_review else END,
+                # ✅ 主工作流结束（等待内容生成）
                 "end": END,
             },
         )
         
-        # 验证结果修改计划分析 → 路线图编辑
-        if self.validation_edit_plan_runner:
-            workflow.add_edge("validation_edit_plan_analysis", "roadmap_edit")
+        # ✅ 编辑计划分析 → 路线图编辑（validation和review都使用此边）
+        if self.edit_plan_node:
+            workflow.add_edge("edit_plan_analysis", "roadmap_edit")
         
         # 路线图编辑后的条件路由：
-        # - 如果编辑来源是 "human_review"，直接返回人工审核
+        # - 如果编辑来源是 "human_review"，直接返回人工审核（或结束）
         # - 如果编辑来源是 "validation_failed"，返回结构验证
         workflow.add_conditional_edges(
             "roadmap_edit",
@@ -208,8 +198,8 @@ class WorkflowBuilder:
         if not self.config.skip_human_review:
             self._add_human_review_edges(workflow)
         
-        # 内容生成完成后结束
-        workflow.add_edge("tutorial_generation", END)
+        # ✅ 移除内容生成相关的边（已独立为 Celery Worker）
+        # 工作流在 human_review 通过后直接结束，内容生成由 review_node 触发 Celery 任务
     
     def _add_human_review_edges(self, workflow: StateGraph):
         """
@@ -223,11 +213,11 @@ class WorkflowBuilder:
         - edit_source="validation_failed" → 返回 structure_validation（验证失败触发的修改）
         """
         # 确定用户拒绝后的下一个节点
-        # 正常流程：edit_plan_runner 存在 → 进入修改计划分析
-        if self.edit_plan_runner:
+        # 正常流程：edit_plan_node 存在 → 进入修改计划分析
+        if self.edit_plan_node:
             modify_next_node = "edit_plan_analysis"
         else:
-            # Fallback：无 edit_plan_runner → 直接编辑
+            # Fallback：无 edit_plan_node → 直接编辑
             modify_next_node = "roadmap_edit"
         
         # 人工审核后的条件路由
@@ -235,13 +225,14 @@ class WorkflowBuilder:
             "human_review",
             self.router.route_after_human_review,
             {
-                "approved": "tutorial_generation",  # 批准后进入内容生成
+                # ✅ 批准后直接结束工作流（内容生成由 review_node 触发 Celery 任务）
+                "approved": END,
                 "modify": modify_next_node,  # 拒绝后进入修改流程
                 "end": END,
             },
         )
         
         # edit_plan_analysis → roadmap_edit 的边
-        if self.edit_plan_runner:
+        if self.edit_plan_node:
             workflow.add_edge("edit_plan_analysis", "roadmap_edit")
 

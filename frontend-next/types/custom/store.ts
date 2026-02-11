@@ -1,203 +1,186 @@
 /**
- * Zustand Store Types
- * Type definitions for global state management
+ * Zustand Store类型定义
  */
 
-import type { RoadmapFramework, Concept, LearningPreferences, Module, Stage } from '../generated/models';
-import type { ViewMode, SidebarState } from './ui';
-import type { GenerationPhase } from './phases';
+import type { 
+  RoadmapFramework, 
+  ChatMessageResponse,
+  Module as GeneratedModule,
+  Stage as GeneratedStage,
+  Concept as GeneratedConcept,
+} from '@/types/generated';
+import type { ViewMode } from './ui';
 
-// Re-export for components that use these types
-export type { Module, Stage, RoadmapFramework };
+/**
+ * 聊天消息（类型别名）
+ */
+export type ChatMessage = ChatMessageResponse;
 
-// ============================================================
-// Roadmap Store
-// ============================================================
-
+/**
+ * 路线图历史记录项
+ */
 export interface RoadmapHistory {
   roadmap_id: string;
   title: string;
   created_at: string;
-  status: 'draft' | 'completed' | 'archived' | 'generating' | 'failed' | 'learning';
-  total_concepts: number;
-  completed_concepts: number;
+  total_concepts?: number;
+  completed_concepts?: number;
   topic?: string;
-  // 新增字段：支持未完成路线图的恢复
-  task_id?: string | null;
-  task_status?: string | null;
-  current_step?: string | null;
-  // Stages 信息
-  stages?: Array<{
-    name: string;
-    description?: string;
-    order: number;
-  }> | null;
+  status?: string;
 }
 
+/**
+ * 路线图Store状态
+ */
 export interface RoadmapStoreState {
-  // Current roadmap data
+  /** 当前路线图 */
   currentRoadmap: RoadmapFramework | null;
-  isLoading: boolean;
-  error: string | null;
-  
-  // Generation state
-  isGenerating: boolean;
-  generationProgress: number;
-  currentStep: string | null;
-  
-  // Generation streaming state
-  generationPhase: 'idle' | 'analyzing' | 'designing' | 'generating_tutorials' | 'done';
-  generationBuffer: string;
-  tutorialProgress: { completed: number; total: number };
-  
-  // Real-time generation tracking (for early navigation)
-  activeTaskId: string | null;
-  activeGenerationPhase: GenerationPhase | null;
-  isLiveGenerating: boolean;
-  
-  // History
+  /** 路线图历史列表 */
   history: RoadmapHistory[];
-  
-  // Selected items
-  selectedConceptId: string | null;
+  /** 是否正在生成 */
+  isGenerating: boolean;
+  /** 生成进度（0-100） */
+  progress: number;
+  /** 当前步骤 */
+  currentStep: string | null;
+  /** 错误信息 */
+  error: string | null;
+  /** 活动的任务ID */
+  activeTaskId: string | null;
 }
 
+/**
+ * 路线图Store操作
+ */
 export interface RoadmapStoreActions {
-  setRoadmap: (roadmap: RoadmapFramework) => void;
-  clearRoadmap: () => void;
-  setLoading: (loading: boolean) => void;
-  setError: (error: string | null) => void;
-  setGenerating: (generating: boolean) => void;
+  /** 设置当前路线图 */
+  setRoadmap: (roadmap: RoadmapFramework | null) => void;
+  /** 更新进度 */
   updateProgress: (step: string, progress: number) => void;
-  setHistory: (history: RoadmapHistory[]) => void;
-  addToHistory: (roadmap: RoadmapHistory) => void;
-  selectConcept: (conceptId: string | null) => void;
-  updateConceptStatus: (
-    conceptId: string,
-    status: Partial<Pick<Concept, 'content_status' | 'resources_status' | 'quiz_status'>>
-  ) => void;
-  
-  // Generation streaming actions
-  setGenerationPhase: (phase: 'idle' | 'analyzing' | 'designing' | 'generating_tutorials' | 'done') => void;
-  appendGenerationBuffer: (chunk: string) => void;
-  clearGenerationBuffer: () => void;
-  updateTutorialProgress: (completed: number, total: number) => void;
-  
-  // Real-time generation tracking (for early navigation)
+  /** 清空路线图 */
+  clearRoadmap: () => void;
+  /** 设置生成状态 */
+  setGenerating: (isGenerating: boolean) => void;
+  /** 设置错误 */
+  setError: (error: string | null) => void;
+  /** 设置活动任务 */
   setActiveTask: (taskId: string | null) => void;
-  setActiveGenerationPhase: (phase: GenerationPhase | null) => void;
-  setLiveGenerating: (isLive: boolean) => void;
-  clearLiveGeneration: () => void;
+  /** 获取历史记录 */
+  fetchHistory: () => Promise<void>;
+  /** 设置历史记录 */
+  setHistory: (history: RoadmapHistory[]) => void;
 }
 
+/**
+ * 路线图Store完整类型
+ */
 export type RoadmapStore = RoadmapStoreState & RoadmapStoreActions;
 
-// ============================================================
-// Chat Store
-// ============================================================
-
-export interface ChatMessage {
-  id: string;
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-  timestamp: string; // ISO 8601 格式的时间字符串
-  metadata?: {
-    isStreaming?: boolean;
-    modifications?: Array<{
-      type: string;
-      targetId: string;
-      targetName: string;
-      success: boolean;
-    }>;
-  };
+/**
+ * 任务Store状态
+ */
+export interface TaskStoreState {
+  /** 当前任务ID */
+  currentTaskId: string | null;
+  /** 任务状态 */
+  taskStatus: 'pending' | 'processing' | 'completed' | 'failed' | null;
+  /** 任务进度 */
+  taskProgress: number;
+  /** 任务错误信息 */
+  taskError: string | null;
 }
 
-export interface ChatStoreState {
-  messages: ChatMessage[];
-  isStreaming: boolean;
-  streamBuffer: string;
-  error: string | null;
-  
-  // Context for AI assistant
-  contextConceptId: string | null;
-  contextRoadmapId: string | null;
+/**
+ * 任务Store操作
+ */
+export interface TaskStoreActions {
+  /** 设置当前任务 */
+  setCurrentTask: (taskId: string | null) => void;
+  /** 更新任务状态 */
+  updateTaskStatus: (status: TaskStoreState['taskStatus']) => void;
+  /** 更新任务进度 */
+  updateTaskProgress: (progress: number) => void;
+  /** 设置任务错误 */
+  setTaskError: (error: string | null) => void;
+  /** 清空任务 */
+  clearTask: () => void;
 }
 
-export interface ChatStoreActions {
-  addMessage: (message: Omit<ChatMessage, 'id' | 'timestamp'>) => void;
-  updateMessage: (id: string, updates: Partial<ChatMessage>) => void;
-  appendToStream: (chunk: string) => void;
-  completeStream: () => void;
-  clearMessages: () => void;
-  setError: (error: string | null) => void;
-  setContext: (roadmapId: string | null, conceptId: string | null) => void;
-}
+/**
+ * 任务Store完整类型
+ */
+export type TaskStore = TaskStoreState & TaskStoreActions;
 
-export type ChatStore = ChatStoreState & ChatStoreActions;
-
-// ============================================================
-// UI Store
-// ============================================================
-
+/**
+ * UI Store状态
+ */
 export interface UIStoreState {
-  // Sidebar states
-  sidebar: SidebarState;
-  
-  // View mode
+  /** 左侧边栏是否折叠 */
+  isLeftSidebarCollapsed: boolean;
+  /** 右侧边栏是否折叠 */
+  isRightSidebarCollapsed: boolean;
+  /** 视图模式 */
   viewMode: ViewMode;
-  
-  // Tutorial dialog
+  /** 当前选中的Concept ID */
+  selectedConceptId: string | null;
+  /** 是否显示教程对话框 */
   isTutorialDialogOpen: boolean;
-  tutorialConceptId: string | null;
-  
-  // Mobile menu
-  isMobileMenuOpen: boolean;
+  /** 主题模式 */
+  theme: 'light' | 'dark' | 'system';
 }
 
+/**
+ * UI Store操作
+ */
 export interface UIStoreActions {
+  /** 切换左侧边栏 */
   toggleLeftSidebar: () => void;
+  /** 切换右侧边栏 */
   toggleRightSidebar: () => void;
+  /** 设置视图模式 */
   setViewMode: (mode: ViewMode) => void;
-  openTutorialDialog: (conceptId: string) => void;
-  closeTutorialDialog: () => void;
-  setMobileMenuOpen: (open: boolean) => void;
+  /** 打开教程 */
+  openTutorial: (conceptId: string) => void;
+  /** 关闭教程 */
+  closeTutorial: () => void;
+  /** 设置主题 */
+  setTheme: (theme: UIStoreState['theme']) => void;
 }
 
+/**
+ * UI Store完整类型
+ */
 export type UIStore = UIStoreState & UIStoreActions;
 
-// ============================================================
-// Learning Store
-// ============================================================
-
-export interface LearningProgress {
-  conceptId: string;
-  completed: boolean;
-  completedAt?: string;
-  quizScore?: number;
-  timeSpentMinutes?: number;
+/**
+ * 用户Store状态
+ */
+export interface UserStoreState {
+  /** 用户ID */
+  userId: string | null;
+  /** 用户名 */
+  username: string | null;
+  /** 用户邮箱 */
+  email: string | null;
+  /** 是否已登录 */
+  isAuthenticated: boolean;
+  /** JWT Token */
+  token: string | null;
 }
 
-export interface LearningStoreState {
-  // User preferences (cached from creation)
-  preferences: LearningPreferences | null;
-  
-  // Progress tracking
-  progress: Record<string, LearningProgress>;
-  
-  // Current learning position
-  currentConceptId: string | null;
-  lastVisitedAt: string | null;
+/**
+ * 用户Store操作
+ */
+export interface UserStoreActions {
+  /** 设置用户信息 */
+  setUser: (user: Partial<UserStoreState>) => void;
+  /** 清空用户信息（登出） */
+  clearUser: () => void;
+  /** 设置Token */
+  setToken: (token: string | null) => void;
 }
 
-export interface LearningStoreActions {
-  setPreferences: (prefs: LearningPreferences) => void;
-  markConceptComplete: (conceptId: string, quizScore?: number) => void;
-  markConceptIncomplete: (conceptId: string) => void;
-  setCurrentConcept: (conceptId: string | null) => void;
-  updateTimeSpent: (conceptId: string, minutes: number) => void;
-  getCompletedCount: () => number;
-  getProgress: (conceptId: string) => LearningProgress | undefined;
-}
-
-export type LearningStore = LearningStoreState & LearningStoreActions;
-
+/**
+ * 用户Store完整类型
+ */
+export type UserStore = UserStoreState & UserStoreActions;

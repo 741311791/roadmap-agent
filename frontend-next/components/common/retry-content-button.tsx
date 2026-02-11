@@ -6,9 +6,7 @@ import { Button } from '@/components/ui/button';
 import { RefreshCw, Loader2, AlertCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { 
-  retryTutorial, 
-  retryResources, 
-  retryQuiz,
+  contentApi,
   type RetryContentRequest,
   type RetryContentResponse,
 } from '@/lib/api/endpoints';
@@ -105,24 +103,24 @@ export function RetryContentButton({
     console.log(`[RetryContentButton] 乐观更新状态: ${contentType} -> generating`);
     
     try {
-      const request: RetryContentRequest = { preferences };
+      const request: RetryContentRequest = {};
       
       let response: RetryContentResponse;
       
       switch (contentType) {
         case 'tutorial':
-          response = await retryTutorial(roadmapId, conceptId, request);
+          response = await contentApi.regenerateTutorial(roadmapId, conceptId, request);
           break;
         case 'resources':
-          response = await retryResources(roadmapId, conceptId, request);
+          response = await contentApi.regenerateResources(roadmapId, conceptId, request);
           break;
         case 'quiz':
-          response = await retryQuiz(roadmapId, conceptId, request);
+          response = await contentApi.regenerateQuiz(roadmapId, conceptId, request);
           break;
       }
       
       if (response.success) {
-        const taskId = response.data?.task_id as string | undefined;
+        const taskId = (response as any).data?.task_id as string | undefined;
         
         // 如果后端返回了 task_id，订阅 WebSocket 实时更新
         if (taskId) {

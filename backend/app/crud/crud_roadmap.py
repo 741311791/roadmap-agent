@@ -281,21 +281,21 @@ class RoadmapCRUD(BaseCRUD[RoadmapMetadata, RoadmapCreate, RoadmapUpdate]):
     async def get_intent_analysis_metadata(
         self,
         session: AsyncSession,
-        task_id: str,
+        roadmap_id: str,
     ) -> Optional[IntentAnalysisMetadata]:
         """
         获取需求分析元数据
         
         Args:
             session: 数据库会话
-            task_id: 任务ID
+            roadmap_id: 路线图ID
             
         Returns:
             需求分析元数据或None
         """
         result = await session.execute(
             select(IntentAnalysisMetadata).where(
-                IntentAnalysisMetadata.task_id == task_id
+                IntentAnalysisMetadata.roadmap_id == roadmap_id
             )
         )
         return result.scalar_one_or_none()
@@ -395,13 +395,13 @@ class RoadmapCRUD(BaseCRUD[RoadmapMetadata, RoadmapCreate, RoadmapUpdate]):
         # 统计各步骤日志数量
         step_counts_result = await session.execute(
             select(
-                ExecutionLog.step_name,
+                ExecutionLog.step,  # ✅ 修复：使用正确的字段名 step
                 func.count(ExecutionLog.id).label('count')
             )
             .where(ExecutionLog.task_id == task_id)
-            .group_by(ExecutionLog.step_name)
+            .group_by(ExecutionLog.step)  # ✅ 修复：使用正确的字段名 step
         )
-        step_counts = {row.step_name: row.count for row in step_counts_result}
+        step_counts = {row.step: row.count for row in step_counts_result}  # ✅ 修复：使用正确的字段名 step
         
         # 获取最新日志时间
         latest_log_result = await session.execute(
@@ -449,6 +449,110 @@ class RoadmapCRUD(BaseCRUD[RoadmapMetadata, RoadmapCreate, RoadmapUpdate]):
             .limit(limit)
         )
         return list(result.scalars().all())
+    
+    async def save_roadmap_metadata(
+        self,
+        session: AsyncSession,
+        roadmap_id: str,
+        user_id: str,
+        framework: "RoadmapFramework",
+    ) -> RoadmapMetadata:
+        """
+        保存路线图元数据和框架
+        
+        如果路线图已存在则更新，否则创建新记录。
+        
+        Args:
+            session: 数据库会话
+            roadmap_id: 路线图ID
+            user_id: 用户ID
+            framework: 路线图框架对象
+            
+        Returns:
+            保存的路线图元数据
+        """
+        from app.models.domain import RoadmapFramework
+        
+        # 检查是否已存在
+        existing = await self.get_by_roadmap_id(session, roadmap_id)
+        
+        # 准备框架数据（转换为字典）
+        framework_dict = framework.model_dump() if framework else {}
+        
+        if existing:
+            # 更新现有记录
+            existing.title = framework.title
+            existing.total_estimated_hours = framework.total_estimated_hours
+            existing.recommended_completion_weeks = framework.recommended_completion_weeks
+            existing.framework_data = framework_dict
+            
+            # ✅ 修复：标记 JSON 字段已修改（SQLAlchemy 需要显式通知）
+            from sqlalchemy.orm import attributes
+            attributes.flag_modified(existing, "framework_data")
+            
+            session.add(existing)
+            await session.flush()
+            
+            logger.info(
+                "roadmap_metadata_updated",
+                roadmap_id=roadmap_id,
+                user_id=user_id,
+                stages_count=len(framework.stages) if framework else 0,
+            )
+            
+            return existing
+        else:
+            # 创建新记录
+            roadmap_metadata = RoadmapMetadata(
+                roadmap_id=roadmap_id,
+                user_id=user_id,
+                title=framework.title,
+                total_estimated_hours=framework.total_estimated_hours,
+                recommended_completion_weeks=framework.recommended_completion_weeks,
+                framework_data=framework_dict,
+            )
+            
+            session.add(roadmap_metadata)
+            await session.flush()
+            
+            logger.info(
+                "roadmap_metadata_created",
+                roadmap_id=roadmap_id,
+                user_id=user_id,
+                stages_count=len(framework.stages) if framework else 0,
+            )
+            
+            return roadmap_metadata
+    
+    async def delete_roadmap(
+        self,
+        session: AsyncSession,
+        roadmap_id: str,
+    ) -> bool:
+        """
+        软删除路线图
+        
+        Args:
+            session: 数据库会话
+            roadmap_id: 路线图ID
+            
+        Returns:
+            是否成功删除
+        """
+        from app.models.database import beijing_now
+        
+        roadmap = await self.get_by_roadmap_id(session, roadmap_id)
+        if not roadmap:
+            logger.warning("roadmap_not_found_for_deletion", roadmap_id=roadmap_id)
+            return False
+        
+        # 软删除
+        roadmap.deleted_at = beijing_now()
+        session.add(roadmap)
+        await session.flush()
+        
+        logger.info("roadmap_soft_deleted", roadmap_id=roadmap_id)
+        return True
 
 
 # 创建单例（工厂函数）

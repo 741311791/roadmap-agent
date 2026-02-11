@@ -78,4 +78,6 @@ class ValidationEditPlanHandler(NodeOutputHandler):
             task_id=task_id,
             roadmap_id=roadmap_id,
         )
+        
+        return None
 

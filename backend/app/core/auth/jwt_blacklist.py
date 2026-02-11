@@ -139,7 +139,7 @@ async def remove_from_blacklist(jti: str):
         logger.debug("jwt_not_in_blacklist", jti=jti)
 
 
-async def clear_user_tokens(user_id: str):
+async def clear_user_tokens(user_id: str) -> int:
     """
     清除用户所有 Token（强制登出）
     
@@ -148,6 +148,9 @@ async def clear_user_tokens(user_id: str):
     
     Args:
         user_id: 用户 ID
+        
+    Returns:
+        清除的token数量
     """
     await redis_client.connect()
     pattern = f"{JWT_BLACKLIST_PREFIX}*:{user_id}:*"
@@ -172,6 +175,8 @@ async def clear_user_tokens(user_id: str):
         deleted_count=deleted_count,
         message=f"已清除用户 {user_id} 的所有 Token",
     )
+    
+    return deleted_count
 
 
 async def get_blacklist_stats() -> dict:
@@ -181,7 +186,8 @@ async def get_blacklist_stats() -> dict:
     Returns:
         dict: 统计信息
             - total_tokens: 黑名单中的 Token 总数
-            - sample_tokens: 示例 Token（最多 10 个）
+            - active_tokens: 活跃的token数量（TTL > 0）
+            - expired_tokens: 已过期的token数量（TTL <= 0，待清理）
     """
     await redis_client.connect()
     pattern = f"{JWT_BLACKLIST_PREFIX}*"
@@ -198,24 +204,27 @@ async def get_blacklist_stats() -> dict:
         if cursor == 0:
             break
     
-    # 获取示例键的 TTL（剩余有效期）
-    sample_keys = all_keys[:10]
-    sample_ttls = []
+    total_tokens = len(all_keys)
     
-    if sample_keys:
+    # 获取所有键的 TTL，统计活跃和过期的token
+    active_tokens = 0
+    expired_tokens = 0
+    
+    if all_keys:
         pipe = redis_client._client.pipeline()
-        for key in sample_keys:
+        for key in all_keys:
             pipe.ttl(key)
-        sample_ttls = await pipe.execute()
+        ttls = await pipe.execute()
+        
+        for ttl in ttls:
+            if ttl > 0:
+                active_tokens += 1
+            else:
+                expired_tokens += 1
     
     return {
-        "total_tokens": len(all_keys),
-        "sample_tokens": [
-            {
-                "key": key,
-                "ttl_seconds": ttl,
-            }
-            for key, ttl in zip(sample_keys, sample_ttls)
-        ],
+        "total_tokens": total_tokens,
+        "active_tokens": active_tokens,
+        "expired_tokens": expired_tokens,
     }
 

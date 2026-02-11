@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useUserProfileStore } from '@/lib/store/user-profile-store';
 import { useAuthStore } from '@/lib/store/auth-store';
-import { saveUserProfile, type UserProfileRequest } from '@/lib/api/endpoints';
+import { saveUserProfile, type UserProfileRequest, type TechStackItem } from '@/lib/api/endpoints';
 
 export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
@@ -94,7 +94,7 @@ export function useAutoSave(options: AutoSaveOptions = {}) {
         const request: UserProfileRequest = {
           industry: profile.industry || null,
           current_role: profile.current_role || null,
-          tech_stack: profile.tech_stack || [],
+          tech_stack: (profile.tech_stack || []) as TechStackItem[],
           primary_language: profile.primary_language || 'English',
           secondary_language: profile.secondary_language || null,
           weekly_commitment_hours: profile.weekly_commitment_hours || 10,
@@ -102,7 +102,7 @@ export function useAutoSave(options: AutoSaveOptions = {}) {
           ai_personalization: profile.ai_personalization ?? true,
         };
 
-        await saveUserProfile(userId, request);
+        await saveUserProfile(request);
         updateSaveStatus('saved', 'Profile saved');
 
         // 2秒后重置状态

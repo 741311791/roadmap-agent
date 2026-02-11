@@ -118,11 +118,12 @@ class SubgraphService:
         subgraph = build_single_concept_subgraph()
         
         # 准备子图输入状态
+        manual_task_id = f"manual_{concept_id}_{user_id}"
         state = {
             "concept": concept,
             "roadmap_id": roadmap_id,
             "user_preferences": user_preferences,
-            "task_id": f"manual_{concept_id}_{user_id}",
+            "task_id": manual_task_id,
             "tutorial": None,
             "resource": None,
             "quiz": None,
@@ -130,9 +131,11 @@ class SubgraphService:
             "save_status": {},
         }
         
-        # 构建 config
+        # 构建 config（为手动生成任务使用独立的 thread_id）
+        # 格式: {manual_task_id}:manual_subgraph
         config = {
             "configurable": {
+                "thread_id": f"{manual_task_id}:manual_subgraph",
                 "runtime_context": runtime_context,
             }
         }

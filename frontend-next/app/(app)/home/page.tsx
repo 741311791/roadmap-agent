@@ -13,6 +13,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { EmptyState } from '@/components/common/empty-state';
 import { MyLearningCard, CreateLearningCard, FeaturedRoadmapCard, MyRoadmap, FeaturedRoadmap } from '@/components/roadmap';
@@ -24,7 +25,7 @@ import {
   TrendingUp,
 } from 'lucide-react';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
-import { getUserRoadmaps, getFeaturedRoadmaps } from '@/lib/api/endpoints';
+import { roadmapsApi } from '@/lib/api/endpoints';
 import { useAuthStore } from '@/lib/store/auth-store';
 import { batchFetchCoverImagesFromAPI, batchGenerateCoverImages } from '@/lib/cover-image';
 
@@ -42,6 +43,7 @@ function SectionHeader({
   showViewAll?: boolean;
   viewAllHref?: string;
 }) {
+  const t = useTranslations();
   return (
     <div className="flex items-end justify-between mb-6">
       <div className="flex items-center gap-3">
@@ -63,7 +65,7 @@ function SectionHeader({
           className="text-sage-600 hover:text-sage-700 hover:bg-sage-50 font-medium"
         >
           <Link href={viewAllHref} className="flex items-center gap-1">
-            View All
+            {t('common.viewAll')}
             <ArrowRight size={16} />
           </Link>
         </Button>
@@ -74,6 +76,7 @@ function SectionHeader({
 
 // Main Home Page Component
 export default function HomePage() {
+  const t = useTranslations();
   const { history, setHistory } = useRoadmapStore();
   const { getUserId, isAuthenticated } = useAuthStore();
   const [isLoading, setIsLoading] = useState(true);
@@ -88,20 +91,13 @@ export default function HomePage() {
   // Fetch user roadmaps on mount
   useEffect(() => {
     const fetchRoadmaps = async () => {
-      const userId = getUserId();
-      if (!userId) {
-        console.error('[Home] No user ID');
-        setIsLoading(false);
-        return;
-      }
-      
       try {
         setIsLoading(true);
         // Home 页面只需要显示最新的 3 个路线图（+ 1个 Create 卡片）
         // 为了判断是否有更多路线图（显示 View All），多获取 1 个
-        const response = await getUserRoadmaps(userId, 4, 0);
+        const response = await roadmapsApi.getMyRoadmaps({ limit: 4, offset: 0 });
         // Map API response to store format
-        const historyData = response.roadmaps.map((item) => {
+        const historyData = response.items.map((item) => {
           let status = item.status || 'completed';
           
           return {
@@ -165,8 +161,8 @@ export default function HomePage() {
         setIsFeaturedLoading(true);
         // Home 页面显示 4 个精选路线图
         // 为了判断是否有更多（显示 View All），多获取 1 个
-        const response = await getFeaturedRoadmaps(5, 0);
-        const featuredData: FeaturedRoadmap[] = response.roadmaps
+        const response = await roadmapsApi.getFeatured({ limit: 5, offset: 0 });
+        const featuredData: FeaturedRoadmap[] = response.items
           .filter(item => item.status === 'completed') // 只显示已完成的路线图
           .map((item) => ({
             id: item.roadmap_id,
@@ -247,13 +243,13 @@ export default function HomePage() {
         <div className="mb-10">
           <div className="flex items-center gap-2 text-sage-600 mb-2">
             <Sparkles size={16} />
-            <span className="text-sm font-medium">Welcome back</span>
+            <span className="text-sm font-medium">{t('header.welcomeBack')}</span>
           </div>
           <h1 className="text-3xl md:text-4xl font-serif font-bold text-foreground mb-2">
-            Continue Your Learning Journey
+            {t('header.continueJourney')}
           </h1>
           <p className="text-base text-muted-foreground max-w-2xl">
-            Pick up where you left off or explore featured roadmaps from the community.
+            {t('header.pickUpDesc')}
           </p>
         </div>
 
@@ -261,8 +257,8 @@ export default function HomePage() {
         <section className="mb-16">
           <SectionHeader
             icon={BookOpen}
-            title="My Learning Journeys"
-            subtitle={hasRoadmaps ? `${allRoadmaps.length} ${allRoadmaps.length === 1 ? 'roadmap' : 'roadmaps'}` : undefined}
+            title={t('roadmap.myLearningJourneys')}
+            subtitle={hasRoadmaps ? `${allRoadmaps.length} ${t('roadmap.roadmap_other')}` : undefined}
             showViewAll={hasMoreRoadmaps}
             viewAllHref="/roadmaps"
           />
@@ -271,7 +267,7 @@ export default function HomePage() {
             <div className="flex items-center justify-center py-20">
               <div className="text-center">
                 <div className="w-12 h-12 border-4 border-sage-200 border-t-sage-600 rounded-full animate-spin mx-auto mb-3" />
-                <p className="text-sm text-muted-foreground">Loading roadmaps...</p>
+                <p className="text-sm text-muted-foreground">{t('roadmap.loadingRoadmaps')}</p>
               </div>
             </div>
           ) : hasRoadmaps ? (
@@ -319,10 +315,10 @@ export default function HomePage() {
           ) : (
             <EmptyState
               icon={BookOpen}
-              title="No roadmaps yet"
-              description="Create your first personalized learning roadmap to get started."
+              title={t('roadmap.noRoadmapsYet')}
+              description={t('roadmap.createFirstRoadmap')}
               action={{
-                label: 'Create Roadmap',
+                label: t('common.createRoadmap'),
                 onClick: () => {
                   window.location.href = '/new';
                 },
@@ -335,8 +331,8 @@ export default function HomePage() {
         <section className="mb-8">
           <SectionHeader
             icon={TrendingUp}
-            title="Featured Roadmaps"
-            subtitle="Discover curated learning paths from the community"
+            title={t('roadmap.featuredRoadmaps')}
+            subtitle={t('roadmap.featuredDesc')}
             showViewAll={hasMoreFeatured}
             viewAllHref="/explore"
           />
@@ -345,7 +341,7 @@ export default function HomePage() {
             <div className="flex items-center justify-center py-16">
               <div className="text-center">
                 <div className="w-10 h-10 border-4 border-sage-200 border-t-sage-600 rounded-full animate-spin mx-auto mb-2" />
-                <p className="text-xs text-muted-foreground">Loading featured roadmaps...</p>
+                <p className="text-xs text-muted-foreground">{t('roadmap.loadingFeatured')}</p>
               </div>
             </div>
           ) : displayedFeatured.length > 0 ? (
@@ -374,8 +370,8 @@ export default function HomePage() {
           ) : (
             <div className="text-center py-16 bg-sage-50 rounded-xl border-2 border-dashed border-sage-200">
               <TrendingUp className="w-12 h-12 text-sage-300 mx-auto mb-3" />
-              <p className="text-sm text-muted-foreground">No featured roadmaps available yet</p>
-              <p className="text-xs text-muted-foreground mt-1">Check back soon for curated content!</p>
+              <p className="text-sm text-muted-foreground">{t('roadmap.noFeaturedAvailable')}</p>
+              <p className="text-xs text-muted-foreground mt-1">{t('roadmap.checkBackSoon')}</p>
             </div>
           )}
         </section>

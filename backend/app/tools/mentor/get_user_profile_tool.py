@@ -36,16 +36,22 @@ class GetUserProfileOutput(BaseModel):
 
 class GetUserProfileTool(BaseTool[GetUserProfileInput, GetUserProfileOutput]):
     """
-    获取用户画像工具
+    获取用户画像工具（已适配统一工具框架）
     
     功能：
     - 从数据库获取用户的个人画像
     - 返回职业背景、技术栈、学习偏好等信息
     - 用于个性化讲解和推荐
+    - 自动生成 LLM Function Schema
     """
     
     def __init__(self):
-        super().__init__(tool_id="get_user_profile_v1")
+        super().__init__(
+            tool_id="get_user_profile_v2",
+            name="get_user_profile",
+            description="Get user's professional background, tech stack, and learning preferences for personalized explanations.",
+            args_schema=GetUserProfileInput,
+        )
     
     async def execute(self, input_data: GetUserProfileInput) -> GetUserProfileOutput:
         """

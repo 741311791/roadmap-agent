@@ -2,15 +2,40 @@
 测验CRUD操作
 """
 from typing import Optional, List
+from datetime import datetime
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
 from app.crud.base import BaseCRUD
-from app.models.database import QuizMetadata
+from app.models.database import QuizMetadata, beijing_now
 from app.schemas.quiz import QuizCreate, QuizUpdate
 
 logger = structlog.get_logger()
+
+
+def _ensure_naive_datetime(dt: datetime) -> datetime:
+    """
+    确保datetime对象无时区信息（防御性函数）
+    
+    如果输入的datetime带有时区信息，转换为北京时间并移除时区。
+    如果已经无时区信息，直接返回。
+    
+    Args:
+        dt: 待处理的datetime对象
+        
+    Returns:
+        无时区信息的datetime对象
+    """
+    if dt.tzinfo is None:
+        # 已经无时区，直接返回
+        return dt
+    
+    # 有时区信息，转换为北京时间（UTC+8）并移除时区
+    from datetime import timezone, timedelta
+    BEIJING_TZ = timezone(timedelta(hours=8))
+    beijing_time = dt.astimezone(BEIJING_TZ)
+    return beijing_time.replace(tzinfo=None)
 
 class QuizCRUD(BaseCRUD[QuizMetadata, QuizCreate, QuizUpdate]):
     """
@@ -72,7 +97,9 @@ class QuizCRUD(BaseCRUD[QuizMetadata, QuizCreate, QuizUpdate]):
         roadmap_id: str,
     ) -> QuizMetadata:
         """
-        保存测验元数据（幂等操作）
+        保存测验元数据（UPSERT 模式）
+        
+        通过业务键 (roadmap_id, concept_id) 查找现有记录，存在则更新，不存在则插入。
         
         Args:
             session: 数据库会话
@@ -87,17 +114,22 @@ class QuizCRUD(BaseCRUD[QuizMetadata, QuizCreate, QuizUpdate]):
         medium_count = sum(1 for q in quiz_output.questions if q.difficulty == "medium")
         hard_count = sum(1 for q in quiz_output.questions if q.difficulty == "hard")
         
-        # 先检查是否已存在（通过主键quiz_id）
-        existing = await self.get(session, quiz_output.quiz_id)
+        # ✅ 通过业务键 (roadmap_id, concept_id) 查找现有记录
+        existing = await self.get_by_concept(
+            session=session,
+            roadmap_id=roadmap_id,
+            concept_id=quiz_output.concept_id,
+        )
         
         if existing:
-            # 更新现有记录
+            # ✅ 更新现有记录（幂等 UPSERT）
+            existing.quiz_id = quiz_output.quiz_id  # 更新 ID（可能变化）
             existing.questions = [q.model_dump() for q in quiz_output.questions]
             existing.total_questions = quiz_output.total_questions
             existing.easy_count = easy_count
             existing.medium_count = medium_count
             existing.hard_count = hard_count
-            existing.generated_at = quiz_output.generated_at
+            existing.created_at = _ensure_naive_datetime(quiz_output.created_at)
             
             await session.flush()
             
@@ -111,15 +143,7 @@ class QuizCRUD(BaseCRUD[QuizMetadata, QuizCreate, QuizUpdate]):
             
             return existing
         
-        # 删除该概念的旧测验（每个概念只保留一个测验）
-        await session.execute(
-            delete(QuizMetadata).where(
-                QuizMetadata.roadmap_id == roadmap_id,
-                QuizMetadata.concept_id == quiz_output.concept_id,
-            )
-        )
-        
-        # 创建新记录
+        # ✅ 创建新记录
         metadata = QuizMetadata(
             quiz_id=quiz_output.quiz_id,
             concept_id=quiz_output.concept_id,
@@ -129,7 +153,7 @@ class QuizCRUD(BaseCRUD[QuizMetadata, QuizCreate, QuizUpdate]):
             easy_count=easy_count,
             medium_count=medium_count,
             hard_count=hard_count,
-            generated_at=quiz_output.generated_at,
+            created_at=_ensure_naive_datetime(quiz_output.created_at),
         )
         
         session.add(metadata)

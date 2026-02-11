@@ -61,13 +61,17 @@ async def roadmap_edit_node(
     # 创建Agent
     agent = ctx.agent_factory.create_roadmap_editor()
     
-    # 执行编辑（传递独立参数）
-    edit_output = await agent.edit(
+    # 准备输入数据
+    from app.models.domain import RoadmapEditInput
+    edit_input = RoadmapEditInput(
         existing_framework=origin_framework,
         user_preferences=state["user_request"].preferences,
-        edit_plan=edit_plan,  # ✅ 传入 EditPlan 对象
+        edit_plan=edit_plan,
         modification_context=f"第 {modification_count} 轮修改",
     )
+    
+    # 执行编辑
+    edit_output = await agent.execute(edit_input)
     
     # 提取修改后的框架
     modified_framework = edit_output.framework

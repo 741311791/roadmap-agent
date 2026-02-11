@@ -1,15 +1,29 @@
 """
-统一错误处理器
+统一错误处理器（已废弃 - DEPRECATED）
 
-提供工作流节点执行的统一错误处理逻辑，消除重复代码。
+⚠️ 此模块已废弃，请使用 SideEffectCoordinator 替代。
+
+废弃原因：
+- 职责重叠：与 SideEffectCoordinator、handlers/base.py 重复
+- 未被使用：代码库中无实际调用
+- 维护困难：多处状态更新导致不一致
+
+新架构：
+- 副作用统一由 SideEffectCoordinator 管理
+- Handler 只负责保存业务数据
+- Executor 调用协调器处理所有副作用
+
+保留原因：
+- 作为历史参考
+- 待确认无依赖后删除
 """
 import time
 import structlog
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Any, Dict, Optional
 
-from app.services.notification_service import notification_service
-from app.services.execution_logger import execution_logger, LogCategory
+from app.services.shared.notification_service import notification_service
+from app.services.shared.execution_logger import execution_logger, LogCategory
 from app.crud.crud_task import get_task_crud
 from app.db.session import async_session_maker
 
@@ -154,14 +168,14 @@ class WorkflowErrorHandler:
         try:
             async with async_session_maker.begin() as session:
                 task_crud = get_task_crud()
-                await task_crud.update_status(
+                await task_crud.update_task_status(
                     session=session,
                     task_id=task_id,
                     status="failed",
-                    current_step=node_name,  # 修复：保留实际出错的节点名称，而不是写死为 "failed"
+                    current_step=None,  # 不更新current_step，保留失败时的阶段信息
                     error_message=str(error)[:500],
                 )
-                await session.commit()
+                # ✅ 不需要手动 commit，async_session_maker.begin() 自动处理
                 
                 logger.debug(
                     "task_status_updated_failed",

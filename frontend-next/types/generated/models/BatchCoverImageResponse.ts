@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { TaskStatus } from '../constants';
 /**
  * 批量封面图响应模型
  *
@@ -19,7 +20,7 @@ export type BatchCoverImageResponse = {
     /**
      * 状态: not_started/pending/generating/success/failed
      */
-    status: string;
+    status: TaskStatus;
     /**
      * 错误信息
      */

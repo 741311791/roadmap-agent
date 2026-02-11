@@ -7,7 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ChevronLeft, ListTodo, RefreshCw } from 'lucide-react';
-import { getUserTasks, retryTask, deleteTask, cancelTask, TaskItem } from '@/lib/api/endpoints';
+import { tasksApi } from '@/lib/api/endpoints';
+import type { TaskStatusResponse, TaskItemResponse } from '@/lib/api/endpoints';
 import { TaskList } from '@/components/task';
 import { useAuthStore } from '@/lib/store/auth-store';
 import { cn } from '@/lib/utils';
@@ -23,7 +24,7 @@ interface TaskStats {
 
 export default function TasksPage() {
   const router = useRouter();
-  const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [tasks, setTasks] = useState<TaskItemResponse[]>([]);
   const [stats, setStats] = useState<TaskStats>({
     pending: 0,
     processing: 0,
@@ -36,23 +37,17 @@ export default function TasksPage() {
 
   const fetchTasks = async (status?: string) => {
     const userId = getUserId();
-    if (!userId) {
-      setIsLoading(false);
-      return;
-    }
-    
     try {
       setIsLoading(true);
-      const response = await getUserTasks(
-        userId,
-        status === 'all' ? undefined : status
+      const response = await tasksApi.getMyTasks(
+        { status: status === 'all' ? undefined : status }
       );
       setTasks(response.tasks);
       setStats({
-        pending: response.pending_count,
-        processing: response.processing_count,
-        completed: response.completed_count,
-        failed: response.failed_count,
+        pending: response.pending_count ?? 0,
+        processing: response.processing_count ?? 0,
+        completed: response.completed_count ?? 0,
+        failed: response.failed_count ?? 0,
       });
     } catch (error) {
       console.error('Failed to fetch tasks:', error);
@@ -87,7 +82,7 @@ export default function TasksPage() {
       }));
       
       // 调用智能重试 API
-      await retryTask(taskId, userId);
+      await tasksApi.retry(taskId);
       
       // ✅ 修复：立即刷新任务列表以获取最新状态（移除延迟）
       // 这样用户点击进入详情页时，能看到最新的 processing 状态
@@ -135,7 +130,7 @@ export default function TasksPage() {
       }));
       
       // 调用取消 API
-      await cancelTask(taskId);
+      await tasksApi.cancel(taskId);
       
       // 成功后刷新任务列表以获取最新状态
       setTimeout(() => {
@@ -171,8 +166,9 @@ export default function TasksPage() {
     if (!userId) return;
     
     try {
-      // ✅ 不再传递userId，后端从JWT Token自动提取
-      await deleteTask(taskId);
+      // ✅ 修复：调用专门的删除接口
+      // 后端会自动处理：如果任务是processing状态，会先取消再删除
+      await tasksApi.delete(taskId);
       // 刷新列表
       await fetchTasks(activeFilter);
     } catch (error) {

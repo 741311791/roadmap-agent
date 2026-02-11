@@ -6,7 +6,7 @@
  */
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { getUserProfile, saveUserProfile } from '@/lib/api/endpoints';
+import { usersApi } from '@/lib/api/endpoints';
 import type { UserProfileData, TechStackItem } from '@/lib/api/endpoints';
 
 type LearningStyleType = 'visual' | 'text' | 'audio' | 'hands_on';
@@ -59,13 +59,13 @@ export const useUserProfileStore = create<UserProfileState>()(
       /**
        * 从后端加载用户画像
        * 
-       * @param userId - 用户 ID
+       * @param userId - 用户 ID（已废弃，从JWT自动提取）
        */
-      loadProfile: async (userId: string) => {
+      loadProfile: async (userId?: string) => {
         set({ isLoading: true, error: null });
         
         try {
-          const profile = await getUserProfile(userId);
+          const profile = await usersApi.getUserProfile();
           set({ 
             profile, 
             isLoading: false,
@@ -104,29 +104,29 @@ export const useUserProfileStore = create<UserProfileState>()(
       /**
        * 保存用户画像到后端
        * 
-       * @param userId - 用户 ID
+       * @param userId - 用户 ID（已废弃，从JWT自动提取）
        * @returns 成功返回 true
        */
-      saveProfile: async (userId: string) => {
+      saveProfile: async (userId?: string) => {
         const { profile } = get();
         if (!profile) return false;
         
         set({ isSaving: true, error: null });
         
         try {
-          // 准备保存的数据
+          // 准备保存的数据 - 确保tech_stack是正确的类型
           const saveData = {
             industry: profile.industry,
             current_role: profile.current_role,
-            tech_stack: profile.tech_stack,
+            tech_stack: (profile.tech_stack || []) as TechStackItem[],
             primary_language: profile.primary_language,
             secondary_language: profile.secondary_language,
             weekly_commitment_hours: profile.weekly_commitment_hours,
-            learning_style: profile.learning_style,
+            learning_style: profile.learning_style || [],
             ai_personalization: profile.ai_personalization,
           };
           
-          const updatedProfile = await saveUserProfile(userId, saveData);
+          const updatedProfile = await usersApi.updateUserProfile(saveData);
           
           set({ 
             profile: updatedProfile,
@@ -156,8 +156,10 @@ export const useUserProfileStore = create<UserProfileState>()(
         const { profile } = get();
         if (!profile) return;
         
+        const techStack = (profile.tech_stack || []) as TechStackItem[];
+        
         // 检查是否已存在
-        const exists = profile.tech_stack.some(
+        const exists = techStack.some(
           (t) => t.technology === item.technology
         );
         
@@ -169,7 +171,7 @@ export const useUserProfileStore = create<UserProfileState>()(
         set({
           profile: {
             ...profile,
-            tech_stack: [...profile.tech_stack, item],
+            tech_stack: [...techStack, item] as Array<Record<string, any>>,
             updated_at: new Date().toISOString(),
           },
         });
@@ -187,14 +189,16 @@ export const useUserProfileStore = create<UserProfileState>()(
         const { profile } = get();
         if (!profile) return;
         
+        const techStack = (profile.tech_stack || []) as TechStackItem[];
+        
         set({
           profile: {
             ...profile,
-            tech_stack: profile.tech_stack.map((item) =>
+            tech_stack: techStack.map((item) =>
               item.technology === technology
                 ? { ...item, ...updates }
                 : item
-            ),
+            ) as Array<Record<string, any>>,
             updated_at: new Date().toISOString(),
           },
         });
@@ -211,12 +215,14 @@ export const useUserProfileStore = create<UserProfileState>()(
         const { profile } = get();
         if (!profile) return;
         
+        const techStack = (profile.tech_stack || []) as TechStackItem[];
+        
         set({
           profile: {
             ...profile,
-            tech_stack: profile.tech_stack.filter(
+            tech_stack: techStack.filter(
               (item) => item.technology !== technology
-            ),
+            ) as Array<Record<string, any>>,
             updated_at: new Date().toISOString(),
           },
         });
@@ -233,7 +239,7 @@ export const useUserProfileStore = create<UserProfileState>()(
         const { profile } = get();
         if (!profile) return;
         
-        const currentStyles = profile.learning_style;
+        const currentStyles = profile.learning_style || [];
         const newStyles = currentStyles.includes(style)
           ? currentStyles.filter((s) => s !== style)
           : [...currentStyles, style];
@@ -276,7 +282,7 @@ export const useUserProfileStore = create<UserProfileState>()(
        */
       getTechStack: () => {
         const { profile } = get();
-        return profile?.tech_stack || [];
+        return (profile?.tech_stack || []) as TechStackItem[];
       },
       
       /**

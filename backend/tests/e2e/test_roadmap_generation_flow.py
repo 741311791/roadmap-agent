@@ -11,7 +11,7 @@
 import pytest
 import json
 import uuid
-from httpx import AsyncClient
+from httpx import AsyncClient, ASGITransport
 from unittest.mock import patch, AsyncMock, MagicMock
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,15 +31,8 @@ from tests.factories import (
 @pytest.fixture
 async def client():
     """创建测试客户端"""
-    async with AsyncClient(app=app, base_url="http://test") as ac:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
-
-
-@pytest.fixture
-async def test_session():
-    """创建测试数据库会话"""
-    async for session in get_session():
-        yield session
 
 
 @pytest.fixture

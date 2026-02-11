@@ -1,6 +1,7 @@
 """
 Redis 客户端封装
 """
+import asyncio
 from typing import Any, Type, TypeVar
 import redis.asyncio as aioredis
 import structlog
@@ -39,8 +40,6 @@ class RedisClient:
         2. asyncio.run() 每次创建新循环
         3. 我们使用全局单例模式
         """
-        import asyncio
-        
         try:
             current_loop_id = id(asyncio.get_running_loop())
         except RuntimeError:
@@ -55,7 +54,16 @@ class RedisClient:
                 new_loop_id=current_loop_id,
             )
             try:
-                await self._client.close()
+                # ✅ 检查事件循环是否还在运行
+                try:
+                    asyncio.get_running_loop()
+                    await self._client.close()
+                except RuntimeError:
+                    # Event loop 已关闭，直接清理引用
+                    logger.debug(
+                        "redis_skip_close_event_loop_closed",
+                        message="Event loop 已关闭，跳过连接关闭"
+                    )
             except Exception as e:
                 logger.warning("redis_close_old_connection_failed", error=str(e))
             self._client = None
@@ -97,10 +105,23 @@ class RedisClient:
     async def close(self):
         """关闭连接"""
         if self._client:
-            await self._client.close()
-            self._client = None
-            self._loop_id = None
-            logger.info("redis_client_closed")
+            try:
+                # ✅ 检查事件循环是否还在运行
+                try:
+                    asyncio.get_running_loop()
+                    await self._client.close()
+                    logger.info("redis_client_closed")
+                except RuntimeError:
+                    # Event loop 已关闭，直接清理引用
+                    logger.debug(
+                        "redis_skip_close_event_loop_closed",
+                        message="Event loop 已关闭，跳过连接关闭"
+                    )
+            except Exception as e:
+                logger.warning("redis_close_failed", error=str(e))
+            finally:
+                self._client = None
+                self._loop_id = None
     
     async def ping(self) -> bool:
         """健康检查"""

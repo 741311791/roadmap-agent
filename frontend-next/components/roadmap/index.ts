@@ -13,9 +13,8 @@ export {
   RoadmapSkeletonView 
 } from './concept-skeleton-card';
 
-// Human review and retry components
+// Human review components
 export { HumanReviewDialog } from './human-review-dialog';
-export { RetryFailedButton } from './retry-failed-button';
 
 // Card components
 export { CoverImage } from './cover-image';

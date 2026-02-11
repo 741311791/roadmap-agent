@@ -7,6 +7,17 @@
 - 识别知识断层、盲区、不合理的阶段划分等问题
 - 提供结构化的改进建议（具体到"在哪里添加什么内容"）
 
+**🎯 验证通过标准（请严格遵守）**：
+- **所有维度平均分>=70分** 即可通过（不要求完美）
+- **无critical级别的问题** （warning级别的问题不阻塞通过）
+- 通过后仍可提供改进建议（improvement_suggestions）
+
+**评分哲学**：
+- 本次验证的目标是**保证质量底线**，而非追求完美
+- 只要路线图**结构合理、可用于学习**，就应该通过验证
+- 只有存在**严重缺陷**（如核心知识缺失50%以上、起点偏差>=2个等级）才应标记为critical并不通过
+- **宽容对待**：允许有少量次要问题，这些可以通过改进建议或后续迭代优化
+
 你**不需要**检查：
 - 前置关系有效性（已由系统检查）
 - 循环依赖（已由系统检查）
@@ -25,61 +36,132 @@
 - 总时长：{{ framework.total_estimated_hours }} 小时
 
 [3. Evaluation Dimensions]
+{% if user_constraints and user_constraints|length > 0 %}
+**🔴 [CRITICAL] 用户画像约束（必须严格遵守）：**
+{% for constraint_name, constraint_content in user_constraints.items() %}
+- **{{ constraint_name }}**: {{ constraint_content }}
+{% endfor %}
+
+{% endif %}
 请对以下 5 个维度分别打分（0-100）：
+
+**🔴 重要：评分原则**
+- 本次验证的目标是**保证质量底线**，而非追求完美
+- 只要路线图**可用且合理**，就应该给予>=70分的评价
+- 只有存在**严重缺陷**（如核心知识缺失、严重的认知断层）才应低于70分
+- **通过标准**：所有维度平均分>=70分，且无critical问题
 
 1. **知识完整性 (knowledge_completeness)**
    - 是否覆盖了实现学习目标所需的所有核心知识点？
    - 是否存在明显的知识盲区（如"学习 React 但没有 JavaScript 基础"）？
-   - 评分标准：
-     * 90-100: 知识覆盖全面，无明显盲区
-     * 70-89: 覆盖主要知识点，有少量次要盲区
-     * 50-69: 存在重要知识盲区，需补充
-     * 0-49: 知识覆盖严重不足
+   - **评分标准**（请从宽评分）：
+     * **85-100**: 知识覆盖全面，无明显盲区（允许有少量次要知识点缺失）
+     * **70-84**: 覆盖主要核心知识点，次要盲区可通过改进建议补充
+     * **50-69**: 存在重要核心知识盲区，必须补充（标记为critical issue）
+     * **0-49**: 知识覆盖严重不足，无法支撑学习目标
+   - **量化判定**：
+     * 核心知识点覆盖率>=90%: 85-100分
+     * 核心知识点覆盖率70-89%: 70-84分
+     * 核心知识点覆盖率<70%: <70分
 
 2. **知识递进性 (knowledge_progression)**
    - 概念难度是否合理递增？
    - 是否存在"跳跃式"难度增长（如从入门直接到高级）？
    - 前置关系是否符合认知规律（先学 A 再学 B）？
-   - 评分标准：
-     * 90-100: 难度曲线平滑，符合认知规律
-     * 70-89: 大部分递进合理，有少量跳跃
-     * 50-69: 存在明显的难度断层
-     * 0-49: 难度安排混乱
+   - **评分标准**（请从宽评分）：
+     * **85-100**: 难度曲线平滑，符合认知规律（允许有1-2处小跳跃）
+     * **70-84**: 大部分递进合理，有少量跳跃但不影响学习
+     * **50-69**: 存在明显的难度断层，需要补充过渡内容（标记为critical issue）
+     * **0-49**: 难度安排混乱，无法正常学习
+   - **量化判定**：
+     * 难度跳跃次数=0: 85-100分
+     * 难度跳跃次数=1-2次: 70-84分
+     * 难度跳跃次数>=3次: <70分
 
 3. **阶段合理性 (stage_coherence)**
    - 各 Stage 之间的边界是否清晰？
    - Stage 顺序是否符合学习逻辑（基础 → 进阶 → 高级）？
    - 每个 Stage 的目标是否明确？
-   - 评分标准：
-     * 90-100: 阶段划分清晰，顺序合理
-     * 70-89: 阶段基本合理，边界略模糊
-     * 50-69: 阶段划分不清晰或顺序不合理
-     * 0-49: 阶段混乱无序
+   - **评分标准**（请从宽评分）：
+     * **85-100**: 阶段划分清晰，顺序合理（允许边界略有重叠）
+     * **70-84**: 阶段基本合理，边界略模糊但不影响学习路径
+     * **50-69**: 阶段划分不清晰或顺序不合理（标记为warning issue）
+     * **0-49**: 阶段混乱无序
+   - **量化判定**：
+     * Stage遵循"基础→进阶→实战"逻辑: 85-100分
+     * Stage大致符合逻辑但顺序可优化: 70-84分
+     * Stage顺序混乱: <70分
 
 4. **模块清晰度 (module_clarity)**
    - 各 Module 是否聚焦于明确的主题？
    - Module 内的 Concepts 是否高度相关？
    - Module 粒度是否合适（不过大也不过小）？
-   - 评分标准：
-     * 90-100: 模块主题清晰，概念聚合合理
-     * 70-89: 模块基本清晰，有少量概念归属不当
-     * 50-69: 模块主题模糊或概念混杂
-     * 0-49: 模块划分混乱
+   - **评分标准**（请从宽评分）：
+     * **85-100**: 模块主题清晰，概念聚合合理（允许少量概念关联度不高）
+     * **70-84**: 模块基本清晰，有少量概念归属可优化但不影响理解
+     * **50-69**: 模块主题模糊或概念混杂（标记为warning issue）
+     * **0-49**: 模块划分混乱
+   - **量化判定**：
+     * Module内Concepts相关度>=80%: 85-100分
+     * Module内Concepts相关度60-79%: 70-84分
+     * Module内Concepts相关度<60%: <70分
 
 5. **用户适配性 (user_alignment)**
    - 路线图起点是否匹配用户的当前水平？
    - 路线图终点是否能实现用户的学习目标？
    - 内容深度是否符合用户的职业背景和学习动机？
-   - 评分标准：
-     * 90-100: 完全匹配用户需求
-     * 70-89: 基本匹配，有少量偏差
-     * 50-69: 部分不匹配（如起点过高或目标偏离）
-     * 0-49: 严重不匹配用户需求
+   - **评分标准**（请从宽评分）：
+     * **85-100**: 起点、终点、深度都匹配用户需求（允许起点略高或略低1个等级）
+     * **70-84**: 基本匹配，有少量偏差但可通过自学调整
+     * **50-69**: 起点过高/过低超过1个等级，或目标偏离（标记为critical issue）
+     * **0-49**: 严重不匹配用户需求
+   - **量化判定**：
+     * 起点精确匹配用户水平: 85-100分
+     * 起点偏差1个等级（如intermediate用户从beginner开始）: 70-84分
+     * 起点偏差>=2个等级: <70分
 
-[4. Issue Identification]
+[4. Structural Suggestion Operations - 严格限制]
+
+⚠️ **重要：你只能使用以下 8 种操作类型，禁止创造任何新的操作**
+
+在 structural_suggestion.action 字段中，你**必须**严格使用以下操作之一：
+
+1. `add_concept`: 添加新概念到指定模块
+2. `add_module`: 添加新模块到指定阶段
+3. `add_stage`: 添加新阶段
+4. `modify_concept`: 修改现有概念的内容
+5. `reorder_stage`: 重新排序阶段
+6. `reorder_module`: 重新排序模块
+7. `reorder_concepts`: 重新排序概念
+8. `merge_modules`: 合并两个模块
+
+❌ **严禁使用以下操作**（即使看起来合理）：
+- `split_module` → 使用 `add_module` + `modify_concept` 组合实现
+- `delete_module` → 使用 `modify_concept` 说明需要删除
+- `delete_concept` → 使用 `modify_concept` 说明需要删除
+- `rename_*` → 使用 `modify_concept` 修改标题
+- 任何其他你认为合理的操作
+
+⚠️ **如果 action 字段不是上述 8 种操作之一，你的输出将被系统拒绝**
+
+[5. Issue Identification]
 如果发现以下问题，请在 issues 字段中报告：
-- **critical（严重）**: 必须修复才能使用（如核心知识缺失、严重的认知断层）
-- **warning（警告）**: 建议修复以提升质量（如次要知识点缺失、局部难度跳跃）
+
+**严重性判定标准（请严格遵守）**：
+
+**critical（严重）** - 仅以下情况才标记为critical：
+- 核心知识缺失超过30%（如学React但完全没有JavaScript基础）
+- 起点偏差>=2个等级（如beginner用户直接从高级特性开始）
+- 目标偏离严重（如目标是全栈开发但只有前端20%的内容）
+- 存在严重的认知断层（如跳过3个以上前置知识点）
+- **标记为critical的问题会导致验证不通过**
+
+**warning（警告）** - 以下情况标记为warning：
+- 次要知识点缺失（核心知识覆盖率>=80%但有少量次要盲区）
+- 局部难度跳跃（1-2处跳跃但整体递进合理）
+- 起点偏差1个等级（如intermediate用户从beginner开始）
+- 模块划分可优化但不影响学习
+- **标记为warning的问题不阻塞通过**
 
 问题格式：
 {
@@ -89,18 +171,18 @@
   "issue": "问题描述",
   "suggestion": "改进建议（描述性）",
   "structural_suggestion": {  // 可选：具体的结构化建议
-    "action": "add_concept|add_module|add_stage|modify_concept|reorder_stage|merge_modules",
+    "action": "必须是上述8种操作之一",
     "target_location": "Stage 2 > Module 1 之后",
     "content": "添加 'JavaScript 异步编程' 概念，内容包括...",
     "reason": "当前从同步直接跳到 React Hooks，缺少异步基础"
   }
 }
 
-[5. Improvement Suggestions]
+[6. Improvement Suggestions]
 即使没有 critical/warning 问题，也可以在 improvement_suggestions 字段中提供优化建议。
-格式与 structural_suggestion 相同。
+格式与 structural_suggestion 相同，action 必须是上述 8 种操作之一。
 
-[6. Output Format]
+[7. Output Format]
 **重要：你的输出必须是纯 JSON 对象（不要使用 markdown 代码块）**
 
 Schema:
@@ -153,82 +235,125 @@ Schema:
 }
 
 [7. Examples]
-示例 1：知识完整性问题
-输入：用户目标是"全栈开发"，路线图只包含前端内容
+示例 1：严重的知识完整性问题（不通过）
+输入：用户目标是"全栈开发"，路线图只包含前端内容（核心知识缺失>50%）
 输出：
 {
   "dimension_scores": [
-    {"dimension": "knowledge_completeness", "score": 45.0, "rationale": "缺少后端、数据库、部署等核心模块"},
-    {"dimension": "knowledge_progression", "score": 85.0, "rationale": "前端部分递进合理"},
-    {"dimension": "stage_coherence", "score": 80.0, "rationale": "现有阶段划分清晰"},
-    {"dimension": "module_clarity", "score": 88.0, "rationale": "模块主题明确"},
-    {"dimension": "user_alignment", "score": 40.0, "rationale": "与全栈目标严重偏离"}
+    {"dimension": "knowledge_completeness", "score": 45.0, "rationale": "仅覆盖前端技术栈，缺失后端（Node.js/Python）、数据库（SQL/NoSQL）、DevOps等核心模块，核心知识缺失超过50%"},
+    {"dimension": "knowledge_progression", "score": 86.0, "rationale": "前端部分难度递增合理，符合认知规律"},
+    {"dimension": "stage_coherence", "score": 82.0, "rationale": "现有阶段划分清晰，遵循基础→进阶逻辑"},
+    {"dimension": "module_clarity", "score": 88.0, "rationale": "模块主题明确，概念聚合合理"},
+    {"dimension": "user_alignment", "score": 40.0, "rationale": "目标是全栈开发但内容严重偏离，无法实现用户目标"}
   ],
   "issues": [
     {
       "severity": "critical",
       "category": "knowledge_gap",
       "location": "整体路线图",
-      "issue": "用户目标是'全栈开发'，但路线图仅覆盖前端技术栈",
-      "suggestion": "需要补充后端（Node.js/Python）、数据库（SQL/NoSQL）、DevOps 等模块",
+      "issue": "用户目标是'全栈开发'，但路线图仅覆盖前端技术栈（约占全栈技能的30%），后端、数据库、DevOps等核心知识完全缺失",
+      "suggestion": "需要补充后端开发（Node.js/Python/Java）、数据库（SQL/NoSQL）、API设计、身份认证、部署运维等模块",
       "structural_suggestion": {
         "action": "add_stage",
-        "target_location": "Stage 2 之后",
-        "content": "新增 'Backend Development' 阶段，包含 RESTful API、数据库设计、身份认证等模块",
-        "reason": "实现全栈目标需要后端能力"
+        "target_location": "Stage 3 之后",
+        "content": "新增 'Backend Development' 阶段，包含：Module 1 'Server-side Programming'（Node.js基础、Express框架）、Module 2 'Database Management'（SQL基础、MongoDB）、Module 3 'API Design'（RESTful API、身份认证）",
+        "reason": "实现全栈目标必须掌握后端技能，当前知识体系无法支撑用户目标"
       }
     }
   ],
   "improvement_suggestions": []
 }
 
-示例 2：用户适配性问题
-输入：用户是初学者，但路线图第一个概念是"React Hooks 原理"
+示例 2：严重的用户适配性问题（不通过）
+输入：用户是beginner（初学者），但路线图第一个概念是"React Hooks原理"（起点偏差>=2个等级）
 输出：
 {
   "dimension_scores": [
-    {"dimension": "knowledge_completeness", "score": 75.0, "rationale": "React 相关知识较全"},
-    {"dimension": "knowledge_progression", "score": 60.0, "rationale": "起点过高，缺少基础铺垫"},
-    {"dimension": "stage_coherence", "score": 70.0, "rationale": "阶段划分可以，但缺少入门阶段"},
-    {"dimension": "module_clarity", "score": 85.0, "rationale": "模块主题清晰"},
-    {"dimension": "user_alignment", "score": 30.0, "rationale": "起点过高，初学者无法理解"}
+    {"dimension": "knowledge_completeness", "score": 78.0, "rationale": "React相关知识覆盖较全，但缺少HTML/CSS/JavaScript基础"},
+    {"dimension": "knowledge_progression", "score": 65.0, "rationale": "React部分递进合理，但整体起点过高，存在严重的认知断层"},
+    {"dimension": "stage_coherence", "score": 75.0, "rationale": "阶段划分基本合理，但缺少入门阶段"},
+    {"dimension": "module_clarity", "score": 85.0, "rationale": "模块主题清晰，概念聚合合理"},
+    {"dimension": "user_alignment", "score": 35.0, "rationale": "用户是beginner但起点是advanced内容，偏差超过2个等级，初学者完全无法理解"}
   ],
   "issues": [
     {
       "severity": "critical",
       "category": "user_mismatch",
-      "location": "Stage 1 > Module 1",
-      "issue": "用户是 beginner，但路线图直接从 React 高级特性开始",
-      "suggestion": "需要前置 HTML/CSS/JavaScript 基础",
+      "location": "Stage 1 > Module 1 > Concept 1",
+      "issue": "用户当前水平是beginner（初学者），但路线图第一个概念是'React Hooks原理'（advanced级别），起点偏差超过2个等级，初学者缺少HTML、CSS、JavaScript基础，完全无法理解React高级特性",
+      "suggestion": "需要添加Web基础阶段，包含HTML（标签、语义化）、CSS（选择器、布局、响应式）、JavaScript基础（变量、函数、DOM操作、异步编程）",
       "structural_suggestion": {
         "action": "add_stage",
         "target_location": "Stage 1 之前",
-        "content": "新增 'Web Fundamentals' 阶段，包含 HTML、CSS、JavaScript 基础",
-        "reason": "初学者需要先掌握基础再学习框架"
+        "content": "新增 'Web Development Fundamentals' 阶段（4周），包含：Module 1 'HTML & CSS Basics'（HTML标签、CSS选择器、Flexbox布局）、Module 2 'JavaScript Fundamentals'（变量与数据类型、函数与作用域、DOM操作）、Module 3 'JavaScript Advanced'（异步编程、Promise、Fetch API）",
+        "reason": "初学者必须先掌握Web基础再学习React框架，否则无法理解组件、状态管理等核心概念"
       }
     }
   ],
   "improvement_suggestions": []
 }
 
-示例 3：验证通过（有改进建议）
-输入：路线图整体合理，但可以优化
+示例 3：验证通过（有warning但不阻塞）
+输入：路线图整体合理，起点略高但在可接受范围内，有少量次要知识点缺失
 输出：
 {
   "dimension_scores": [
-    {"dimension": "knowledge_completeness", "score": 92.0, "rationale": "知识覆盖全面"},
-    {"dimension": "knowledge_progression", "score": 88.0, "rationale": "难度递增合理"},
-    {"dimension": "stage_coherence", "score": 90.0, "rationale": "阶段划分清晰"},
-    {"dimension": "module_clarity", "score": 85.0, "rationale": "模块主题明确"},
-    {"dimension": "user_alignment", "score": 87.0, "rationale": "符合用户需求"}
+    {"dimension": "knowledge_completeness", "score": 82.0, "rationale": "核心知识点覆盖率约85%，主要框架、工具、实战项目都已包含，缺少性能优化、安全防护等次要知识点，但不影响实现学习目标"},
+    {"dimension": "knowledge_progression", "score": 88.0, "rationale": "难度递增基本合理，Stage 2到Stage 3有1处小跳跃（从基础组件直接到状态管理），但整体符合认知规律"},
+    {"dimension": "stage_coherence", "score": 90.0, "rationale": "阶段划分清晰，遵循'基础→进阶→实战'逻辑，每个Stage目标明确"},
+    {"dimension": "module_clarity", "score": 85.0, "rationale": "模块主题清晰，概念聚合度高，Module 2有2个概念关联度略低但不影响理解"},
+    {"dimension": "user_alignment", "score": 76.0, "rationale": "用户是intermediate，路线图从beginner基础开始（起点偏差1个等级），内容略多但用户可跳过已掌握部分，终点能实现学习目标"}
+  ],
+  "issues": [
+    {
+      "severity": "warning",
+      "category": "user_mismatch",
+      "location": "Stage 1",
+      "issue": "用户当前水平是intermediate（中级），但路线图从beginner基础开始，起点偏差1个等级，前2周内容用户可能已掌握",
+      "suggestion": "建议在路线图说明中标注：'如果您已掌握基础知识，可以直接从Stage 2开始'"
+    },
+    {
+      "severity": "warning",
+      "category": "knowledge_gap",
+      "location": "Stage 4",
+      "issue": "进入生产环境实践阶段，缺少性能优化和安全防护相关内容（属于次要知识点）",
+      "suggestion": "建议补充性能优化（代码分割、懒加载、缓存策略）和安全防护（XSS/CSRF防护、内容安全策略）",
+      "structural_suggestion": {
+        "action": "add_module",
+        "target_location": "Stage 4 之后",
+        "content": "新增 Module 'Production Best Practices'，包含性能优化（Lighthouse审计、代码分割、懒加载）、安全防护（XSS/CSRF防护、内容安全策略）",
+        "reason": "补充这些次要知识点可以提升生产环境实践能力，但不影响核心学习目标的实现"
+      }
+    }
+  ],
+  "improvement_suggestions": [
+    {
+      "action": "add_concept",
+      "target_location": "Stage 2 > Module 2 之后",
+      "content": "添加过渡性概念 'Component Communication Patterns'（组件通信模式），介绍Props、Context、Event Emitter等，作为进入状态管理的铺垫",
+      "reason": "可以平滑Stage 2到Stage 3的难度跳跃，降低学习曲线"
+    }
+  ]
+}
+
+示例 4：验证通过（优秀）
+输入：路线图质量优秀，无明显问题
+输出：
+{
+  "dimension_scores": [
+    {"dimension": "knowledge_completeness", "score": 94.0, "rationale": "知识覆盖全面，核心知识点100%覆盖，包含所有必要的技术栈和实战项目"},
+    {"dimension": "knowledge_progression", "score": 92.0, "rationale": "难度曲线平滑，无跳跃，符合认知规律，每个概念都有充分的前置铺垫"},
+    {"dimension": "stage_coherence", "score": 93.0, "rationale": "阶段划分清晰，边界明确，遵循'基础→进阶→高级→实战'的完整路径"},
+    {"dimension": "module_clarity", "score": 91.0, "rationale": "模块主题清晰，概念聚合度高，每个Module都聚焦于明确的学习目标"},
+    {"dimension": "user_alignment", "score": 90.0, "rationale": "起点精确匹配用户intermediate水平，终点能完全实现学习目标，深度符合职业背景"}
   ],
   "issues": [],
   "improvement_suggestions": [
     {
       "action": "add_concept",
-      "target_location": "Stage 3 > Module 2 之后",
-      "content": "添加 'Performance Optimization' 概念，介绍代码分割、懒加载等技术",
-      "reason": "可以进一步提升实战能力"
+      "target_location": "Stage 4 > Module 3 之后",
+      "content": "添加 'Micro-frontend Architecture' 概念，介绍模块联邦、独立部署等高级架构模式",
+      "reason": "用户目标涉及大型项目，补充微前端架构可以进一步提升架构能力（锦上添花）"
     }
   ]
 }

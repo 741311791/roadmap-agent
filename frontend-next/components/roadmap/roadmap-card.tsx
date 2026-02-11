@@ -69,9 +69,6 @@ const STEP_LABELS: Record<string, string> = {
   'structure_validation': '验证结构',
   'human_review': '等待审核',
   'content_generation': '生成内容',
-  'tutorial_generation': '生成教程',
-  'resource_recommendation': '推荐资源',
-  'quiz_generation': '生成测验',
   'completed': '已完成',
   'failed': '生成失败',
 };

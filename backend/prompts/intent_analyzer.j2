@@ -51,6 +51,14 @@
 
 [3. Constraints & Rules]
 工作规范：
+
+{% if user_constraints and user_constraints|length > 0 %}
+**🔴 [CRITICAL] 用户画像约束（必须严格遵守）：**
+{% for constraint_name, constraint_content in user_constraints.items() %}
+- **{{ constraint_name }}**: {{ constraint_content }}
+{% endfor %}
+
+{% endif %}
 1. 仔细分析用户的学习需求，提取关键信息
 2. 结合用户画像信息（行业、职位、已有技能）进行个性化分析
 3. 识别用户需要学习的技术栈，并考虑其已掌握的技能基础
@@ -76,7 +84,6 @@
 
 输出必须严格遵循以下 JSON Schema：
 {
-  "roadmap_id": "string - **路线图唯一标识**（格式：英文语义短语-8位随机后缀），详见下方说明",
   "parsed_goal": "string - 结构化的学习目标",
   "key_technologies": ["string"] - 需要学习的关键技术栈列表,
   "difficulty_profile": "string - 难度画像分析",
@@ -99,26 +106,31 @@
       "primary": 0.6 - 主语言资源占比（如果有次语言则为 0.6，否则为 1.0）,
       "secondary": 0.4 - 次语言资源占比（如果有次语言则为 0.4，否则为 0.0）
     }
-  } - 语言偏好配置，影响教程语言和资源推荐的语言分布
+  } - 语言偏好配置，影响教程语言和资源推荐的语言分布,
+  "full_analysis_data": {
+    "user_goal": "string - 用户学习目标",
+    "current_level": "string - 当前水平（beginner/intermediate/advanced）",
+    "learning_style": "string - 学习风格偏好",
+    "content_preference": "string - 内容偏好（用逗号分隔，如 'visual, text, hands_on'）",
+    "difficulty": "string - 难度画像约束",
+    "time_constraint": "string - 时间约束说明",
+    "skill_gap": "string - 技能差距总结",
+    "recommended_focus": "string - 推荐学习重点总结",
+    "language": "string - 语言偏好约束",
+    "content_format_preference": "string - 内容格式偏好约束",
+    "key_technologies": "string - 关键技术栈总结",
+    "personalized_suggestions": "string - 个性化建议总结"
+  } - **[必填] 约束文本字典**，所有字段的值都必须是字符串类型（不能是列表或对象），用于后续 Agent 参考
 }
 
 **再次强调：请直接输出 JSON 对象本身，不要包裹在代码块中！**
 
-**roadmap_id 生成规则（重要）**：
-1. **格式**：`<英文语义短语>-<8位随机字符>`
-2. **英文语义短语**：从学习目标中提取核心关键词，翻译成英文，用连字符连接
-   - 保持简洁（20-40个字符）
-   - 全部小写
-   - 只使用字母、数字和连字符
-   - 体现学习目标的核心内容
-3. **8位随机字符**：生成8位随机字母数字组合（小写）
-4. **示例**：
-   - "学习Python Web开发" → "python-web-development-a1b2c3d4"
-   - "成为全栈工程师" → "fullstack-engineer-x9y8z7w6"
-   - "掌握React前端框架" → "react-frontend-framework-m4n5o6p7"
-   - "Kubernetes云原生技术" → "kubernetes-cloud-native-k1j2h3g4"
-
-**重要**：roadmap_id 必须完全是英文，即使学习目标是中文，也要翻译成有意义的英文短语。
+**full_analysis_data 字段说明**：
+- 这是一个约束文本字典（Dict[str, str]），用于后续的课程设计、内容生成等环节
+- **所有字段的值都必须是字符串类型**，不能使用列表或对象
+- 如果原本是列表的内容（如 content_preference、key_technologies），请用逗号分隔的字符串表示（如 "visual, text, hands_on"）
+- 每个字段都应该是简洁、清晰的约束描述
+- 必须包含所有必填字段，确保后续 Agent 能够获得完整的用户画像和约束信息
 
 [5. Tool Usage Guide]
 {% if tools %}
@@ -143,7 +155,6 @@
 
 输出：
 {
-  "roadmap_id": "fullstack-web-development-a7f3e2c1",
   "parsed_goal": "从零开始学习全栈开发，掌握前端和后端核心技术，能够独立开发 Web 应用",
   "key_technologies": ["HTML", "CSS", "JavaScript", "React", "Node.js", "PostgreSQL", "Git"],
   "difficulty_profile": "用户为非技术背景的初学者，需要从编程基础概念开始，循序渐进，注重实战项目以建立信心",
@@ -166,6 +177,20 @@
       "primary": 0.6,
       "secondary": 0.4
     }
+  },
+  "full_analysis_data": {
+    "user_goal": "从零开始学习全栈开发，掌握前端和后端核心技术，能够独立开发 Web 应用",
+    "current_level": "beginner",
+    "learning_style": "balanced",
+    "content_preference": "visual, hands_on",
+    "difficulty": "用户为非技术背景的初学者，需要从编程基础概念开始，循序渐进，注重实战项目以建立信心",
+    "time_constraint": "每周 10 小时，建议 8-10 个月完成转型，包含项目实战时间",
+    "skill_gap": "需要从零学习编程基础、建立计算机科学基本概念、缺乏项目开发实战经验、需要学习版本控制和协作工具",
+    "recommended_focus": "编程思维培养、前端基础 HTML/CSS/JS、React 框架实战、后端 API 开发、全栈项目实践",
+    "language": "请使用简体中文生成响应内容",
+    "content_format_preference": "用户偏好：视觉化内容（图表、图示）、实践性内容（代码示例、项目）",
+    "key_technologies": "关键技术栈：HTML、CSS、JavaScript、React、Node.js",
+    "personalized_suggestions": "建议从可视化编程概念入手，降低学习门槛；利用市场背景优势，选择电商或营销相关的实战项目；建议加入编程社区，获得更多交流机会"
   }
 }
 
@@ -183,7 +208,6 @@
 
 输出：
 {
-  "roadmap_id": "kubernetes-cloud-native-m9n8k7j6",
   "parsed_goal": "系统学习 Kubernetes 和云原生技术栈，掌握容器编排和微服务架构，能够设计和部署生产级云原生应用",
   "key_technologies": ["Kubernetes", "Helm", "Prometheus", "Grafana", "Istio", "ArgoCD", "Terraform"],
   "difficulty_profile": "用户有扎实的后端开发基础和 Docker 经验，学习 K8s 有较好的基础。重点在于理解分布式系统概念和实际运维经验",
@@ -206,6 +230,20 @@
       "primary": 1.0,
       "secondary": 0.0
     }
+  },
+  "full_analysis_data": {
+    "user_goal": "系统学习 Kubernetes 和云原生技术栈，掌握容器编排和微服务架构，能够设计和部署生产级云原生应用",
+    "current_level": "intermediate",
+    "learning_style": "balanced",
+    "content_preference": "text, hands_on",
+    "difficulty": "用户有扎实的后端开发基础和 Docker 经验，学习 K8s 有较好的基础。重点在于理解分布式系统概念和实际运维经验",
+    "time_constraint": "每周 8 小时，建议 4-5 个月完成核心内容，后续持续实践深化",
+    "skill_gap": "需要深入学习 Kubernetes 编排原理、AWS 知识需要加强特别是 EKS 相关、缺乏微服务架构设计经验、需要学习云原生监控体系",
+    "recommended_focus": "Kubernetes 核心概念与架构、应用部署与管理、服务网格与微服务治理、监控与可观测性、GitOps 与持续交付",
+    "language": "请使用英语生成响应内容",
+    "content_format_preference": "用户偏好：实践性内容（代码示例、项目）",
+    "key_technologies": "关键技术栈：Kubernetes、Helm、Prometheus、Grafana、Istio",
+    "personalized_suggestions": "建议结合现有 Python 技能开发 K8s Operator；利用 Docker 基础快速过渡到容器编排；建议在现有项目中实践 K8s 部署"
   }
 }
 

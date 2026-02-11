@@ -7,7 +7,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Check, X, Loader2, Clock, BookOpen, AlertCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { approveRoadmap } from '@/lib/api/endpoints';
+import { tasksApi } from '@/lib/api/endpoints';
 
 interface HumanReviewCardProps {
   taskId: string;
@@ -71,7 +71,7 @@ export function HumanReviewCard({
       setStatus('submitting');
       setError(null);
       
-      await approveRoadmap(taskId, true);
+      await tasksApi.approve(taskId, { approved: true });
       
       setStatus('approved');
       onReviewComplete?.();
@@ -97,7 +97,7 @@ export function HumanReviewCard({
       setStatus('submitting');
       setError(null);
       
-      await approveRoadmap(taskId, false, feedback);
+      await tasksApi.approve(taskId, { approved: false, feedback });
       
       // 反馈提交成功后，重置为 waiting 状态，让工作流自然过渡
       // 不显示 'rejected' 状态的确认卡片

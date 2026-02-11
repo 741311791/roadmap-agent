@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { TaskStatus } from '../constants';
 /**
  * 审核响应模型
  */
@@ -9,7 +10,7 @@ export type ApprovalResponse = {
     /**
      * 审核状态：approved/rejected
      */
-    status: string;
+    status: TaskStatus;
     /**
      * 状态消息
      */

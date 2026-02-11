@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import type { Module } from '@/types/custom/store';
+import type { Module } from '@/types/generated';
 
 interface ModuleCardProps {
   module: Module;
@@ -71,21 +71,21 @@ export function ModuleCard({
             </p>
 
             {/* 学习目标 */}
-            {module.learning_objectives && module.learning_objectives.length > 0 && (
+            {(module as any).learning_objectives && (module as any).learning_objectives.length > 0 && (
               <div className="mt-3 space-y-1">
                 <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
                   <Target className="w-3 h-3" />
                   学习目标
                 </div>
                 <ul className="text-xs text-muted-foreground space-y-1 ml-5">
-                  {module.learning_objectives.slice(0, isExpanded ? undefined : 2).map((objective, idx) => (
+                  {(module as any).learning_objectives.slice(0, isExpanded ? undefined : 2).map((objective: string, idx: number) => (
                     <li key={idx} className="list-disc">
                       {objective}
                     </li>
                   ))}
-                  {!isExpanded && module.learning_objectives.length > 2 && (
+                  {!isExpanded && (module as any).learning_objectives.length > 2 && (
                     <li className="text-primary">
-                      +{module.learning_objectives.length - 2} 更多...
+                      +{(module as any).learning_objectives.length - 2} 更多...
                     </li>
                   )}
                 </ul>

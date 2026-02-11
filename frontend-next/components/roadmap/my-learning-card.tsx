@@ -67,9 +67,6 @@ const STEP_LABELS: Record<string, string> = {
   'structure_validation': 'Validating',
   'human_review': 'Pending Review',
   'content_generation': 'Generating',
-  'tutorial_generation': 'Creating Tutorials',
-  'resource_recommendation': 'Finding Resources',
-  'quiz_generation': 'Creating Quizzes',
   'completed': 'Completed',
   'failed': 'Failed',
 };

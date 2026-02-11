@@ -53,11 +53,15 @@ async def structure_validation_node(
     # 创建Agent
     agent = ctx.agent_factory.create_structure_validator()
     
-    # 执行验证（需要传递2个参数）
-    validation_result = await agent.validate(
+    # 准备输入数据
+    from app.models.domain import ValidationInput
+    validation_input = ValidationInput(
         framework=framework,
         user_preferences=state["user_request"].preferences,
     )
+    
+    # 执行验证
+    validation_result = await agent.execute(validation_input)
     
     logger.info(
         "structure_validation_node_completed",

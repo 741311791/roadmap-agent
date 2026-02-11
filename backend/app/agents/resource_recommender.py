@@ -1,10 +1,11 @@
 """
-Resource Recommender Agent（资源推荐师）
+Resource Recommender Agent（资源推荐师 - 已适配统一工具框架）
 """
 import json
 import uuid
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+from pydantic import BaseModel, Field
 from app.agents.base import BaseAgent
 from app.models.domain import (
     Concept,
@@ -12,9 +13,8 @@ from app.models.domain import (
     ResourceRecommendationInput,
     ResourceRecommendationOutput,
     Resource,
-    SearchQuery,
 )
-from app.core.tool_registry import tool_registry
+from app.tools.registry import ToolRegistry
 from app.config.settings import settings
 import structlog
 import httpx
@@ -25,7 +25,7 @@ logger = structlog.get_logger()
 
 class ResourceRecommenderAgent(BaseAgent):
     """
-    资源推荐师 Agent
+    资源推荐师 Agent（已适配统一工具框架）
     
     配置从环境变量加载：
     - RECOMMENDER_PROVIDER: 模型提供商（默认: openai）
@@ -33,6 +33,11 @@ class ResourceRecommenderAgent(BaseAgent):
     - RECOMMENDER_BASE_URL: 自定义 API 端点（可选）
     - RECOMMENDER_API_KEY: API 密钥（必需）
     - tavily_key: 预分配的 Tavily API Key（可选，用于优化性能）
+    
+    改进：
+    - ✅ 使用统一的 ToolRegistry
+    - ✅ 自动生成工具 Schema
+    - ✅ 统一的工具调用接口
     """
     
     def __init__(
@@ -43,6 +48,7 @@ class ResourceRecommenderAgent(BaseAgent):
         base_url: str | None = None,
         api_key: str | None = None,
         tavily_key: Optional[str] = None,
+        tool_registry: Optional[ToolRegistry] = None,
     ):
         super().__init__(
             agent_id=agent_id,
@@ -54,8 +60,14 @@ class ResourceRecommenderAgent(BaseAgent):
             max_tokens=4096,
         )
         
-        # 预分配的 Tavily API Key（用于优化性能，避免数据库查询）
+        # 预分配的 Tavily API Key
         self._tavily_key = tavily_key
+        
+        # 注入 ToolRegistry
+        self.tool_registry = tool_registry or ToolRegistry()
+        
+        # 搜索查询记录（用于 execute 方法）
+        self._search_queries = []
         
         if tavily_key:
             logger.debug(
@@ -64,74 +76,72 @@ class ResourceRecommenderAgent(BaseAgent):
                 key_prefix=tavily_key[:10] + "...",
             )
     
-    def _get_tools_definition(self) -> List[Dict[str, Any]]:
-        """
-        获取工具定义（符合 OpenAI Function Calling 格式）
-        
-        返回 web_search 工具（通过 WebSearchRouter 自动路由到 Tavily API 或 DuckDuckGo）
-        
-        Returns:
-            工具定义列表
-        """
-        tools = [
-            # 普通搜索工具（通过 WebSearchRouter 路由）
-            {
-                "type": "function",
-                "function": {
-                    "name": "web_search",
-                    "description": (
-                        "执行网络搜索以获取学习资源、官方文档、教程和课程。"
-                        "支持时间筛选（最近一年/月/周）、域名筛选（优先搜索权威网站）等高级功能。"
-                        "优先级：Tavily API → DuckDuckGo。"
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "搜索查询字符串，例如：'React Hooks 官方文档'、'Python 机器学习教程'",
-                            },
-                            "max_results": {
-                                "type": "integer",
-                                "description": "最大结果数量，默认5，范围1-20",
-                                "default": 5,
-                            },
-                            "time_range": {
-                                "type": "string",
-                                "enum": ["day", "week", "month", "year"],
-                                "description": (
-                                    "时间筛选（推荐使用，确保资源时效性）："
-                                    "'year'=最近一年（推荐，适合技术教程）、"
-                                    "'month'=最近一月（最新资讯）、"
-                                    "'week'=最近一周、'day'=最近一天"
-                                ),
-                            },
-                            "search_depth": {
-                                "type": "string",
-                                "enum": ["basic", "advanced"],
-                                "description": "搜索深度：'advanced'（高质量，推荐）或 'basic'（快速）",
-                                "default": "advanced",
-                            },
-                            "include_domains": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": (
-                                    "优先搜索的权威域名列表，例如：['github.com', 'stackoverflow.com', 'docs.python.org']"
-                                ),
-                            },
-                            "exclude_domains": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "排除的域名列表，例如：['medium.com']（避免低质量内容）",
-                            },
-                        },
-                        "required": ["query"],
-                    },
-                },
-            }
+    def _get_required_constraints(self) -> list[str]:
+        """资源推荐器需要的约束"""
+        from app.models.domain import ConstraintNames
+        return [
+            ConstraintNames.LANGUAGE,
+            ConstraintNames.USER_GOAL,
+            ConstraintNames.USER_PROFILE,
+            ConstraintNames.LANGUAGE_RESOURCE_ALLOCATION,
+            ConstraintNames.CONTENT_FORMAT_PREFERENCE,
         ]
+    
+    def _get_tools_definition(self) -> List[Dict[str, Any]]:
+        """获取工具定义（从 ToolRegistry 自动生成）"""
+        return self.tool_registry.get_all_schemas(format="openai")
+    
+    async def _execute_tool(
+        self,
+        tool_name: str,
+        tool_args: Dict[str, Any]
+    ) -> Any:
+        """
+        执行工具调用（使用 ToolRegistry）
         
-        return tools
+        覆盖 base 的抽象方法，使用 ToolRegistry 执行工具
+        
+        Args:
+            tool_name: 工具名称
+            tool_args: 工具参数
+            
+        Returns:
+            格式化后的工具执行结果
+        """
+        # 记录搜索查询
+        if tool_name == "web_search" and "query" in tool_args:
+            self._search_queries.append(tool_args["query"])
+        
+        logger.info(
+            "resource_recommender_tool_call",
+            tool_name=tool_name,
+            arguments=tool_args,
+        )
+        
+        # 使用 ToolRegistry 执行工具
+        result = await self.tool_registry.execute_tool(
+            name=tool_name,
+            arguments=tool_args,
+            pre_allocated_tavily_key=self._tavily_key,
+        )
+        
+        # 格式化返回结果
+        if isinstance(result, str):
+            return result
+        
+        # 格式化搜索结果
+        if tool_name == "web_search" and hasattr(result, 'results'):
+            formatted_results = []
+            for idx, res in enumerate(result.results[:5], 1):
+                formatted_results.append(
+                    f"{idx}. {res['title']}\n"
+                    f"   URL: {res['url']}\n"
+                    f"   摘要: {res['snippet']}\n"
+                )
+            return "\n".join(formatted_results) if formatted_results else "未找到相关结果"
+        
+        # 其他工具结果转为 JSON
+        return result.model_dump() if hasattr(result, 'model_dump') else result
     
     async def _handle_tool_calls(
         self, 
@@ -139,11 +149,11 @@ class ResourceRecommenderAgent(BaseAgent):
         user_preferences: LearningPreferences | None = None
     ) -> tuple[List[Dict[str, Any]], List[str]]:
         """
-        处理 LLM 返回的工具调用请求
+        处理 LLM 返回的工具调用请求（使用 ToolRegistry 统一执行）
         
         Args:
             tool_calls: 工具调用列表
-            user_preferences: 用户偏好（可选，如果未提供则从实例变量获取）
+            user_preferences: 用户偏好（可选）
             
         Returns:
             (工具调用结果列表, 使用的搜索查询列表)
@@ -151,109 +161,92 @@ class ResourceRecommenderAgent(BaseAgent):
         tool_messages = []
         search_queries_used = []
         
-        # 获取用户偏好（优先使用参数，否则使用实例变量）
-        prefs = user_preferences or getattr(self, '_current_user_preferences', None)
-        
         for tool_call in tool_calls:
             tool_name = tool_call.function.name
-            tool_args = json.loads(tool_call.function.arguments)
             tool_call_id = tool_call.id
+            arguments_str = tool_call.function.arguments
+            
+            # 验证参数
+            if not arguments_str or not arguments_str.strip():
+                logger.warning(
+                    "resource_recommender_empty_tool_arguments",
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                )
+                tool_messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": json.dumps({
+                        "error": "Invalid tool call: empty arguments",
+                        "tool_name": tool_name
+                    }, ensure_ascii=False)
+                })
+                continue
+            
+            # 解析 JSON 参数
+            try:
+                arguments = json.loads(arguments_str)
+            except json.JSONDecodeError as e:
+                logger.error(
+                    "resource_recommender_invalid_tool_arguments",
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                    arguments=arguments_str[:200],
+                    error=str(e)
+                )
+                tool_messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": json.dumps({
+                        "error": f"Invalid JSON arguments: {str(e)}",
+                        "tool_name": tool_name
+                    }, ensure_ascii=False)
+                })
+                continue
+            
+            # 记录搜索查询
+            if tool_name == "web_search" and "query" in arguments:
+                search_queries_used.append(arguments["query"])
             
             logger.info(
                 "resource_recommender_tool_call",
                 tool_name=tool_name,
-                tool_args=tool_args,
+                arguments=arguments,
                 tool_call_id=tool_call_id,
             )
             
-            # 处理 web_search 工具调用
-            if tool_name == "web_search":
-                try:
-                    # 记录搜索查询
-                    search_queries_used.append(tool_args["query"])
-                    
-                    # 使用 WebSearchRouter（会按优先级自动选择：Tavily API → DuckDuckGo）
-                    search_tool = tool_registry.get("web_search_v1")
-                    if not search_tool:
-                        raise RuntimeError("Web Search Router 未注册")
-                    
-                    # 构建搜索查询（包含语言和内容类型信息）
-                    # 从 user_preferences 提取语言信息（如果可用）
-                    language = None
-                    if prefs and prefs.preferred_language:
-                        language = prefs.preferred_language
-                    
-                    # 从查询中推断内容类型（如果可能）
-                    content_type = None
-                    query_lower = tool_args["query"].lower()
-                    if any(keyword in query_lower for keyword in ["video", "tutorial", "course", "youtube", "bilibili"]):
-                        content_type = "video"
-                    elif any(keyword in query_lower for keyword in ["documentation", "docs", "api"]):
-                        content_type = "documentation"
-                    elif any(keyword in query_lower for keyword in ["article", "blog", "post"]):
-                        content_type = "article"
-                    
-                    # 构建 SearchQuery（支持 Tavily 高级参数）
-                    search_query = SearchQuery(
-                        query=tool_args["query"],
-                        max_results=tool_args.get("max_results", 5),
-                        language=language,
-                        content_type=content_type,
-                        # Tavily 高级参数
-                        search_depth=tool_args.get("search_depth", "advanced"),
-                        time_range=tool_args.get("time_range"),
-                        include_domains=tool_args.get("include_domains"),
-                        exclude_domains=tool_args.get("exclude_domains"),
-                    )
-                    
-                    # 执行搜索（使用预分配的 Tavily Key，如果可用）
-                    search_result = await search_tool.execute(
-                        search_query,
-                        pre_allocated_tavily_key=self._tavily_key,
-                    )
-                    
+            # 使用 ToolRegistry 统一执行工具
+            result = await self.tool_registry.execute_tool(
+                name=tool_name,
+                arguments=arguments,
+                pre_allocated_tavily_key=self._tavily_key,
+            )
+            
+            # 格式化返回结果
+            if isinstance(result, str):
+                content = result
+            else:
+                if tool_name == "web_search" and hasattr(result, 'results'):
                     # 格式化搜索结果
                     formatted_results = []
-                    for idx, result in enumerate(search_result.results[:5], 1):
+                    for idx, res in enumerate(result.results[:5], 1):
                         formatted_results.append(
-                            f"{idx}. {result['title']}\n"
-                            f"   URL: {result['url']}\n"
-                            f"   摘要: {result['snippet']}\n"
+                            f"{idx}. {res['title']}\n"
+                            f"   URL: {res['url']}\n"
+                            f"   摘要: {res['snippet']}\n"
                         )
-                    
-                    result_text = "\n".join(formatted_results) if formatted_results else "未找到相关结果"
-                    
-                    logger.info(
-                        "resource_recommender_tool_success",
-                        tool_name=tool_name,
-                        results_count=len(search_result.results),
+                    content = "\n".join(formatted_results) if formatted_results else "未找到相关结果"
+                else:
+                    content = json.dumps(
+                        result.model_dump() if hasattr(result, 'model_dump') else result,
+                        ensure_ascii=False
                     )
-                    
-                    # 构建工具响应消息
-                    tool_messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "content": result_text,
-                    })
-                    
-                except Exception as e:
-                    logger.error(
-                        "resource_recommender_tool_failed",
-                        tool_name=tool_name,
-                        error=str(e),
-                    )
-                    tool_messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "content": f"工具调用失败: {str(e)}",
-                    })
-            else:
-                logger.warning("resource_recommender_unknown_tool", tool_name=tool_name)
-                tool_messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "content": f"未知工具: {tool_name}",
-                })
+            
+            tool_messages.append({
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "content": content
+            })
         
         return tool_messages, search_queries_used
     
@@ -261,25 +254,9 @@ class ResourceRecommenderAgent(BaseAgent):
         self, 
         resources: List[Resource]
     ) -> List[Resource]:
-        """
-        批量验证资源URL的有效性
-        
-        策略:
-        - 使用 HEAD 请求检查链接（更快）
-        - 模拟浏览器 User-Agent（避免403）
-        - 并发验证提升速度
-        - 保留200和403/412状态码的资源（403/412可能需要浏览器访问但资源存在）
-        - 过滤404和500+错误的资源
-        
-        Args:
-            resources: 待验证的资源列表
-            
-        Returns:
-            验证后的资源列表（已过滤无效链接）
-        """
+        """批量验证资源URL的有效性（并发）"""
         verified_resources = []
         
-        # 模拟浏览器 User-Agent
         headers = {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                          "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -290,131 +267,60 @@ class ResourceRecommenderAgent(BaseAgent):
             """验证单个URL"""
             try:
                 async with httpx.AsyncClient(
-                    timeout=10.0, 
+                    timeout=15.0,
                     follow_redirects=True
                 ) as client:
                     response = await client.head(resource.url, headers=headers)
                     
-                    # 200: 完全有效
                     if response.status_code == 200:
-                        # 更新为最终URL（处理重定向）
                         resource.url = str(response.url)
-                        logger.info(
-                            "url_verified_success",
-                            url=resource.url,
-                            status=200,
-                            title=resource.title[:50]
-                        )
                         return resource
-                    
-                    # 403/412: 可能需要浏览器访问，但资源可能存在，保留
                     elif response.status_code in [403, 412]:
-                        logger.info(
-                            "url_possibly_valid",
-                            url=resource.url,
-                            status=response.status_code,
-                            title=resource.title[:50],
-                            reason="需要浏览器访问或Cookie"
-                        )
-                        return resource  # 保留这些资源
-                    
-                    # 404: 确认无效
+                        return resource  # 保留
                     elif response.status_code == 404:
-                        logger.warning(
-                            "url_not_found",
-                            url=resource.url,
-                            status=404,
-                            title=resource.title[:50]
-                        )
                         return None  # 过滤掉
-                    
-                    # 500+: 服务器错误
                     elif response.status_code >= 500:
-                        logger.warning(
-                            "url_server_error",
-                            url=resource.url,
-                            status=response.status_code,
-                            title=resource.title[:50]
-                        )
                         return None  # 过滤掉
-                    
-                    # 其他状态码：保守处理，保留
                     else:
-                        logger.info(
-                            "url_unknown_status",
-                            url=resource.url,
-                            status=response.status_code,
-                            title=resource.title[:50]
-                        )
-                        return resource
+                        return resource  # 保守处理，保留
                         
             except httpx.TimeoutException:
-                logger.warning(
-                    "url_verification_timeout",
-                    url=resource.url,
-                    title=resource.title[:50]
-                )
-                # 超时的链接保留（可能是网络问题）
-                return resource
-                
-            except Exception as e:
-                logger.warning(
-                    "url_verification_failed",
-                    url=resource.url,
-                    error=str(e)[:100],
-                    title=resource.title[:50]
-                )
-                # 验证失败的链接保留（保守策略）
-                return resource
-        
-        # 并发验证所有URL
-        logger.info(
-            "url_verification_start",
-            total_resources=len(resources)
-        )
+                return resource  # 超时保留
+            except Exception:
+                return resource  # 验证失败保留
         
         tasks = [verify_single(r) for r in resources]
         results = await asyncio.gather(*tasks)
         
         verified_resources = [r for r in results if r is not None]
         
-        filtered_count = len(resources) - len(verified_resources)
-        
         logger.info(
             "url_verification_complete",
             total=len(resources),
             verified=len(verified_resources),
-            filtered=filtered_count,
-            success_rate=f"{len(verified_resources)/len(resources)*100:.1f}%" if resources else "0%"
+            filtered=len(resources) - len(verified_resources),
         )
         
         return verified_resources
     
-    async def recommend(
-        self,
-        concept: Concept,
-        context: dict,
-        user_preferences: LearningPreferences,
-    ) -> ResourceRecommendationOutput:
+    async def execute(self, input_data: ResourceRecommendationInput) -> ResourceRecommendationOutput:
         """
-        为给定的 Concept 推荐学习资源
-        
-        支持双语资源推荐：
-        - 如果用户设置了不同的主语言和次语言，按 60%/40% 比例分配资源
-        - 如果只有主语言，则 100% 使用主语言资源
+        为给定的 Concept 推荐学习资源（支持工具调用）
         
         Args:
-            concept: 要推荐资源的概念
-            context: 上下文信息（所属阶段、模块等）
-            user_preferences: 用户偏好
+            input_data: 包含概念、上下文和用户偏好
             
         Returns:
             资源推荐结果
         """
-        # 保存用户偏好到实例变量，供工具调用时使用
+        concept = input_data.concept
+        context = input_data.context
+        user_preferences = input_data.user_preferences
+        
+        # 保存用户偏好
         self._current_user_preferences = user_preferences
         
-        # 获取语言偏好和资源分配比例
+        # 获取语言偏好
         language_prefs = user_preferences.get_language_preferences()
         resource_ratio = language_prefs.get_effective_ratio()
         
@@ -434,7 +340,7 @@ class ResourceRecommenderAgent(BaseAgent):
             has_bilingual=has_bilingual,
         )
         
-        # 加载 System Prompt（包含语言偏好信息）
+        # 加载 System Prompt
         system_prompt = self._load_system_prompt(
             "resource_recommender.j2",
             agent_name="Resource Recommender",
@@ -446,7 +352,25 @@ class ResourceRecommenderAgent(BaseAgent):
             resource_ratio=resource_ratio,
         )
         
-        # 根据内容偏好构建搜索建议
+        # 构建语言分配指令
+        if has_bilingual:
+            primary_count = int(10 * resource_ratio["primary"])
+            secondary_count = 10 - primary_count
+            language_instruction = f"""
+**语言分配要求**（重要）:
+- 主要语言（{language_prefs.primary_language}）资源: 约 {int(resource_ratio['primary'] * 100)}%（约 {primary_count} 个）
+- 次要语言（{language_prefs.secondary_language}）资源: 约 {int(resource_ratio['secondary'] * 100)}%（约 {secondary_count} 个）
+- 每个资源需要标注语言（language 字段）
+- 搜索时分别使用主语言和次语言的搜索查询
+"""
+        else:
+            language_instruction = f"""
+**语言要求**:
+- 主要使用 {language_prefs.primary_language} 语言的资源
+- 每个资源需要标注语言（language 字段）
+"""
+        
+        # 构建用户消息
         content_pref_map = {
             "visual": "视频教程、图解、演示",
             "text": "文档、文章、书籍",
@@ -457,24 +381,6 @@ class ResourceRecommenderAgent(BaseAgent):
             content_pref_map.get(pref, pref) 
             for pref in user_preferences.content_preference
         ])
-        
-        # 构建语言分配指令
-        if has_bilingual:
-            primary_count = int(10 * resource_ratio["primary"])  # 假设推荐10个资源
-            secondary_count = 10 - primary_count
-            language_instruction = f"""
-**语言分配要求**（重要）:
-- 主要语言（{language_prefs.primary_language}）资源: 约 {int(resource_ratio['primary'] * 100)}%（约 {primary_count} 个）
-- 次要语言（{language_prefs.secondary_language}）资源: 约 {int(resource_ratio['secondary'] * 100)}%（约 {secondary_count} 个）
-- 每个资源需要在 JSON 输出中标注其语言（language 字段）
-- 搜索时需要分别使用主语言和次语言的搜索查询
-"""
-        else:
-            language_instruction = f"""
-**语言要求**:
-- 主要使用 {language_prefs.primary_language} 语言的资源
-- 每个资源需要在 JSON 输出中标注其语言（language 字段）
-"""
         
         user_message = f"""
 请为以下概念推荐高质量的学习资源：
@@ -494,12 +400,9 @@ class ResourceRecommenderAgent(BaseAgent):
 - 当前水平: {user_preferences.current_level}
 {language_instruction}
 请执行以下步骤：
-1. 根据用户的内容偏好（{", ".join(user_preferences.content_preference)}）和语言分配要求，构建针对性的搜索查询
-2. 使用 web_search 工具搜索与概念相关的官方文档、教程、课程等资源
-   - 优先搜索用户偏好的内容类型（如偏好 visual，优先搜索视频教程）
-   - **按语言分配比例分别搜索不同语言的资源**
-3. 基于搜索结果和你的知识，筛选 8-10 个高质量资源（按语言比例分配）
-4. 按相关性评分排序，输出 JSON 格式的推荐结果（每个资源包含 language 字段）
+1. 使用 web_search 工具搜索与概念相关的资源（按语言分配比例分别搜索）
+2. 基于搜索结果，筛选 8-10 个高质量资源
+3. 按相关性评分排序，输出 JSON 格式
 """
         
         messages = [
@@ -510,108 +413,63 @@ class ResourceRecommenderAgent(BaseAgent):
         # 获取工具定义
         tools = self._get_tools_definition()
         
-        # 收集所有使用的搜索查询
-        all_search_queries = []
+        # 初始化搜索查询记录（用于工具执行）
+        self._search_queries = []
         
-        # 调用 LLM（支持工具调用）
-        max_iterations = 5
-        iteration = 0
-        content = None  # 初始化 content 变量，避免 UnboundLocalError
+        # 使用 base 的 ReAct 循环
+        logger.info(
+            "resource_recommender_using_react",
+            concept_id=concept.concept_id,
+        )
         
-        while iteration < max_iterations:
-            logger.info(
-                "resource_recommender_llm_call",
-                concept_id=concept.concept_id,
-                iteration=iteration,
-            )
-            
-            response = await self._call_llm(messages, tools=tools)
-            message = response.choices[0].message
-            
-            # 检查是否有工具调用
-            if hasattr(message, 'tool_calls') and message.tool_calls:
-                logger.info(
-                    "resource_recommender_tool_calls_detected",
-                    concept_id=concept.concept_id,
-                    tool_calls_count=len(message.tool_calls),
-                )
-                
-                # 将 assistant 的消息添加到对话历史
-                messages.append({
-                    "role": "assistant",
-                    "content": message.content or "",
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            }
-                        }
-                        for tc in message.tool_calls
-                    ]
-                })
-                
-                # 处理工具调用（传递用户偏好）
-                tool_messages, search_queries = await self._handle_tool_calls(
-                    message.tool_calls,
-                    user_preferences=user_preferences
-                )
-                messages.extend(tool_messages)
-                all_search_queries.extend(search_queries)
-                
-                iteration += 1
-                continue
-            
-            # 没有工具调用，获取最终内容
-            content = message.content
-            break
+        response = await self._call_llm(
+            messages=messages,
+            tools=tools,
+            use_react=True,
+            max_iterations=5,
+        )
         
-        if iteration >= max_iterations:
-            logger.error(
-                "resource_recommender_max_iterations_reached",
-                concept_id=concept.concept_id,
-            )
-            raise ValueError(
-                f"资源推荐失败：工具调用循环达到最大次数（{max_iterations}）仍未获得最终内容。"
-                "可能原因：LLM 持续进行工具调用而未输出最终结果。"
-            )
+        final_response = response.choices[0].message.content
         
-        # 解析输出
-        if not content:
+        if not final_response:
             raise ValueError("LLM 未返回任何内容")
         
+        # 获取收集到的搜索查询
+        all_search_queries = self._search_queries
+        
+        # 使用 instructor 解析最终响应（添加一次性的 structured output 调用）
+        # 由于已经完成工具调用循环，这里只需要解析最终的 JSON 输出
         try:
-            # 提取 JSON 内容
-            json_content = content.strip()
-            
-            # 如果包含 ```json 代码块，提取其中的内容
+            # 简单的 JSON 提取
+            json_content = final_response.strip()
             if "```json" in json_content:
                 json_start = json_content.find("```json") + 7
                 json_end = json_content.find("```", json_start)
                 if json_end > json_start:
                     json_content = json_content[json_start:json_end].strip()
-            elif json_content.startswith("```") and "```" in json_content[3:]:
-                json_start = 3
-                json_end = json_content.find("```", json_start)
-                if json_end > json_start:
-                    json_content = json_content[json_start:json_end].strip()
             
-            # 解析 JSON
             data = json.loads(json_content)
             
             # 构建 Resource 列表
             resources = []
             for r in data.get("resources", []):
                 try:
+                    # 规范化 type 字段
+                    raw_type = r.get("type", "article")
+                    type_mapping = {
+                        "tutorial": "hands_on",
+                        "guide": "article",
+                        "reference": "documentation",
+                        "practice": "hands_on",
+                    }
+                    normalized_type = type_mapping.get(raw_type, raw_type)
+                    
                     resource = Resource(
                         title=r.get("title", ""),
                         url=r.get("url", ""),
-                        type=r.get("type", "article"),
+                        type=normalized_type,
                         description=r.get("description", ""),
                         relevance_score=float(r.get("relevance_score", 0.5)),
-                        # 🆕 支持新字段
                         confidence_score=float(r.get("confidence_score")) if r.get("confidence_score") is not None else None,
                         published_date=r.get("published_date"),
                         language=r.get("language"),
@@ -624,39 +482,17 @@ class ResourceRecommenderAgent(BaseAgent):
                         resource_data=r,
                     )
             
-            logger.info(
-                "resource_recommender_parsed_resources",
-                concept_id=concept.concept_id,
-                resources_count=len(resources)
-            )
-            
-            # 🆕 验证URL有效性（过滤404链接）
+            # 验证URL有效性
             if resources:
-                logger.info(
-                    "resource_recommender_verifying_urls",
-                    concept_id=concept.concept_id,
-                    resources_count=len(resources)
-                )
-                
                 resources = await self._verify_urls(resources)
-                
-                # 确保至少有3个资源
-                if len(resources) < 3:
-                    logger.warning(
-                        "resource_recommender_insufficient_resources",
-                        concept_id=concept.concept_id,
-                        resources_count=len(resources),
-                        message="URL验证后资源数量不足，但将继续返回"
-                    )
             
-            # 合并搜索查询（从 JSON 和实际调用中）
+            # 合并搜索查询
             json_queries = data.get("search_queries_used", [])
             combined_queries = list(set(all_search_queries + json_queries))
             
-            # 生成唯一 ID（用于关联 resource_recommendation_metadata 表）
+            # 生成唯一 ID
             resource_id = str(uuid.uuid4())
             
-            # 构建输出
             result = ResourceRecommendationOutput(
                 id=resource_id,
                 concept_id=concept.concept_id,
@@ -671,13 +507,14 @@ class ResourceRecommenderAgent(BaseAgent):
                 resources_count=len(resources),
                 search_queries_count=len(combined_queries),
             )
+            
             return result
             
         except json.JSONDecodeError as e:
             logger.error(
                 "resource_recommender_json_parse_error",
                 error=str(e),
-                content=content[:500],
+                content=final_response[:500],
             )
             raise ValueError(f"LLM 输出不是有效的 JSON 格式: {e}")
         except Exception as e:
@@ -687,12 +524,3 @@ class ResourceRecommenderAgent(BaseAgent):
                 error=str(e),
             )
             raise ValueError(f"资源推荐失败: {e}")
-    
-    async def execute(self, input_data: ResourceRecommendationInput) -> ResourceRecommendationOutput:
-        """实现基类的抽象方法"""
-        return await self.recommend(
-            concept=input_data.concept,
-            context=input_data.context,
-            user_preferences=input_data.user_preferences,
-        )
-

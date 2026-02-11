@@ -76,89 +76,79 @@ export function ChatModification({
     try {
       await chatModificationStream(
         roadmapId,
-        {
-          user_id: 'temp-user-001', // TODO: Replace with real user ID
-          user_message: message,
-          preferences: userPreferences,
-          context: currentConceptId ? { concept_id: currentConceptId } : undefined,
-        },
-        {
-          onEvent: (event: ChatModificationEvent) => {
-            // Handle each event type independently with switch
-            switch (event.type) {
-              case 'analyzing': {
-                setCurrentPhase('analyzing');
-                break;
-              }
-              case 'intents': {
-                const intentsEvent = event;
-                setCurrentPhase('intents');
-                setIntents(intentsEvent.intents as ModificationIntent[]);
-                if (intentsEvent.needs_clarification) {
-                  setClarificationNeeded(true);
-                  setClarificationQuestions(intentsEvent.clarification_questions || []);
-                  setIsProcessing(false);
-                }
-                break;
-              }
-              case 'modifying': {
-                setCurrentPhase('modifying');
-                break;
-              }
-              case 'agent_progress': {
-                const progressEvent = event;
-                // Can show detailed progress if needed
-                console.log(`[${progressEvent.agent}] ${progressEvent.step}: ${progressEvent.details || ''}`);
-                break;
-              }
-              case 'result': {
-                const resultEvent = event;
-                const result: ModificationResult = {
-                  modification_type: resultEvent.modification_type || '',
-                  target_id: resultEvent.target_id,
-                  target_name: resultEvent.target_name,
-                  success: resultEvent.success,
-                  modification_summary: resultEvent.modification_summary || '',
-                  new_version: resultEvent.new_version,
-                  error_message: resultEvent.error_message,
-                };
-                setResults((prev) => [...prev, result]);
-                break;
-              }
-              case 'done': {
-                setCurrentPhase('done');
-                setIsProcessing(false);
-                if (onModificationComplete) {
-                  setTimeout(() => {
-                    onModificationComplete();
-                  }, 1000);
-                }
-                break;
-              }
-              case 'modification_error': {
-                const modErrorEvent = event;
-                alert(`错误: ${modErrorEvent.message}`);
-                setCurrentPhase('error');
-                setIsProcessing(false);
-                break;
-              }
-              case 'error': {
-                const genericErrorEvent = event;
-                alert(`错误: ${genericErrorEvent.message}`);
-                setCurrentPhase('error');
-                setIsProcessing(false);
-                break;
-              }
+        message,
+        (event: any) => {
+          // Handle SSE message
+          const data = event as ChatModificationEvent;
+          switch (data.type) {
+            case 'analyzing': {
+              setCurrentPhase('analyzing');
+              break;
             }
-          },
-          onComplete: () => {
-            setIsProcessing(false);
-          },
-          onError: (error) => {
-            alert(`连接错误: ${error.message}`);
-            setCurrentPhase('error');
-            setIsProcessing(false);
-          },
+            case 'intents': {
+              const intentsEvent = data;
+              setCurrentPhase('intents');
+              setIntents(intentsEvent.intents as ModificationIntent[]);
+              if (intentsEvent.needs_clarification) {
+                setClarificationNeeded(true);
+                setClarificationQuestions(intentsEvent.clarification_questions || []);
+                setIsProcessing(false);
+              }
+              break;
+            }
+            case 'modifying': {
+              setCurrentPhase('modifying');
+              break;
+            }
+            case 'agent_progress': {
+              const progressEvent = data;
+              console.log(`[${progressEvent.agent}] ${progressEvent.step}: ${progressEvent.details || ''}`);
+              break;
+            }
+            case 'result': {
+              const resultEvent = data;
+              const result: ModificationResult = {
+                modification_type: resultEvent.modification_type || '',
+                target_id: resultEvent.target_id,
+                target_name: resultEvent.target_name,
+                success: resultEvent.success,
+                modification_summary: resultEvent.modification_summary || '',
+                new_version: resultEvent.new_version,
+                error_message: resultEvent.error_message,
+              };
+              setResults((prev) => [...prev, result]);
+              break;
+            }
+            case 'done': {
+              setCurrentPhase('done');
+              setIsProcessing(false);
+              if (onModificationComplete) {
+                setTimeout(() => {
+                  onModificationComplete();
+                }, 1000);
+              }
+              break;
+            }
+            case 'modification_error': {
+              const modErrorEvent = data;
+              alert(`错误: ${modErrorEvent.message}`);
+              setCurrentPhase('error');
+              setIsProcessing(false);
+              break;
+            }
+            case 'error': {
+              const genericErrorEvent = data;
+              alert(`错误: ${genericErrorEvent.message}`);
+              setCurrentPhase('error');
+              setIsProcessing(false);
+              break;
+            }
+          }
+        },
+        (error: Error) => {
+          alert(`连接错误: ${error.message}`);
+          setCurrentPhase('error');
+          setIsProcessing(false);
         }
       );
     } catch (error) {

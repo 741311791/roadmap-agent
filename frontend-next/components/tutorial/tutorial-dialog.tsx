@@ -57,11 +57,12 @@ export function TutorialDialog({
       setTutorial(tutorialMeta);
 
       // Load tutorial content if available
-      if (tutorialMeta && tutorialMeta.content_status === 'completed') {
+      if (tutorialMeta && (tutorialMeta as any).content_status === 'completed') {
         setContentLoading(true);
         try {
           // 通过后端代理下载内容（解决 CORS 问题）
-          const markdownContent = await downloadTutorialContent(roadmapId, conceptId);
+          const markdownBlob = await downloadTutorialContent(roadmapId, conceptId);
+          const markdownContent = await markdownBlob.text();
           setContent(markdownContent);
         } catch (error) {
           console.error('Failed to load tutorial content:', error);
@@ -127,18 +128,19 @@ export function TutorialDialog({
 
     setIsRegenerating(true);
     try {
-      const result = await regenerateTutorial(roadmapId, conceptId, {
-        user_id: 'temp-user-001',
-        preferences: userPreferences,
-      });
+      const result = await regenerateTutorial(roadmapId, conceptId, {});
 
-      alert(`重新生成成功! 新版本: v${result.content_version}`);
-      
-      // Reload tutorial data
-      await loadTutorialData();
-      
-      if (onRegenerate) {
-        onRegenerate();
+      if (result.success) {
+        alert(`重新生成成功! ${result.message}`);
+        
+        // Reload tutorial data
+        await loadTutorialData();
+        
+        if (onRegenerate) {
+          onRegenerate();
+        }
+      } else {
+        throw new Error(result.message || '重新生成失败');
       }
     } catch (error) {
       console.error('Regeneration failed:', error);

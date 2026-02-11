@@ -6,7 +6,7 @@
  * ⚠️ WARNING: 请勿手动修改此文件
  * Run `npm run generate:constants` 重新生成
  * 
- * Generated at: 2026-01-20T14:38:20.920Z
+ * Generated at: 2026-02-09T13:14:00.149Z
  */
 
 /**
@@ -103,6 +103,10 @@ export const ContentStatusLabels: Record<ContentStatusType, string> = {
 
 /**
  * 工作流步骤枚举
+ *     
+ *     核心步骤：
+ *     - 主路节点：INTENT_ANALYSIS → CURRICULUM_DESIGN → STRUCTURE_VALIDATION → HUMAN_REVIEW → CONTENT_GENERATION
+ *     - 共享编辑节点：EDIT_PLAN_ANALYSIS、ROADMAP_EDIT（由edit_source区分来源）
  */
 export enum WorkflowStep {
   /** 初始化 */
@@ -117,24 +121,16 @@ export enum WorkflowStep {
   CURRICULUM_DESIGN = "curriculum_design",
   /** 结构验证 */
   STRUCTURE_VALIDATION = "structure_validation",
-  /** 验证修改计划分析 */
-  // ✅ 移除：VALIDATION_EDIT_PLAN_ANALYSIS（使用共享的EDIT_PLAN_ANALYSIS）
-  /** 审核修改计划分析 */
-  EDIT_PLAN_ANALYSIS = "edit_plan_analysis",
-  /** 路线图修正 */
-  ROADMAP_EDIT = "roadmap_edit",
   /** 人工审核 */
   HUMAN_REVIEW = "human_review",
+  /** 编辑计划分析（共享） */
+  EDIT_PLAN_ANALYSIS = "edit_plan_analysis",
+  /** 路线图修正（共享） */
+  ROADMAP_EDIT = "roadmap_edit",
   /** 内容生成已入队 */
   CONTENT_GENERATION_QUEUED = "content_generation_queued",
   /** 内容生成（包含教程、资源、测验） */
   CONTENT_GENERATION = "content_generation",
-  /** 资源推荐（已废弃，由content_generation统一处理） */
-  RESOURCE_RECOMMENDATION = "resource_recommendation",
-  /** 测验生成（已废弃，由content_generation统一处理） */
-  QUIZ_GENERATION = "quiz_generation",
-  /** 收尾中 */
-  // ✅ 移除：FINALIZING（不需要此步骤）
   /** 已完成 */
   COMPLETED = "completed",
   /** 失败 */
@@ -144,7 +140,7 @@ export enum WorkflowStep {
 /**
  * WorkflowStep 类型 (Union Type)
  */
-export type WorkflowStepType = "init" | "queued" | "starting" | "intent_analysis" | "curriculum_design" | "structure_validation" | "validation_edit_plan_analysis" | "edit_plan_analysis" | "roadmap_edit" | "human_review" | "content_generation_queued" | "content_generation" | "resource_recommendation" | "quiz_generation" | "finalizing" | "completed" | "failed";
+export type WorkflowStepType = "init" | "queued" | "starting" | "intent_analysis" | "curriculum_design" | "structure_validation" | "human_review" | "edit_plan_analysis" | "roadmap_edit" | "content_generation_queued" | "content_generation" | "completed" | "failed";
 
 /**
  * WorkflowStep 类型守卫
@@ -157,15 +153,11 @@ export function isWorkflowStep(value: any): value is WorkflowStepType {
     "intent_analysis",
     "curriculum_design",
     "structure_validation",
-    "validation_edit_plan_analysis",
+    "human_review",
     "edit_plan_analysis",
     "roadmap_edit",
-    "human_review",
     "content_generation_queued",
     "content_generation",
-    "resource_recommendation",
-    "quiz_generation",
-    "finalizing",
     "completed",
     "failed",
   ].includes(value);
@@ -181,15 +173,11 @@ export const WorkflowStepLabels: Record<WorkflowStepType, string> = {
   "intent_analysis": "需求分析",
   "curriculum_design": "课程设计",
   "structure_validation": "结构验证",
-  "validation_edit_plan_analysis": "验证修改计划分析",
-  "edit_plan_analysis": "审核修改计划分析",
-  "roadmap_edit": "路线图修正",
   "human_review": "人工审核",
+  "edit_plan_analysis": "编辑计划分析（共享）",
+  "roadmap_edit": "路线图修正（共享）",
   "content_generation_queued": "内容生成已入队",
   "content_generation": "内容生成（包含教程、资源、测验）",
-  "resource_recommendation": "资源推荐（已废弃，由content_generation统一处理）",
-  "quiz_generation": "测验生成（已废弃，由content_generation统一处理）",
-  "finalizing": "收尾中",
   "completed": "已完成",
   "failed": "失败",
 };

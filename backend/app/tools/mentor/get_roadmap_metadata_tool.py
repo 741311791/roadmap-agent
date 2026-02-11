@@ -43,16 +43,22 @@ class GetRoadmapMetadataOutput(BaseModel):
 
 class GetRoadmapMetadataTool(BaseTool[GetRoadmapMetadataInput, GetRoadmapMetadataOutput]):
     """
-    获取路线图元数据工具
+    获取路线图元数据工具（已适配统一工具框架）
     
     功能：
     - 从数据库获取路线图的基本信息
     - 返回标题、阶段数量、概念数量等
     - 可选择性地获取特定概念的详细信息
+    - 自动生成 LLM Function Schema
     """
     
     def __init__(self):
-        super().__init__(tool_id="get_roadmap_metadata_v1")
+        super().__init__(
+            tool_id="get_roadmap_metadata_v2",
+            name="get_roadmap_metadata",
+            description="Get roadmap structure information including title, stages, and concepts. Useful for answering questions about the overall learning path.",
+            args_schema=GetRoadmapMetadataInput,
+        )
     
     async def execute(self, input_data: GetRoadmapMetadataInput) -> GetRoadmapMetadataOutput:
         """

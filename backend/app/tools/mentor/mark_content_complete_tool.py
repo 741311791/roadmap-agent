@@ -35,16 +35,22 @@ class MarkContentCompleteOutput(BaseModel):
 
 class MarkContentCompleteTool(BaseTool[MarkContentCompleteInput, MarkContentCompleteOutput]):
     """
-    标记内容完成工具
+    标记内容完成工具（已适配统一工具框架）
     
     功能：
     - 标记用户已完成学习某个概念
     - 支持取消完成状态
     - 更新学习进度记录
+    - 自动生成 LLM Function Schema
     """
     
     def __init__(self):
-        super().__init__(tool_id="mark_content_complete_v1")
+        super().__init__(
+            tool_id="mark_content_complete_v2",
+            name="mark_content_complete",
+            description="Mark a concept as completed or incomplete. Use this when the user explicitly says they finished learning a topic.",
+            args_schema=MarkContentCompleteInput,
+        )
         self.progress_crud = get_progress_crud()
     
     async def execute(self, input_data: MarkContentCompleteInput) -> MarkContentCompleteOutput:
@@ -89,8 +95,7 @@ class MarkContentCompleteTool(BaseTool[MarkContentCompleteInput, MarkContentComp
                         completed_at=now if input_data.is_completed else None,
                     )
                     session.add(progress)
-                
-                await session.commit()
+                # ✅ 不需要手动 commit，async_session_maker.begin() 自动处理
                 
                 status_text = "完成" if input_data.is_completed else "未完成"
                 logger.info(

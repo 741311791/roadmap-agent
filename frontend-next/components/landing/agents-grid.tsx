@@ -9,6 +9,7 @@
  */
 
 import React from 'react';
+import { useTranslations } from 'next-intl';
 import { motion } from 'motion/react';
 import { cn } from '@/lib/utils';
 import {
@@ -23,64 +24,14 @@ import {
 } from '@tabler/icons-react';
 
 interface Agent {
-  title: string;
-  description: string;
+  titleKey: string;
+  descriptionKey: string;
   icon: React.ElementType;
   index: number;
 }
 
-const agents: Agent[] = [
-  {
-    title: 'Intent Analyzer',
-    description: 'Analyzes learning goals and extracts key technologies from your requirements',
-    icon: IconBrain,
-    index: 0,
-  },
-  {
-    title: 'Curriculum Architect',
-    description: 'Designs structured roadmap with stages, modules, and concepts in logical order',
-    icon: IconTarget,
-    index: 1,
-  },
-  {
-    title: 'Structure Validator',
-    description: 'Validates roadmap structure, dependencies, and ensures learning prerequisites',
-    icon: IconShieldCheck,
-    index: 2,
-  },
-  {
-    title: 'Edit Plan Analyzer',
-    description: 'Creates precise modification plans from validation results and user feedback',
-    icon: IconEdit,
-    index: 3,
-  },
-  {
-    title: 'Roadmap Editor',
-    description: 'Executes precise edits to roadmap structure based on analysis and feedback',
-    icon: IconPencil,
-    index: 4,
-  },
-  {
-    title: 'Tutorial Generator',
-    description: 'Creates in-depth tutorials with theory, examples, and exercises for each concept',
-    icon: IconBook,
-    index: 5,
-  },
-  {
-    title: 'Resource Recommender',
-    description: 'Curates the best external resources, articles, videos, and tools for each topic',
-    icon: IconSearch,
-    index: 6,
-  },
-  {
-    title: 'Quiz Generator',
-    description: 'Creates adaptive quizzes with various question types to test understanding',
-    icon: IconCheckbox,
-    index: 7,
-  },
-];
-
-function AgentCard({ title, description, icon: Icon, index }: Agent) {
+function AgentCard({ titleKey, descriptionKey, icon: Icon, index }: Agent) {
+  const t = useTranslations('agents');
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -113,19 +64,72 @@ function AgentCard({ title, description, icon: Icon, index }: Agent) {
         {/* 左侧动画条 */}
         <div className="absolute left-0 inset-y-0 h-6 group-hover/feature:h-8 w-1 rounded-tr-full rounded-br-full bg-border group-hover/feature:bg-sage transition-all duration-200 origin-center" />
         <span className="group-hover/feature:translate-x-2 transition duration-200 inline-block text-foreground">
-          {title}
+          {t(titleKey as any)}
         </span>
       </div>
       
       {/* 描述 */}
       <p className="text-sm text-muted-foreground max-w-xs relative z-10 px-10 leading-relaxed">
-        {description}
+        {t(descriptionKey as any)}
       </p>
     </motion.div>
   );
 }
 
 export function AgentsGrid() {
+  const t = useTranslations('agents');
+  
+  const agents: Agent[] = [
+    {
+      titleKey: 'intentAnalyzer',
+      descriptionKey: 'intentAnalyzerDesc',
+      icon: IconBrain,
+      index: 0,
+    },
+    {
+      titleKey: 'curriculumArchitect',
+      descriptionKey: 'curriculumArchitectDesc',
+      icon: IconTarget,
+      index: 1,
+    },
+    {
+      titleKey: 'structureValidator',
+      descriptionKey: 'structureValidatorDesc',
+      icon: IconShieldCheck,
+      index: 2,
+    },
+    {
+      titleKey: 'editPlanAnalyzer',
+      descriptionKey: 'editPlanAnalyzerDesc',
+      icon: IconEdit,
+      index: 3,
+    },
+    {
+      titleKey: 'roadmapEditor',
+      descriptionKey: 'roadmapEditorDesc',
+      icon: IconPencil,
+      index: 4,
+    },
+    {
+      titleKey: 'tutorialGenerator',
+      descriptionKey: 'tutorialGeneratorDesc',
+      icon: IconBook,
+      index: 5,
+    },
+    {
+      titleKey: 'resourceRecommender',
+      descriptionKey: 'resourceRecommenderDesc',
+      icon: IconSearch,
+      index: 6,
+    },
+    {
+      titleKey: 'quizGenerator',
+      descriptionKey: 'quizGeneratorDesc',
+      icon: IconCheckbox,
+      index: 7,
+    },
+  ];
+  
   return (
     <section className="py-24 px-6 bg-gradient-to-b from-card via-muted/30 to-card">
       <div className="max-w-7xl mx-auto">
@@ -138,14 +142,13 @@ export function AgentsGrid() {
           className="text-center mb-16"
         >
           <div className="inline-flex items-center gap-2 px-4 py-2 bg-muted border border-border rounded-full text-sage text-sm font-medium mb-6">
-            Powered by Multi-Agent AI
+            {t('sectionBadge')}
           </div>
           <h2 className="text-4xl md:text-5xl font-serif font-bold text-foreground mb-4">
-            How It Works
+            {t('sectionTitle')}
           </h2>
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-            Eight specialized AI agents collaborate to create and deliver your personalized
-            learning experience
+            {t('sectionDesc')}
           </p>
         </motion.div>
 

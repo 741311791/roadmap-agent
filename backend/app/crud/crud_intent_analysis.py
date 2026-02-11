@@ -70,7 +70,8 @@ class IntentAnalysisCRUD(BaseCRUD[IntentAnalysisMetadata, dict, dict]):
                 if intent_analysis.content_format_weights 
                 else None
             ),
-            full_analysis_data=intent_analysis.model_dump(),
+            # ✅ 修复：直接使用约束文本字典，而不是完整对象
+            full_analysis_data=intent_analysis.full_analysis_data,
         )
         
         session.add(metadata)

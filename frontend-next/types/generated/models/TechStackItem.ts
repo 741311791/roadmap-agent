@@ -14,5 +14,9 @@ export type TechStackItem = {
      * 熟练程度: beginner, intermediate, expert
      */
     proficiency: string;
+    /**
+     * 能力分析结果（可选）
+     */
+    capability_analysis?: (Record<string, any> | null);
 };
 

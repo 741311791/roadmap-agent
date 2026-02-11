@@ -26,17 +26,27 @@ logger = structlog.get_logger()
 
 class DuckDuckGoSearchTool(BaseTool[SearchQuery, SearchResult]):
     """
-    DuckDuckGo 搜索工具
+    DuckDuckGo 搜索工具（已适配统一工具框架）
     
     特性：
     - 使用 ddgs 包（duckduckgo_search 的新名称）
     - 支持语言和区域配置
     - 异步执行（通过 asyncio.to_thread）
     - 内置速率控制（避免触发限流）
+    - 自动生成 LLM Function Schema
     """
     
     def __init__(self):
-        super().__init__(tool_id="duckduckgo_search")
+        # ✅ 适配新的 BaseTool 签名
+        super().__init__(
+            tool_id="duckduckgo_search_v2",
+            name="duckduckgo_search",
+            description=(
+                "Search using DuckDuckGo search engine. "
+                "This is a privacy-friendly alternative when Tavily is not available."
+            ),
+            args_schema=SearchQuery,
+        )
         
         # 速率控制 - 保守策略
         self._search_semaphore = asyncio.Semaphore(2)  # 最多2个并发请求
@@ -126,8 +136,17 @@ class DuckDuckGoSearchTool(BaseTool[SearchQuery, SearchResult]):
             
         Raises:
             ImportError: 如果 duckduckgo-search 未安装
+            ValueError: 如果搜索查询为空
             Exception: 其他搜索错误
         """
+        # 验证查询不为空
+        if not input_data.query or not input_data.query.strip():
+            logger.error(
+                "duckduckgo_search_empty_query",
+                query=input_data.query,
+            )
+            raise ValueError("搜索查询不能为空")
+        
         try:
             # 动态导入 ddgs（新包名）
             from ddgs import DDGS

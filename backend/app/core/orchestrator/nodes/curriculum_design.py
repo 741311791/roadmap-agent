@@ -40,22 +40,39 @@ async def curriculum_design_node(
     task_id = state["task_id"]
     intent_analysis = state["intent_analysis"]
     user_request = state["user_request"]
+    roadmap_id = state["roadmap_id"]
     
     logger.info(
         "curriculum_design_node_start",
         task_id=task_id,
-        roadmap_id=state.get("roadmap_id"),
+        roadmap_id=roadmap_id,
+    )
+    
+    # 从 RuntimeContext 缓存中获取用户约束（预热缓存，提升后续性能）
+    # Agent 内部会通过 _load_user_constraints 自动加载约束
+    user_constraints = await ctx.get_user_constraints(
+        roadmap_id=roadmap_id,
+        intent_analysis=intent_analysis
+    )
+    
+    logger.debug(
+        "curriculum_design_constraints_preloaded",
+        roadmap_id=roadmap_id,
+        constraints_count=len(user_constraints),
     )
     
     # 创建Agent
     agent = ctx.agent_factory.create_curriculum_architect()
     
-    # 执行设计（传递3个独立参数）
-    design_output = await agent.design(
+    # 准备输入数据
+    from app.models.domain import CurriculumDesignInput
+    curriculum_input = CurriculumDesignInput(
         intent_analysis=intent_analysis,
         user_preferences=user_request.preferences,
-        roadmap_id=state["roadmap_id"],
     )
+    
+    # 执行设计
+    design_output = await agent.execute(curriculum_input)
     
     # 提取framework
     framework = design_output.framework

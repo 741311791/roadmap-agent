@@ -74,12 +74,16 @@ async def edit_plan_analysis_node(
     # 创建Agent
     agent = ctx.agent_factory.create_edit_plan_analyzer()
     
-    # 执行分析（传递独立参数）
-    analysis_output = await agent.analyze(
+    # 准备输入数据
+    from app.models.domain import EditPlanAnalyzerInput
+    analyzer_input = EditPlanAnalyzerInput(
         user_feedback=user_feedback,
         existing_framework=framework,
         user_preferences=state["user_request"].preferences,
     )
+    
+    # 执行分析
+    analysis_output = await agent.execute(analyzer_input)
     
     logger.info(
         "edit_plan_analysis_node_completed",

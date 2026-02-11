@@ -1,20 +1,26 @@
 """
 Celery 应用配置
 
-用于异步任务处理，包括日志队列和路线图生成任务。
+用于异步任务处理。
 
-架构：
+架构特点：
 - FastAPI 应用：将任务提交到 Celery
 - Celery Worker：独立进程，执行异步任务
 - Redis：作为消息队列 broker 和 result backend
+- 单一队列（default）：所有任务统一管理，简化部署
 
 Worker 进程初始化：
 - Celery prefork 模式下，子进程继承父进程的全局状态
-- 在 worker_process_init 信号中重置数据库 engine 缓存
-- 确保每个子进程使用独立的数据库连接
+- 在 worker_process_init 信号中重置必要的进程级资源
+- 确保每个子进程使用独立的数据库连接和事件循环
 """
+# ✅ Celery Worker 独立进程需要初始化日志系统
+# 这会在 Celery 主进程启动时执行一次（父进程）
+from app.config.logging_config import setup_logging
+setup_logging()
+
 from celery import Celery
-from celery.signals import worker_process_init, task_failure, task_retry
+from celery.signals import worker_process_init, worker_process_shutdown, task_failure, task_retry
 from app.config.settings import settings
 
 # 构建 Redis URL（支持 Upstash 等云服务的完整 URL，或根据配置构建）
@@ -43,13 +49,19 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
+    # Worker 连接丢失时取消任务，防止重复执行
+    worker_cancel_long_running_tasks_on_connection_loss=True,
     # 批量处理配置
     task_acks_late=True,
     task_reject_on_worker_lost=True,
-    # 任务路由配置（简化为 2 个队列：logs 和 default）
+    # 任务路由配置
     task_routes={
-        "app.tasks.log_tasks.batch_write_logs": {"queue": "logs"},
-        # 所有其他任务使用 default 队列（包括路线图生成、恢复、维护等）
+        "generate_all_content": {"queue": "content_generation"},  # 内容生成任务使用专用队列
+    },
+    # 队列定义
+    task_queues={
+        "celery": {"exchange": "celery", "routing_key": "celery"},  # 默认队列
+        "content_generation": {"exchange": "content_generation", "routing_key": "content_generation"},  # 内容生成队列
     },
     # Worker 配置
     worker_prefetch_multiplier=1,
@@ -87,52 +99,163 @@ celery_app.conf.update(
         "app.tasks.cover_image_tasks",
         "app.tasks.maintenance_tasks",
         "app.tasks.content_utils",  # 内容重试任务
+        "app.tasks.tavily_cache_tasks",  # Tavily Key 缓存任务
+        "app.tasks.assessment_initialization_tasks",  # 测验题初始化任务
+        "app.tasks.capability_analysis_tasks",  # 技术能力分析任务
+        "app.tasks.content_generation_tasks",  # ✅ 内容生成任务
     ),
 )
 
 
 # ============================================================
-# Worker 进程初始化钩子（解决数据库连接隔离问题）
+# Worker 进程初始化钩子
 # ============================================================
 @worker_process_init.connect
 def on_worker_process_init(**kwargs):
     """
-    Worker 子进程初始化时调用
+    Worker 子进程初始化钩子（重构版 - 持久事件循环）
     
-    Celery prefork 模式下，子进程继承父进程的全局变量。
-    清空继承的 engine 缓存，强制子进程创建新的数据库连接。
+    Celery prefork 模式下，子进程通过 fork() 创建，继承父进程的内存空间。
+    必须重置以下进程级资源：
+    1. ✅ 创建持久的事件循环（避免每次任务都创建新循环）
+    2. 数据库连接引擎（避免跨进程共享连接）
+    3. PostgreSQL 连接池（避免 SIGSEGV 段错误）
+    4. 第三方库状态（如 litellm 异步日志）
+    
+    关键修复：
+    - 使用 EventLoopManager 创建持久的事件循环
+    - 避免 asyncio 原语（Lock、Event等）跨循环使用的问题
+    - 符合 asyncio 最佳实践（长期运行的应用应该只有一个事件循环）
+    
+    参考：
+    - https://docs.celeryq.dev/en/stable/userguide/signals.html#worker-process-init
+    - https://docs.python.org/3/library/asyncio-eventloop.html#asyncio-multithreading
     """
+    from app.config.logging_config import setup_logging
     import structlog
+    
+    # 步骤1: 子进程重新初始化日志系统
+    setup_logging()
     logger = structlog.get_logger()
     
     try:
-        # 重置主 session 模块的 engine 缓存
+        # ✅ 步骤2: 创建持久的事件循环（关键修复）
+        # 替代原来每次任务都创建新循环的做法
+        from app.tasks.event_loop_manager import setup_event_loop
+        setup_event_loop()
+        logger.info("worker_persistent_event_loop_created")
+        
+        # 步骤3: 重置数据库引擎缓存
+        # 强制子进程创建新的连接，避免跨进程共享
         from app.db.session import reset_engine_cache
         reset_engine_cache()
         
-        # 重置 Celery 专用 session 模块的 engine 缓存（如果存在）
         try:
             from app.db.celery_session import reset_celery_engine_cache
             reset_celery_engine_cache()
         except ImportError:
             pass
         
-        # 打印数据库连接信息（隐藏密码）
-        from app.config.settings import settings
-        db_url_safe = settings.DATABASE_URL.replace(
-            settings.POSTGRES_PASSWORD, "***"
-        ) if settings.POSTGRES_PASSWORD else settings.DATABASE_URL
+        logger.info("worker_db_engine_reset")
         
+        # 步骤4: 重新初始化 OrchestratorFactory（Fork 安全）
+        # 
+        # ⚠️ 重要：AsyncConnectionPool 不能跨进程共享
+        # OrchestratorFactory.initialize() 已包含 Fork 检测逻辑：
+        # - 自动检测进程 ID 变化
+        # - 清理父进程的资源引用
+        # - 在子进程中创建新的连接池
+        try:
+            from app.core.orchestrator_factory import OrchestratorFactory
+            import asyncio
+            
+            # ✅ 直接调用 initialize()，内部会自动处理 fork 检测
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(OrchestratorFactory.initialize())
+            
+            logger.info("worker_orchestrator_factory_initialized")
+            
+        except Exception as e:
+            logger.error(
+                "worker_orchestrator_factory_reset_failed",
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            # 初始化失败应该让进程退出，避免后续任务执行时崩溃
+            raise
+        
+        # 步骤5: 禁用 litellm 异步日志
+        # litellm 的异步日志队列绑定到父进程 event loop
+        # 简单禁用即可，不影响功能
+        try:
+            import litellm
+            litellm.disable_async_logging = True
+            logger.debug("worker_litellm_async_logging_disabled")
+        except Exception as e:
+            # litellm 配置失败不影响 Worker 启动
+            logger.debug(
+                "worker_litellm_config_skipped",
+                error=str(e),
+            )
+        
+        # 打印初始化完成日志
         logger.info(
-            "celery_worker_process_init",
-            message="Celery Worker 进程初始化完成，数据库引擎缓存已重置",
+            "worker_process_init_completed",
             db_host=settings.POSTGRES_HOST,
             db_name=settings.POSTGRES_DB,
-            db_url_safe=db_url_safe[:50] + "..." if len(db_url_safe) > 50 else db_url_safe,
+            event_loop_model="persistent",
         )
+        
     except Exception as e:
         logger.error(
-            "celery_worker_process_init_error",
+            "worker_process_init_failed",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+        raise  # 初始化失败应该让进程退出
+
+
+@worker_process_shutdown.connect
+def on_worker_process_shutdown(**kwargs):
+    """
+    Worker 子进程关闭钩子
+    
+    在 Worker 进程关闭前清理资源，包括：
+    1. 停止持久的事件循环
+    2. 关闭 OrchestratorFactory 连接池
+    
+    参考：
+    - https://docs.celeryq.dev/en/stable/userguide/signals.html#worker-process-shutdown
+    """
+    import structlog
+    logger = structlog.get_logger()
+    
+    try:
+        # 步骤1: 清理持久的事件循环
+        from app.tasks.event_loop_manager import cleanup_event_loop
+        cleanup_event_loop()
+        logger.info("worker_event_loop_cleaned_up")
+        
+        # 步骤2: 清理 OrchestratorFactory
+        try:
+            from app.core.orchestrator_factory import OrchestratorFactory
+            if OrchestratorFactory._initialized:
+                # 注意：cleanup 方法是异步的，但在 shutdown 时我们无法运行异步代码
+                # 连接池会在进程退出时自动关闭，这里只是标记为未初始化
+                OrchestratorFactory._initialized = False
+                logger.info("worker_orchestrator_factory_marked_for_cleanup")
+        except Exception as e:
+            logger.warning(
+                "worker_orchestrator_factory_cleanup_failed",
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+        
+        logger.info("worker_process_shutdown_completed")
+        
+    except Exception as e:
+        logger.error(
+            "worker_process_shutdown_failed",
             error=str(e),
             error_type=type(e).__name__,
         )
@@ -192,5 +315,14 @@ celery_app.conf.beat_schedule = {
         'task': 'maintenance.monitor_checkpoint_size',
         'schedule': crontab(minute=0),  # 每小时整点执行
     },
+    # ✅ 每 5 分钟刷新 Tavily API Key 缓存
+    'refresh-tavily-key-cache': {
+        'task': 'tavily_cache.refresh_keys',
+        'schedule': 300.0,  # 每 5 分钟（秒）
+    },
+    # ✅ 每小时清理失效的 Tavily Key
+    'cleanup-expired-tavily-keys': {
+        'task': 'tavily_cache.cleanup_expired',
+        'schedule': crontab(minute=15),  # 每小时的第 15 分钟
+    },
 }
-

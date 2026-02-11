@@ -1,16 +1,15 @@
 """
 Edit Plan Analyzer Agent（修改计划分析器）
 
-负责将用户的自然语言反馈解析为结构化的修改计划，
-指导 RoadmapEditorAgent 精确执行用户意图。
+重构说明：
+- 将修改指令收敛到 Stage 级别
+- 输出 StageEditTask 列表（CREATE/UPDATE/REGENERATE）
+- 利用 LLM 的语义理解能力，降低工程化复杂度
 """
-import json
 from app.agents.base import BaseAgent
 from app.models.domain import (
     EditPlanAnalyzerInput,
     EditPlanAnalyzerOutput,
-    EditPlan,
-    EditIntent,
     RoadmapFramework,
     LearningPreferences,
 )
@@ -22,13 +21,13 @@ logger = structlog.get_logger()
 
 class EditPlanAnalyzerAgent(BaseAgent):
     """
-    修改计划分析器 Agent
+    修改计划分析器 Agent（简化版）
     
-    将用户的自然语言反馈解析为结构化的修改计划：
-    - 识别修改类型（add/remove/modify/reorder/merge/split）
-    - 定位修改目标（stage/module/concept）
-    - 生成优先级排序的修改意图列表
-    - 明确必须保留不变的元素
+    重构后职责：
+    - 将用户反馈解析为 Stage 级别的修改任务
+    - 只生成 3 种动作：CREATE/UPDATE/REGENERATE
+    - 用自然语言描述修改意图，而非细粒度指令
+    - 识别任务依赖关系，支持并行执行
     
     配置从环境变量加载：
     - ANALYZER_PROVIDER: 模型提供商（默认: openai）
@@ -53,8 +52,21 @@ class EditPlanAnalyzerAgent(BaseAgent):
             base_url=base_url or settings.ANALYZER_BASE_URL,
             api_key=api_key or settings.ANALYZER_API_KEY,
             temperature=0.2,  # 低温度确保解析的稳定性
-            max_tokens=2048,
+            max_tokens=10000,
         )
+    
+    def _get_required_constraints(self) -> list[str]:
+        """编辑计划分析器需要的约束"""
+        from app.models.domain import ConstraintNames
+        return [
+            # 通用约束
+            ConstraintNames.LANGUAGE,
+            ConstraintNames.USER_GOAL,
+            ConstraintNames.USER_PROFILE,
+            # 特定约束
+            ConstraintNames.SKILL_GAP,
+            ConstraintNames.PERSONALIZED_SUGGESTIONS,
+        ]
     
     def _build_roadmap_structure_summary(self, framework: RoadmapFramework) -> str:
         """
@@ -82,23 +94,20 @@ class EditPlanAnalyzerAgent(BaseAgent):
         
         return "\n".join(lines)
     
-    async def analyze(
-        self,
-        user_feedback: str,
-        existing_framework: RoadmapFramework,
-        user_preferences: LearningPreferences,
-    ) -> EditPlanAnalyzerOutput:
+    async def execute(self, input_data: EditPlanAnalyzerInput) -> EditPlanAnalyzerOutput:
         """
         分析用户反馈并生成结构化修改计划
         
         Args:
-            user_feedback: 用户的原始反馈文本
-            existing_framework: 当前路线图框架
-            user_preferences: 用户偏好
+            input_data: 包含用户反馈、现有框架和用户偏好
             
         Returns:
             结构化的修改计划
         """
+        user_feedback = input_data.user_feedback
+        existing_framework = input_data.existing_framework
+        user_preferences = input_data.user_preferences
+        
         logger.info(
             "edit_plan_analysis_started",
             feedback_preview=user_feedback[:100] + "..." if len(user_feedback) > 100 else user_feedback,
@@ -143,109 +152,23 @@ class EditPlanAnalyzerAgent(BaseAgent):
             {"role": "user", "content": user_message},
         ]
         
-        # 调用 LLM
-        response = await self._call_llm(
+        # 使用 instructor 调用 LLM,自动验证和重试
+        logger.info(
+            "edit_plan_analysis_calling_llm",
+            model=self.model_name,
+            roadmap_id=existing_framework.roadmap_id,
+        )
+        
+        result = await self._call_llm(
             messages,
-            response_format={"type": "json_object"},  # 强制 JSON 输出
+            response_model=EditPlanAnalyzerOutput
         )
         
-        # 解析输出
-        content = response.choices[0].message.content
-        
-        try:
-            # 尝试提取 JSON（LLM可能返回带代码块的内容）
-            json_content = content
-            if "```json" in content:
-                json_start = content.find("```json") + 7
-                json_end = content.find("```", json_start)
-                if json_end > json_start:
-                    json_content = content[json_start:json_end].strip()
-            elif "```" in content:
-                json_start = content.find("```") + 3
-                json_end = content.find("```", json_start)
-                if json_end > json_start:
-                    json_content = content[json_start:json_end].strip()
-            
-            # 如果提取后是空字符串，尝试直接解析
-            if not json_content.strip():
-                json_content = content
-            
-            result_dict = json.loads(json_content)
-            
-            # 构建 EditIntent 列表
-            intents = []
-            for intent_data in result_dict.get("intents", []):
-                intent = EditIntent(
-                    intent_type=intent_data.get("intent_type", "modify"),
-                    target_type=intent_data.get("target_type", "concept"),
-                    target_id=intent_data.get("target_id"),
-                    target_path=intent_data.get("target_path", ""),
-                    description=intent_data.get("description", ""),
-                    priority=intent_data.get("priority", "must"),
-                )
-                intents.append(intent)
-            
-            # 构建 EditPlan
-            edit_plan = EditPlan(
-                feedback_summary=result_dict.get("feedback_summary", user_feedback[:200]),
-                intents=intents,
-                scope_analysis=result_dict.get("scope_analysis", ""),
-                preservation_requirements=result_dict.get("preservation_requirements", []),
-            )
-            
-            # 构建输出
-            output = EditPlanAnalyzerOutput(
-                edit_plan=edit_plan,
-                confidence=result_dict.get("confidence", 0.8),
-                needs_clarification=result_dict.get("needs_clarification", False),
-                clarification_questions=result_dict.get("clarification_questions", []),
-            )
-            
-            logger.info(
-                "edit_plan_analysis_completed",
-                roadmap_id=existing_framework.roadmap_id,
-                intents_count=len(intents),
-                confidence=output.confidence,
-                needs_clarification=output.needs_clarification,
-            )
-            
-            return output
-            
-        except json.JSONDecodeError as e:
-            logger.error(
-                "edit_plan_analysis_json_parse_error",
-                error=str(e),
-                content_preview=content[:500],
-                raw_content=content,  # 记录完整原始内容用于调试
-                json_content_tried=json_content[:200] if 'json_content' in locals() else None,
-            )
-            # 返回默认的修改计划
-            return EditPlanAnalyzerOutput(
-                edit_plan=EditPlan(
-                    feedback_summary=user_feedback[:200],
-                    intents=[
-                        EditIntent(
-                            intent_type="modify",
-                            target_type="stage",
-                            target_id=None,
-                            target_path="整个路线图",
-                            description=user_feedback,
-                            priority="must",
-                        )
-                    ],
-                    scope_analysis="解析失败，将用户反馈作为整体修改意图",
-                    preservation_requirements=[],
-                ),
-                confidence=0.3,
-                needs_clarification=True,
-                clarification_questions=["请您更具体地说明想要修改的内容？"],
-            )
-    
-    async def execute(self, input_data: EditPlanAnalyzerInput) -> EditPlanAnalyzerOutput:
-        """实现基类的抽象方法"""
-        return await self.analyze(
-            user_feedback=input_data.user_feedback,
-            existing_framework=input_data.existing_framework,
-            user_preferences=input_data.user_preferences,
+        logger.info(
+            "edit_plan_analysis_completed",
+            roadmap_id=existing_framework.roadmap_id,
+            tasks_count=len(result.edit_plan.tasks),
+            confidence=result.confidence,
         )
-
+        
+        return result

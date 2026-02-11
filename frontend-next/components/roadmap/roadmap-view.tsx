@@ -5,7 +5,7 @@ import { StageCard } from './stage-card';
 import { Button } from '@/components/ui/button';
 import { LayoutList, Network } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { RoadmapFramework } from '@/types/custom/store';
+import type { RoadmapFramework } from '@/types/generated';
 
 interface RoadmapViewProps {
   framework: RoadmapFramework;

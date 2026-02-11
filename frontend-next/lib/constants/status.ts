@@ -31,15 +31,13 @@ export enum WorkflowStep {
   INTENT_ANALYSIS = 'intent_analysis',      // 需求分析
   CURRICULUM_DESIGN = 'curriculum_design',  // 课程设计
   STRUCTURE_VALIDATION = 'structure_validation',  // 结构验证
-  VALIDATION_EDIT_PLAN_ANALYSIS = 'validation_edit_plan_analysis',  // 验证修改计划分析
-  EDIT_PLAN_ANALYSIS = 'edit_plan_analysis',  // 审核修改计划分析
-  ROADMAP_EDIT = 'roadmap_edit',            // 路线图修正
   HUMAN_REVIEW = 'human_review',            // 人工审核
+  
+  // ✅ 共享编辑节点（validation失败或review拒绝都使用，由edit_source区分）
+  EDIT_PLAN_ANALYSIS = 'edit_plan_analysis',  // 编辑计划分析（共享）
+  ROADMAP_EDIT = 'roadmap_edit',            // 路线图修正（共享）
+  
   CONTENT_GENERATION = 'content_generation',// 内容生成
-  TUTORIAL_GENERATION = 'tutorial_generation',    // 教程生成
-  RESOURCE_RECOMMENDATION = 'resource_recommendation',  // 资源推荐
-  QUIZ_GENERATION = 'quiz_generation',      // 测验生成
-  FINALIZING = 'finalizing',                // 收尾中
   COMPLETED = 'completed',                  // 已完成
   FAILED = 'failed'                         // 失败
 }
@@ -76,15 +74,10 @@ export const WORKFLOW_STEP_CONFIG: Record<WorkflowStep, { label: string; descrip
   [WorkflowStep.INTENT_ANALYSIS]: { label: '需求分析', description: '正在分析您的学习需求...' },
   [WorkflowStep.CURRICULUM_DESIGN]: { label: '课程设计', description: '正在设计学习路线图...' },
   [WorkflowStep.STRUCTURE_VALIDATION]: { label: '结构验证', description: '正在验证路线图结构...' },
-  [WorkflowStep.VALIDATION_EDIT_PLAN_ANALYSIS]: { label: '验证修改计划', description: '正在分析验证失败原因...' },
-  [WorkflowStep.EDIT_PLAN_ANALYSIS]: { label: '审核修改计划', description: '正在分析审核反馈...' },
-  [WorkflowStep.ROADMAP_EDIT]: { label: '路线图修正', description: '正在根据反馈修正路线图...' },
   [WorkflowStep.HUMAN_REVIEW]: { label: '人工审核', description: '等待您的审核...' },
+  [WorkflowStep.EDIT_PLAN_ANALYSIS]: { label: '编辑计划分析', description: '正在分析修改需求...' },
+  [WorkflowStep.ROADMAP_EDIT]: { label: '路线图修正', description: '正在修正路线图...' },
   [WorkflowStep.CONTENT_GENERATION]: { label: '内容生成', description: '正在生成学习内容...' },
-  [WorkflowStep.TUTORIAL_GENERATION]: { label: '教程生成', description: '正在生成教程...' },
-  [WorkflowStep.RESOURCE_RECOMMENDATION]: { label: '资源推荐', description: '正在推荐学习资源...' },
-  [WorkflowStep.QUIZ_GENERATION]: { label: '测验生成', description: '正在生成测验题目...' },
-  [WorkflowStep.FINALIZING]: { label: '收尾中', description: '即将完成...' },
   [WorkflowStep.COMPLETED]: { label: '已完成', description: '路线图已生成完成！' },
   [WorkflowStep.FAILED]: { label: '失败', description: '生成失败，请重试' },
 };

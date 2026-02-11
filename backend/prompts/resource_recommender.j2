@@ -37,6 +37,14 @@
 
 [3. Constraints & Rules]
 工作规范：
+
+{% if user_constraints and user_constraints|length > 0 %}
+**🔴 [CRITICAL] 用户画像约束（必须严格遵守）：**
+{% for constraint_name, constraint_content in user_constraints.items() %}
+- **{{ constraint_name }}**: {{ constraint_content }}
+{% endfor %}
+
+{% endif %}
 1. 为给定的 Concept 搜索并推荐高质量的学习资源
 2. 推荐资源应覆盖多种类型：文章、视频、书籍、在线课程、官方文档、工具
 3. 根据用户的学习偏好（{{ user_preferences.content_preference | join(", ") }}）优先推荐对应类型的资源
@@ -77,7 +85,7 @@
     {
       "title": "资源标题",
       "url": "https://example.com/resource",
-      "type": "article|video|book|course|documentation|tool",
+      "type": "article|video|book|course|documentation|tool|hands_on",
       "description": "资源简介（50-100字）",
       "relevance_score": 0.95,
       "confidence_score": 0.9,
@@ -102,6 +110,7 @@
 - `course`: 在线课程（Coursera、Udemy 等）
 - `documentation`: 官方文档
 - `tool`: 开发工具、练习平台
+- `hands_on`: 实操项目、GitHub 仓库、在线练习平台（CodePen、CodeSandbox 等）
 
 **语言字段说明**:
 - `language`: 资源内容的语言代码（如 "zh", "en", "ja" 等）

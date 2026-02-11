@@ -40,6 +40,14 @@
 
 [3. Constraints & Rules]
 分析要求：
+
+{% if user_constraints and user_constraints|length > 0 %}
+**🔴 [CRITICAL] 用户画像约束（必须严格遵守）：**
+{% for constraint_name, constraint_content in user_constraints.items() %}
+- **{{ constraint_name }}**: {{ constraint_content }}
+{% endfor %}
+
+{% endif %}
 1. **重点关注错题**：深入分析用户在哪些知识点上存在薄弱环节
 2. **难度维度分析**：从简单、中等、困难三个维度评估掌握情况
 3. **知识体系诊断**：判断是基础不牢、理解不深、还是经验不足

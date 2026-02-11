@@ -51,6 +51,19 @@ class TechCapabilityAnalyzer(BaseAgent):
             autoescape=False,
         )
     
+    def _get_required_constraints(self) -> list[str]:
+        """技术能力分析器需要的约束"""
+        from app.models.domain import ConstraintNames
+        return [
+            # 通用约束
+            ConstraintNames.LANGUAGE,
+            ConstraintNames.USER_GOAL,
+            ConstraintNames.USER_PROFILE,
+            # 特定约束
+            ConstraintNames.SKILL_GAP,
+            ConstraintNames.KEY_TECHNOLOGIES,
+        ]
+    
     async def analyze_capability(
         self,
         technology: str,

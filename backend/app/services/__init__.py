@@ -1,16 +1,16 @@
 """业务逻辑层"""
 
-from app.services.notification_service import notification_service, TaskEvent, StepName
-from app.services.roadmap_service import RoadmapService
-from app.services.concept_service import ConceptService, get_concept_service
-from app.services.content_service import ContentService, get_content_service
+from app.services.shared.notification_service import notification_service, TaskEvent, StepName
+from app.services.roadmaps.roadmap_service import RoadmapService
+from app.services.content.concept_service import ConceptService, get_concept_service
+from app.services.content.content_service import ContentService, get_content_service
 # 延迟导入 task_recovery_service 避免循环依赖
-# from app.services.task_recovery_service import (
+# from app.services.workflows.generation.task_recovery_service import (
 #     task_recovery_service,
 #     TaskRecoveryService,
 #     recover_interrupted_tasks_on_startup,
 # )
-from app.services.execution_logger import ExecutionLogger
+from app.services.shared.execution_logger import ExecutionLogger
 
 __all__ = [
     # 通知服务
@@ -36,10 +36,10 @@ __all__ = [
 # 延迟导入函数，避免循环依赖
 def get_task_recovery_service():
     """延迟导入任务恢复服务"""
-    from app.services.task_recovery_service import task_recovery_service
+    from app.services.workflows.generation.task_recovery_service import task_recovery_service
     return task_recovery_service
 
 def get_recover_interrupted_tasks_on_startup():
     """延迟导入恢复函数"""
-    from app.services.task_recovery_service import recover_interrupted_tasks_on_startup
+    from app.services.workflows.generation.task_recovery_service import recover_interrupted_tasks_on_startup
     return recover_interrupted_tasks_on_startup

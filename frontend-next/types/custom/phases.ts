@@ -82,7 +82,16 @@ export const GENERATION_PHASES: PhaseConfig[] = [
   },
 ];
 
-// Map backend step names to frontend phases
+/**
+ * 将后端步骤映射到前端阶段
+ * 
+ * 核心工作流：
+ * - intent_analysis → curriculum_design → structure_validation → human_review → content_generation
+ * 
+ * 共享编辑节点（由edit_source区分来源）：
+ * - edit_plan_analysis：编辑计划分析（validation失败或review拒绝都使用）
+ * - roadmap_edit：路线图修正（validation失败或review拒绝都使用）
+ */
 export function mapStepToPhase(step: string | null): GenerationPhase | null {
   if (!step) return null;
   
@@ -94,26 +103,27 @@ export function mapStepToPhase(step: string | null): GenerationPhase | null {
     
     // Curriculum design phase
     'curriculum_design': 'curriculum_design',
-    'framework_generation': 'curriculum_design',
     
-    // Structure validation phase
+    // Structure validation phase (包含编辑分支，edit_source=validation_failed时)
     'structure_validation': 'structure_validation',
     
-    // Human review phase (includes roadmap_edit as sub-status)
+    // Human review phase (包含编辑分支，edit_source=human_review时)
     'human_review': 'human_review',
-    'roadmap_edit': 'human_review',  // 编辑中状态，映射到同一阶段
+    
+    // ✅ 共享编辑节点（通过edit_source区分来源）
+    // - edit_source=validation_failed → 映射到structure_validation阶段
+    // - edit_source=human_review → 映射到human_review阶段
+    // 但这里无法获取edit_source，所以统一映射到human_review（UI上显示为同一阶段）
+    'edit_plan_analysis': 'human_review',
+    'roadmap_edit': 'human_review',
     
     // Content generation phase
     'content_generation_queued': 'content_generation',
     'content_generation': 'content_generation',
-    'tutorial_generation': 'content_generation',
-    'quiz_generation': 'content_generation',
-    'resource_recommendation': 'content_generation',
     
-    // Completed (includes failed)
-    'finalizing': 'completed',
+    // Completed phase
     'completed': 'completed',
-    'failed': 'completed',  // 失败也显示为完成阶段，在 UI 中展示统计
+    'failed': 'completed',  // 失败也显示为完成阶段，在UI中展示统计
   };
   
   return stepMap[step] || null;

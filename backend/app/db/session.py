@@ -81,8 +81,10 @@ engine: AsyncEngine = create_async_engine(
             "application_name": "roadmap_agent",
             "jit": "off",
         },
-        "command_timeout": 120,
-        "timeout": 30,
+        "command_timeout": 60,  # ✅ 恢复到60秒（主工作流已移除内容生成，checkpoint 很快）
+        "timeout": 30,  # ✅ 恢复到30秒（建立连接超时）
+        # 注意：asyncpg 不支持 keepalives 参数（仅 psycopg2 支持）
+        # 使用 pool_pre_ping 和 pool_recycle 来保持连接健康
     },
 )
 
@@ -296,16 +298,17 @@ def get_session() -> AsyncSession:
     
     ⚠️ 注意：调用方负责关闭会话
     
-    使用示例:
+    使用示例（需要手动管理事务）:
         session = get_session()
         try:
             result = await session.execute(query)
-            await session.commit()
+            await session.commit()  # 手动 commit（仅限 get_session()）
         finally:
             await session.close()
     
-    ⚠️ 推荐使用上下文管理器:
-        async with async_session_maker() as session:
+    ⚠️ 推荐使用上下文管理器（自动处理事务）:
+        async with async_session_maker.begin() as session:
+            # 不需要手动 commit/rollback/close
             ...
     """
     return async_session_maker()

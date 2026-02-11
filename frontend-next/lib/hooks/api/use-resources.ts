@@ -7,6 +7,7 @@
  */
 
 import { useQuery } from '@tanstack/react-query';
+import { apiClient } from '@/lib/api/client';
 import type { ResourcesResponse } from '@/types/generated';
 
 /**
@@ -26,16 +27,12 @@ export function useResources(
         throw new Error('Roadmap ID and Concept ID are required');
       }
 
-      const response = await fetch(
-        `/api/v1/roadmaps/${roadmapId}/concepts/${conceptId}/resources`
+      // ✅ 使用 apiClient 和正确的路径
+      const { data } = await apiClient.get<ResourcesResponse>(
+        `/content/${roadmapId}/concepts/${conceptId}/resources`
       );
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || 'Failed to fetch resources');
-      }
-
-      return response.json();
+      return data;
     },
     enabled: !!roadmapId && !!conceptId,
     staleTime: 10 * 60 * 1000, // 10分钟

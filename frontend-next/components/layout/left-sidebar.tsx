@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -79,6 +80,7 @@ function NavItem({
 }
 
 export function LeftSidebar({ className }: LeftSidebarProps) {
+  const t = useTranslations();
   const pathname = usePathname();
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -147,7 +149,7 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
             'w-6 h-6 flex items-center justify-center hover:bg-primary/5 rounded transition-colors',
             isCollapsed && 'absolute top-4 right-2'
           )}
-          title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          title={isCollapsed ? t('nav.expandTooltip') : t('nav.collapseTooltip')}
         >
           {isCollapsed ? (
             <PanelLeftOpen size={16} className="text-foreground/60" />
@@ -164,7 +166,7 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
             <Search size={16} className="text-foreground/40" />
             <input
               type="text"
-              placeholder="Quick search..."
+              placeholder={t('common.search')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="bg-transparent text-sm outline-none w-full placeholder:text-foreground/30"
@@ -178,13 +180,13 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
         <div className="px-4 pb-2">
           <Link href="/new">
             <Button variant="sage" className="w-full gap-2">
-              <Plus size={16} /> New Roadmap
+              <Plus size={16} /> {t('common.newRoadmap')}
             </Button>
           </Link>
         </div>
       ) : (
         <div className="px-2 py-2 flex justify-center">
-          <Tooltip text="New Roadmap">
+          <Tooltip text={t('common.newRoadmap')}>
             <Link href="/new">
               <Button variant="sage" size="icon" className="w-10 h-10">
                 <Plus size={18} />
@@ -199,35 +201,35 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
         <nav className="space-y-1">
           {!isCollapsed && (
             <div className="px-2 py-1 text-xs font-bold text-foreground/40 uppercase tracking-wider mt-4 mb-2">
-              Workspace
+              {t('nav.workspace')}
             </div>
           )}
           {isCollapsed && <div className="h-4" />}
 
           <NavItem
             icon={Home}
-            label="Home"
+            label={t('common.home')}
             href="/home"
             active={isActive('/home')}
             isCollapsed={isCollapsed}
           />
           <NavItem
             icon={BookOpen}
-            label="My Roadmaps"
+            label={t('common.myRoadmaps')}
             href="/roadmaps"
             active={isActive('/roadmaps')}
             isCollapsed={isCollapsed}
           />
           <NavItem
             icon={ListTodo}
-            label="Tasks"
+            label={t('common.tasks')}
             href="/tasks"
             active={isActive('/tasks')}
             isCollapsed={isCollapsed}
           />
           <NavItem
             icon={User}
-            label="Profile"
+            label={t('common.profile')}
             href="/profile"
             active={isActive('/profile')}
             isCollapsed={isCollapsed}
@@ -238,28 +240,28 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
             <>
               {!isCollapsed && (
                 <div className="px-2 py-1 text-xs font-bold text-foreground/40 uppercase tracking-wider mt-6 mb-2">
-                  Admin
+                  {t('nav.admin')}
                 </div>
               )}
               {isCollapsed && <div className="h-4" />}
               
               <NavItem
                 icon={Mail}
-                label="Waitlist Management"
+                label={t('admin.waitlistManagement')}
                 href="/admin/waitlist"
                 active={isActive('/admin/waitlist')}
                 isCollapsed={isCollapsed}
               />
               <NavItem
                 icon={Key}
-                label="API Keys Management"
+                label={t('admin.apiKeysManagement')}
                 href="/admin/api-keys"
                 active={isActive('/admin/api-keys')}
                 isCollapsed={isCollapsed}
               />
               <NavItem
                 icon={Activity}
-                label="Celery Monitor"
+                label={t('admin.celeryMonitor')}
                 href="/admin/celery-monitor"
                 active={isActive('/admin/celery-monitor')}
                 isCollapsed={isCollapsed}
@@ -272,7 +274,7 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
             <>
               <div className="px-2 py-1 mt-8 mb-2 flex items-center justify-between">
                 <div className="text-xs font-bold text-foreground/40 uppercase tracking-wider">
-                  Recent
+                  {t('nav.recent')}
                 </div>
                 <button
                   onClick={() => setIsRecentExpanded(!isRecentExpanded)}
@@ -303,7 +305,7 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
                     </div>
                   ) : (
                     <div className="px-2 py-2 text-xs text-foreground/30">
-                      No recent roadmaps
+                      {t('nav.noRecentRoadmaps')}
                     </div>
                   )}
                 </>
@@ -336,14 +338,14 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
         {!isCollapsed ? (
           <NavItem
             icon={Trash2}
-            label="Trash"
+            label={t('common.trash')}
             href="/trash"
             active={isActive('/trash')}
             isCollapsed={false}
           />
         ) : (
           <div className="flex justify-center">
-            <Tooltip text="Trash">
+            <Tooltip text={t('common.trash')}>
               <Link
                 href="/trash"
                 className={cn(
@@ -362,7 +364,7 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
 
       {/* User Footer */}
       <div className="p-4 border-t border-border/5">
-        <UserMenu />
+        <UserMenu compact />
       </div>
     </div>
   );

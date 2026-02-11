@@ -33,15 +33,25 @@ class GetConceptTutorialOutput(BaseModel):
 
 class GetConceptTutorialTool(BaseTool[GetConceptTutorialInput, GetConceptTutorialOutput]):
     """
-    获取概念教程工具
+    获取概念教程工具（已适配统一工具框架）
     
     功能：
     - 从数据库获取概念的教程元数据
     - 返回教程摘要、URL等关键信息
+    - 自动生成 LLM Function Schema
     """
     
     def __init__(self):
-        super().__init__(tool_id="get_concept_tutorial_v1")
+        # ✅ 适配新的 BaseTool 签名
+        super().__init__(
+            tool_id="get_concept_tutorial_v2",
+            name="get_concept_tutorial",
+            description=(
+                "Get tutorial information for a specific concept in the learning roadmap. "
+                "Use this tool when the user asks about a specific topic or wants to review tutorial content."
+            ),
+            args_schema=GetConceptTutorialInput,
+        )
     
     async def execute(self, input_data: GetConceptTutorialInput) -> GetConceptTutorialOutput:
         """

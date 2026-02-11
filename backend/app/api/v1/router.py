@@ -1,101 +1,57 @@
 """
-API v1 路由注册
+API v1 主路由（业务领域驱动架构）
 
-将所有拆分的端点模块统一注册到主路由
+重构后按7大业务领域组织：
+- auth: 认证授权
+- users: 用户画像管理
+- roadmaps: 路线图资源管理
+- tasks: 任务执行与追踪
+- content: 内容管理
+- learning: 学习体验
+- admin: 平台管理
+
+重构变更(2026-01-14)：
+- ✅ 废弃workflows目录，改为tasks
+- ✅ 认证模块独立到auth/
+- ✅ Waitlist公开接口独立注册
+- ✅ 所有模块按业务功能重新归类
 """
 from fastapi import APIRouter
 
-from .endpoints import (
-    generation,
-    retrieval,
-    approval,
-    content,  # ✅ 替代: tutorial, resource, quiz已合并到content
-    modification,
-    progress,
-    mentor,
-    waitlist,
-    admin,
-    tech_assessment,
-    featured,
-    validation,
-    edit,
-    status,
-    streaming,
-    management,
-    users,
-    intent,
-    trace,
-    cover_image,
-    celery_monitor,
-    concept_status,
-    auth_ext,
-)
+# 导入各业务领域的路由
+from .endpoints import auth, users, roadmaps, tasks, content, learning, admin
+from .endpoints.admin.waitlist import router_public as waitlist_public_router
+
+# FastAPI Users认证
 from app.core.auth import fastapi_users, auth_backend
-from app.core.auth.schemas import UserRead, UserCreate, UserUpdate
+from app.core.auth.schemas import UserRead, UserUpdate
 
 # 创建v1主路由
 router = APIRouter(prefix="/api/v1")
 
-# 注册所有子路由
-# 路线图生成相关
-router.include_router(generation.router)
+# ==================== 认证授权 ====================
+router.include_router(auth.router)
 
-# 路线图查询相关
-router.include_router(retrieval.router)
-
-# 人工审核相关
-router.include_router(approval.router)
-
-# 内容管理相关（教程/资源/测验）
-router.include_router(content.router)
-
-# 内容修改相关
-router.include_router(modification.router)
-
-# 学习进度相关
-router.include_router(progress.router)
-
-# Concept 状态相关（内容生成进度）
-router.include_router(concept_status.router)
-
-# 验证记录相关
-router.include_router(validation.router)
-
-# 编辑记录相关
-router.include_router(edit.router)
-
-# 伴学Agent相关（聊天、笔记）
-router.include_router(mentor.router)
-
-# 技术栈能力测试相关
-router.include_router(tech_assessment.router)
-
-# 精选路线图相关
-router.include_router(featured.router)
-
-# 路线图状态查询
-router.include_router(status.router)
-
-# 流式生成
-router.include_router(streaming.router)
-
-# 路线图管理（删除、恢复等）
-router.include_router(management.router)
-
-# 用户相关（画像等）
+# ==================== 用户管理 ====================
 router.include_router(users.router)
 
-# 需求分析相关
-router.include_router(intent.router)
+# ==================== 路线图管理 ====================
+router.include_router(roadmaps.router)
 
-# 执行追踪相关（日志、摘要）
-router.include_router(trace.router)
+# ==================== 任务管理 ====================
+router.include_router(tasks.router)
 
-# 候补名单相关
-router.include_router(waitlist.router)
+# ==================== 内容管理 ====================
+router.include_router(content.router)
 
-# 封面图相关
-router.include_router(cover_image.router)
+# ==================== 学习体验 ====================
+router.include_router(learning.router)
+
+# ==================== 平台管理 ====================
+router.include_router(admin.router)
+
+# ==================== Waitlist公开接口 ====================
+router.include_router(waitlist_public_router)
 
 # ==================== FastAPI Users 认证路由 ====================
 # JWT 认证路由（登录）
@@ -105,18 +61,9 @@ router.include_router(
     tags=["auth"],
 )
 
-# 认证扩展路由（登出、黑名单管理）
-router.include_router(auth_ext.router)
-
 # 用户管理路由（获取/更新当前用户信息）
 router.include_router(
     fastapi_users.get_users_router(UserRead, UserUpdate),
     prefix="/users",
     tags=["users"],
 )
-
-# 管理员路由
-router.include_router(admin.router)
-
-# Celery 监控路由
-router.include_router(celery_monitor.router)

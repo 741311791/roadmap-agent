@@ -152,6 +152,25 @@ class TechAssessmentCRUD(BaseCRUD[TechStackAssessment, dict, dict]):
         
         return assessment
     
+    async def get_by_tech_and_level(
+        self,
+        session: AsyncSession,
+        technology: str,
+        proficiency_level: str,
+    ) -> Optional[TechStackAssessment]:
+        """
+        根据技术栈和级别获取测验题目（get_assessment的别名方法）
+        
+        Args:
+            session: 数据库会话
+            technology: 技术栈名称（python, react等）
+            proficiency_level: 能力级别（beginner, intermediate, expert）
+            
+        Returns:
+            测验记录或None
+        """
+        return await self.get_assessment(session, technology, proficiency_level)
+    
     async def assessment_exists(
         self,
         session: AsyncSession,

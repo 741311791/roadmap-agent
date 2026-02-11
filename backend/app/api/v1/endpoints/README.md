@@ -1,208 +1,322 @@
-# API端点说明
+# API Endpoints 目录说明
 
-## 概述
+> **架构版本**: v2.0 (工作流驱动架构)  
+> **重构日期**: 2026-01-11  
+> **组织原则**: 按业务领域分组，支持多工作流扩展
 
-本目录包含所有按功能拆分的API端点模块。每个模块负责特定领域的API功能，遵循单一职责原则。
+---
 
-## 端点模块
+## 目录结构
 
-### 1. generation.py - 路线图生成
+```
+endpoints/
+├── workflows/              # 工作流执行
+│   └── generation/         # 路线图生成工作流
+│       ├── generation.py   # 发起生成任务
+│       └── approval.py     # 人工审核
+│
+├── roadmaps/               # 路线图资源管理
+│   ├── retrieval.py        # 查询路线图
+│   ├── status.py           # 状态查询
+│   ├── streaming.py        # 流式查询
+│   ├── management.py       # 删除/恢复/更新
+│   ├── featured.py         # 精选路线图
+│   ├── cover_image.py      # 封面图管理
+│   ├── intent.py           # 意图分析元数据
+│   ├── validation.py       # 验证记录
+│   └── edit.py             # 编辑记录
+│
+├── content/                # 内容管理
+│   ├── content.py          # 内容CRUD查询
+│   ├── modification.py     # 内容修改
+│   └── concept_status.py   # 概念生成状态
+│
+├── learning/               # 学习体验
+│   ├── progress.py         # 学习进度追踪
+│   ├── mentor.py           # 伴学交互
+│   └── assessment.py       # 技术评估
+│
+├── users/                  # 用户与认证
+│   ├── users.py            # 用户管理
+│   ├── auth.py             # 认证扩展
+│   └── waitlist.py         # 候补名单
+│
+└── admin/                  # 平台管理
+    ├── admin.py            # 管理员功能
+    ├── monitoring.py       # Celery监控
+    └── trace.py            # 执行追踪
+```
 
-**功能**：处理路线图的异步生成请求
+---
 
-**端点**：
-- `POST /roadmaps/generate` - 创建新的路线图生成任务
-- `GET /roadmaps/{task_id}/status` - 查询任务状态
+## 业务领域说明
 
-**特点**：
-- 使用后台任务异步处理
-- 通过WebSocket推送进度更新
-- 独立的数据库会话管理
+### 1. Workflows - 工作流执行
 
-### 2. retrieval.py - 路线图查询
+**路径前缀**: `/api/v1/workflows/`
 
-**功能**：查询路线图数据和状态
+#### Generation 工作流
 
-**端点**：
+负责路线图生成的完整工作流，包括：
+- 意图分析 (Intent Analysis)
+- 课程设计 (Curriculum Design)
+- 结构验证 (Validation)
+- 人工审核 (Review)
+- 内容生成 (Content Generation)
+
+**主要端点**:
+- `POST /workflows/generation/generate` - 发起路线图生成
+- `POST /workflows/generation/approve/{task_id}` - 人工审核决策
+
+**预留工作流**:
+- Company 工作流 - 伴学模式（未来）
+- Guidance 工作流 - 导学模式（未来）
+
+---
+
+### 2. Roadmaps - 路线图资源管理
+
+**路径前缀**: `/api/v1/roadmaps/`
+
+负责路线图资源的CRUD操作和状态管理。
+
+**主要端点**:
 - `GET /roadmaps/{roadmap_id}` - 获取完整路线图
-- `GET /roadmaps/{roadmap_id}/active-task` - 获取活跃任务
+- `GET /roadmaps/{roadmap_id}/status` - 查询生成状态
+- `GET /roadmaps/{roadmap_id}/stream` - 流式查询进度
+- `DELETE /roadmaps/{roadmap_id}` - 软删除路线图
+- `GET /roadmaps/intent/{task_id}` - 查询意图分析元数据
+- `GET /roadmaps/validation/{task_id}` - 查询验证记录
+- `GET /roadmaps/edit/{task_id}` - 查询编辑记录
 
-**特点**：
+**特点**:
 - 支持正在生成中的路线图查询
-- 返回实时任务状态
+- 提供实时状态更新
+- 精选路线图策展
+- 完整的元数据追踪（意图、验证、编辑）
 
-### 3. approval.py - 人工审核
+---
 
-**功能**：Human-in-the-Loop审核功能
+### 3. Content - 内容管理
 
-**端点**：
-- `POST /roadmaps/{task_id}/approve` - 审核路线图
+**路径前缀**: `/api/v1/content/`
 
-**特点**：
-- 支持批准/拒绝决策
-- 可提供反馈意见
-- 继续或中断工作流
+负责教程、资源、测验等内容的管理和修改。
 
-### 4. tutorial.py - 教程管理
+**主要端点**:
+- `GET /content/{roadmap_id}/concepts/{concept_id}/tutorials` - 获取教程
+- `POST /content/{roadmap_id}/concepts/{concept_id}/tutorial/modify` - 修改教程
+- `GET /content/concept-status` - 查询概念生成状态
 
-**功能**：教程内容的查询和版本管理
+**特点**:
+- 支持内容版本管理
+- 提供修改历史追踪
+- 实时生成状态更新
 
-**端点**：
-- `GET /roadmaps/{roadmap_id}/concepts/{concept_id}/tutorials` - 获取教程版本历史
-- `GET /roadmaps/{roadmap_id}/concepts/{concept_id}/tutorials/latest` - 获取最新版本
-- `GET /roadmaps/{roadmap_id}/concepts/{concept_id}/tutorials/v{version}` - 获取指定版本
+---
 
-**特点**：
-- 完整的版本历史追踪
-- 支持多版本并存
-- 版本元数据管理
+### 4. Learning - 学习体验
 
-### 5. resource.py - 资源管理
+**路径前缀**: `/api/v1/learning/`
 
-**功能**：学习资源推荐的查询
+负责学习进度追踪、伴学交互、能力评估。
 
-**端点**：
-- `GET /roadmaps/{roadmap_id}/concepts/{concept_id}/resources` - 获取资源列表
+**主要端点**:
+- `GET /learning/progress` - 获取学习进度
+- `POST /learning/mentor/chat` - 伴学聊天
+- `GET /learning/assessments` - 技术评估列表
 
-**特点**：
-- 包含资源类型分类
-- 搜索查询记录
-- 资源数量统计
+**特点**:
+- 个性化学习路径
+- AI伴学功能
+- 能力评估系统
 
-### 6. quiz.py - 测验管理
+---
 
-**功能**：测验内容的查询
+### 5. Users - 用户与认证
 
-**端点**：
-- `GET /roadmaps/{roadmap_id}/concepts/{concept_id}/quiz` - 获取测验
+**路径前缀**: `/api/v1/users/`
 
-**特点**：
-- 题目难度分级
-- 完整题目列表
-- 答案和解析
+负责用户管理、认证、候补名单。
 
-### 7. modification.py - 内容修改
+**主要端点**:
+- `GET /users/me` - 获取当前用户信息
+- `PATCH /users/me` - 更新用户信息
+- `POST /users/auth/logout` - 用户登出
+- `GET /users/waitlist` - 候补名单
 
-**功能**：使用Modifier Agent修改现有内容
+**特点**:
+- JWT认证
+- 用户画像管理
+- 候补名单系统
 
-**端点**：
-- `POST /roadmaps/{roadmap_id}/concepts/{concept_id}/tutorial/modify` - 修改教程
-- `POST /roadmaps/{roadmap_id}/concepts/{concept_id}/resources/modify` - 修改资源
-- `POST /roadmaps/{roadmap_id}/concepts/{concept_id}/quiz/modify` - 修改测验
+---
 
-**特点**：
-- 增量修改现有内容
-- 版本自动递增
-- 修改记录追踪
+### 6. Admin - 平台管理
 
-### 8. retry.py - 失败重试
+**路径前缀**: `/api/v1/admin/`
 
-**功能**：重试失败的内容生成
+负责管理员功能、系统监控、执行追踪。
 
-**端点**：
-- `POST /roadmaps/{roadmap_id}/retry-failed` - 批量重试失败内容
-- `POST /roadmaps/{roadmap_id}/concepts/{concept_id}/regenerate` - 重新生成指定内容
+**主要端点**:
+- `GET /admin/users` - 用户管理
+- `GET /admin/monitoring/celery/stats` - Celery监控
+- `GET /admin/trace/{execution_id}` - 执行追踪
 
-**特点**：
-- 断点续传支持
-- 按内容类型筛选
-- 批量并发处理
+**特点**:
+- 用户邀请系统
+- Tavily配额管理
+- 系统监控告警
 
-**注意**：辅助函数已迁移至 `app.services.content_retry_service.ContentRetryService`
+---
 
-## 架构优势
+## 路由组织原则
 
-### 1. 模块化
-- 每个文件独立负责一个功能域
-- 文件大小控制在200行以内
-- 易于理解和维护
+### 分层路由
 
-### 2. 可扩展性
-- 新增端点只需创建新模块
-- 不影响现有代码
-- 易于测试和调试
-
-### 3. 职责清晰
-- 端点只负责请求处理
-- 业务逻辑在Service层
-- 数据访问在Repository层
-
-### 4. 统一规范
-- 统一的错误处理
-- 一致的日志记录
-- 标准的文档注释
-
-## 使用示例
-
-### 生成路线图
-
-```python
-import requests
-
-response = requests.post(
-    "http://localhost:8000/api/v1/roadmaps/generate",
-    json={
-        "user_id": "user-001",
-        "preferences": {
-            "learning_goal": "学习Python Web开发",
-            "current_level": "beginner",
-            "time_commitment_hours": 20
-        }
-    }
-)
-
-task_id = response.json()["task_id"]
+```
+主路由 (router.py)
+  ├── Workflows路由 (workflows/generation/router.py)
+  ├── Roadmaps路由 (roadmaps/router.py)
+  ├── Content路由 (content/router.py)
+  ├── Learning路由 (learning/router.py)
+  ├── Users路由 (users/router.py)
+  └── Admin路由 (admin/router.py)
 ```
 
-### 查询路线图
+### 路由聚合示例
 
+**workflows/generation/router.py**:
 ```python
-import requests
+from fastapi import APIRouter
+from . import generation, approval, intent, validation, edit
 
-response = requests.get(
-    f"http://localhost:8000/api/v1/roadmaps/{roadmap_id}"
+router = APIRouter(
+    prefix="/workflows/generation",
+    tags=["Generation Workflow"]
 )
 
-roadmap = response.json()
+router.include_router(generation.router)
+router.include_router(approval.router)
+router.include_router(intent.router)
+router.include_router(validation.router)
+router.include_router(edit.router)
 ```
 
-### 修改教程
+---
+
+## 开发规范
+
+### 1. 文件命名
+
+- 使用小写字母和下划线：`tech_assessment.py` → `assessment.py`
+- 名称简洁清晰：`celery_monitor.py` → `monitoring.py`
+
+### 2. 路由前缀
+
+- 工作流：由router.py统一管理，endpoint文件不设prefix
+- 资源管理：在endpoint文件中设置prefix
+- 保持一致性和可预测性
+
+### 3. 依赖注入
 
 ```python
-import requests
+from typing import Annotated
+from fastapi import APIRouter, Depends
 
-response = requests.post(
-    f"http://localhost:8000/api/v1/roadmaps/{roadmap_id}/concepts/{concept_id}/tutorial/modify",
-    json={
-        "user_id": "user-001",
-        "preferences": {...},
-        "requirements": [
-            "增加更多代码示例",
-            "简化技术术语"
-        ]
-    }
-)
+from app.services.workflows.generation.intent_service import IntentService
+
+router = APIRouter(tags=["intent-analysis"])
+
+@router.get("/{task_id}")
+async def get_intent_analysis(
+    task_id: str,
+    service: Annotated[IntentService, Depends()],
+):
+    ...
 ```
+
+### 4. 错误处理
+
+```python
+from app.core.custom_exceptions import errors
+
+if not record:
+    raise errors.NotFoundError(msg="未找到验证记录")
+```
+
+### 5. 响应格式
+
+```python
+from app.core.response_schema import ResponseSchemaModel, response_base
+
+@router.get("/{task_id}", response_model=ResponseSchemaModel[DataType])
+async def endpoint(...):
+    return response_base.success(data=result)
+```
+
+---
 
 ## 测试
 
-运行端点测试：
+### 运行所有API测试
 
 ```bash
 pytest backend/tests/api/ -v
 ```
 
-运行特定模块测试：
+### 运行特定业务领域测试
 
 ```bash
+# 工作流测试
 pytest backend/tests/api/test_generation.py -v
+
+# 路线图测试
+pytest backend/tests/api/test_retrieval.py -v
 ```
 
-## 文档
+---
 
-查看完整API文档：
+## API文档
 
-```bash
-# 启动服务器后访问
+启动服务器后访问Swagger文档：
+
+```
 http://localhost:8000/docs
 ```
+
+按业务领域分组的API端点，清晰易读。
+
+---
+
+## 扩展指南
+
+### 添加新的工作流
+
+1. 在 `workflows/` 下创建新目录（如 `company/`）
+2. 创建 `__init__.py` 和 `router.py`
+3. 添加endpoint文件
+4. 在 `workflows/__init__.py` 中导出路由
+5. 在主 `router.py` 中注册
+
+### 添加新的业务领域
+
+1. 在 `endpoints/` 下创建新目录
+2. 创建 `__init__.py` 和 `router.py`
+3. 添加endpoint文件
+4. 在主 `router.py` 中注册
+
+---
+
+## 迁移指南
+
+如果你是从旧版本（v1.0）迁移，请查看：
+
+- `docs/20260111_API路径迁移清单.md` - API路径变化详情
+- `docs/20260111_工作流驱动架构重构完成总结.md` - 完整重构说明
+
+---
+
+**文档版本**: v2.0  
+**最后更新**: 2026-01-11  
+**维护者**: Backend Team

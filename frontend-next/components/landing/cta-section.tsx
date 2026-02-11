@@ -11,6 +11,7 @@
  */
 
 import React from 'react';
+import { useTranslations } from 'next-intl';
 import { motion } from 'motion/react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
@@ -19,8 +20,10 @@ import { WaitlistForm } from '@/components/ui/waitlist-form';
 import { joinWaitlist } from '@/lib/api/endpoints';
 
 export function CTASection() {
+  const t = useTranslations('cta');
+  
   const handleJoin = async (email: string) => {
-    await joinWaitlist({ email, source: 'cta_section' });
+    await joinWaitlist(email);
   };
 
   return (
@@ -48,10 +51,10 @@ export function CTASection() {
         className="max-w-4xl mx-auto text-center relative z-10"
       >
         <h2 className="text-4xl md:text-5xl font-serif font-bold text-white mb-6">
-          Start Your Learning Journey Today
+          {t('title')}
         </h2>
         <p className="text-xl text-white/95 mb-10 max-w-2xl mx-auto">
-          Join thousands of learners building their future with AI-powered personalized roadmaps
+          {t('subtitle')}
         </p>
 
         <div className="max-w-md mx-auto mb-6 text-left">
@@ -59,18 +62,18 @@ export function CTASection() {
         </div>
 
         <p className="text-sm text-white/80">
-          No credit card required · Start learning in minutes
+          {t('noCredit')}
         </p>
 
         {/* 或者直接开始 */}
         <div className="mt-8 pt-8 border-t border-white/20">
-          <p className="text-white/90 mb-4">Already have an account?</p>
+          <p className="text-white/90 mb-4">{t('alreadyAccount')}</p>
           <Link href="/login">
             <Button
               variant="outline"
               className="bg-white/5 border-white/50 text-white hover:bg-white/15 hover:border-white"
             >
-              Sign In
+              {t('signIn')}
             </Button>
           </Link>
         </div>

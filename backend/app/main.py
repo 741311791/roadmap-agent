@@ -7,6 +7,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from sqlalchemy.exc import SQLAlchemyError
+
+# ✅ 在模块导入时就初始化日志系统（确保所有后续 structlog 调用都使用正确配置）
+from app.config.logging_config import setup_logging
+setup_logging()
+
 import structlog
 
 from app.api.v1.router import router as api_router_v1
@@ -30,7 +35,7 @@ from app.core.global_exception_handlers import (
 from app.core.custom_exceptions import BaseAPIException
 # 延迟导入避免循环依赖
 def get_recover_interrupted_tasks_on_startup():
-    from app.services.task_recovery_service import recover_interrupted_tasks_on_startup
+    from app.services.workflows.generation.task_recovery_service import recover_interrupted_tasks_on_startup
     return recover_interrupted_tasks_on_startup
 
 
@@ -48,8 +53,34 @@ async def lifespan(app: FastAPI):
     # 初始化全局 orchestrator 和 Redis 连接
     await init_orchestrator()
     
+    # ✅ 初始化 Tavily API Key Redis 缓存（从数据库加载）
+    try:
+        from app.core.tavily_key_cache import get_tavily_key_cache
+        key_cache = get_tavily_key_cache()
+        loaded_keys = await key_cache.initialize()
+        logger.info(
+            "tavily_key_cache_initialized_on_startup",
+            loaded_keys=loaded_keys,
+        )
+    except Exception as e:
+        # 缓存初始化失败不应阻止服务启动（降级到数据库直查）
+        logger.error(
+            "tavily_key_cache_init_error_on_startup",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+    
     # 初始化 S3 兼容存储 bucket（如果不存在则创建）
     await ensure_bucket_exists()
+    
+    # ============================================================
+    # MCP Servers 初始化已废弃 (2026-01-19)
+    # 原因：统一使用官方 langchain-mcp-adapters
+    # 现在Agent直接在需要时加载MCP工具，无需在启动时统一初始化
+    # ============================================================
+    # 如需使用MCP工具，请参考：
+    # - app/tools/mcp_loader.py - 官方langchain-mcp-adapters加载器
+    # - app/agents/tutorial_generator.py - 使用示例（场景区分加载）
     
     # 恢复被中断的任务（服务器重启后自动恢复）
     try:
@@ -71,17 +102,36 @@ async def lifespan(app: FastAPI):
             error_type=type(e).__name__,
         )
     
-    # 初始化技术栈测验数据（如果缺失则生成）
+    # 初始化技术栈测验数据（先检查，如果已全部生成则跳过Celery任务）
     try:
-        from app.services.tech_assessment_initializer import initialize_tech_assessments
+        from app.services.learning.assessment_initializer import initialize_tech_assessments
         init_result = await initialize_tech_assessments()
-        if init_result.get("generated", 0) > 0:
-            logger.info(
-                "tech_assessments_initialized",
-                total_expected=init_result.get("total_expected"),
-                existing=init_result.get("existing"),
-                generated=init_result.get("generated"),
-                failed=init_result.get("failed"),
+        
+        # 记录初始化结果
+        if init_result.get("success"):
+            if init_result.get("status") == "complete":
+                # 所有测验题已存在，无需生成
+                logger.info(
+                    "tech_assessments_already_complete",
+                    total_expected=init_result.get("total_expected"),
+                    existing=init_result.get("existing"),
+                    message="所有测验题已存在，跳过生成",
+                )
+            elif init_result.get("status") == "triggered":
+                # 触发了Celery任务
+                logger.info(
+                    "tech_assessments_task_triggered",
+                    total_expected=init_result.get("total_expected"),
+                    existing=init_result.get("existing"),
+                    missing=init_result.get("missing"),
+                    task_id=init_result.get("task_id"),
+                    message=f"发现 {init_result.get('missing')} 个缺失的测验题，已提交Celery任务",
+                )
+        else:
+            logger.warning(
+                "tech_assessments_init_check_failed",
+                error=init_result.get("error"),
+                message="测验题检查失败，但不影响服务启动",
             )
     except Exception as e:
         # 初始化失败不应阻止服务启动
@@ -97,7 +147,7 @@ async def lifespan(app: FastAPI):
     
     # 刷新所有待发送的日志
     try:
-        from app.services.execution_logger import execution_logger
+        from app.services.shared.execution_logger import execution_logger
         await execution_logger.flush()
         logger.info("execution_logger_flushed")
         
@@ -197,6 +247,25 @@ from prometheus_client import make_asgi_app
 metrics_app = make_asgi_app()
 app.mount("/metrics", metrics_app)
 logger.info("prometheus_metrics_endpoint_registered", path="/metrics")
+
+# 挂载 FastAPI Voyager 可视化工具
+try:
+    from fastapi_voyager import create_voyager
+    app.mount(
+        '/voyager',
+        create_voyager(
+            app,
+            module_prefix='app',  # 模块前缀，对应项目中的 app 包
+            swagger_url="/docs",  # Swagger 文档地址
+            initial_page_policy='first',  # 默认显示第一个路由
+            enable_pydantic_resolve_meta=True,  # 启用 pydantic-resolve 元信息显示
+        )
+    )
+    logger.info("voyager_visualization_registered", path="/voyager")
+except ImportError:
+    logger.warning("fastapi_voyager_not_installed", message="Run 'uv add fastapi-voyager' to enable API visualization")
+except Exception as e:
+    logger.error("voyager_mount_failed", error=str(e), error_type=type(e).__name__)
 
 
 @app.get("/health")

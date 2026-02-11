@@ -4,7 +4,8 @@
  * 用于水平树状图的类型系统
  */
 
-import type { Stage, Module, Concept, ContentStatus } from '@/types/generated/models';
+import type { Stage, Module, Concept } from '@/types/generated/models';
+import type { ContentStatus } from '@/types/generated/constants';
 
 // ============================================================
 // 节点状态枚举
@@ -277,17 +278,19 @@ export function getConceptNodeStatus(
   }
   
   // 🆕 优先使用 overall_status（来自 concept_metadata 表，更准确）
-  if (concept.overall_status) {
-    switch (concept.overall_status) {
+  // 注意：只有 loadingConceptIds 中的概念才显示为 loading 状态
+  // overall_status = 'pending' 表示"等待处理"，不是"正在加载"
+  if ((concept as any).overall_status) {
+    switch ((concept as any).overall_status) {
       case 'completed':
         return 'completed';
-      case 'generating':
-        return 'loading';
       case 'failed':
         return 'failed';
       case 'partial_failed':
         return 'partial_failure';
       case 'pending':
+        // pending 表示等待处理，不是正在加载
+        // loading 状态只由 loadingConceptIds 控制（上面已检查）
         return 'pending';
       default:
         // 继续使用旧逻辑
@@ -305,15 +308,25 @@ export function getConceptNodeStatus(
     return 'completed';
   }
   
-  const anyGenerating = 
-    concept.content_status === 'generating' ||
-    concept.resources_status === 'generating' ||
-    concept.quiz_status === 'generating';
+  // 检查是否有任何内容生成失败
+  const anyFailed = 
+    concept.content_status === 'failed' ||
+    concept.resources_status === 'failed' ||
+    concept.quiz_status === 'failed';
   
-  if (anyGenerating) {
-    return 'loading';
+  if (anyFailed) {
+    // 检查是否部分成功
+    const anyCompleted = 
+      concept.content_status === 'completed' ||
+      concept.resources_status === 'completed' ||
+      concept.quiz_status === 'completed';
+    
+    return anyCompleted ? 'partial_failure' : 'failed';
   }
   
+  // 注意：content_status === 'pending' 表示"正在生成中"
+  // 但我们不在这里返回 loading，因为 loading 状态由 loadingConceptIds 控制
+  // 这里只返回 pending，让 loadingConceptIds 来决定是否显示 loading 动画
   return 'pending';
 }
 

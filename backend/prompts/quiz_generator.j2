@@ -18,6 +18,14 @@
 
 [3. Constraints & Rules]
 工作规范：
+
+{% if user_constraints and user_constraints|length > 0 %}
+**🔴 [CRITICAL] 用户画像约束（必须严格遵守）：**
+{% for constraint_name, constraint_content in user_constraints.items() %}
+- **{{ constraint_name }}**: {{ constraint_content }}
+{% endfor %}
+
+{% endif %}
 1. 为给定的 Concept 生成 5-8 道测验题目
 2. 题目类型仅限：单选题（single_choice）、多选题（multiple_choice）、判断题（true_false）
 3. 题目难度应与概念难度（{{ concept.difficulty }}）和用户水平（{{ user_preferences.current_level }}）匹配

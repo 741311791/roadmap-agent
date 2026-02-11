@@ -55,7 +55,7 @@ export function MessageList({
       <div ref={scrollRef} className="space-y-4 pr-4">
         {messages.map((message) => (
           <MessageBubble
-            key={message.id}
+            key={message.message_id}
             message={message}
             compact={compact}
           />
@@ -76,7 +76,7 @@ function MessageBubble({
   compact?: boolean;
 }) {
   const isUser = message.role === 'user';
-  const isStreaming = message.metadata?.isStreaming;
+  const isStreaming = (message as any).metadata?.isStreaming;
 
   return (
     <div
@@ -131,12 +131,12 @@ function MessageBubble({
 
         {/* 时间戳 */}
         <span className="text-xs text-muted-foreground px-1">
-          {formatTimestamp(message.timestamp)}
+          {formatTimestamp(message.created_at)}
         </span>
 
         {/* 修改结果（如果有） */}
-        {message.metadata?.modifications && (
-          <ModificationResults modifications={message.metadata.modifications} />
+        {(message as any).metadata?.modifications && (
+          <ModificationResults modifications={(message as any).metadata.modifications} />
         )}
       </div>
     </div>

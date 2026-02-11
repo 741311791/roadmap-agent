@@ -9,7 +9,7 @@
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from sqlmodel import SQLModel, Field, Column, JSON
-from sqlalchemy import Text, DateTime, UniqueConstraint, String, Boolean, text
+from sqlalchemy import Text, DateTime, UniqueConstraint, String, Boolean, text, Index, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, DeclarativeBase
 from fastapi_users.db import SQLAlchemyBaseUserTable
 import uuid
@@ -93,7 +93,11 @@ class RoadmapTask(SQLModel, table=True):
     
     # 输入/输出
     user_request: dict = Field(sa_column=Column(JSON))
-    roadmap_id: Optional[str] = Field(default=None)
+    roadmap_id: Optional[str] = Field(
+        default=None, 
+        index=True,
+        description="路线图ID（创建任务生成新ID，重试任务复用已有ID）"
+    )
     
     # 任务类型信息（用于区分创建任务和重试任务）
     task_type: Optional[str] = Field(default=None)  # 'creation', 'retry_tutorial', 'retry_resources', 'retry_quiz', 'retry_batch'
@@ -104,6 +108,16 @@ class RoadmapTask(SQLModel, table=True):
     celery_task_id: Optional[str] = Field(
         default=None,
         description="Celery 任务 ID，用于查询内容生成任务状态或取消任务"
+    )
+    
+    # ✅ 新增：内容生成独立追踪
+    content_generation_celery_id: Optional[str] = Field(
+        default=None,
+        description="内容生成 Celery 协调任务 ID（独立 Worker）"
+    )
+    content_generation_status: str = Field(
+        default="pending",
+        description="内容生成状态: pending | processing | completed | partial_failure | failed"
     )
     
     # 元数据（所有时间字段使用北京时间）
@@ -155,7 +169,13 @@ class RoadmapMetadata(SQLModel, table=True):
     
     created_at: datetime = Field(
         default_factory=beijing_now,
-        sa_column=Column(DateTime(timezone=False))  # 无时区，直接存储北京时间
+        sa_column=Column(DateTime(timezone=False)),
+        description="创建时间（北京时间）"
+    )
+    updated_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False)),
+        description="最后更新时间（北京时间）"
     )
     
     # 软删除字段
@@ -276,6 +296,12 @@ class TutorialMetadata(SQLModel, table=True):
     """
     __tablename__ = "tutorial_metadata"
     
+    # ✅ 唯一约束：每个 Concept 只有一个最新版本
+    __table_args__ = (
+        Index('uix_tutorial_roadmap_concept_latest', 'roadmap_id', 'concept_id', 'is_latest', 
+              unique=True, postgresql_where="is_latest = true"),
+    )
+    
     tutorial_id: str = Field(primary_key=True)  # UUID 格式，确保全局唯一
     concept_id: str = Field(index=True)
     roadmap_id: str = Field(foreign_key="roadmap_metadata.roadmap_id", index=True)
@@ -293,9 +319,15 @@ class TutorialMetadata(SQLModel, table=True):
     is_latest: bool = Field(default=True, index=True, description="是否为最新版本")
     
     estimated_completion_time: int  # 分钟
-    generated_at: datetime = Field(
+    created_at: datetime = Field(
         default_factory=beijing_now,
-        sa_column=Column(DateTime(timezone=False))  # 无时区，直接存储北京时间
+        sa_column=Column(DateTime(timezone=False)),
+        description="创建时间（北京时间）"
+    )
+    updated_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False)),
+        description="最后更新时间（北京时间）"
     )
 
 
@@ -303,18 +335,25 @@ class IntentAnalysisMetadata(SQLModel, table=True):
     """需求分析结果元数据表（A1: 需求分析师产出，增强版）"""
     __tablename__ = "intent_analysis_metadata"
     
-    id: str = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        primary_key=True,
-    )
-    task_id: str = Field(
-        foreign_key="roadmap_tasks.task_id",
-        index=True,
-        unique=True,  # 确保每个任务只有一个需求分析记录
+    # ✅ 唯一约束：每个路线图只有一个意图分析记录
+    __table_args__ = (
+        Index('uix_intent_roadmap_id', 'roadmap_id', unique=True),
     )
     
-    # 路线图ID（在需求分析完成后生成）
-    roadmap_id: Optional[str] = Field(default=None, index=True, description="路线图唯一标识")
+    # 主键：意图分析ID（UUID格式）
+    intent_id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        primary_key=True,
+        description="意图分析唯一标识"
+    )
+    
+    # 路线图ID（唯一，每个路线图只有一个意图分析）
+    # ⚠️ 不使用外键约束，因为 intent_analysis 在 roadmap_metadata 创建之前执行
+    # 应用层通过工作流保证数据一致性
+    roadmap_id: str = Field(
+        index=True,
+        description="路线图唯一标识"
+    )
     
     # 原有分析结果字段
     parsed_goal: str = Field(sa_column=Column(Text))
@@ -338,13 +377,24 @@ class IntentAnalysisMetadata(SQLModel, table=True):
     
     created_at: datetime = Field(
         default_factory=beijing_now,
-        sa_column=Column(DateTime(timezone=False))
+        sa_column=Column(DateTime(timezone=False)),
+        description="创建时间（北京时间）"
+    )
+    updated_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False)),
+        description="最后更新时间（北京时间）"
     )
 
 
 class ResourceRecommendationMetadata(SQLModel, table=True):
     """资源推荐元数据表（A5: 资源推荐师产出）"""
     __tablename__ = "resource_recommendation_metadata"
+    
+    # ✅ 唯一约束：每个 Concept 只有一条 Resource 记录
+    __table_args__ = (
+        Index('uix_resource_roadmap_concept', 'roadmap_id', 'concept_id', unique=True),
+    )
     
     id: str = Field(
         default_factory=lambda: str(uuid.uuid4()),
@@ -360,15 +410,26 @@ class ResourceRecommendationMetadata(SQLModel, table=True):
     # 搜索查询记录
     search_queries_used: list = Field(sa_column=Column(JSON))  # List[str]
     
-    generated_at: datetime = Field(
+    created_at: datetime = Field(
         default_factory=beijing_now,
-        sa_column=Column(DateTime(timezone=False))
+        sa_column=Column(DateTime(timezone=False)),
+        description="创建时间（北京时间）"
+    )
+    updated_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False)),
+        description="最后更新时间（北京时间）"
     )
 
 
 class QuizMetadata(SQLModel, table=True):
     """测验元数据表（A6: 测验生成器产出）"""
     __tablename__ = "quiz_metadata"
+    
+    # ✅ 唯一约束：每个 Concept 只有一条 Quiz 记录
+    __table_args__ = (
+        Index('uix_quiz_roadmap_concept', 'roadmap_id', 'concept_id', unique=True),
+    )
     
     quiz_id: str = Field(primary_key=True)  # UUID 格式，确保全局唯一
     concept_id: str = Field(index=True)
@@ -383,9 +444,15 @@ class QuizMetadata(SQLModel, table=True):
     medium_count: int = Field(default=0)
     hard_count: int = Field(default=0)
     
-    generated_at: datetime = Field(
+    created_at: datetime = Field(
         default_factory=beijing_now,
-        sa_column=Column(DateTime(timezone=False))
+        sa_column=Column(DateTime(timezone=False)),
+        description="创建时间（北京时间）"
+    )
+    updated_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False)),
+        description="最后更新时间（北京时间）"
     )
 
 
@@ -408,9 +475,15 @@ class TechStackAssessment(SQLModel, table=True):
         description="考察内容规划（topics）"
     )
     
-    generated_at: datetime = Field(
+    created_at: datetime = Field(
         default_factory=beijing_now,
-        sa_column=Column(DateTime(timezone=False))
+        sa_column=Column(DateTime(timezone=False)),
+        description="创建时间（北京时间）"
+    )
+    updated_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False)),
+        description="最后更新时间（北京时间）"
     )
 
 
@@ -591,8 +664,11 @@ class StructureValidationRecord(SQLModel, table=True):
     
     # 关联字段
     task_id: str = Field(
-        foreign_key="roadmap_tasks.task_id",
-        index=True,
+        sa_column=Column(
+            String,
+            ForeignKey("roadmap_tasks.task_id", ondelete="CASCADE"),
+            index=True,
+        ),
         description="关联的任务 ID"
     )
     roadmap_id: str = Field(
@@ -664,8 +740,11 @@ class RoadmapEditRecord(SQLModel, table=True):
     
     # 关联字段
     task_id: str = Field(
-        foreign_key="roadmap_tasks.task_id",
-        index=True,
+        sa_column=Column(
+            String,
+            ForeignKey("roadmap_tasks.task_id", ondelete="CASCADE"),
+            index=True,
+        ),
         description="关联的任务 ID"
     )
     roadmap_id: str = Field(
@@ -726,8 +805,11 @@ class HumanReviewFeedback(SQLModel, table=True):
     
     # 关联字段
     task_id: str = Field(
-        foreign_key="roadmap_tasks.task_id",
-        index=True,
+        sa_column=Column(
+            String,
+            ForeignKey("roadmap_tasks.task_id", ondelete="CASCADE"),
+            index=True,
+        ),
         description="关联的任务 ID"
     )
     roadmap_id: str = Field(
@@ -787,18 +869,26 @@ class EditPlanRecord(SQLModel, table=True):
     
     # 关联字段
     task_id: str = Field(
-        foreign_key="roadmap_tasks.task_id",
-        index=True,
+        sa_column=Column(
+            String,
+            ForeignKey("roadmap_tasks.task_id", ondelete="CASCADE"),
+            index=True,
+        ),
         description="关联的任务 ID"
     )
     roadmap_id: str = Field(
         index=True,
         description="关联的路线图 ID"
     )
-    feedback_id: str = Field(
-        foreign_key="human_review_feedbacks.id",
-        index=True,
-        description="关联的用户反馈记录 ID"
+    feedback_id: Optional[str] = Field(
+        default=None,
+        sa_column=Column(
+            String,
+            ForeignKey("human_review_feedbacks.id", ondelete="CASCADE"),
+            nullable=True,
+            index=True,
+        ),
+        description="关联的用户反馈记录 ID（验证失败触发时为 None）"
     )
     
     # 修改计划内容（JSON 格式）
@@ -1077,6 +1167,10 @@ class RoadmapCoverImage(SQLModel, table=True):
         default=None,
         sa_column=Column(Text, nullable=True),
         description="生成失败时的错误信息"
+    )
+    retry_count: int = Field(
+        default=0,
+        description="重试次数（用于幂等性检查和重试限制）"
     )
     created_at: datetime = Field(
         default_factory=beijing_now,

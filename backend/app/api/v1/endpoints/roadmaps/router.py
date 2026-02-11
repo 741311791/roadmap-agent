@@ -2,10 +2,11 @@
 
 重构变更：
 - ✅ 整合list/crud/metadata替代原有的分散文件
-- ✅ 保留streaming和cover_image
+- ✅ 移除streaming（已废弃流式输出）
+- ✅ 保留cover_image
 """
 from fastapi import APIRouter
-from . import list as list_module, crud, metadata, streaming, cover_image
+from . import list as list_module, crud, metadata, cover_image
 
 router = APIRouter(tags=["Roadmap Resources"])
 
@@ -17,9 +18,6 @@ router.include_router(crud.router)
 
 # 元数据查询
 router.include_router(metadata.router)
-
-# 流式生成
-router.include_router(streaming.router)
 
 # 封面图
 router.include_router(cover_image.router)

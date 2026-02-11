@@ -209,7 +209,8 @@ async def get_tavily_rate_limiter() -> GlobalRateLimiter:
     """
     获取全局 Tavily API 速率限制器单例
     
-    限制：每分钟最多 100 次请求
+    速率限制从环境变量 TAVILY_RATE_LIMIT_PER_MINUTE 读取（默认10次/分钟）
+    所有 Tavily API key 使用统一的速率限制
     
     Returns:
         GlobalRateLimiter 实例
@@ -219,6 +220,9 @@ async def get_tavily_rate_limiter() -> GlobalRateLimiter:
     if _tavily_rate_limiter is None:
         from redis.asyncio import from_url
         
+        # 从环境变量读取速率限制配置
+        rate_limit = settings.TAVILY_RATE_LIMIT_PER_MINUTE
+        
         # 创建 Redis 客户端
         redis_client = from_url(
             settings.get_redis_url,
@@ -226,18 +230,19 @@ async def get_tavily_rate_limiter() -> GlobalRateLimiter:
             decode_responses=False,
         )
         
-        # 创建限制器（每分钟 100 次）
+        # 创建全局限制器
         _tavily_rate_limiter = GlobalRateLimiter(
             redis_client=redis_client,
             key_prefix="tavily_api",
-            max_requests=100,
+            max_requests=rate_limit,
             window_seconds=60,
         )
         
         logger.info(
             "tavily_rate_limiter_initialized",
-            max_requests=100,
+            max_requests=rate_limit,
             window_seconds=60,
+            source="environment_variable",
         )
     
     return _tavily_rate_limiter

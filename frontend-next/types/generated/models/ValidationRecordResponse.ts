@@ -2,6 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ContentStatus } from '../constants';
+import type { TaskStatus } from '../constants';
 /**
  * 验证记录响应
  *
@@ -23,7 +25,7 @@ export type ValidationRecordResponse = {
     /**
      * 验证状态（passed/failed）
      */
-    validation_status: string;
+    validation_status: TaskStatus;
     /**
      * 发现的问题数量
      */

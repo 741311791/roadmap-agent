@@ -175,55 +175,6 @@ class QuizGeneratorProtocol(Protocol):
         ...
 
 
-class ModificationAnalyzerProtocol(Protocol):
-    """
-    修改分析器协议
-    
-    职责：分析用户的修改请求并确定修改类型
-    输入：ModificationAnalysisInput
-    输出：ModificationAnalysisOutput
-    """
-    
-    @property
-    def agent_id(self) -> str: ...
-    
-    async def execute(self, input_data: Any) -> Any:
-        """执行修改分析"""
-        ...
-
-
-class TutorialModifierProtocol(Protocol):
-    """
-    教程修改器协议
-    
-    职责：修改现有教程内容
-    输入：TutorialModificationInput
-    输出：TutorialModificationOutput
-    """
-    
-    @property
-    def agent_id(self) -> str: ...
-    
-    async def execute(self, input_data: Any) -> Any:
-        """执行教程修改"""
-        ...
-
-
-class ResourceModifierProtocol(Protocol):
-    """
-    资源修改器协议
-    
-    职责：修改资源推荐内容
-    输入：ResourceModificationInput
-    输出：ResourceModificationOutput
-    """
-    
-    @property
-    def agent_id(self) -> str: ...
-    
-    async def execute(self, input_data: Any) -> Any:
-        """执行资源修改"""
-        ...
 
 
 class QuizModifierProtocol(Protocol):
@@ -280,18 +231,6 @@ class AgentFactoryProtocol(Protocol):
     
     def create_quiz_generator(self) -> QuizGeneratorProtocol:
         """创建测验生成器"""
-        ...
-    
-    def create_modification_analyzer(self) -> ModificationAnalyzerProtocol:
-        """创建修改分析器"""
-        ...
-    
-    def create_tutorial_modifier(self) -> TutorialModifierProtocol:
-        """创建教程修改器"""
-        ...
-    
-    def create_resource_modifier(self) -> ResourceModifierProtocol:
-        """创建资源修改器"""
         ...
     
     def create_quiz_modifier(self) -> QuizModifierProtocol:

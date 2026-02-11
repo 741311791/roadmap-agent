@@ -9,7 +9,13 @@
  */
 
 /**
- * 工作流步骤枚举值
+ * 工作流步骤枚举值（与后端WorkflowStep枚举完全对齐）
+ * 
+ * @see backend/app/models/constants.py::WorkflowStep
+ * 
+ * 核心步骤：
+ * - 主路节点：INTENT_ANALYSIS → CURRICULUM_DESIGN → STRUCTURE_VALIDATION → HUMAN_REVIEW → CONTENT_GENERATION
+ * - 共享编辑节点：EDIT_PLAN_ANALYSIS、ROADMAP_EDIT（由edit_source区分来源）
  */
 export const WorkflowStep = {
   // 初始化阶段
@@ -23,24 +29,15 @@ export const WorkflowStep = {
   STRUCTURE_VALIDATION: 'structure_validation',
   HUMAN_REVIEW: 'human_review',
   
-  // 验证分支节点（验证失败触发）
-  VALIDATION_EDIT_PLAN_ANALYSIS: 'validation_edit_plan_analysis',
-  
-  // 审核分支节点（用户拒绝触发）
+  // 共享编辑节点（由edit_source区分来源：validation_failed或human_review）
   EDIT_PLAN_ANALYSIS: 'edit_plan_analysis',
-  
-  // 共享的编辑节点
   ROADMAP_EDIT: 'roadmap_edit',
   
   // 内容生成阶段
   CONTENT_GENERATION_QUEUED: 'content_generation_queued',
   CONTENT_GENERATION: 'content_generation',
-  TUTORIAL_GENERATION: 'tutorial_generation',
-  RESOURCE_RECOMMENDATION: 'resource_recommendation',
-  QUIZ_GENERATION: 'quiz_generation',
   
   // 完成阶段
-  FINALIZING: 'finalizing',
   COMPLETED: 'completed',
   FAILED: 'failed',
 } as const;
@@ -91,29 +88,16 @@ export const REVIEW_STEPS: WorkflowStepValue[] = [
 export const CONTENT_STEPS: WorkflowStepValue[] = [
   WorkflowStep.CONTENT_GENERATION_QUEUED,
   WorkflowStep.CONTENT_GENERATION,
-  WorkflowStep.TUTORIAL_GENERATION,
-  WorkflowStep.RESOURCE_RECOMMENDATION,
-  WorkflowStep.QUIZ_GENERATION,
 ];
 
 /**
- * 验证分支的步骤（验证失败触发）
+ * 共享编辑分支的步骤（validation失败或review拒绝都使用）
+ * 通过edit_source区分来源：
+ * - edit_source=validation_failed：validation分支
+ * - edit_source=human_review：review分支
  */
-export const VALIDATION_BRANCH_STEPS: WorkflowStepValue[] = [
-  WorkflowStep.VALIDATION_EDIT_PLAN_ANALYSIS,
-];
-
-/**
- * 审核分支的步骤（用户拒绝触发）
- */
-export const REVIEW_BRANCH_STEPS: WorkflowStepValue[] = [
+export const SHARED_EDIT_STEPS: WorkflowStepValue[] = [
   WorkflowStep.EDIT_PLAN_ANALYSIS,
-];
-
-/**
- * 共享的编辑步骤
- */
-export const EDIT_STEPS: WorkflowStepValue[] = [
   WorkflowStep.ROADMAP_EDIT,
 ];
 
@@ -128,16 +112,11 @@ export function isAfterIntentAnalysis(step: string | null): boolean {
     WorkflowStep.INTENT_ANALYSIS,
     WorkflowStep.CURRICULUM_DESIGN,
     WorkflowStep.STRUCTURE_VALIDATION,
-    WorkflowStep.VALIDATION_EDIT_PLAN_ANALYSIS,
     WorkflowStep.EDIT_PLAN_ANALYSIS,
     WorkflowStep.ROADMAP_EDIT,
     WorkflowStep.HUMAN_REVIEW,
     WorkflowStep.CONTENT_GENERATION_QUEUED,
     WorkflowStep.CONTENT_GENERATION,
-    WorkflowStep.TUTORIAL_GENERATION,
-    WorkflowStep.RESOURCE_RECOMMENDATION,
-    WorkflowStep.QUIZ_GENERATION,
-    WorkflowStep.FINALIZING,
     WorkflowStep.COMPLETED,
   ];
   
@@ -153,16 +132,11 @@ export function isAfterCurriculumDesign(step: string | null): boolean {
   
   const stepsAfterDesign: string[] = [
     WorkflowStep.STRUCTURE_VALIDATION,
-    WorkflowStep.VALIDATION_EDIT_PLAN_ANALYSIS,
     WorkflowStep.EDIT_PLAN_ANALYSIS,
     WorkflowStep.ROADMAP_EDIT,
     WorkflowStep.HUMAN_REVIEW,
     WorkflowStep.CONTENT_GENERATION_QUEUED,
     WorkflowStep.CONTENT_GENERATION,
-    WorkflowStep.TUTORIAL_GENERATION,
-    WorkflowStep.RESOURCE_RECOMMENDATION,
-    WorkflowStep.QUIZ_GENERATION,
-    WorkflowStep.FINALIZING,
     WorkflowStep.COMPLETED,
   ];
   
@@ -179,16 +153,11 @@ export const STEP_DISPLAY_CONFIG: Record<string, { label: string; description: s
   [WorkflowStep.INTENT_ANALYSIS]: { label: 'Intent Analysis', description: 'Analyzing your learning goals...' },
   [WorkflowStep.CURRICULUM_DESIGN]: { label: 'Curriculum Design', description: 'Designing roadmap structure...' },
   [WorkflowStep.STRUCTURE_VALIDATION]: { label: 'Structure Validation', description: 'Validating roadmap structure...' },
-  [WorkflowStep.VALIDATION_EDIT_PLAN_ANALYSIS]: { label: 'Validation Edit Plan', description: 'Analyzing validation issues...' },
-  [WorkflowStep.EDIT_PLAN_ANALYSIS]: { label: 'Review Edit Plan', description: 'Analyzing your feedback...' },
-  [WorkflowStep.ROADMAP_EDIT]: { label: 'Roadmap Edit', description: 'Applying modifications...' },
   [WorkflowStep.HUMAN_REVIEW]: { label: 'Human Review', description: 'Awaiting your review...' },
+  [WorkflowStep.EDIT_PLAN_ANALYSIS]: { label: 'Edit Plan Analysis', description: 'Analyzing modification needs...' },
+  [WorkflowStep.ROADMAP_EDIT]: { label: 'Roadmap Edit', description: 'Applying modifications...' },
   [WorkflowStep.CONTENT_GENERATION_QUEUED]: { label: 'Content Queued', description: 'Preparing content generation...' },
   [WorkflowStep.CONTENT_GENERATION]: { label: 'Content Generation', description: 'Generating learning content...' },
-  [WorkflowStep.TUTORIAL_GENERATION]: { label: 'Tutorial Generation', description: 'Generating tutorials...' },
-  [WorkflowStep.RESOURCE_RECOMMENDATION]: { label: 'Resource Recommendation', description: 'Finding learning resources...' },
-  [WorkflowStep.QUIZ_GENERATION]: { label: 'Quiz Generation', description: 'Creating quiz questions...' },
-  [WorkflowStep.FINALIZING]: { label: 'Finalizing', description: 'Finalizing your roadmap...' },
   [WorkflowStep.COMPLETED]: { label: 'Completed', description: 'Roadmap generation completed!' },
   [WorkflowStep.FAILED]: { label: 'Failed', description: 'Roadmap generation failed.' },
 };
@@ -215,12 +184,6 @@ export function getStepDescription(step: string | null): string {
  * 目的：合并中间步骤，避免UI快速闪烁
  * 原理：将多个内部步骤映射到同一个用户可见的步骤
  * 
- * 示例：
- * - content_generation_queued → content_generation（用户只需要知道"内容生成中"）
- * - tutorial_generation → content_generation（子步骤，不需要单独显示）
- * - resource_recommendation → content_generation
- * - quiz_generation → content_generation
- * 
  * @param backendStep 后端返回的步骤名称
  * @returns 前端应该显示的步骤名称
  */
@@ -230,12 +193,13 @@ export function mapToDisplayStep(backendStep: string | null): string | null {
   // 内容生成阶段的所有子步骤都映射到 content_generation
   const contentGenerationSteps = [
     WorkflowStep.CONTENT_GENERATION_QUEUED,
-    WorkflowStep.TUTORIAL_GENERATION,
-    WorkflowStep.RESOURCE_RECOMMENDATION,
-    WorkflowStep.QUIZ_GENERATION,
-  ] as const;
+    // 向后兼容：映射已废弃的步骤（旧数据可能仍然存在）
+    'tutorial_generation',
+    'resource_recommendation',
+    'quiz_generation',
+  ];
   
-  if (contentGenerationSteps.includes(backendStep as any)) {
+  if (contentGenerationSteps.includes(backendStep)) {
     return WorkflowStep.CONTENT_GENERATION;
   }
   

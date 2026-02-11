@@ -14,8 +14,8 @@ from app.crud.crud_quiz import QuizCRUD, get_quiz_crud
 from app.crud.crud_task import TaskCRUD, get_task_crud
 from app.crud.crud_user import UserCRUD, get_user_crud
 from app.crud.crud_progress import ProgressCRUD, get_progress_crud
-from app.services.concept_service import ConceptService, get_concept_service
-from app.services.content_service import ContentService, get_content_service
+from app.services.content.concept_service import ConceptService, get_concept_service
+from app.services.content.content_service import ContentService, get_content_service
 from app.core.auth.deps import current_user as get_current_user, current_active_user
 from app.models.database import User
 
@@ -149,23 +149,19 @@ CurrentContentService = Annotated[ContentService, Depends(get_content_service)]
 # ===== 其他Service依赖 =====
 
 try:
-    from app.services.retrieval_service import RetrievalService, get_retrieval_service
-    from app.services.status_service import StatusService, get_status_service
-    from app.services.progress_service import ProgressService, get_progress_service
-    from app.services.user_service import UserService, get_user_service
-    from app.services.retry_service import RetryService, get_retry_service
-    from app.services.management_service import ManagementService, get_management_service
-    from app.services.mentor_service import MentorService, get_mentor_service
-    from app.services.generation_service import GenerationService, get_generation_service
+    from app.services.roadmaps.retrieval_service import RetrievalService, get_retrieval_service
+    from app.services.roadmaps.status_service import StatusService, get_status_service
+    from app.services.learning.progress_service import ProgressService, get_progress_service
+    from app.services.users.user_service import UserService, get_user_service
+    from app.services.roadmaps.management_service import ManagementService, get_management_service
+    from app.services.workflows.generation.generation_service import GenerationService, get_generation_service
     
     # 定义依赖注入别名
     CurrentRetrievalService = Annotated[RetrievalService, Depends(get_retrieval_service)]
     CurrentStatusService = Annotated[StatusService, Depends(get_status_service)]
     CurrentProgressService = Annotated[ProgressService, Depends(get_progress_service)]
     CurrentUserService = Annotated[UserService, Depends(get_user_service)]
-    CurrentRetryService = Annotated[RetryService, Depends(get_retry_service)]
     CurrentManagementService = Annotated[ManagementService, Depends(get_management_service)]
-    CurrentMentorService = Annotated[MentorService, Depends(get_mentor_service)]
     CurrentGenerationService = Annotated[GenerationService, Depends(get_generation_service)]
     
 except ImportError as e:

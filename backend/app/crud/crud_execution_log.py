@@ -73,7 +73,7 @@ class ExecutionLogCRUD(BaseCRUD[ExecutionLog, dict, dict]):
         stmt = select(ExecutionLog).where(ExecutionLog.roadmap_id == roadmap_id)
         
         if step_name:
-            stmt = stmt.where(ExecutionLog.step_name == step_name)
+            stmt = stmt.where(ExecutionLog.step == step_name)  # ✅ 修复：使用正确的字段名 step
         
         stmt = stmt.order_by(desc(ExecutionLog.created_at)).limit(limit)
         

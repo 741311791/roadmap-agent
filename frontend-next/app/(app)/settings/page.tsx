@@ -1,13 +1,16 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { User, Bell, Palette, Shield, LogOut } from 'lucide-react';
+import { LanguageSwitcher } from '@/components/language-switcher';
 
 export default function SettingsPage() {
+  const t = useTranslations('settings');
   const [notifications, setNotifications] = useState({
     email: true,
     progress: true,
@@ -17,9 +20,9 @@ export default function SettingsPage() {
   return (
     <div className="max-w-3xl mx-auto py-12 px-6">
       <div className="mb-8">
-        <h1 className="text-3xl font-serif font-bold text-foreground">Settings</h1>
+        <h1 className="text-3xl font-serif font-bold text-foreground">{t('title')}</h1>
         <p className="text-muted-foreground mt-1">
-          Manage your account and preferences
+          {t('description')}
         </p>
       </div>
 
@@ -29,9 +32,9 @@ export default function SettingsPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-lg">
               <User className="w-5 h-5 text-sage-600" />
-              Profile
+              {t('profile')}
             </CardTitle>
-            <CardDescription>Your personal information</CardDescription>
+            <CardDescription>{t('profileDesc')}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-center gap-4">
@@ -41,13 +44,13 @@ export default function SettingsPage() {
               <div>
                 <div className="font-medium text-lg">Learner</div>
                 <div className="text-sm text-muted-foreground">learner@example.com</div>
-                <Badge variant="sage" className="mt-1">Free Plan</Badge>
+                <Badge variant="sage" className="mt-1">{t('freePlan')}</Badge>
               </div>
             </div>
             <Separator />
             <div className="grid gap-4">
               <div>
-                <label className="block text-sm font-medium mb-1">Display Name</label>
+                <label className="block text-sm font-medium mb-1">{t('displayName')}</label>
                 <input
                   type="text"
                   defaultValue="Learner"
@@ -55,7 +58,7 @@ export default function SettingsPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium mb-1">Email</label>
+                <label className="block text-sm font-medium mb-1">{t('email')}</label>
                 <input
                   type="email"
                   defaultValue="learner@example.com"
@@ -63,7 +66,7 @@ export default function SettingsPage() {
                 />
               </div>
             </div>
-            <Button variant="sage">Save Changes</Button>
+            <Button variant="sage">{t('saveChanges')}</Button>
           </CardContent>
         </Card>
 
@@ -72,16 +75,16 @@ export default function SettingsPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-lg">
               <Bell className="w-5 h-5 text-sage-600" />
-              Notifications
+              {t('notifications')}
             </CardTitle>
-            <CardDescription>Configure how you receive updates</CardDescription>
+            <CardDescription>{t('notificationsDesc')}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
-                <div className="font-medium">Email Notifications</div>
+                <div className="font-medium">{t('emailNotifications')}</div>
                 <div className="text-sm text-muted-foreground">
-                  Receive updates via email
+                  {t('emailNotificationsDesc')}
                 </div>
               </div>
               <button
@@ -100,9 +103,9 @@ export default function SettingsPage() {
             <Separator />
             <div className="flex items-center justify-between">
               <div>
-                <div className="font-medium">Progress Reminders</div>
+                <div className="font-medium">{t('progressReminders')}</div>
                 <div className="text-sm text-muted-foreground">
-                  Get reminded to continue learning
+                  {t('progressRemindersDesc')}
                 </div>
               </div>
               <button
@@ -121,9 +124,9 @@ export default function SettingsPage() {
             <Separator />
             <div className="flex items-center justify-between">
               <div>
-                <div className="font-medium">Content Recommendations</div>
+                <div className="font-medium">{t('contentRecommendations')}</div>
                 <div className="text-sm text-muted-foreground">
-                  Receive personalized learning suggestions
+                  {t('contentRecommendationsDesc')}
                 </div>
               </div>
               <button
@@ -147,27 +150,45 @@ export default function SettingsPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-lg">
               <Palette className="w-5 h-5 text-sage-600" />
-              Appearance
+              {t('appearance')}
             </CardTitle>
-            <CardDescription>Customize how the app looks</CardDescription>
+            <CardDescription>{t('appearanceDesc')}</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-6">
+            {/* Theme */}
             <div>
-              <label className="block text-sm font-medium mb-2">Theme</label>
+              <label className="block text-sm font-medium mb-2">{t('theme')}</label>
               <div className="grid grid-cols-3 gap-3">
-                {['light', 'dark', 'system'].map((theme) => (
+                {[
+                  { value: 'light', label: t('light') },
+                  { value: 'dark', label: t('dark') },
+                  { value: 'system', label: t('system') }
+                ].map((theme) => (
                   <button
-                    key={theme}
+                    key={theme.value}
                     className={`p-4 rounded-lg border text-center capitalize ${
-                      theme === 'light'
+                      theme.value === 'light'
                         ? 'border-sage-600 bg-sage-50'
                         : 'border-border hover:border-sage-300'
                     }`}
                   >
-                    {theme}
+                    {theme.label}
                   </button>
                 ))}
               </div>
+            </div>
+
+            <Separator />
+
+            {/* Language */}
+            <div>
+              <label className="block text-sm font-medium mb-2">
+                {t('language')}
+              </label>
+              <p className="text-xs text-muted-foreground mb-3">
+                {t('languageDesc')}
+              </p>
+              <LanguageSwitcher variant="default" />
             </div>
           </CardContent>
         </Card>
@@ -177,17 +198,17 @@ export default function SettingsPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-lg">
               <Shield className="w-5 h-5 text-sage-600" />
-              Account
+              {t('account')}
             </CardTitle>
-            <CardDescription>Account management and security</CardDescription>
+            <CardDescription>{t('accountDesc')}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <Button variant="outline" className="w-full justify-start gap-2">
-              Change Password
+              {t('changePassword')}
             </Button>
             <Button variant="outline" className="w-full justify-start gap-2 text-destructive hover:text-destructive">
               <LogOut className="w-4 h-4" />
-              Sign Out
+              {t('signOut')}
             </Button>
           </CardContent>
         </Card>

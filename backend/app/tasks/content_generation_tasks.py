@@ -29,14 +29,222 @@ from app.config.settings import settings
 from app.models.domain import (
     Concept,
     LearningPreferences,
+    RoadmapFramework,
     TutorialGenerationInput,
     ResourceRecommendationInput,
     QuizGenerationInput,
 )
 from app.services.shared.notification_service import notification_service
+from app.services.shared.execution_logger import execution_logger
 
 logger = structlog.get_logger()
 
+
+# ============================================================
+# 辅助函数
+# ============================================================
+
+def _apply_test_mode_truncation(
+    framework: "RoadmapFramework",
+    concepts: list[Concept],
+    task_id: str,
+) -> tuple["RoadmapFramework", list[Concept]]:
+    """
+    应用测试模式截断（统一的截断逻辑）
+    
+    只保留第一个 Stage 的第一个 Module 的所有 Concepts
+    
+    Args:
+        framework: 原始框架
+        concepts: 原始 Concepts 列表
+        task_id: 任务 ID
+        
+    Returns:
+        (截断后的 framework, 截断后的 concepts)
+    """
+    from app.models.domain import RoadmapFramework
+    from copy import deepcopy
+    
+    logger.warning(
+        "test_mode_truncate_framework_enabled",
+        task_id=task_id,
+        original_stages=len(framework.stages),
+        original_modules=sum(len(s.modules) for s in framework.stages),
+        original_concepts=len(concepts),
+    )
+    
+    # 深拷贝避免修改原始对象
+    framework = deepcopy(framework)
+    
+    # 只保留第一个 Stage 的第一个 Module
+    if framework.stages:
+        first_stage = framework.stages[0]
+        if first_stage.modules:
+            first_module = first_stage.modules[0]
+            first_stage.modules = [first_module]
+        framework.stages = [first_stage]
+    
+    # 重新提取 Concepts
+    truncated_concepts = []
+    for stage in framework.stages:
+        for module in stage.modules:
+            truncated_concepts.extend(module.concepts)
+    
+    logger.info(
+        "test_mode_framework_truncated",
+        task_id=task_id,
+        truncated_stages=len(framework.stages),
+        truncated_modules=sum(len(s.modules) for s in framework.stages),
+        truncated_concepts=len(truncated_concepts),
+    )
+    
+    return framework, truncated_concepts
+
+
+async def _execute_content_generation_subgraph(
+    task_id: str,
+    roadmap_id: str,
+    concepts: list[Concept],
+    user_constraints: dict,
+    user_request: dict,
+) -> Dict[str, Any]:
+    """
+    执行内容生成子图（LangGraph 版本）
+    
+    架构：
+    - 使用 build_content_generation_subgraph() 构建子图
+    - 传入 child_checkpointer 支持断点续传
+    - 使用独立的 thread_id: {task_id}:content
+    - LangGraph 自动管理 Fan-Out/Fan-In
+    
+    Args:
+        task_id: 任务 ID
+        roadmap_id: 路线图 ID
+        concepts: Concept 列表（已经过测试模式截断）
+        user_constraints: 用户约束（来自 IntentAnalysis.full_analysis_data）
+        user_request: 原始用户请求（来自 RoadmapTask.user_request）
+        
+    Returns:
+        执行结果
+    """
+    from app.core.orchestrator_factory import OrchestratorFactory
+    from app.core.orchestrator.runtime_context import RuntimeContext
+    from app.core.orchestrator.subgraphs.content_generation import build_content_generation_subgraph
+    from app.models.domain import LearningPreferences
+    
+    logger.info(
+        "langgraph_subgraph_execution_starting",
+        task_id=task_id,
+        roadmap_id=roadmap_id,
+        total_concepts=len(concepts),
+        has_checkpointer=True,
+        architecture="dual_checkpointer",
+    )
+    
+    # 1. 获取 child_checkpointer（复用 OrchestratorFactory）
+    child_checkpointer = OrchestratorFactory.get_child_checkpointer()
+    
+    # 2. 创建 RuntimeContext（复用现有依赖）
+    context = RuntimeContext(
+        agent_factory=OrchestratorFactory.get_agent_factory(),
+        notification_service=notification_service,
+        execution_logger=execution_logger,
+        state_manager=OrchestratorFactory.get_state_manager(),
+        child_checkpointer=child_checkpointer,
+    )
+    
+    # 3. 从 user_request 构建 LearningPreferences
+    # user_request 格式: {"user_id": "...", "preferences": {...}, "additional_context": "..."}
+    preferences_data = user_request.get("preferences", {})
+    
+    logger.debug(
+        "building_learning_preferences",
+        task_id=task_id,
+        has_preferences=bool(preferences_data),
+        preferences_keys=list(preferences_data.keys()) if preferences_data else [],
+    )
+    
+    user_preferences = LearningPreferences(**preferences_data)
+    
+    # 4. 构建子图（传入 checkpointer）
+    subgraph = build_content_generation_subgraph(checkpointer=child_checkpointer)
+    
+    # 5. 准备子图输入状态
+    sub_state = {
+        "roadmap_id": roadmap_id,
+        "concepts": concepts,
+        "user_preferences": user_preferences,
+        "task_id": task_id,
+        "concept": None,  # 用于 Send API
+        "concept_results": [],  # Reducer 自动累加
+    }
+    
+    # 6. 调用子图（关键：使用独立的 thread_id）
+    child_config = {
+        "configurable": {
+            "thread_id": f"{task_id}:content",  # 独立的 thread_id
+            "runtime_context": context,
+        }
+    }
+    
+    logger.info(
+        "langgraph_subgraph_invoking",
+        task_id=task_id,
+        roadmap_id=roadmap_id,
+        thread_id=f"{task_id}:content",
+        concepts_count=len(concepts),
+    )
+    
+    # 7. 执行子图（LangGraph 自动断点续传）
+    result = await subgraph.ainvoke(sub_state, child_config)
+    
+    # 8. 统计结果
+    concept_results = result.get("concept_results", [])
+    successful_count = len([
+        r for r in concept_results
+        if r.get("save_status", {}).get("metadata_saved", False)
+    ])
+    failed_count = len(concept_results) - successful_count
+    
+    logger.info(
+        "langgraph_subgraph_execution_completed",
+        task_id=task_id,
+        roadmap_id=roadmap_id,
+        total_concepts=len(concept_results),
+        successful_count=successful_count,
+        failed_count=failed_count,
+    )
+    
+    # 9. 成功后删除 Redis 缓存（释放内存）
+    try:
+        from app.db.redis_client import redis_client
+        redis_key = f"content_gen_cache:{task_id}"
+        await redis_client.delete(redis_key)
+        logger.info(
+            "content_gen_cache_deleted",
+            task_id=task_id,
+            redis_key=redis_key,
+            reason="task_completed",
+        )
+    except Exception as e:
+        logger.warning(
+            "content_gen_cache_delete_failed",
+            task_id=task_id,
+            error=str(e),
+        )
+    
+    return {
+        "status": "completed" if failed_count == 0 else "partial_failure",
+        "total_concepts": len(concept_results),
+        "successful_count": successful_count,
+        "failed_count": failed_count,
+        "concept_results": concept_results,
+    }
+
+
+# ============================================================
+# Celery 任务
+# ============================================================
 
 @celery_app.task(
     name="generate_all_content",
@@ -50,34 +258,46 @@ def generate_all_content_task(
     user_id: str,
 ) -> Dict[str, Any]:
     """
-    生成所有内容的协调任务（同步入口）
+    生成所有内容的协调任务（LangGraph 子图版本）
+    
+    架构改进：
+    - ✅ 使用 LangGraph 子图替代 Celery Chord
+    - ✅ 支持 Fan-Out/Fan-In 并行架构
+    - ✅ 支持断点续传（通过 checkpointer）
+    - ✅ 使用独立的 thread_id（{task_id}:content）
     
     职责：
-    1. 从数据库获取 Framework
-    2. 提取所有 Concepts
-    3. 创建并发子任务组
-    4. 更新 Task 表的 content_generation_celery_id
+    1. 获取 Framework 和 Concepts（含测试模式截断）
+    2. 调用 LangGraph 子图执行内容生成
+    3. 子图内部自动 Fan-Out/Fan-In 和保存结果
     
     Args:
         roadmap_id: 路线图 ID
-        task_id: 主任务 ID（用于进度通知）
+        task_id: 主任务 ID
         user_id: 用户 ID
         
     Returns:
-        协调任务结果
+        执行结果
     """
     logger.info(
-        "content_generation_coordinator_started",
+        "content_generation_coordinator_started_langgraph",
         task_id=task_id,
         roadmap_id=roadmap_id,
         celery_task_id=self.request.id,
+        architecture="langgraph_subgraph",
     )
     
     try:
-        # 获取 Framework 和 Concepts
-        import asyncio
-        framework, concepts, user_preferences = asyncio.run(
-            _get_framework_and_concepts(roadmap_id, user_id)
+        from app.tasks.event_loop_manager import run_async_in_worker_loop
+        
+        # 1. 获取 Framework 和 Concepts（优先从 Redis，含测试模式截断）
+        # ⚠️ 使用 Worker 持久 event loop
+        framework, concepts, user_constraints, user_request = run_async_in_worker_loop(
+            _get_framework_and_concepts_optimized(
+                roadmap_id=roadmap_id,
+                task_id=task_id,
+                user_id=user_id,
+            )
         )
         
         if not concepts:
@@ -92,42 +312,32 @@ def generate_all_content_task(
                 "message": "无内容需要生成",
             }
         
-        logger.info(
-            "creating_content_generation_tasks",
-            task_id=task_id,
-            roadmap_id=roadmap_id,
-            total_concepts=len(concepts),
-        )
+        # 2. 执行 LangGraph 子图（替代 Celery Chord）
+        # ⚠️ 必须使用 Worker 的持久 event loop，不能创建新的 loop
+        # 原因：OrchestratorFactory 的 AsyncPostgresSaver 绑定到 Worker 持久 loop
+        #      如果使用 asyncio.run() 创建新 loop，会导致 Lock 跨 loop 使用错误
+        from app.tasks.event_loop_manager import run_async_in_worker_loop
         
-        # 创建并发任务组（使用 chord 实现 Fan-Out + Callback）
-        callback = finalize_content_generation.s(
-            roadmap_id=roadmap_id,
-            task_id=task_id,
-        )
-        
-        job = chord([
-            generate_concept_content_task.s(
-                concept_data=concept.model_dump(),
-                user_preferences_data=user_preferences.model_dump(),
-                roadmap_id=roadmap_id,
+        result = run_async_in_worker_loop(
+            _execute_content_generation_subgraph(
                 task_id=task_id,
+                roadmap_id=roadmap_id,
+                concepts=concepts,
+                user_constraints=user_constraints,
+                user_request=user_request,
             )
-            for concept in concepts
-        ])(callback)
-        
-        logger.info(
-            "content_generation_tasks_created",
-            task_id=task_id,
-            roadmap_id=roadmap_id,
-            chord_id=job.id,
-            total_concepts=len(concepts),
         )
         
-        return {
-            "status": "processing",
-            "chord_id": job.id,
-            "total_concepts": len(concepts),
-        }
+        logger.info(
+            "content_generation_coordinator_completed_langgraph",
+            task_id=task_id,
+            roadmap_id=roadmap_id,
+            status=result.get("status"),
+            successful_count=result.get("successful_count"),
+            failed_count=result.get("failed_count"),
+        )
+        
+        return result
         
     except Exception as e:
         logger.error(
@@ -140,208 +350,83 @@ def generate_all_content_task(
         raise
 
 
-@celery_app.task(
-    name="generate_concept_content",
-    bind=True,
-    max_retries=3,
-    default_retry_delay=60,
-    time_limit=300,  # 5 分钟硬超时
-    soft_time_limit=270,  # 4.5 分钟软超时
-    queue="content_generation",
-)
-def generate_concept_content_task(
-    self,
-    concept_data: Dict[str, Any],
-    user_preferences_data: Dict[str, Any],
-    roadmap_id: str,
-    task_id: str,
-) -> Dict[str, Any]:
-    """
-    生成单个 Concept 的所有内容
-    
-    职责：
-    1. 并发生成 Tutorial、Resource、Quiz
-    2. 保存到数据库
-    3. 发送进度通知
-    4. 失败自动重试（最多 3 次）
-    
-    Args:
-        concept_data: Concept 序列化数据
-        user_preferences_data: 用户偏好序列化数据
-        roadmap_id: 路线图 ID
-        task_id: 主任务 ID
-        
-    Returns:
-        生成结果
-        
-    Raises:
-        Retry: 失败时自动重试
-    """
-    concept = Concept(**concept_data)
-    user_preferences = LearningPreferences(**user_preferences_data)
-    concept_id = concept.concept_id
-    
-    logger.info(
-        "concept_content_generation_started",
-        task_id=task_id,
-        roadmap_id=roadmap_id,
-        concept_id=concept_id,
-        celery_task_id=self.request.id,
-        retry_count=self.request.retries,
-    )
-    
-    try:
-        # 执行异步生成
-        import asyncio
-        result = asyncio.run(
-            _generate_and_save_concept_content(
-                concept=concept,
-                user_preferences=user_preferences,
-                roadmap_id=roadmap_id,
-                task_id=task_id,
-            )
-        )
-        
-        logger.info(
-            "concept_content_generation_completed",
-            task_id=task_id,
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            tutorial_status=result.get("tutorial_status"),
-            resource_status=result.get("resource_status"),
-            quiz_status=result.get("quiz_status"),
-        )
-        
-        return result
-        
-    except Exception as exc:
-        logger.error(
-            "concept_content_generation_failed",
-            task_id=task_id,
-            roadmap_id=roadmap_id,
-            concept_id=concept_id,
-            error=str(exc),
-            retry_count=self.request.retries,
-            exc_info=True,
-        )
-        
-        # 重试逻辑
-        if self.request.retries < self.max_retries:
-            logger.warning(
-                "retrying_concept_content_generation",
-                task_id=task_id,
-                concept_id=concept_id,
-                retry_count=self.request.retries + 1,
-            )
-            raise self.retry(exc=exc)
-        
-        # 达到最大重试次数，标记为失败
-        logger.error(
-            "concept_content_generation_max_retries_exceeded",
-            task_id=task_id,
-            concept_id=concept_id,
-            max_retries=self.max_retries,
-        )
-        
-        return {
-            "concept_id": concept_id,
-            "status": "failed",
-            "error": str(exc),
-        }
-
-
-@celery_app.task(
-    name="finalize_content_generation",
-    queue="content_generation",
-)
-def finalize_content_generation(
-    results: list[Dict[str, Any]],
-    roadmap_id: str,
-    task_id: str,
-) -> Dict[str, Any]:
-    """
-    最终汇总任务（Chord Callback）
-    
-    职责：
-    1. 汇总所有 Concept 的生成结果
-    2. 更新 Task 最终状态
-    3. 发送完成通知
-    
-    Args:
-        results: 所有子任务的结果列表
-        roadmap_id: 路线图 ID
-        task_id: 主任务 ID
-        
-    Returns:
-        最终汇总结果
-    """
-    logger.info(
-        "content_generation_finalization_started",
-        task_id=task_id,
-        roadmap_id=roadmap_id,
-        total_results=len(results),
-    )
-    
-    # 统计结果
-    success_count = len([r for r in results if r.get("status") == "success"])
-    failed_count = len([r for r in results if r.get("status") == "failed"])
-    
-    # 确定最终状态
-    if failed_count == 0:
-        final_status = "completed"
-    elif success_count > 0:
-        final_status = "partial_failure"
-    else:
-        final_status = "failed"
-    
-    # 更新 Task 状态
-    import asyncio
-    asyncio.run(_update_task_content_status(
-        task_id=task_id,
-        status=final_status,
-    ))
-    
-    # 发送完成通知
-    asyncio.run(notification_service.publish_completed(
-        task_id=task_id,
-        roadmap_id=roadmap_id,
-        tutorials_count=success_count,
-        failed_count=failed_count,
-    ))
-    
-    logger.info(
-        "content_generation_finalization_completed",
-        task_id=task_id,
-        roadmap_id=roadmap_id,
-        final_status=final_status,
-        success_count=success_count,
-        failed_count=failed_count,
-    )
-    
-    return {
-        "status": final_status,
-        "total": len(results),
-        "success": success_count,
-        "failed": failed_count,
-    }
-
-
 # ============================================================
 # 辅助函数
 # ============================================================
 
-async def _get_framework_and_concepts(
+async def _get_framework_and_concepts_optimized(
     roadmap_id: str,
+    task_id: str,
     user_id: str,
-) -> tuple[Any, list[Concept], LearningPreferences]:
+) -> tuple["RoadmapFramework", list[Concept], dict, dict]:
     """
-    从数据库获取 Framework 和 Concepts
+    获取 Framework 和 Concepts（优化版 - 优先从 Redis 读取）
     
+    读取策略：
+    1. 优先从 Redis 读取（~10ms，快速）
+    2. 如果 Redis 不存在，从数据库读取（~50ms，兜底）
+    3. 应用测试模式截断（统一逻辑）
+    
+    Args:
+        roadmap_id: 路线图 ID
+        task_id: 任务 ID（用于 Redis key）
+        user_id: 用户 ID（Fallback 时使用）
+        
     Returns:
-        (framework, concepts, user_preferences)
+        (framework, concepts, user_constraints, user_request)
     """
+    from app.db.redis_client import redis_client
+    from app.models.domain import RoadmapFramework, Concept
+    
+    # ============ 优先级1：从 Redis 读取 ============
+    if settings.CONTENT_GEN_CACHE_ENABLED:
+        try:
+            redis_key = f"content_gen_cache:{task_id}"
+            cache_data = await redis_client.get_json(redis_key)
+            
+            if cache_data:
+                logger.info(
+                    "content_gen_cache_hit",
+                    task_id=task_id,
+                    roadmap_id=roadmap_id,
+                    redis_key=redis_key,
+                    total_concepts=len(cache_data["concepts"]),
+                    cached_at=cache_data.get("cached_at"),
+                )
+                
+                # 反序列化 Pydantic 模型
+                framework = RoadmapFramework(**cache_data["framework"])
+                concepts = [Concept(**c) for c in cache_data["concepts"]]
+                user_constraints = cache_data["user_constraints"]
+                user_request = cache_data.get("user_request", {})
+                
+                # ✅ 应用测试模式截断（在缓存数据上应用）
+                if settings.TEST_MODE_TRUNCATE_FRAMEWORK:
+                    framework, concepts = _apply_test_mode_truncation(
+                        framework, concepts, task_id
+                    )
+                
+                return framework, concepts, user_constraints, user_request
+        
+        except Exception as e:
+            logger.warning(
+                "redis_cache_read_failed_fallback_to_db",
+                task_id=task_id,
+                roadmap_id=roadmap_id,
+                error=str(e),
+            )
+    
+    # ============ 优先级2：从数据库读取（兜底） ============
+    logger.info(
+        "content_gen_cache_miss_or_disabled_using_db",
+        task_id=task_id,
+        roadmap_id=roadmap_id,
+        cache_enabled=settings.CONTENT_GEN_CACHE_ENABLED,
+    )
+    
+    # 使用原有的数据库查询逻辑
     async with get_celery_session() as session:
-        # 获取 RoadmapMetadata
+        # 查询 RoadmapMetadata
         roadmap_crud = get_roadmap_crud()
         roadmap_metadata = await roadmap_crud.get_by_roadmap_id(session, roadmap_id)
         
@@ -349,238 +434,29 @@ async def _get_framework_and_concepts(
             raise ValueError(f"路线图 {roadmap_id} 不存在")
         
         # 解析 Framework
-        from app.models.domain import RoadmapFramework
         framework = RoadmapFramework(**roadmap_metadata.framework_data)
         
-        # 提取所有 Concepts
+        # 提取 Concepts
         concepts = []
         for stage in framework.stages:
             for module in stage.modules:
-                for concept in module.concepts:
-                    concepts.append(concept)
+                concepts.extend(module.concepts)
         
-        # 获取用户偏好（从 Intent Analysis 获取）
+        # 获取用户约束（Intent Analysis）
         from app.crud.crud_intent_analysis import get_intent_analysis_crud
         intent_crud = get_intent_analysis_crud()
         intent_analysis = await intent_crud.get_by_roadmap_id(session, roadmap_id)
+        user_constraints = intent_analysis.full_analysis_data if intent_analysis else {}
         
-        if intent_analysis and intent_analysis.analysis_result:
-            # 从 intent_analysis 提取用户偏好
-            analysis_data = intent_analysis.analysis_result
-            user_preferences = LearningPreferences(
-                learning_goal=analysis_data.get("learning_goal", "学习目标"),
-                available_hours_per_week=analysis_data.get("available_hours_per_week", 10),
-                motivation=analysis_data.get("motivation", "学习"),
-                current_level=analysis_data.get("current_level", "beginner"),
-                career_background=analysis_data.get("career_background", "默认背景"),
-            )
-        else:
-            # Fallback: 使用默认值
-            user_preferences = LearningPreferences(
-                learning_goal="默认学习目标",
-                available_hours_per_week=10,
-                motivation="学习",
-                current_level="beginner",
-                career_background="默认背景",
-            )
-        
-        return framework, concepts, user_preferences
-
-
-async def _generate_and_save_concept_content(
-    concept: Concept,
-    user_preferences: LearningPreferences,
-    roadmap_id: str,
-    task_id: str,
-) -> Dict[str, Any]:
-    """
-    生成并保存单个 Concept 的所有内容
-    
-    Returns:
-        生成结果
-    """
-    concept_id = concept.concept_id
-    agent_factory = AgentFactory(settings)
-    
-    results = {
-        "concept_id": concept_id,
-        "status": "success",
-        "tutorial_status": "skipped",
-        "resource_status": "skipped",
-        "quiz_status": "skipped",
-    }
-    
-    # 1. 生成 Tutorial
-    try:
-        tutorial_agent = agent_factory.create_tutorial_generator()
-        tutorial = await tutorial_agent.generate(
-            concept=concept,
-            context={},
-            user_preferences=user_preferences,
-        )
-        
-        # 保存到数据库
-        async with get_celery_session() as session:
-            from app.crud.crud_tutorial import get_tutorial_crud
-            tutorial_crud = get_tutorial_crud()
-            await tutorial_crud.save_tutorial(
-                session=session,
-                tutorial_output=tutorial,
-                roadmap_id=roadmap_id,
-            )
-        
-        results["tutorial_status"] = "success"
-        results["tutorial_id"] = tutorial.tutorial_id
-        
-        # 发送进度通知
-        await notification_service.publish_concept_complete(
-            task_id=task_id,
-            concept_id=concept_id,
-            concept_name=concept.name,
-            content_type="tutorial",
-        )
-        
-        logger.info(
-            "tutorial_generated_and_saved",
-            task_id=task_id,
-            concept_id=concept_id,
-            tutorial_id=tutorial.tutorial_id,
-        )
-        
-    except Exception as e:
-        logger.error(
-            "tutorial_generation_failed",
-            task_id=task_id,
-            concept_id=concept_id,
-            error=str(e),
-            exc_info=True,
-        )
-        results["tutorial_status"] = "failed"
-        results["status"] = "partial_failure"
-    
-    # 2. 生成 Resource
-    try:
-        resource_agent = agent_factory.create_resource_recommender()
-        resource_input = ResourceRecommendationInput(
-            concept=concept,
-            context={},
-            user_preferences=user_preferences,
-        )
-        resource = await resource_agent.execute(resource_input)
-        
-        # 保存到数据库
-        async with get_celery_session() as session:
-            from app.crud.crud_resource import get_resource_crud
-            resource_crud = get_resource_crud()
-            await resource_crud.save_resource_recommendation(
-                session=session,
-                resource_output=resource,
-                roadmap_id=roadmap_id,
-            )
-        
-        results["resource_status"] = "success"
-        results["resources_id"] = resource.id
-        
-        # 发送进度通知
-        await notification_service.publish_concept_complete(
-            task_id=task_id,
-            concept_id=concept_id,
-            concept_name=concept.name,
-            content_type="resource",
-        )
-        
-        logger.info(
-            "resource_generated_and_saved",
-            task_id=task_id,
-            concept_id=concept_id,
-            resources_id=resource.id,
-            resource_count=len(resource.resources),
-        )
-        
-    except Exception as e:
-        logger.error(
-            "resource_generation_failed",
-            task_id=task_id,
-            concept_id=concept_id,
-            error=str(e),
-            exc_info=True,
-        )
-        results["resource_status"] = "failed"
-        results["status"] = "partial_failure"
-    
-    # 3. 生成 Quiz
-    try:
-        quiz_agent = agent_factory.create_quiz_generator()
-        quiz = await quiz_agent.generate(
-            concept=concept,
-            context={},
-            user_preferences=user_preferences,
-        )
-        
-        # 保存到数据库
-        async with get_celery_session() as session:
-            from app.crud.crud_quiz import get_quiz_crud
-            quiz_crud = get_quiz_crud()
-            await quiz_crud.save_quiz(
-                session=session,
-                quiz_output=quiz,
-                roadmap_id=roadmap_id,
-            )
-        
-        results["quiz_status"] = "success"
-        results["quiz_id"] = quiz.quiz_id
-        
-        # 发送进度通知
-        await notification_service.publish_concept_complete(
-            task_id=task_id,
-            concept_id=concept_id,
-            concept_name=concept.name,
-            content_type="quiz",
-        )
-        
-        logger.info(
-            "quiz_generated_and_saved",
-            task_id=task_id,
-            concept_id=concept_id,
-            quiz_id=quiz.quiz_id,
-            question_count=len(quiz.questions),
-        )
-        
-    except Exception as e:
-        logger.error(
-            "quiz_generation_failed",
-            task_id=task_id,
-            concept_id=concept_id,
-            error=str(e),
-            exc_info=True,
-        )
-        results["quiz_status"] = "failed"
-        results["status"] = "partial_failure"
-    
-    return results
-
-
-async def _update_task_content_status(
-    task_id: str,
-    status: str,
-) -> None:
-    """
-    更新 Task 的内容生成状态
-    
-    Args:
-        task_id: 任务 ID
-        status: 状态（completed | partial_failure | failed）
-    """
-    async with get_celery_session() as session:
+        # 获取原始用户请求（来自 RoadmapTask）
         task_crud = get_task_crud()
-        await task_crud.update_content_generation_status(
-            session=session,
-            task_id=task_id,
-            status=status,
-        )
+        task = await task_crud.get_by_id(session, task_id)
+        user_request = task.user_request if task else {}
         
-        logger.info(
-            "task_content_status_updated",
-            task_id=task_id,
-            status=status,
-        )
+        # ✅ 应用测试模式截断
+        if settings.TEST_MODE_TRUNCATE_FRAMEWORK:
+            framework, concepts = _apply_test_mode_truncation(
+                framework, concepts, task_id
+            )
+        
+        return framework, concepts, user_constraints, user_request

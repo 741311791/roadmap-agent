@@ -242,9 +242,10 @@ export class TaskWebSocket {
   private taskId: string;
   private handlers: WSHandlers;
   private reconnectAttempts = 0;
-  private maxReconnectAttempts = 3;
+  private maxReconnectAttempts = 10;  // ✅ 从3增加到10次
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private isIntentionallyClosed = false;
+  private reconnectTimeout: NodeJS.Timeout | null = null;
 
   constructor(taskId: string, handlers: WSHandlers) {
     this.taskId = taskId;
@@ -376,8 +377,31 @@ export class TaskWebSocket {
       // Attempt reconnect if not intentionally closed
       if (!this.isIntentionallyClosed && this.reconnectAttempts < this.maxReconnectAttempts) {
         this.reconnectAttempts++;
-        console.log(`[WS] Attempting reconnect ${this.reconnectAttempts}/${this.maxReconnectAttempts}...`);
-        setTimeout(() => this.connect(false), 2000 * this.reconnectAttempts);
+        
+        // ✅ 优化：使用指数退避，但限制最大延迟为10秒
+        const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts - 1), 10000);
+        
+        console.log(
+          `[WS] Attempting reconnect ${this.reconnectAttempts}/${this.maxReconnectAttempts} ` +
+          `in ${delay}ms...`
+        );
+        
+        // ✅ 清除之前的重连定时器
+        if (this.reconnectTimeout) {
+          clearTimeout(this.reconnectTimeout);
+        }
+        
+        this.reconnectTimeout = setTimeout(() => {
+          this.connect(false);
+        }, delay);
+      } else if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+        console.error('[WS] Max reconnect attempts reached, giving up');
+        // ✅ 触发错误回调，通知前端WebSocket连接失败
+        this.handlers.onError?.({
+          type: 'error',
+          task_id: this.taskId,
+          message: 'WebSocket连接失败，已达到最大重连次数'
+        });
       }
     };
   }
@@ -388,6 +412,12 @@ export class TaskWebSocket {
   disconnect(): void {
     this.isIntentionallyClosed = true;
     this.stopHeartbeat();
+    
+    // ✅ 清除重连定时器
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
 
     if (this.ws) {
       this.ws.close(1000, 'Client disconnect');

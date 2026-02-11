@@ -9,6 +9,7 @@
  */
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { apiClient } from '@/lib/api/client';
 import type {
   ModifyTutorialRequest,
   ModifyTutorialResponse,
@@ -26,23 +27,12 @@ export function useModifyTutorial(roadmapId: string, conceptId: string) {
     mutationFn: async (
       request: ModifyTutorialRequest
     ): Promise<ModifyTutorialResponse> => {
-      const response = await fetch(
-        `/api/v1/roadmaps/${roadmapId}/concepts/${conceptId}/tutorial/modify`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(request),
-        }
+      // ✅ 使用 apiClient 和正确的路径
+      const { data } = await apiClient.post<ModifyTutorialResponse>(
+        `/content/${roadmapId}/concepts/${conceptId}/tutorial/modify`,
+        request
       );
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || 'Failed to modify tutorial');
-      }
-
-      return response.json();
+      return data;
     },
     onSuccess: () => {
       // 使教程缓存失效
@@ -61,23 +51,12 @@ export function useModifyResources(roadmapId: string, conceptId: string) {
 
   return useMutation({
     mutationFn: async (request: ModifyResourcesRequest) => {
-      const response = await fetch(
-        `/api/v1/roadmaps/${roadmapId}/concepts/${conceptId}/resources/modify`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(request),
-        }
+      // ✅ 使用 apiClient 和正确的路径
+      const { data } = await apiClient.post(
+        `/content/${roadmapId}/concepts/${conceptId}/resources/modify`,
+        request
       );
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || 'Failed to modify resources');
-      }
-
-      return response.json();
+      return data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({
@@ -95,23 +74,12 @@ export function useModifyQuiz(roadmapId: string, conceptId: string) {
 
   return useMutation({
     mutationFn: async (request: ModifyQuizRequest) => {
-      const response = await fetch(
-        `/api/v1/roadmaps/${roadmapId}/concepts/${conceptId}/quiz/modify`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(request),
-        }
+      // ✅ 使用 apiClient 和正确的路径
+      const { data } = await apiClient.post(
+        `/content/${roadmapId}/concepts/${conceptId}/quiz/modify`,
+        request
       );
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || 'Failed to modify quiz');
-      }
-
-      return response.json();
+      return data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({

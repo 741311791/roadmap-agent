@@ -32,13 +32,6 @@ from pathlib import Path
 import httpx
 import structlog
 
-# ⚠️ 重要：在导入 app 模块之前设置环境变量
-# 这样可以确保 settings.py 加载时使用正确的配置
-os.environ["SKIP_HUMAN_REVIEW"] = "true"
-
-# 添加项目根目录到 Python 路径
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 logger = structlog.get_logger()
 
 # ============================================================
@@ -130,12 +123,12 @@ MOCK_ROADMAP_FRAMEWORK = {
 # 辅助函数
 # ============================================================
 
-async def login_and_get_token(client: httpx.AsyncClient) -> str:
+async def login_and_get_token(client: httpx.AsyncClient) -> tuple[str, str]:
     """
-    登录并获取JWT token
+    登录并获取JWT token和用户ID
     
     Returns:
-        JWT token字符串
+        (JWT token字符串, 用户ID)
     """
     print(f"\n{'='*70}")
     print(f"🔐 步骤1: 用户登录")
@@ -143,6 +136,7 @@ async def login_and_get_token(client: httpx.AsyncClient) -> str:
     print(f"   用户邮箱: {TEST_USER_EMAIL}")
     
     try:
+        # 登录获取 token
         response = await client.post(
             "/api/v1/auth/jwt/login",
             data={
@@ -160,7 +154,22 @@ async def login_and_get_token(client: httpx.AsyncClient) -> str:
         token = response.json()["access_token"]
         print(f"   ✅ 登录成功")
         print(f"   Token: {token[:30]}...")
-        return token
+        
+        # 获取用户信息（包含 user_id）
+        user_response = await client.get(
+            "/api/v1/users/me",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        
+        if user_response.status_code != 200:
+            print(f"   ❌ 获取用户信息失败")
+            sys.exit(1)
+        
+        user_info = user_response.json()
+        user_id = user_info["id"]
+        print(f"   User ID: {user_id}")
+        
+        return token, user_id
         
     except Exception as e:
         print(f"   ❌ 登录异常: {e}")
@@ -170,9 +179,15 @@ async def login_and_get_token(client: httpx.AsyncClient) -> str:
 async def submit_roadmap_generation(
     client: httpx.AsyncClient,
     token: str,
+    user_id: str,
 ) -> str:
     """
     提交路线图生成请求
+    
+    Args:
+        client: HTTP 客户端
+        token: 访问令牌
+        user_id: 用户 ID（从登录后获取）
     
     Returns:
         任务ID
@@ -181,12 +196,12 @@ async def submit_roadmap_generation(
     print(f"📝 步骤2: 提交路线图生成请求")
     print(f"{'='*70}")
     
-    # 构造请求数据
+    # 构造请求数据（使用实际的 user_id）
     request_data = {
-        "user_id": "e2e-test-permanent-user-id-00000001",
+        "user_id": user_id,  # ✅ 使用登录用户的实际 ID
         "session_id": f"test-session-{uuid.uuid4().hex[:8]}",
         "preferences": {
-            "learning_goal": "成为Python全栈开发工程师",
+            "learning_goal": "成为全栈开发工程师",
             "available_hours_per_week": 15,
             "motivation": "转行进入技术领域，希望在6个月内找到初级开发工作",
             "current_level": "beginner",
@@ -341,7 +356,7 @@ async def poll_task_status(
             # 🔧 Mock路线图模式：在进入内容生成前替换数据
             if use_mock_roadmap and not mock_replaced:
                 # 检测到即将进入或已进入content_generation阶段
-                if current_step in ["human_review_approved", "content_generation"]:
+                if current_step in ["content_generation_queued", "content_generation"]:
                     roadmap_id = task_data.get("roadmap_id")
                     if roadmap_id:
                         print(f"\n   {'─'*66}")
@@ -537,11 +552,11 @@ async def main(use_mock_roadmap: bool = False, skip_cleanup: bool = False):
         timeout=30.0,
     ) as client:
         try:
-            # 步骤1: 登录
-            token = await login_and_get_token(client)
+            # 步骤1: 登录并获取用户ID
+            token, user_id = await login_and_get_token(client)
             
-            # 步骤2: 提交生成请求
-            task_id = await submit_roadmap_generation(client, token)
+            # 步骤2: 提交生成请求（使用实际的 user_id）
+            task_id = await submit_roadmap_generation(client, token, user_id)
             
             # 步骤3: 轮询任务状态
             task_data = await poll_task_status(

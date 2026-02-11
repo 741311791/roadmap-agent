@@ -1,8 +1,8 @@
 {
-  "timestamp": "2026-01-23T15:10:49.587Z",
+  "timestamp": "2026-02-09T13:14:00.741Z",
   "schemaUrl": "http://localhost:8000/openapi.json",
-  "modelsCount": 162,
-  "servicesCount": 32,
-  "endpointsCount": 101,
+  "modelsCount": 154,
+  "servicesCount": 30,
+  "endpointsCount": 95,
   "success": true
 }

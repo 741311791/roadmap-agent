@@ -2,7 +2,7 @@
 BaseCRUD泛型类 - 提供通用的CRUD操作
 """
 from typing import Generic, TypeVar, Type, Optional, Any
-from sqlalchemy import select, func
+from sqlalchemy import select, func, inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import DeclarativeBase
 from pydantic import BaseModel
@@ -49,17 +49,28 @@ class BaseCRUD(Generic[ModelType, CreateSchemaType, UpdateSchemaType]):
         id: Any
     ) -> Optional[ModelType]:
         """
-        根据ID获取单条记录
+        根据ID获取单条记录（动态主键支持）
+        
+        自动检测模型的主键字段，支持不同的主键命名（id/tutorial_id/quiz_id等）。
         
         Args:
             session: 数据库会话
-            id: 主键ID
+            id: 主键值
             
         Returns:
             模型实例或None
         """
+        # ✅ 动态获取模型的主键字段（支持任意主键名）
+        pk_columns = list(inspect(self.model).primary_key)
+        
+        if not pk_columns:
+            raise ValueError(f"模型 {self.model.__name__} 没有定义主键")
+        
+        # 获取第一个主键字段（通常只有一个主键）
+        pk_column = pk_columns[0]
+        
         result = await session.execute(
-            select(self.model).where(self.model.id == id)
+            select(self.model).where(pk_column == id)
         )
         return result.scalar_one_or_none()
     
@@ -217,7 +228,7 @@ class BaseCRUD(Generic[ModelType, CreateSchemaType, UpdateSchemaType]):
         
         obj = await self.get(session, id)
         if obj and hasattr(obj, "deleted_at"):
-            obj.deleted_at = datetime.utcnow()
+            obj.deleted_at = datetime.now(timezone.utc)
             session.add(obj)
             await session.flush()
             await session.refresh(obj)

@@ -21,6 +21,7 @@ from app.schemas.monitoring import (
     CeleryWorkerInfo,
     CeleryWorkerListResponse,
 )
+from app.core.rate_limiter import get_rate_limiter
 
 router = APIRouter(prefix="/celery", tags=["monitoring", "celery"])
 logger = structlog.get_logger()
@@ -578,5 +579,166 @@ async def get_celery_workers(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get Celery workers: {str(e)}"
+        )
+
+
+# ============================================================
+# API 速率限制监控端点
+# ============================================================
+
+@router.get("/api-rate-limits", response_model=Dict[str, Any])
+async def get_api_rate_limits(
+    current_user: User = Depends(current_superuser),
+):
+    """
+    获取所有API的速率限制使用情况
+    
+    返回各API Provider的当前速率使用情况，包括：
+    - current_count: 当前1分钟窗口内的请求数
+    - limit: 配置的速率限制（RPM）
+    - usage_percent: 使用率百分比
+    - available: 剩余可用次数
+    
+    只有超级管理员可以访问。
+    
+    Returns:
+        所有Provider的速率使用情况
+    """
+    logger.info(
+        "api_rate_limits_requested",
+        admin_id=current_user.id,
+    )
+    
+    try:
+        rate_limiter = get_rate_limiter()
+        usage_data = await rate_limiter.get_all_usage()
+        stats_data = rate_limiter.get_stats()
+        
+        logger.info(
+            "api_rate_limits_success",
+            admin_id=current_user.id,
+        )
+        
+        return {
+            "usage": usage_data,
+            "statistics": stats_data,
+        }
+        
+    except Exception as e:
+        logger.error(
+            "api_rate_limits_failed",
+            admin_id=current_user.id,
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get API rate limits: {str(e)}"
+        )
+
+
+@router.get("/api-rate-limits/{provider}", response_model=Dict[str, Any])
+async def get_api_rate_limit_by_provider(
+    provider: str,
+    current_user: User = Depends(current_superuser),
+):
+    """
+    获取指定API Provider的速率限制使用情况
+    
+    Args:
+        provider: API Provider名称（如openai, anthropic, deepseek, tavily）
+        
+    Returns:
+        该Provider的速率使用情况
+    """
+    logger.info(
+        "api_rate_limit_by_provider_requested",
+        admin_id=current_user.id,
+        provider=provider,
+    )
+    
+    try:
+        rate_limiter = get_rate_limiter()
+        usage_data = await rate_limiter.get_current_usage(provider)
+        
+        logger.info(
+            "api_rate_limit_by_provider_success",
+            admin_id=current_user.id,
+            provider=provider,
+        )
+        
+        return usage_data
+        
+    except Exception as e:
+        logger.error(
+            "api_rate_limit_by_provider_failed",
+            admin_id=current_user.id,
+            provider=provider,
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get API rate limit for {provider}: {str(e)}"
+        )
+
+
+@router.post("/api-rate-limits/{provider}/reset", response_model=Dict[str, Any])
+async def reset_api_rate_limit(
+    provider: str,
+    current_user: User = Depends(current_superuser),
+):
+    """
+    重置指定API Provider的速率限制（清空窗口记录）
+    
+    用于紧急情况下清空某个Provider的请求记录，重置速率限制。
+    
+    Args:
+        provider: API Provider名称（如openai, anthropic, deepseek, tavily）
+        
+    Returns:
+        操作结果
+    """
+    logger.info(
+        "api_rate_limit_reset_requested",
+        admin_id=current_user.id,
+        provider=provider,
+    )
+    
+    try:
+        rate_limiter = get_rate_limiter()
+        success = await rate_limiter.reset_provider(provider)
+        
+        if not success:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Provider '{provider}' not found or not supported"
+            )
+        
+        logger.info(
+            "api_rate_limit_reset_success",
+            admin_id=current_user.id,
+            provider=provider,
+        )
+        
+        return {
+            "success": True,
+            "message": f"Rate limit for {provider} has been reset",
+            "provider": provider,
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "api_rate_limit_reset_failed",
+            admin_id=current_user.id,
+            provider=provider,
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to reset API rate limit for {provider}: {str(e)}"
         )
 

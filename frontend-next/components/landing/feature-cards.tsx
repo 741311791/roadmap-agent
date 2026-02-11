@@ -11,6 +11,7 @@
  */
 
 import React from 'react';
+import { useTranslations } from 'next-intl';
 import { motion } from 'motion/react';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
@@ -32,36 +33,38 @@ import {
  * Intent Analysis Card - 需求分析卡片
  */
 export function IntentAnalysisCard() {
+  const t = useTranslations('featureCards.intentAnalysis');
+  
   return (
     <Card className="p-6 border-border bg-gradient-to-br from-muted to-card shadow-xl">
       <div className="space-y-4">
         {/* 标题 */}
         <div className="flex items-center gap-2">
           <Target className="w-5 h-5 text-sage" />
-          <h3 className="text-lg font-semibold text-foreground">Intent Analysis</h3>
-          <Badge variant="outline" className="ml-auto text-xs">AI-Generated</Badge>
+          <h3 className="text-lg font-semibold text-foreground">{t('title')}</h3>
+          <Badge variant="outline" className="ml-auto text-xs">{t('aiGenerated')}</Badge>
         </div>
 
         {/* 学习目标 */}
         <div className="space-y-2">
-          <p className="text-sm font-medium text-foreground">Learning Goal</p>
+          <p className="text-sm font-medium text-foreground">{t('learningGoal')}</p>
           <p className="text-sm text-muted-foreground leading-relaxed">
-            Master full-stack web development with React and Node.js, focusing on modern best practices and scalable architecture
+            {t('goalText')}
           </p>
         </div>
 
         {/* 当前水平 */}
         <div className="space-y-2">
-          <p className="text-xs font-medium text-foreground">Current Experience</p>
+          <p className="text-xs font-medium text-foreground">{t('currentExperience')}</p>
           <div className="flex items-center gap-2">
-            <Badge variant="secondary" className="text-xs">Beginner HTML/CSS</Badge>
-            <Badge variant="secondary" className="text-xs">Basic JavaScript</Badge>
+            <Badge variant="secondary" className="text-xs">{t('beginnerHtml')}</Badge>
+            <Badge variant="secondary" className="text-xs">{t('basicJs')}</Badge>
           </div>
         </div>
 
         {/* 技术栈 */}
         <div className="space-y-2">
-          <p className="text-xs font-medium text-foreground">Recommended Tech Stack</p>
+          <p className="text-xs font-medium text-foreground">{t('recommendedTech')}</p>
           <div className="flex flex-wrap gap-1.5">
             <Badge variant="secondary" className="text-xs">React 18</Badge>
             <Badge variant="secondary" className="text-xs">Node.js</Badge>
@@ -75,13 +78,13 @@ export function IntentAnalysisCard() {
 
         {/* 识别的知识缺口 */}
         <div className="space-y-2 pt-2">
-          <p className="text-xs font-medium text-foreground">Identified Gaps</p>
+          <p className="text-xs font-medium text-foreground">{t('identifiedGaps')}</p>
           <div className="space-y-1.5">
             {[
-              'Component architecture & state management',
-              'RESTful API design & authentication',
-              'Database modeling & migrations',
-              'Deployment & DevOps basics',
+              t('gap1'),
+              t('gap2'),
+              t('gap3'),
+              t('gap4'),
             ].map((gap, i) => (
               <div key={i} className="flex items-center gap-2 text-xs text-muted-foreground">
                 <div className="w-1.5 h-1.5 rounded-full bg-sage" />
@@ -96,23 +99,23 @@ export function IntentAnalysisCard() {
           <div className="space-y-1">
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <Clock className="w-3.5 h-3.5" />
-              <span>Duration</span>
+              <span>{t('duration')}</span>
             </div>
-            <p className="text-sm font-semibold text-foreground">12 weeks</p>
+            <p className="text-sm font-semibold text-foreground">12 {t('weeks')}</p>
           </div>
           <div className="space-y-1">
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <TrendingUp className="w-3.5 h-3.5" />
-              <span>Level</span>
+              <span>{t('level')}</span>
             </div>
             <Badge className="bg-orange-100 text-orange-700 hover:bg-orange-200 text-xs">
-              Intermediate
+              {t('intermediate')}
             </Badge>
           </div>
           <div className="space-y-1">
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <Layers className="w-3.5 h-3.5" />
-              <span>Concepts</span>
+              <span>{t('concepts')}</span>
             </div>
             <p className="text-sm font-semibold text-foreground">89</p>
           </div>
@@ -126,14 +129,16 @@ export function IntentAnalysisCard() {
  * Roadmap Card - 路线图卡片
  */
 export function RoadmapCard() {
+  const t = useTranslations('featureCards.roadmap');
+  
   return (
     <Card className="p-6 border-border bg-gradient-to-br from-card to-muted shadow-xl">
       <div className="space-y-4">
         {/* 标题 */}
         <div className="flex items-center gap-2">
           <Layers className="w-5 h-5 text-sage" />
-          <h3 className="text-lg font-semibold text-foreground">Learning Roadmap</h3>
-          <Badge variant="outline" className="ml-auto text-xs">3 Stages</Badge>
+          <h3 className="text-lg font-semibold text-foreground">{t('title')}</h3>
+          <Badge variant="outline" className="ml-auto text-xs">3 {t('stages')}</Badge>
         </div>
 
         {/* 路线图层级 */}
@@ -143,31 +148,31 @@ export function RoadmapCard() {
             <div className="flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-sage" />
               <span className="text-sm font-bold text-foreground">
-                Stage 1: Foundations
+                {t('stage1')}
               </span>
-              <Badge variant="secondary" className="ml-auto text-xs">Completed</Badge>
+              <Badge variant="secondary" className="ml-auto text-xs">{t('completed')}</Badge>
             </div>
             
             {/* Module */}
             <div className="ml-4 pl-3 border-l-2 border-sage/30 space-y-2">
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="w-3.5 h-3.5 text-sage" />
-                <span className="text-xs text-foreground font-medium">Module 1.1: JavaScript Basics</span>
+                <span className="text-xs text-foreground font-medium">{t('module11')}</span>
               </div>
               
               {/* Concepts */}
               <div className="ml-5 space-y-1">
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <CheckCircle2 className="w-2.5 h-2.5 text-sage" />
-                  <span>Variables & Data Types</span>
+                  <span>{t('concept1')}</span>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <CheckCircle2 className="w-2.5 h-2.5 text-sage" />
-                  <span>Functions & Scope</span>
+                  <span>{t('concept2')}</span>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <CheckCircle2 className="w-2.5 h-2.5 text-sage" />
-                  <span>Objects & Arrays</span>
+                  <span>{t('concept3')}</span>
                 </div>
               </div>
             </div>
@@ -180,29 +185,29 @@ export function RoadmapCard() {
                 <div className="w-2 h-2 rounded-full bg-sage animate-pulse" />
               </div>
               <span className="text-sm font-bold text-foreground">
-                Stage 2: React Development
+                {t('stage2')}
               </span>
-              <Badge className="ml-auto text-xs bg-blue-100 text-blue-700">In Progress</Badge>
+              <Badge className="ml-auto text-xs bg-blue-100 text-blue-700">{t('inProgress')}</Badge>
             </div>
             
             <div className="ml-4 pl-3 border-l-2 border-border space-y-2">
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="w-3.5 h-3.5 text-sage" />
-                <span className="text-xs text-foreground font-medium">Module 2.1: React Fundamentals</span>
+                <span className="text-xs text-foreground font-medium">{t('module21')}</span>
               </div>
               
               <div className="ml-5 space-y-1">
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <CheckCircle2 className="w-2.5 h-2.5 text-sage" />
-                  <span>Components & Props</span>
+                  <span>{t('concept4')}</span>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-sage font-medium">
                   <Circle className="w-2.5 h-2.5" />
-                  <span>State & Lifecycle</span>
+                  <span>{t('concept5')}</span>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-muted-foreground/50">
                   <Circle className="w-2.5 h-2.5" />
-                  <span>Hooks (useState, useEffect)</span>
+                  <span>{t('concept6')}</span>
                 </div>
               </div>
             </div>
@@ -213,9 +218,9 @@ export function RoadmapCard() {
             <div className="flex items-center gap-2">
               <Circle className="w-4 h-4 text-muted-foreground" />
               <span className="text-sm font-bold text-muted-foreground">
-                Stage 3: Full-Stack Integration
+                {t('stage3')}
               </span>
-              <Badge variant="outline" className="ml-auto text-xs">Locked</Badge>
+              <Badge variant="outline" className="ml-auto text-xs">{t('locked')}</Badge>
             </div>
           </div>
         </div>
@@ -223,7 +228,7 @@ export function RoadmapCard() {
         {/* 进度统计 */}
         <div className="pt-3 border-t border-border space-y-3">
           <div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
-            <span>Overall Progress</span>
+            <span>{t('overallProgress')}</span>
             <span className="font-semibold text-foreground">45%</span>
           </div>
           <Progress value={45} className="h-2" />
@@ -231,15 +236,15 @@ export function RoadmapCard() {
           <div className="grid grid-cols-3 gap-2 pt-2">
             <div className="text-center">
               <p className="text-lg font-bold text-foreground">32</p>
-              <p className="text-xs text-muted-foreground">Completed</p>
+              <p className="text-xs text-muted-foreground">{t('completed')}</p>
             </div>
             <div className="text-center">
               <p className="text-lg font-bold text-sage">5</p>
-              <p className="text-xs text-muted-foreground">In Progress</p>
+              <p className="text-xs text-muted-foreground">{t('inProgress')}</p>
             </div>
             <div className="text-center">
               <p className="text-lg font-bold text-muted-foreground">52</p>
-              <p className="text-xs text-muted-foreground">Remaining</p>
+              <p className="text-xs text-muted-foreground">{t('remaining')}</p>
             </div>
           </div>
         </div>
@@ -252,35 +257,37 @@ export function RoadmapCard() {
  * Quiz Card - 测验卡片
  */
 export function QuizCard() {
+  const t = useTranslations('featureCards.quiz');
+  
   return (
     <Card className="p-6 border-border bg-gradient-to-br from-muted to-card shadow-xl">
       <div className="space-y-4">
         {/* 标题 */}
         <div className="flex items-center gap-2">
           <CheckCircle2 className="w-5 h-5 text-sage" />
-          <h3 className="text-lg font-semibold text-foreground">Practice Quiz</h3>
-          <Badge className="ml-auto text-xs bg-sage/10 text-sage border border-sage/20">Interactive</Badge>
+          <h3 className="text-lg font-semibold text-foreground">{t('title')}</h3>
+          <Badge className="ml-auto text-xs bg-sage/10 text-sage border border-sage/20">{t('interactive')}</Badge>
         </div>
 
         {/* 问题标签 */}
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="text-xs">JavaScript</Badge>
           <Badge variant="outline" className="text-xs">Data Types</Badge>
-          <Badge variant="outline" className="text-xs">Medium</Badge>
+          <Badge variant="outline" className="text-xs">{t('medium')}</Badge>
         </div>
 
         {/* 问题 */}
         <div className="space-y-3">
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <p className="text-xs text-muted-foreground">Question 3 of 10</p>
+              <p className="text-xs text-muted-foreground">{t('questionOf')}</p>
               <div className="flex items-center gap-1">
                 <Clock className="w-3 h-3 text-muted-foreground" />
-                <span className="text-xs text-muted-foreground">1:45 remaining</span>
+                <span className="text-xs text-muted-foreground">1:45 {t('remaining')}</span>
               </div>
             </div>
             <p className="text-sm font-medium text-foreground leading-relaxed">
-              What is the output of:{' '}
+              {t('question')}{' '}
               <code className="px-2 py-1 bg-muted rounded text-xs font-mono">typeof []</code>?
             </p>
           </div>
@@ -325,7 +332,7 @@ export function QuizCard() {
           {/* 解释说明 */}
           <div className="p-3 bg-sage/5 border border-sage/20 rounded-lg">
             <p className="text-xs text-muted-foreground leading-relaxed">
-              💡 <span className="font-medium">Tip:</span> In JavaScript, arrays are actually a special type of object. Use <code className="px-1 bg-muted rounded">Array.isArray()</code> to check for arrays specifically.
+              💡 <span className="font-medium">{t('tip')}</span> {t('tipText')} <code className="px-1 bg-muted rounded">Array.isArray()</code> {t('toCheck')}
             </p>
           </div>
         </div>
@@ -336,7 +343,7 @@ export function QuizCard() {
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-1 text-sage">
                 <Star className="w-3.5 h-3.5 fill-current" />
-                <span className="text-xs font-semibold">8/10 correct</span>
+                <span className="text-xs font-semibold">8/10 {t('correct')}</span>
               </div>
               <div className="flex items-center gap-1 text-muted-foreground">
                 <TrendingUp className="w-3.5 h-3.5" />
@@ -355,22 +362,24 @@ export function QuizCard() {
  * Resource Card - 资源推荐卡片
  */
 export function ResourceCard() {
+  const t = useTranslations('featureCards.resource');
+  
   return (
     <Card className="p-6 border-border bg-gradient-to-br from-card to-muted shadow-xl">
       <div className="space-y-4">
         {/* 标题 */}
         <div className="flex items-center gap-2">
           <BookOpen className="w-5 h-5 text-sage" />
-          <h3 className="text-lg font-semibold text-foreground">Curated Resources</h3>
-          <Badge className="ml-auto text-xs bg-sage/10 text-sage border border-sage/20">14 Resources</Badge>
+          <h3 className="text-lg font-semibold text-foreground">{t('title')}</h3>
+          <Badge className="ml-auto text-xs bg-sage/10 text-sage border border-sage/20">14 {t('resources')}</Badge>
         </div>
 
         {/* 筛选标签 */}
         <div className="flex items-center gap-2 overflow-x-auto pb-1">
-          <Badge variant="default" className="text-xs bg-sage text-white">All</Badge>
-          <Badge variant="outline" className="text-xs">Articles</Badge>
-          <Badge variant="outline" className="text-xs">Videos</Badge>
-          <Badge variant="outline" className="text-xs">Projects</Badge>
+          <Badge variant="default" className="text-xs bg-sage text-white">{t('all')}</Badge>
+          <Badge variant="outline" className="text-xs">{t('articles')}</Badge>
+          <Badge variant="outline" className="text-xs">{t('videos')}</Badge>
+          <Badge variant="outline" className="text-xs">{t('projects')}</Badge>
         </div>
 
         {/* 资源列表 */}
@@ -385,10 +394,10 @@ export function ResourceCard() {
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-foreground truncate group-hover:text-sage transition-colors">
-                Async/Await Deep Dive
+                {t('resource1Title')}
               </p>
               <div className="flex items-center gap-3 mt-1">
-                <span className="text-xs text-muted-foreground">javascript.info · 12 min read</span>
+                <span className="text-xs text-muted-foreground">{t('resource1Source')}</span>
                 <div className="flex items-center gap-0.5">
                   {[...Array(5)].map((_, i) => (
                     <Star
@@ -415,10 +424,10 @@ export function ResourceCard() {
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-foreground truncate group-hover:text-sage transition-colors">
-                Promises Explained Visually
+                {t('resource2Title')}
               </p>
               <div className="flex items-center gap-3 mt-1">
-                <span className="text-xs text-muted-foreground">YouTube · 18 min</span>
+                <span className="text-xs text-muted-foreground">{t('resource2Source')}</span>
                 <div className="flex items-center gap-0.5">
                   {[...Array(5)].map((_, i) => (
                     <Star
@@ -445,10 +454,10 @@ export function ResourceCard() {
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-foreground truncate group-hover:text-sage transition-colors">
-                Error Handling Best Practices
+                {t('resource3Title')}
               </p>
               <div className="flex items-center gap-3 mt-1">
-                <span className="text-xs text-muted-foreground">MDN Web Docs · 8 min read</span>
+                <span className="text-xs text-muted-foreground">{t('resource3Source')}</span>
                 <div className="flex items-center gap-0.5">
                   {[...Array(5)].map((_, i) => (
                     <Star
@@ -475,12 +484,12 @@ export function ResourceCard() {
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-foreground truncate group-hover:text-sage transition-colors">
-                Build a Weather App with Async
+                {t('resource4Title')}
               </p>
               <div className="flex items-center gap-3 mt-1">
-                <span className="text-xs text-muted-foreground">Hands-on Project · 2 hours</span>
+                <span className="text-xs text-muted-foreground">{t('resource4Source')}</span>
                 <Badge className="text-xs bg-sage/10 text-sage border border-sage/20">
-                  Project
+                  {t('project')}
                 </Badge>
               </div>
             </div>
@@ -494,17 +503,17 @@ export function ResourceCard() {
             <div className="flex items-center gap-3 text-xs">
               <div className="flex items-center gap-1 text-sage">
                 <CheckCircle2 className="w-3.5 h-3.5" />
-                <span className="font-semibold">8 completed</span>
+                <span className="font-semibold">8 {t('completed')}</span>
               </div>
               <div className="h-3 w-px bg-border" />
-              <span className="text-muted-foreground">10 more available</span>
+              <span className="text-muted-foreground">10 {t('moreAvailable')}</span>
             </div>
             <motion.button
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               className="text-xs font-medium text-sage hover:text-sage/80 transition-colors"
             >
-              View All →
+              {t('viewAll')}
             </motion.button>
           </div>
         </div>

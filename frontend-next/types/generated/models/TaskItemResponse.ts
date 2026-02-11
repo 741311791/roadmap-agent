@@ -2,6 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { WorkflowStep } from '../constants';
+import type { TaskStatus } from '../constants';
 /**
  * 任务列表项
  */
@@ -13,7 +15,7 @@ export type TaskItemResponse = {
     /**
      * 任务状态
      */
-    status: string;
+    status: TaskStatus;
     /**
      * 当前步骤
      */

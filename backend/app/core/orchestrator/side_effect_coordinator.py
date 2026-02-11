@@ -188,27 +188,45 @@ class SideEffectCoordinator:
         if modified_node_ids is not None:
             extra_data["modified_concept_ids"] = modified_node_ids
         
-        # ✅ 关键修复：从 output 提取 current_step，而不是使用 node_name
-        # 原因：某些节点（如 human_review）完成后会返回新的 current_step
+        # ✅ 关键修复：从 output 提取 current_step（必须存在）
+        # 原因：
+        # 1. output 是 executor 传递的 final_state（完整的工作流状态）
+        # 2. 所有节点都返回 current_step 字段（已验证）
+        # 3. current_step 代表工作流的逻辑状态，不同于物理节点名称 node_name
         # 例如：human_review 批准后返回 current_step="content_generation_queued"
-        # 如果使用 node_name="human_review"，前端会收到错误的步骤信息，导致UI不更新
-        current_step_in_output = _safe_get(output, "current_step")
-        notification_step = current_step_in_output if current_step_in_output else node_name
+        #       但 node_name="human_review"，前端需要收到 "content_generation_queued"
+        current_step = _safe_get(output, "current_step")
+        
+        # ⚠️ 严格校验：current_step 必须存在
+        # 如果缺失，说明状态机有严重bug，必须立即发现
+        if not current_step:
+            logger.critical(
+                "coordinator_missing_current_step_critical_bug",
+                task_id=task_id,
+                node_name=node_name,
+                output_keys=list(output.keys()) if isinstance(output, dict) else "not_dict",
+                output_sample=str(output)[:500],
+                message="CRITICAL: final_state 中缺少 current_step！这是状态机的严重bug！",
+            )
+            # ❌ 不使用 node_name fallback（会导致前端状态异常）
+            # 直接抛出异常，强制修复底层问题
+            raise ValueError(
+                f"CRITICAL BUG: Node {node_name} completed but final_state has no current_step. "
+                f"This breaks frontend state sync. output_keys={list(output.keys()) if isinstance(output, dict) else 'not_dict'}"
+            )
         
         # 3. 发送 WebSocket 通知
-        # 🔍 Debug日志：检查extra_data内容和步骤选择
         logger.info(
             "coordinator_sending_websocket",
             task_id=task_id,
             node_name=node_name,
-            current_step_in_output=current_step_in_output,
-            notification_step=notification_step,
+            current_step=current_step,
             extra_data=extra_data,
         )
         
         await self._send_progress_notification(
             task_id=task_id,
-            step=notification_step,  # ✅ 使用 output 中的 current_step（如果存在）
+            step=current_step,  # ✅ 强制使用 current_step（前端依赖此字段，不能fallback到node_name）
             status="completed",
             extra_data=extra_data,
         )

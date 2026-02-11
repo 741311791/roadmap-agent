@@ -87,20 +87,9 @@ export interface ContentGenerationOverview {
 }
 
 /**
- * 执行日志条目（从现有类型扩展）
+ * 执行日志条目（使用生成的类型）
  */
-export interface ExecutionLog {
-  id: string;
-  task_id: string;
-  level: string;
-  category: string;
-  step: string | null;
-  agent_name: string | null;
-  message: string;
-  details: any;
-  duration_ms: number | null;
-  created_at: string;
-}
+export type { ExecutionLogResponse as ExecutionLog } from '@/types/generated/models';
 
 /**
  * 日志中的内容生成事件类型

@@ -25,22 +25,9 @@ export function useRoadmapGeneration() {
 
   return useMutation({
     mutationFn: async (request: UserRequest): Promise<GenerateRoadmapResponse> => {
-      const response = await fetch('/api/v1/roadmaps/generate', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(request),
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || 'Failed to generate roadmap');
-      }
-
-      // ✅ 后端返回 APIResponse<GenerateRoadmapResponse> 结构
-      const apiResponse: APIResponse<GenerateRoadmapResponse> = await response.json();
-      return apiResponse.data;
+      // ✅ 重构：使用新的 tasksApi.generate（路径从 /roadmaps/generate → /tasks/generate）
+      const { tasksApi } = await import('@/lib/api/endpoints/tasks');
+      return tasksApi.generate(request);
     },
     onMutate: () => {
       // 乐观更新：立即更新 UI 状态

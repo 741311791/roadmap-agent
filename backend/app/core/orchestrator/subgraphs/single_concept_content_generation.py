@@ -29,7 +29,7 @@ from app.models.domain import (
 from app.core.orchestrator.runtime_context import RuntimeContext
 from app.core.orchestrator.handlers.concept_content_handler import ConceptContentHandler
 from ..retry_policies import LLM_RETRY_POLICY, TAVILY_RETRY_POLICY
-from .content_generation_legacy import (
+from .content_generation_shared import (
     generate_tutorial_for_concept as _generate_tutorial_base,
     generate_resource_for_concept as _generate_resource_base,
     generate_quiz_for_concept as _generate_quiz_base,

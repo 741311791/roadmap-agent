@@ -77,6 +77,8 @@ class ContentHandler(NodeOutputHandler[ContentHandlerInput]):
             task_id=task_id,
             status=final_status,
         )
+        
+        return None
     
     async def on_complete(
         self,

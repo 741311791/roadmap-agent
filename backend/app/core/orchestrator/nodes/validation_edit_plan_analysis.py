@@ -58,12 +58,16 @@ async def validation_edit_plan_analysis_node(
     if validation_result.issues:
         feedback += f"Issues: {', '.join([issue.issue for issue in validation_result.issues[:3]])}"
     
-    # 执行分析（传递独立参数）
-    analysis_output = await agent.analyze(
+    # 准备输入数据
+    from app.models.domain import EditPlanAnalyzerInput
+    analyzer_input = EditPlanAnalyzerInput(
         user_feedback=feedback,
         existing_framework=framework,
         user_preferences=state["user_request"].preferences,
     )
+    
+    # 执行分析
+    analysis_output = await agent.execute(analyzer_input)
     
     # 提取edit_plan
     edit_plan = analysis_output.edit_plan

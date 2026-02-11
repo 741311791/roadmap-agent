@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import type { Stage } from '@/types/custom/store';
+import type { Stage } from '@/types/generated';
 
 interface StageCardProps {
   stage: Stage;
@@ -49,7 +49,7 @@ export function StageCard({
 
   const generatingConcepts = stage.modules.reduce(
     (acc, module) => 
-      acc + module.concepts.filter(c => c.content_status === 'generating').length,
+      acc + module.concepts.filter(c => (c.content_status as string) === 'generating').length,
     0
   );
 

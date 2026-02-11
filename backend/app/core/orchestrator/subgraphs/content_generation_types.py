@@ -4,7 +4,7 @@
 使用 Pydantic 模型和枚举提供类型安全，避免字符串字面量。
 """
 from enum import Enum
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class ContentType(str, Enum):
@@ -52,13 +52,12 @@ class ContentError(BaseModel):
     
     使用 Pydantic 确保错误对象结构一致。
     """
+    model_config = ConfigDict(use_enum_values=True)  # 自动将枚举转换为值
+    
     type: ContentType = Field(..., description="内容类型（tutorial/resource/quiz）")
     concept_id: str = Field(..., description="Concept ID")
     concept_name: str = Field(..., description="Concept 名称")
     error: str = Field(..., description="错误信息")
-    
-    class Config:
-        use_enum_values = True  # 自动将枚举转换为值
 
 
 class StateUpdate(BaseModel):
@@ -67,8 +66,7 @@ class StateUpdate(BaseModel):
     
     确保返回的状态更新结构一致。
     """
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class TutorialStateUpdate(StateUpdate):

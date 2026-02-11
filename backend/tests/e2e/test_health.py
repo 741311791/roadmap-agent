@@ -4,7 +4,7 @@
 测试目标：确保服务能正常启动并响应健康检查请求
 """
 import pytest
-from httpx import AsyncClient
+from httpx import AsyncClient, ASGITransport
 from app.main import app
 
 
@@ -15,7 +15,7 @@ async def client():
     
     使用FastAPI的TestClient进行端到端测试
     """
-    async with AsyncClient(app=app, base_url="http://test") as ac:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
 
 
@@ -58,12 +58,12 @@ async def test_database_health_check(client: AsyncClient):
     assert "status" in data
     assert data["status"] == "healthy"
     
-    # 验证连接池信息
-    assert "pool_status" in data
-    pool_status = data["pool_status"]
-    assert "size" in pool_status
-    assert "checked_in" in pool_status
-    assert "checked_out" in pool_status
+    # 验证连接池信息（字段名为pool，不是pool_status）
+    assert "pool" in data
+    pool = data["pool"]
+    assert "size" in pool
+    assert "checked_in" in pool
+    assert "checked_out" in pool
 
 
 @pytest.mark.asyncio
@@ -107,7 +107,8 @@ async def test_prometheus_metrics_endpoint(client: AsyncClient):
     - /metrics端点可访问
     - 返回Prometheus格式的指标数据
     """
-    response = await client.get("/metrics")
+    # 跟随重定向（如果有307重定向到/metrics/）
+    response = await client.get("/metrics", follow_redirects=True)
     
     assert response.status_code == 200
     

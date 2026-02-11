@@ -9,26 +9,30 @@
  */
 
 import React from 'react';
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Github, Twitter, MessageCircle } from 'lucide-react';
 
 export function Footer() {
+  const t = useTranslations('footer');
+  const tMarketing = useTranslations('marketing');
+  
   const navigation = {
     product: [
-      { name: 'Methodology', href: '/methodology' },
-      { name: 'Pricing', href: '/pricing' },
-      { name: 'About', href: '/about' },
+      { name: tMarketing('methodology'), href: '/methodology' },
+      { name: tMarketing('pricing'), href: '/pricing' },
+      { name: tMarketing('about'), href: '/about' },
     ],
     resources: [
-      { name: 'Documentation', href: '#' },
-      { name: 'Blog', href: '#' },
-      { name: 'Help Center', href: '#' },
+      { name: t('documentation'), href: '#' },
+      { name: t('blog'), href: '#' },
+      { name: t('helpCenter'), href: '#' },
     ],
     legal: [
-      { name: 'Privacy Policy', href: '#' },
-      { name: 'Terms of Service', href: '#' },
-      { name: 'Cookie Policy', href: '#' },
+      { name: t('privacyPolicy'), href: '#' },
+      { name: t('termsOfService'), href: '#' },
+      { name: t('cookiePolicy'), href: '#' },
     ],
     social: [
       {
@@ -67,7 +71,7 @@ export function Footer() {
               </div>
             </Link>
             <p className="text-sm text-muted-foreground leading-relaxed mb-4">
-              AI-powered personalized learning roadmaps that adapt to your goals and pace.
+              {t('description')}
             </p>
             {/* 社交媒体 */}
             <div className="flex items-center gap-4">
@@ -89,7 +93,7 @@ export function Footer() {
 
           {/* Product */}
           <div>
-            <h3 className="text-sm font-semibold text-foreground mb-4">Product</h3>
+            <h3 className="text-sm font-semibold text-foreground mb-4">{t('product')}</h3>
             <ul className="space-y-3">
               {navigation.product.map((item) => (
                 <li key={item.name}>
@@ -106,7 +110,7 @@ export function Footer() {
 
           {/* Resources */}
           <div>
-            <h3 className="text-sm font-semibold text-foreground mb-4">Resources</h3>
+            <h3 className="text-sm font-semibold text-foreground mb-4">{t('resources')}</h3>
             <ul className="space-y-3">
               {navigation.resources.map((item) => (
                 <li key={item.name}>
@@ -123,7 +127,7 @@ export function Footer() {
 
           {/* Legal */}
           <div>
-            <h3 className="text-sm font-semibold text-foreground mb-4">Legal</h3>
+            <h3 className="text-sm font-semibold text-foreground mb-4">{t('legal')}</h3>
             <ul className="space-y-3">
               {navigation.legal.map((item) => (
                 <li key={item.name}>
@@ -143,14 +147,14 @@ export function Footer() {
         <div className="pt-8 border-t border-border">
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
             <p className="text-sm text-muted-foreground">
-              © {new Date().getFullYear()} Fast Learning. All rights reserved.
+              © {new Date().getFullYear()} {t('copyright')}
             </p>
             <p className="text-sm text-muted-foreground">
-              Made with{' '}
+              {t('madeWith')}{' '}
               <span className="text-sage" aria-label="love">
                 ♥
               </span>{' '}
-              for learners worldwide
+              {t('forLearners')}
             </p>
           </div>
         </div>

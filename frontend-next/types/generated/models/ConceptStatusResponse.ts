@@ -2,6 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ContentStatus } from '../constants';
+import type { TaskStatus } from '../constants';
 /**
  * 单个 Concept 状态响应
  *
@@ -15,19 +17,19 @@ export type ConceptStatusResponse = {
     /**
      * 整体状态
      */
-    overall_status: string;
+    overall_status: TaskStatus;
     /**
      * 教程状态
      */
-    tutorial_status: string;
+    tutorial_status: TaskStatus;
     /**
      * 资源状态
      */
-    resources_status: string;
+    resources_status: TaskStatus;
     /**
      * 测验状态
      */
-    quiz_status: string;
+    quiz_status: TaskStatus;
     /**
      * 教程 ID
      */

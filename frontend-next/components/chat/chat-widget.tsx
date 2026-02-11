@@ -157,7 +157,7 @@ export function ChatWidget({
 
       {/* 消息列表 */}
       <CardContent className="flex-1 overflow-hidden p-4">
-        <MessageList messages={messages} />
+        <MessageList messages={messages as any} />
       </CardContent>
 
       {/* 输入区域 */}
@@ -226,7 +226,7 @@ export function CompactChatWidget({
     <div className={cn('flex flex-col h-full', className)}>
       {/* 消息列表 */}
       <div className="flex-1 overflow-hidden px-4 py-2">
-        <MessageList messages={messages} compact />
+        <MessageList messages={messages as any} compact />
       </div>
 
       {/* 输入区域 */}

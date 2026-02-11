@@ -1,406 +1,343 @@
 """
-内容生成子图
+内容生成子图（外层编排）
 
-使用 LangGraph 1.0 子图模式和 Send API 实现内容生成的并行处理。
+使用两层 Fan-Out/Fan-In 架构实现多 Concept 的内容生成：
+- 外层 Fan-Out：为每个 Concept 创建子图实例
+- 外层 Reduce：自动汇总所有子图结果
+- 最终汇总：检查并更新 Framework
 
-架构优势：
-- 细粒度 Checkpoint：每个 Concept 的内容生成独立保存状态
-- 单独重试：Tutorial 失败不影响 Resource 和 Quiz
-- 动态并行：使用 Send API 根据 Concept 数量动态创建并行任务
-- 统一容错：Node 级 RetryPolicy 自动处理失败
+架构设计：
+1. 外层 Fan-Out：为每个 Concept 创建独立的单 Concept 子图实例
+2. 并行执行：所有单 Concept 子图并行运行
+3. 外层 Reduce：LangGraph 自动汇总所有子图结果
+4. 最终汇总：批量更新 Framework 和 Task 状态
+
+迁移说明：
+- 共享的内容生成函数位于 content_generation_shared.py
+- 新架构支持更细粒度的状态管理和独立测试
 """
-from typing import TypedDict, Annotated, TYPE_CHECKING, Any
+from typing import TypedDict, Annotated
 import operator
 import structlog
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, START, END
-from langgraph.types import Send
+from langgraph.types import Send, Command
 
 from app.models.domain import (
     Concept,
     LearningPreferences,
-    TutorialGenerationInput,
-    TutorialGenerationOutput,
-    ResourceRecommendationInput,
-    ResourceRecommendationOutput,
-    QuizGenerationInput,
-    QuizGenerationOutput,
 )
-from app.core.agent_factory import AgentFactory
-from ..retry_policies import LLM_RETRY_POLICY, TAVILY_RETRY_POLICY
-from .content_generation_types import (
-    ContentType,
-    NodeName,
-    StateKey,
-    ContextKey,
-    ContentError,
-)
-
-if TYPE_CHECKING:
-    from app.core.orchestrator.workflow_brain import WorkflowBrain
+from app.core.orchestrator.runtime_context import RuntimeContext
+from app.core.orchestrator.handlers.content_handler import ContentHandler
+from .single_concept_content_generation import build_single_concept_subgraph
 
 logger = structlog.get_logger()
 
 
 class ContentGenState(TypedDict):
     """
-    内容生成子图状态
+    外层子图状态
     
     注意：
-    - 子图状态与主图状态是隔离的
-    - 仅通过调用时的参数传递数据
-    - 使用 Reducer 支持并行累加结果
+    - 此状态用于外层子图编排
+    - 管理多个 Concept 的并行生成
+    - 使用 Reducer 自动汇总所有子图结果
     """
-    # 输入数据（由主图传入）
+    # 输入数据
     roadmap_id: str
     concepts: list[Concept]
     user_preferences: LearningPreferences
-    task_id: str  # 用于日志追踪
-    
-    # WorkflowBrain 和 AgentFactory（新增）
-    brain: Any  # WorkflowBrain 实例（用于进度通知）
-    agent_factory: Any  # AgentFactory 实例（用于创建 Agent）
+    task_id: str
     
     # 单个 Concept 的输入（用于 Send API）
     concept: Concept | None
-    context: dict | None
     
-    # 输出数据（使用 Reducer 累加）
-    tutorials: Annotated[list[TutorialGenerationOutput], operator.add]
-    resources: Annotated[list[ResourceRecommendationOutput], operator.add]
-    quizzes: Annotated[list[QuizGenerationOutput], operator.add]
-    
-    # 错误追踪
-    errors: Annotated[list[dict], operator.add]
+    # 汇总结果（使用 Reducer 自动累加）
+    concept_results: Annotated[list[dict], operator.add]
 
 
-async def generate_tutorial_for_concept(state: ContentGenState) -> dict:
+def outer_fan_out(state: ContentGenState) -> Command:
     """
-    为单个 Concept 生成教程（集成 WorkflowBrain）
+    外层 Fan-Out：为每个 Concept 创建子图实例
     
-    此函数会被 Send API 动态调用多次（每个 Concept 一次）
-    
-    职责：
-    1. 调用 TutorialGeneratorAgent 生成教程
-    2. 使用 WorkflowBrain 发送进度通知
-    3. 返回生成结果（不保存数据库，由 ContentRunner 批量保存）
+    使用 Send API 为每个 Concept 创建独立的单 Concept 子图实例。
+    每个子图实例负责：
+    - 并发生成 Tutorial、Resource、Quiz
+    - Fan-In 收集并保存元数据
+    - 返回该 Concept 的保存状态
     
     Args:
-        state: 子图状态，包含单个 Concept 的数据
+        state: 外层子图状态，包含所有 Concept 列表
         
     Returns:
-        dict: 包含生成的教程或错误信息
+        Command 对象，包含 N 个 Send 任务（N = Concept 数量）
     """
-    concept = state[StateKey.CONCEPT.value]
-    context = state.get(StateKey.CONTEXT.value, {})
-    user_preferences = state[StateKey.USER_PREFERENCES.value]
-    brain = state["brain"]
-    agent_factory = state["agent_factory"]
-    
-    # 构造子状态用于 brain.node_execution()
-    sub_node_state = {
-        "task_id": state[StateKey.TASK_ID.value],
-        "roadmap_id": state[StateKey.ROADMAP_ID.value],
-        "current_step": f"tutorial_{concept.concept_id[:8]}",
-    }
-    
-    # 使用 WorkflowBrain 的上下文管理器（用于进度通知）
-    async with brain.node_execution(f"generate_tutorial_{concept.concept_id[:8]}", sub_node_state):
-        try:
-            # 创建 Agent（使用传入的 factory）
-            tutorial_agent = agent_factory.create_tutorial_generator()
-            
-            # 构造输入
-            tutorial_input = TutorialGenerationInput(
-                concept=concept,
-                context=context,
-                user_preferences=user_preferences,
-            )
-            
-            # 执行生成
-            tutorial = await tutorial_agent.generate(tutorial_input)
-            
-            logger.info(
-                "tutorial_generation_completed",
-                task_id=state[StateKey.TASK_ID.value],
-                concept_id=concept.concept_id,
-                tutorial_id=tutorial.tutorial_id,
-            )
-            
-            # 仅返回结果，不保存数据库（由 ContentRunner 批量保存）
-            return {StateKey.TUTORIALS.value: [tutorial]}
-            
-        except Exception as e:
-            logger.error(
-                "tutorial_generation_failed",
-                task_id=state[StateKey.TASK_ID.value],
-                concept_id=concept.concept_id,
-                error=str(e),
-                exc_info=True,
-            )
-            # 使用 Pydantic 模型确保结构一致
-            error = ContentError(
-                type=ContentType.TUTORIAL,
-                concept_id=concept.concept_id,
-                concept_name=concept.name,
-                error=str(e),
-            )
-            return {StateKey.ERRORS.value: [error.model_dump()]}
-
-
-async def generate_resource_for_concept(state: ContentGenState) -> dict:
-    """
-    为单个 Concept 推荐资源（集成 WorkflowBrain）
-    
-    此函数会被 Send API 动态调用多次（每个 Concept 一次）
-    
-    职责：
-    1. 调用 ResourceRecommenderAgent 推荐资源
-    2. 使用 WorkflowBrain 发送进度通知
-    3. 返回推荐结果（不保存数据库，由 ContentRunner 批量保存）
-    
-    Args:
-        state: 子图状态，包含单个 Concept 的数据
-        
-    Returns:
-        dict: 包含推荐的资源或错误信息
-    """
-    concept = state[StateKey.CONCEPT.value]
-    context = state.get(StateKey.CONTEXT.value, {})
-    user_preferences = state[StateKey.USER_PREFERENCES.value]
-    brain = state["brain"]
-    agent_factory = state["agent_factory"]
-    
-    # 构造子状态用于 brain.node_execution()
-    sub_node_state = {
-        "task_id": state[StateKey.TASK_ID.value],
-        "roadmap_id": state[StateKey.ROADMAP_ID.value],
-        "current_step": f"resource_{concept.concept_id[:8]}",
-    }
-    
-    # 使用 WorkflowBrain 的上下文管理器（用于进度通知）
-    async with brain.node_execution(f"generate_resource_{concept.concept_id[:8]}", sub_node_state):
-        try:
-            # 创建 Agent（使用传入的 factory）
-            resource_agent = agent_factory.create_resource_recommender()
-            
-            # 构造输入
-            resource_input = ResourceRecommendationInput(
-                concept=concept,
-                context=context,
-                user_preferences=user_preferences,
-            )
-            
-            # 执行推荐
-            resources = await resource_agent.recommend(resource_input)
-            
-            logger.info(
-                "resource_recommendation_completed",
-                task_id=state[StateKey.TASK_ID.value],
-                concept_id=concept.concept_id,
-                resource_count=len(resources.resources),
-            )
-            
-            # 仅返回结果，不保存数据库
-            return {StateKey.RESOURCES.value: [resources]}
-        
-        except Exception as e:
-            logger.error(
-                "resource_recommendation_failed",
-                task_id=state[StateKey.TASK_ID.value],
-                concept_id=concept.concept_id,
-                error=str(e),
-                exc_info=True,
-            )
-            # 使用 Pydantic 模型确保结构一致
-            error = ContentError(
-                type=ContentType.RESOURCE,
-                concept_id=concept.concept_id,
-                concept_name=concept.name,
-                error=str(e),
-            )
-            return {StateKey.ERRORS.value: [error.model_dump()]}
-
-
-async def generate_quiz_for_concept(state: ContentGenState) -> dict:
-    """
-    为单个 Concept 生成测验（集成 WorkflowBrain）
-    
-    此函数会被 Send API 动态调用多次（每个 Concept 一次）
-    
-    职责：
-    1. 调用 QuizGeneratorAgent 生成测验
-    2. 使用 WorkflowBrain 发送进度通知
-    3. 返回生成结果（不保存数据库，由 ContentRunner 批量保存）
-    
-    Args:
-        state: 子图状态，包含单个 Concept 的数据
-        
-    Returns:
-        dict: 包含生成的测验或错误信息
-    """
-    concept = state[StateKey.CONCEPT.value]
-    context = state.get(StateKey.CONTEXT.value, {})
-    user_preferences = state[StateKey.USER_PREFERENCES.value]
-    brain = state["brain"]
-    agent_factory = state["agent_factory"]
-    
-    # 构造子状态用于 brain.node_execution()
-    sub_node_state = {
-        "task_id": state[StateKey.TASK_ID.value],
-        "roadmap_id": state[StateKey.ROADMAP_ID.value],
-        "current_step": f"quiz_{concept.concept_id[:8]}",
-    }
-    
-    # 使用 WorkflowBrain 的上下文管理器（用于进度通知）
-    async with brain.node_execution(f"generate_quiz_{concept.concept_id[:8]}", sub_node_state):
-        try:
-            # 创建 Agent（使用传入的 factory）
-            quiz_agent = agent_factory.create_quiz_generator()
-            
-            # 执行生成
-            quiz = await quiz_agent.generate(
-                concept=concept,
-                context=context,
-                user_preferences=user_preferences,
-            )
-            
-            logger.info(
-                "quiz_generation_completed",
-                task_id=state[StateKey.TASK_ID.value],
-                concept_id=concept.concept_id,
-                quiz_id=quiz.quiz_id,
-                question_count=len(quiz.questions),
-            )
-            
-            # 仅返回结果，不保存数据库
-            return {StateKey.QUIZZES.value: [quiz]}
-        
-        except Exception as e:
-            logger.error(
-                "quiz_generation_failed",
-                task_id=state[StateKey.TASK_ID.value],
-                concept_id=concept.concept_id,
-                error=str(e),
-                exc_info=True,
-            )
-            # 使用 Pydantic 模型确保结构一致
-            error = ContentError(
-                type=ContentType.QUIZ,
-                concept_id=concept.concept_id,
-                concept_name=concept.name,
-                error=str(e),
-            )
-            return {StateKey.ERRORS.value: [error.model_dump()]}
-
-
-def fan_out_concepts(state: ContentGenState) -> list[Send]:
-    """
-    Map 阶段：为每个 Concept 动态创建并行任务
-    
-    使用 LangGraph 1.0 的 Send API，为每个 Concept 创建 3 个并行任务：
-    - generate_tutorial
-    - generate_resource
-    - generate_quiz
-    
-    Args:
-        state: 子图状态，包含所有 Concept 列表
-        
-    Returns:
-        Send 对象列表，每个 Send 指定目标节点和传递的状态
-    """
-    concepts = state[StateKey.CONCEPTS.value]
-    roadmap_id = state[StateKey.ROADMAP_ID.value]
-    user_preferences = state[StateKey.USER_PREFERENCES.value]
-    task_id = state[StateKey.TASK_ID.value]
+    concepts = state["concepts"]
+    roadmap_id = state["roadmap_id"]
+    user_preferences = state["user_preferences"]
+    task_id = state["task_id"]
     
     logger.info(
-        "fan_out_concepts_started",
+        "outer_fan_out_started",
         task_id=task_id,
+        roadmap_id=roadmap_id,
         concept_count=len(concepts),
     )
     
     sends = []
     for concept in concepts:
-        # 构造上下文信息（包含所属阶段和模块）
-        context = {
-            ContextKey.ROADMAP_ID.value: roadmap_id,
-            ContextKey.STAGE_NAME.value: getattr(concept, "stage_name", "Unknown"),
-            ContextKey.MODULE_NAME.value: getattr(concept, "module_name", "Unknown"),
-        }
-        
-        # 为每个 Concept 创建 3 个并行任务（使用枚举确保节点名称正确）
-        concept_state = {
-            StateKey.CONCEPT.value: concept,
-            StateKey.CONTEXT.value: context,
-            StateKey.ROADMAP_ID.value: roadmap_id,
-            StateKey.USER_PREFERENCES.value: user_preferences,
-            StateKey.TASK_ID.value: task_id,
-            StateKey.TUTORIALS.value: [],
-            StateKey.RESOURCES.value: [],
-            StateKey.QUIZZES.value: [],
-            StateKey.ERRORS.value: [],
-        }
-        
-        sends.append(Send(NodeName.GENERATE_TUTORIAL.value, concept_state))
-        sends.append(Send(NodeName.GENERATE_RESOURCE.value, concept_state))
-        sends.append(Send(NodeName.GENERATE_QUIZ.value, concept_state))
+        # 为每个 Concept 创建子图实例
+        sends.append(Send("single_concept_subgraph", {
+            "concept": concept,
+            "roadmap_id": roadmap_id,
+            "user_preferences": user_preferences,
+            "task_id": task_id,
+            "tutorial": None,
+            "resource": None,
+            "quiz": None,
+            "errors": [],
+            "save_status": {},
+        }))
     
     logger.info(
-        "fan_out_concepts_completed",
+        "outer_fan_out_completed",
         task_id=task_id,
-        total_sends=len(sends),
+        subgraph_instances=len(sends),
     )
     
-    return sends
+    return Command(goto=sends)
 
 
-def build_content_generation_subgraph():
+async def single_concept_subgraph_wrapper(
+    state: dict,
+    config: RunnableConfig,
+) -> dict:
     """
-    构建内容生成子图
+    单 Concept 子图包装器
+    
+    执行单 Concept 子图并返回结果。
+    子图内部会：
+    1. 并发生成 Tutorial、Resource、Quiz
+    2. Fan-In 收集结果并保存元数据
+    3. 返回保存状态
+    
+    Args:
+        state: 单 Concept 状态（由 Send 传递）
+        config: 运行时配置
+        
+    Returns:
+        状态更新字典，包含该 Concept 的结果
+    """
+    task_id = state["task_id"]
+    concept = state["concept"]
+    
+    logger.info(
+        "single_concept_subgraph_executing",
+        task_id=task_id,
+        concept_id=concept.concept_id,
+        concept_name=concept.name,
+    )
+    
+    # 构建并执行单 Concept 子图
+    subgraph = build_single_concept_subgraph()
+    result = await subgraph.ainvoke(state, config)
+    
+    logger.info(
+        "single_concept_subgraph_completed",
+        task_id=task_id,
+        concept_id=concept.concept_id,
+        save_status=result.get("save_status", {}),
+    )
+    
+    # 返回结果到 Reducer（只返回可序列化的字段，避免Celery序列化失败）
+    serializable_result = {
+        "concept_id": concept.concept_id,
+        "save_status": result.get("save_status", {}),
+        # 不返回完整的 Concept 对象，只返回基本信息
+        "concept_name": concept.name,
+    }
+    
+    return {
+        "concept_results": [serializable_result],
+    }
+
+
+async def final_aggregation(
+    state: ContentGenState,
+    config: RunnableConfig,
+) -> dict:
+    """
+    最终汇总节点
+    
+    职责：
+    1. 检查所有 Concept 的元数据是否保存成功
+    2. 统一更新整个 Framework（批量）
+    3. 更新 Task 最终状态
+    4. 发送工作流完成通知
+    
+    注意：
+    - 此节点不保存单个元数据（已在各子图的 Fan-In 中完成）
+    - 只负责批量更新 Framework 和最终状态
+    
+    Args:
+        state: 外层子图状态，包含所有 Concept 的结果
+        config: 运行时配置
+        
+    Returns:
+        状态更新字典
+    """
+    ctx: RuntimeContext = config["configurable"]["runtime_context"]
+    
+    concept_results = state["concept_results"]
+    roadmap_id = state["roadmap_id"]
+    task_id = state["task_id"]
+    
+    logger.info(
+        "final_aggregation_started",
+        task_id=task_id,
+        roadmap_id=roadmap_id,
+        total_concepts=len(concept_results),
+    )
+    
+    # 检查元数据保存状态
+    all_saved = all(
+        result.get("save_status", {}).get("metadata_saved", False)
+        for result in concept_results
+    )
+    
+    failed_concepts = [
+        result.get("save_status", {}).get("concept_id")
+        for result in concept_results
+        if not result.get("save_status", {}).get("metadata_saved", False)
+    ]
+    
+    logger.info(
+        "final_aggregation_metadata_check",
+        task_id=task_id,
+        all_saved=all_saved,
+        failed_count=len(failed_concepts),
+        failed_concepts=failed_concepts,
+    )
+    
+    # 创建 Handler 并批量更新 Framework
+    # ⚠️ NodeOutputHandler 只接受 state_manager 参数
+    handler = ContentHandler(
+        state_manager=ctx.state_manager,
+    )
+    
+    # ✅ 修复：使用 Celery 专用 Session（避免跨进程连接池问题）
+    from app.db.celery_session import get_celery_session
+    
+    async with get_celery_session() as session:
+        # 批量更新 Framework
+        await handler.update_framework_batch(
+            session=session,
+            roadmap_id=roadmap_id,
+            concept_results=concept_results,
+        )
+        
+        # 更新 Task 最终状态
+        final_status = "completed" if all_saved else "partial_failure"
+        await handler.update_task_final_status(
+            session=session,
+            task_id=task_id,
+            status=final_status,
+        )
+        
+        # ✅ get_celery_session() 使用 .begin()，自动 commit/rollback
+    
+    # 发送工作流完成通知
+    await ctx.notification_service.publish_completed(
+        task_id=task_id,
+        roadmap_id=roadmap_id,
+        tutorials_count=len([
+            r for r in concept_results
+            if r.get("save_status", {}).get("tutorial") == "success"
+        ]),
+        failed_count=len(failed_concepts),
+    )
+    
+    logger.info(
+        "final_aggregation_completed",
+        task_id=task_id,
+        roadmap_id=roadmap_id,
+        final_status=final_status,
+    )
+    
+    return {
+        "all_concepts_saved": all_saved,
+        "failed_concepts": failed_concepts,
+    }
+
+
+def build_content_generation_subgraph(checkpointer=None):
+    """
+    构建外层内容生成子图（双 Checkpointer 架构）
     
     架构：
-    1. fan_out 节点：动态创建并行任务（Send API）
-    2. generate_tutorial/resource/quiz：并行执行（含 RetryPolicy）
-    3. 自动合并结果（Reducer）
+    1. START → outer_fan_out（外层 Fan-Out）
+    2. outer_fan_out → single_concept_subgraph（N 个并行子图实例）
+    3. single_concept_subgraph → 自动 Reduce（LangGraph 自动汇总）
+    4. Reduce → final_aggregation（最终汇总）
+    5. final_aggregation → END
+    
+    双 Checkpointer 架构：
+    - 子图使用独立的 checkpointer（命名空间：child_graph）
+    - 与父图共享 thread_id，实现逻辑关联
+    - 子图可以独立记录并发任务进度，支持细粒度断点续传
+    
+    Args:
+        checkpointer: 子图专用的 checkpointer（独立于父图）
     
     Returns:
         编译后的子图
     """
     builder = StateGraph(ContentGenState)
     
-    # 添加 fan_out 节点（不需要 RetryPolicy）
-    builder.add_node(NodeName.FAN_OUT.value, fan_out_concepts)
+    # 添加外层 Fan-Out 节点
+    builder.add_node("outer_fan_out", outer_fan_out)
     
-    # 添加并行执行节点（含 RetryPolicy）
-    builder.add_node(
-        NodeName.GENERATE_TUTORIAL.value,
-        generate_tutorial_for_concept,
-        retry=LLM_RETRY_POLICY,  # Tutorial 生成使用 LLM
+    # 添加单 Concept 子图包装器节点（无需 RetryPolicy，子图内部已有）
+    builder.add_node("single_concept_subgraph", single_concept_subgraph_wrapper)
+    
+    # 添加最终汇总节点
+    builder.add_node("final_aggregation", final_aggregation)
+    
+    # 定义流程
+    builder.add_edge(START, "outer_fan_out")
+    # outer_fan_out 返回 Command，LangGraph 自动路由到 single_concept_subgraph
+    # 所有子图完成后，Reducer 自动汇总结果
+    builder.add_edge("single_concept_subgraph", "final_aggregation")
+    builder.add_edge("final_aggregation", END)
+    
+    # ✅ 编译子图时传入独立的 checkpointer（双 Checkpointer 架构）
+    subgraph = builder.compile(checkpointer=checkpointer)
+    
+    logger.info(
+        "content_generation_subgraph_built_v3_dual_checkpointer",
+        has_checkpointer=checkpointer is not None,
+        namespace="child_graph" if checkpointer else None,
+        architecture="dual_checkpointer",
     )
-    builder.add_node(
-        NodeName.GENERATE_RESOURCE.value,
-        generate_resource_for_concept,
-        retry=TAVILY_RETRY_POLICY,  # Resource 推荐使用 Tavily 搜索
-    )
-    builder.add_node(
-        NodeName.GENERATE_QUIZ.value,
-        generate_quiz_for_concept,
-        retry=LLM_RETRY_POLICY,  # Quiz 生成使用 LLM
-    )
-    
-    # 定义边：START -> fan_out -> 动态并行节点 -> END
-    builder.add_edge(START, NodeName.FAN_OUT.value)
-    builder.add_conditional_edges(NodeName.FAN_OUT.value, fan_out_concepts)
-    
-    # 所有并行节点完成后自动流向 END
-    builder.add_edge(NodeName.GENERATE_TUTORIAL.value, END)
-    builder.add_edge(NodeName.GENERATE_RESOURCE.value, END)
-    builder.add_edge(NodeName.GENERATE_QUIZ.value, END)
-    
-    # 编译子图（不传递 checkpointer，会自动继承父图的）
-    subgraph = builder.compile()
-    
-    logger.info("content_generation_subgraph_built")
     
     return subgraph
 
+
+# ========== 向后兼容：导出旧版本的生成函数 ==========
+# 这些函数已移至 content_generation_shared.py
+# 为了保持向后兼容，从共享模块导出
+
+from .content_generation_shared import (
+    generate_tutorial_for_concept,
+    generate_resource_for_concept,
+    generate_quiz_for_concept,
+    ContentGenState as LegacyContentGenState,
+)
+
+__all__ = [
+    "build_content_generation_subgraph",
+    "ContentGenState",
+    "generate_tutorial_for_concept",
+    "generate_resource_for_concept",
+    "generate_quiz_for_concept",
+]

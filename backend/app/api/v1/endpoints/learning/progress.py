@@ -11,7 +11,7 @@
 from typing import Annotated, List
 from fastapi import APIRouter, Depends
 
-from app.api.v1.deps import CurrentSessionTransaction, get_current_user_id_flexible
+from app.api.v1.deps import CurrentSession, CurrentSessionTransaction, get_current_user_id_flexible
 from app.services.learning.progress_service import ProgressService, get_progress_service
 from app.models.domain import (
     ConceptProgressUpdate,
@@ -80,7 +80,7 @@ async def update_concept_progress(
 )
 async def get_roadmap_progress(
     roadmap_id: str,
-    db: CurrentSessionTransaction,  # ✅ 使用CurrentSessionTransaction
+    db: CurrentSession,  # ✅ GET请求使用只读Session
     user_id: str = Depends(get_current_user_id_flexible),
     service: CurrentProgressService = None,
 ) -> ResponseSchemaModel[List[ConceptProgressResponse]]:

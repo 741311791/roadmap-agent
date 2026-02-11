@@ -8,7 +8,6 @@
 export { useRoadmap } from './use-roadmap';
 export { useRoadmapList } from './use-roadmap-list';
 export { useRoadmapGeneration } from './use-roadmap-generation';
-export { useTaskStatus } from './use-task-status';
 
 // 内容相关
 export { useTutorial } from './use-tutorial';
@@ -22,7 +21,3 @@ export {
 
 // 用户相关
 export { useUserProfile, useUpdateUserProfile } from './use-user-profile';
-
-// 伴学Agent相关
-export { useMentorChat } from './use-mentor-chat';
-export type { ChatMessage, ChatSession, LearningNote } from './use-mentor-chat';

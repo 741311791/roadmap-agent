@@ -28,9 +28,8 @@ import { Badge } from '@/components/ui/badge';
 import { Key, Plus, Trash2, Loader2, RefreshCw, Upload } from 'lucide-react';
 import {
   getTavilyAPIKeys,
-  addTavilyAPIKey,
   batchAddTavilyAPIKeys,
-  deleteTavilyAPIKey,
+  batchDeleteTavilyAPIKeys,
   refreshTavilyQuota,
   type TavilyAPIKeyInfo,
   type AddTavilyAPIKeyRequest,
@@ -96,7 +95,7 @@ export default function APIKeysManagementPage() {
   };
 
   /**
-   * 添加单个 API Key
+   * 添加单个 API Key（使用批量接口）
    */
   const handleAddKey = async () => {
     if (!newKey.trim()) {
@@ -105,9 +104,11 @@ export default function APIKeysManagementPage() {
 
     try {
       setIsAdding(true);
-      await addTavilyAPIKey({
-        api_key: newKey.trim(),
-        plan_limit: parseInt(newPlanLimit) || 1000,
+      await batchAddTavilyAPIKeys({
+        keys: [{
+          api_key: newKey.trim(),
+          plan_limit: parseInt(newPlanLimit) || 1000,
+        }],
       });
       
       // 重新加载列表
@@ -180,12 +181,14 @@ export default function APIKeysManagementPage() {
   };
 
   /**
-   * 删除 API Key
+   * 删除 API Key（使用批量接口）
    */
   const handleDeleteKey = async (apiKey: string) => {
     try {
       setIsDeleting(true);
-      await deleteTavilyAPIKey(apiKey);
+      await batchDeleteTavilyAPIKeys({
+        api_keys: [apiKey],
+      });
       
       // 重新加载列表
       await loadKeys();
@@ -214,10 +217,9 @@ export default function APIKeysManagementPage() {
       // 显示结果
       alert(
         `Quota refresh completed!\n\n` +
-        `Total Keys: ${result.total_keys}\n` +
         `Success: ${result.success}\n` +
-        `Failed: ${result.failed}\n` +
-        `Time: ${result.elapsed_seconds.toFixed(2)}s`
+        `Failed: ${result.failed}` +
+        (result.errors.length > 0 ? `\n\nErrors:\n${result.errors.map(e => `- ${e.api_key}: ${e.error}`).join('\n')}` : '')
       );
     } catch (err) {
       console.error('Failed to refresh quota:', err);

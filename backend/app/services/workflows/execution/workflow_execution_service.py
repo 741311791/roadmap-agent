@@ -11,13 +11,14 @@
 - Service 层：业务逻辑编排、状态管理、数据持久化、通知发送
 - Task 层：异步任务调度、事件循环管理
 """
+import asyncio
 import structlog
 from typing import Optional
 from datetime import datetime
 
 from app.core.orchestrator_factory import OrchestratorFactory
 from app.services.shared.notification_service import notification_service
-from app.models.constants import TaskStatus
+from app.models.constants import TaskStatus, WorkflowStep
 from app.models.domain import UserRequest, LearningPreferences
 from app.db.celery_session import get_celery_session
 from app.crud.crud_task import get_task_crud
@@ -90,14 +91,14 @@ class WorkflowExecutionService:
                     session=session,
                     task_id=task_id,
                     status=TaskStatus.PROCESSING.value,
-                    current_step="queued",
+                    current_step=WorkflowStep.QUEUED.value,
                 )
                 # ✅ 不需要手动 commit，get_celery_session() 自动处理
             
             # ===== 步骤3: 发送 WebSocket 通知 =====
             await notification_service.publish_progress(
                 task_id=task_id,
-                step="queued",
+                step=WorkflowStep.QUEUED.value,
                 status=TaskStatus.PROCESSING.value,
             )
             
@@ -143,10 +144,10 @@ class WorkflowExecutionService:
             
             # ===== 步骤7: 判断最终状态 =====
             roadmap_id = final_state.get("roadmap_id")
-            current_step = final_state.get("current_step", "completed")
+            current_step = final_state.get("current_step", WorkflowStep.COMPLETED.value)
             
             # 判断任务状态
-            if current_step == "human_review":
+            if current_step == WorkflowStep.HUMAN_REVIEW.value:
                 # 工作流在人工审核处暂停
                 status = TaskStatus.HUMAN_REVIEW
                 success = True
@@ -155,8 +156,35 @@ class WorkflowExecutionService:
                     task_id=task_id,
                     roadmap_id=roadmap_id,
                 )
-            elif current_step == "completed":
-                # 工作流完成
+            elif current_step == WorkflowStep.CONTENT_GENERATION_QUEUED.value:
+                # ✅ 主工作流完成，内容生成已入队（独立 Worker 执行）
+                # 这种情况不应该在 execute_workflow 中出现，仅在 resume_after_review 中
+                status = TaskStatus.PROCESSING
+                success = True
+                logger.info(
+                    "main_workflow_completed_content_queued_from_execute",
+                    task_id=task_id,
+                    roadmap_id=roadmap_id,
+                    current_step=current_step,
+                    message="主工作流完成，内容生成已入队（独立 Worker 执行）",
+                )
+            elif current_step == WorkflowStep.STRUCTURE_VALIDATION.value and roadmap_id:
+                # ✅ 主工作流在验证阶段正常结束
+                # 场景1: 验证通过且SKIP_HUMAN_REVIEW=true
+                # 场景2: 验证失败但达到最大重试次数且SKIP_HUMAN_REVIEW=true
+                # 此时路线图框架已生成并保存，主工作流正常完成
+                # TaskStatus应保持为PROCESSING（等待内容生成），不是COMPLETED
+                status = TaskStatus.PROCESSING
+                success = True
+                logger.info(
+                    "framework_generation_completed",
+                    task_id=task_id,
+                    roadmap_id=roadmap_id,
+                    current_step=current_step,
+                    message="主工作流完成（框架已生成），等待内容生成",
+                )
+            elif current_step == WorkflowStep.COMPLETED.value:
+                # 整体任务完成（框架 + 内容生成都完成）
                 status = TaskStatus.COMPLETED
                 success = True
                 logger.info(
@@ -165,13 +193,14 @@ class WorkflowExecutionService:
                     roadmap_id=roadmap_id,
                 )
             else:
-                # 其他情况视为部分完成
+                # 其他情况视为异常中断
                 status = TaskStatus.PARTIAL_FAILURE
                 success = False
                 logger.warning(
                     "workflow_incomplete",
                     task_id=task_id,
                     current_step=current_step,
+                    roadmap_id=roadmap_id,
                 )
             
             return {
@@ -190,10 +219,9 @@ class WorkflowExecutionService:
             )
             raise
             
-        finally:
-            # 清理 Orchestrator Factory
-            if factory:
-                await factory.cleanup()
+        # ⚠️ 不要在这里清理 Factory！
+        # OrchestratorFactory 是全局单例，应该在应用生命周期内保持
+        # 只在应用关闭时清理（main.py 的 shutdown 事件）
     
     async def update_task_final_status(
         self,
@@ -217,7 +245,7 @@ class WorkflowExecutionService:
                 task = await task_crud.get_by_task_id(session, task_id)
                 if task:
                     task.status = result.get("status", TaskStatus.COMPLETED.value)
-                    task.current_step = result.get("current_step", "completed")
+                    task.current_step = result.get("current_step", WorkflowStep.COMPLETED.value)
                     task.roadmap_id = result.get("roadmap_id")
                     session.add(task)
                     # ✅ 不需要手动 commit，get_celery_session() 自动处理
@@ -319,14 +347,14 @@ class WorkflowExecutionService:
                     session=session,
                     task_id=task_id,
                     status=TaskStatus.PROCESSING.value,
-                    current_step="resuming",
+                    current_step=WorkflowStep.STARTING.value,
                 )
                 # ✅ 不需要手动 commit，get_celery_session() 自动处理
             
             # 发送 WebSocket 通知
             await notification_service.publish_progress(
                 task_id=task_id,
-                step="resuming",
+                step=WorkflowStep.STARTING.value,
                 status=TaskStatus.PROCESSING.value,
                 message="Resuming workflow after review...",
             )
@@ -339,18 +367,44 @@ class WorkflowExecutionService:
             executor = factory.create_workflow_executor()
             
             # 从 checkpoint 恢复工作流（人工审核后）
-            final_state = await executor.resume_after_human_review(
-                task_id=task_id,
-                approved=approved,
-                feedback=feedback,
-            )
+            # ✅ 添加重试机制（应对阿里云RDS网络抖动）
+            max_retries = 3
+            retry_delay = 5  # 秒
+            
+            for attempt in range(max_retries):
+                try:
+                    final_state = await executor.resume_after_human_review(
+                        task_id=task_id,
+                        approved=approved,
+                        feedback=feedback,
+                    )
+                    break  # 成功则跳出循环
+                except Exception as e:
+                    error_msg = str(e)
+                    is_timeout = "timeout" in error_msg.lower() or "could not receive data" in error_msg.lower()
+                    
+                    if is_timeout and attempt < max_retries - 1:
+                        logger.warning(
+                            "resume_workflow_retry",
+                            task_id=task_id,
+                            attempt=attempt + 1,
+                            max_retries=max_retries,
+                            error=error_msg,
+                            retry_in_seconds=retry_delay,
+                        )
+                        await asyncio.sleep(retry_delay)
+                        continue  # 重试
+                    else:
+                        # 最后一次失败或非超时错误，抛出异常
+                        raise
             
             # 检查最终状态
             roadmap_id = final_state.get("roadmap_id")
-            current_step = final_state.get("current_step", "completed")
+            current_step = final_state.get("current_step", WorkflowStep.CONTENT_GENERATION_QUEUED.value)
+            human_approved = final_state.get("human_approved", False)
             
-            # 判断任务状态
-            if current_step == "human_review":
+            # 判断任务状态（优先检查 human_approved 标志）
+            if current_step == WorkflowStep.HUMAN_REVIEW.value and not human_approved:
                 # 用户拒绝后，工作流再次暂停在人工审核
                 status = TaskStatus.HUMAN_REVIEW
                 success = True
@@ -359,14 +413,18 @@ class WorkflowExecutionService:
                     task_id=task_id,
                     roadmap_id=roadmap_id,
                 )
-            elif current_step == "completed":
-                # 工作流完成
-                status = TaskStatus.COMPLETED
+            elif current_step == WorkflowStep.CONTENT_GENERATION_QUEUED.value or human_approved:
+                # ✅ 批准后主工作流结束，内容生成已入队（独立 Celery Worker）
+                # ⚠️ 任务状态为 PROCESSING（等待内容生成），不是 COMPLETED
+                status = TaskStatus.PROCESSING
                 success = True
                 logger.info(
-                    "workflow_completed_after_review",
+                    "main_workflow_completed_content_queued",
                     task_id=task_id,
                     roadmap_id=roadmap_id,
+                    approved=human_approved,
+                    current_step=current_step,
+                    message="主工作流完成，内容生成已入队（独立 Worker 执行）",
                 )
             else:
                 # 其他情况视为部分完成
@@ -394,10 +452,9 @@ class WorkflowExecutionService:
             )
             raise
             
-        finally:
-            # 清理 Orchestrator Factory
-            if factory:
-                await factory.cleanup()
+        # ⚠️ 不要在这里清理 Factory！
+        # OrchestratorFactory 是全局单例，应该在应用生命周期内保持
+        # 只在应用关闭时清理（main.py 的 shutdown 事件）
     
     async def resume_workflow_from_checkpoint(
         self,
@@ -431,7 +488,7 @@ class WorkflowExecutionService:
                     session=session,
                     task_id=task_id,
                     status=TaskStatus.PROCESSING.value,
-                    current_step="resuming",
+                    current_step=WorkflowStep.STARTING.value,
                 )
                 # ✅ 不需要手动 commit，get_celery_session() 自动处理
             
@@ -443,7 +500,7 @@ class WorkflowExecutionService:
             )
             await notification_service.publish_progress(
                 task_id=task_id,
-                step="resuming",
+                step=WorkflowStep.STARTING.value,
                 status=TaskStatus.PROCESSING.value,
                 message=message,
                 details={"mode": mode, "checkpoint_id": checkpoint_id},
@@ -468,15 +525,76 @@ class WorkflowExecutionService:
                     checkpoint_id=checkpoint_id,
                 )
             
+            # ✅ 双 Checkpointer 架构：恢复前检查子图状态
+            child_checkpointer = factory.get_child_checkpointer()
+            
+            try:
+                child_state_before = await child_checkpointer.aget(config)
+                is_subgraph_before = child_state_before is not None and hasattr(child_state_before, "tasks") and bool(child_state_before.tasks)
+                
+                if is_subgraph_before:
+                    tasks = child_state_before.tasks or []
+                    completed = [t for t in tasks if isinstance(t, dict) and t.get("status") == "completed"]
+                    pending = [t for t in tasks if isinstance(t, dict) and t.get("status") != "completed"]
+                    
+                    logger.info(
+                        "resuming_with_subgraph_state",
+                        task_id=task_id,
+                        mode=mode,
+                        completed_count=len(completed),
+                        pending_count=len(pending),
+                        message="子图将自动跳过已完成的节点",
+                    )
+            except Exception as e:
+                logger.warning(
+                    "failed_to_check_subgraph_state_before_resume",
+                    task_id=task_id,
+                    error=str(e),
+                )
+                is_subgraph_before = False
+            
             # 直接调用 graph.ainvoke，不传入初始状态
+            # LangGraph 会自动处理：
+            # 1. 主图从 parent_checkpointer 恢复
+            # 2. 如果进入 content_generation，子图从 child_checkpointer 恢复
+            # 3. 跳过已完成的节点，只执行失败的部分
             final_state = await executor.graph.ainvoke(None, config=config)
+            
+            # ✅ 双 Checkpointer 架构：恢复后验证子图状态
+            try:
+                child_state_after = await child_checkpointer.aget(config)
+                is_subgraph_after = child_state_after is not None and hasattr(child_state_after, "tasks") and bool(child_state_after.tasks)
+                
+                if is_subgraph_before and not is_subgraph_after:
+                    logger.info(
+                        "subgraph_resume_successful",
+                        task_id=task_id,
+                        message="子图已成功完成所有节点",
+                    )
+                elif is_subgraph_after:
+                    tasks_after = child_state_after.tasks or []
+                    pending_after = [t for t in tasks_after if isinstance(t, dict) and t.get("status") != "completed"]
+                    
+                    if pending_after:
+                        logger.warning(
+                            "subgraph_still_has_pending_nodes",
+                            task_id=task_id,
+                            pending_count=len(pending_after),
+                            message="子图仍有未完成的节点，可能需要继续重试",
+                        )
+            except Exception as e:
+                logger.warning(
+                    "failed_to_verify_subgraph_state_after_resume",
+                    task_id=task_id,
+                    error=str(e),
+                )
             
             # 检查最终状态
             roadmap_id = final_state.get("roadmap_id")
-            current_step = final_state.get("current_step", "completed")
+            current_step = final_state.get("current_step", WorkflowStep.COMPLETED.value)
             
             # 判断任务状态
-            if current_step == "human_review":
+            if current_step == WorkflowStep.HUMAN_REVIEW.value:
                 # 工作流在人工审核处暂停
                 status = TaskStatus.HUMAN_REVIEW
                 success = True
@@ -485,7 +603,7 @@ class WorkflowExecutionService:
                     task_id=task_id,
                     roadmap_id=roadmap_id,
                 )
-            elif current_step == "completed":
+            elif current_step == WorkflowStep.COMPLETED.value:
                 # 工作流完成
                 status = TaskStatus.COMPLETED
                 success = True
@@ -520,10 +638,9 @@ class WorkflowExecutionService:
             )
             raise
             
-        finally:
-            # 清理 Orchestrator Factory
-            if factory:
-                await factory.cleanup()
+        # ⚠️ 不要在这里清理 Factory！
+        # OrchestratorFactory 是全局单例，应该在应用生命周期内保持
+        # 只在应用关闭时清理（main.py 的 shutdown 事件）
 
 
 # 依赖注入工厂

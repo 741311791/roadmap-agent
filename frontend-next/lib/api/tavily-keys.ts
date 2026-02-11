@@ -68,6 +68,21 @@ export interface BatchAddTavilyKeysResponse {
 }
 
 /**
+ * 批量删除 Tavily API Keys 响应
+ */
+export interface BatchDeleteTavilyKeysResponse {
+  /** 成功删除的数量 */
+  success: number;
+  /** 失败的数量 */
+  failed: number;
+  /** 失败详情列表 */
+  errors: Array<{
+    api_key: string;
+    error: string;
+  }>;
+}
+
+/**
  * 更新 Tavily API Key 配额请求
  */
 export interface UpdateTavilyAPIKeyRequest {
@@ -88,17 +103,18 @@ export interface DeleteTavilyAPIKeyResponse {
 }
 
 /**
- * 刷新配额响应
+ * 刷新配额响应（与批量更新响应相同）
  */
 export interface RefreshQuotaResponse {
   /** 成功更新的数量 */
   success: number;
   /** 失败的数量 */
   failed: number;
-  /** 总 Key 数量 */
-  total_keys: number;
-  /** 耗时（秒） */
-  elapsed_seconds: number;
+  /** 失败详情列表 */
+  errors: Array<{
+    api_key: string;
+    error: string;
+  }>;
 }
 
 // ==================== API 函数 ====================
@@ -110,23 +126,7 @@ export interface RefreshQuotaResponse {
  */
 export async function getTavilyAPIKeys(): Promise<TavilyAPIKeyListResponse> {
   const response = await apiClient.get<TavilyAPIKeyListResponse>(
-    '/admin/tavily-keys'
-  );
-  return response.data;
-}
-
-/**
- * 添加单个 Tavily API Key
- * 
- * @param request - 添加请求
- * @returns 添加的 Tavily API Key 信息
- */
-export async function addTavilyAPIKey(
-  request: AddTavilyAPIKeyRequest
-): Promise<TavilyAPIKeyInfo> {
-  const response = await apiClient.post<TavilyAPIKeyInfo>(
-    '/admin/tavily-keys',
-    request
+    '/admin/tavily/keys'
   );
   return response.data;
 }
@@ -141,41 +141,52 @@ export async function batchAddTavilyAPIKeys(
   request: BatchAddTavilyKeysRequest
 ): Promise<BatchAddTavilyKeysResponse> {
   const response = await apiClient.post<BatchAddTavilyKeysResponse>(
-    '/admin/tavily-keys/batch',
+    '/admin/tavily/keys/batch',
     request
   );
   return response.data;
 }
 
 /**
- * 更新 Tavily API Key 配额
+ * 批量更新 Tavily API Keys 配额
  * 
- * @param apiKey - API Key
- * @param request - 更新请求
- * @returns 更新后的 Tavily API Key 信息
+ * @param request - 批量更新请求（包含待更新的API Keys列表）
+ * @returns 批量更新结果
  */
-export async function updateTavilyAPIKey(
-  apiKey: string,
-  request: UpdateTavilyAPIKeyRequest
-): Promise<TavilyAPIKeyInfo> {
-  const response = await apiClient.put<TavilyAPIKeyInfo>(
-    `/admin/tavily-keys/${encodeURIComponent(apiKey)}`,
+export interface BatchUpdateTavilyKeysResponse {
+  /** 成功更新的数量 */
+  success: number;
+  /** 失败的数量 */
+  failed: number;
+  /** 失败详情列表 */
+  errors: Array<{
+    api_key: string;
+    error: string;
+  }>;
+}
+
+export async function batchUpdateTavilyAPIKeys(
+  request: { api_keys: string[] }
+): Promise<BatchUpdateTavilyKeysResponse> {
+  const response = await apiClient.post<BatchUpdateTavilyKeysResponse>(
+    '/admin/tavily/keys/batch-update',
     request
   );
   return response.data;
 }
 
 /**
- * 删除 Tavily API Key
+ * 批量删除 Tavily API Keys
  * 
- * @param apiKey - API Key
- * @returns 删除结果
+ * @param request - 批量删除请求（包含待删除的API Keys列表）
+ * @returns 批量删除结果
  */
-export async function deleteTavilyAPIKey(
-  apiKey: string
-): Promise<DeleteTavilyAPIKeyResponse> {
-  const response = await apiClient.delete<DeleteTavilyAPIKeyResponse>(
-    `/admin/tavily-keys/${encodeURIComponent(apiKey)}`
+export async function batchDeleteTavilyAPIKeys(
+  request: { api_keys: string[] }
+): Promise<BatchDeleteTavilyKeysResponse> {
+  const response = await apiClient.post<BatchDeleteTavilyKeysResponse>(
+    '/admin/tavily/keys/batch-delete',
+    request
   );
   return response.data;
 }
@@ -189,7 +200,7 @@ export async function deleteTavilyAPIKey(
  */
 export async function refreshTavilyQuota(): Promise<RefreshQuotaResponse> {
   const response = await apiClient.post<RefreshQuotaResponse>(
-    '/admin/tavily-keys/refresh-quota'
+    '/admin/tavily/keys/refresh-quota'
   );
   return response.data;
 }

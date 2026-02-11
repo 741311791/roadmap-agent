@@ -29,13 +29,6 @@ def ws_client():
 
 
 @pytest.fixture
-async def test_session():
-    """创建测试数据库会话"""
-    async for session in get_session():
-        yield session
-
-
-@pytest.fixture
 async def test_user(test_session: AsyncSession):
     """创建测试用户"""
     user = User(
@@ -75,7 +68,7 @@ def valid_jwt_token(test_user: User):
         "sub": str(test_user.id),
         "email": test_user.email,
         "aud": ["fastapi-users:auth"],
-        "exp": datetime.utcnow() + timedelta(hours=1),
+        "exp": datetime.now(timezone.utc) + timedelta(hours=1),
     }
     
     # 注意：实际生成token可能需要使用strategy的方法
@@ -188,7 +181,7 @@ async def test_websocket_authentication_expired_token(ws_client: TestClient):
         "sub": str(uuid.uuid4()),
         "email": "test@example.com",
         "aud": ["fastapi-users:auth"],
-        "exp": datetime.utcnow() - timedelta(hours=1),  # 已过期
+        "exp": datetime.now(timezone.utc) - timedelta(hours=1),  # 已过期
     }
     
     expired_token = jwt.encode(

@@ -11,14 +11,17 @@
  */
 
 import React from 'react';
+import { useTranslations } from 'next-intl';
 import { motion } from 'motion/react';
 import { WorkflowAnimation } from './workflow-animation';
 import { WaitlistForm } from '@/components/ui/waitlist-form';
 import { joinWaitlist } from '@/lib/api/endpoints';
 
 export function HeroSection() {
+  const t = useTranslations('hero');
+  
   const handleJoin = async (email: string) => {
-    await joinWaitlist({ email, source: 'hero_section' });
+    await joinWaitlist(email);
   };
 
   return (
@@ -65,9 +68,9 @@ export function HeroSection() {
             transition={{ duration: 0.6, delay: 0.2 }}
             className="text-5xl md:text-6xl lg:text-7xl font-serif font-semibold text-foreground leading-tight mb-6"
           >
-            Master Any Skill
+            {t('title')}
             <br />
-            <span className="text-sage italic">Faster Than Ever</span>
+            <span className="text-sage italic">{t('titleHighlight')}</span>
           </motion.h1>
 
           {/* 副标题 */}
@@ -77,7 +80,7 @@ export function HeroSection() {
             transition={{ duration: 0.6, delay: 0.4 }}
             className="text-xl text-muted-foreground max-w-xl mx-auto lg:mx-0 mb-10 leading-relaxed"
           >
-            AI creates personalized learning roadmaps that adapt to your goals, experience, and learning style.
+            {t('subtitle')}
           </motion.p>
 
           {/* Email Waitlist Form */}
@@ -90,7 +93,7 @@ export function HeroSection() {
             <WaitlistForm onSubmit={handleJoin} className="w-full" />
             
             <p className="text-sm text-muted-foreground mt-4 text-center lg:text-left pl-2">
-              Join 2,400+ learners building their future
+              {t('joinCount')}
             </p>
           </motion.div>
         </div>

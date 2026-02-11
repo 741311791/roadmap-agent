@@ -1,520 +1,38 @@
 """
-Curriculum Architect Agent（课程架构师）
+Curriculum Architect Agent(课程架构师)
 """
-import json
-import re
-import uuid
-import yaml
-from typing import AsyncIterator
 from app.agents.base import BaseAgent
+from app.agents.framework_normalizer import normalize_framework_ids
 from app.models.domain import (
-    IntentAnalysisOutput,
-    LearningPreferences,
     CurriculumDesignInput,
     CurriculumDesignOutput,
+    SimplifiedRoadmapFramework,
     RoadmapFramework,
+    Stage,
+    Module,
+    Concept,
 )
 from app.config.settings import settings
 import structlog
+from typing import Dict, List, Set, Tuple
 
 logger = structlog.get_logger()
-
-
-def _try_extract_yaml(content: str) -> str | None:
-    """
-    尝试从内容中提取 YAML
-    
-    支持：
-    1. 直接的 YAML 内容
-    2. 被 ```yaml ... ``` 包裹的 YAML
-    3. 被 ``` ... ``` 包裹的 YAML
-    
-    Returns:
-        提取的 YAML 字符串，如果没找到则返回 None
-    """
-    content = content.strip()
-    
-    # 情况1: 被 ```yaml 包裹
-    if "```yaml" in content or "```yml" in content:
-        start_marker = "```yaml" if "```yaml" in content else "```yml"
-        start = content.find(start_marker)
-        if start != -1:
-            start += len(start_marker)
-            end = content.find("```", start)
-            if end != -1:
-                yaml_content = content[start:end].strip()
-                logger.debug("yaml_extracted_from_code_block", format="yaml")
-                return yaml_content
-    
-    # 情况2: 被 ``` 包裹（尝试解析为YAML）
-    if content.startswith("```") and content.count("```") >= 2:
-        start = content.find("```")
-        # 跳过第一行的 ``` 标记
-        start = content.find("\n", start) + 1
-        end = content.find("```", start)
-        if end != -1:
-            yaml_content = content[start:end].strip()
-            # 简单检查是否像YAML（包含冒号和换行）
-            if ":" in yaml_content and "\n" in yaml_content:
-                logger.debug("yaml_extracted_from_generic_code_block")
-                return yaml_content
-    
-    # 情况3: 直接的YAML内容（启发式检测）
-    # YAML通常以键值对开始，检查是否有顶层字段
-    lines = content.split("\n")
-    if lines and any(line.strip().startswith(key + ":") for line in lines[:10] 
-                     for key in ["roadmap_id", "title", "stages"]):
-        logger.debug("yaml_detected_as_plain_text")
-        return content
-    
-    return None
-
-
-def _sanitize_yaml_special_chars(yaml_content: str) -> str:
-    """
-    预处理 YAML 内容，修复 LLM 生成的 YAML 中可能存在的特殊字符问题
-    
-    主要处理：
-    1. YAML 数组中未引号包裹的 @ 开头的值（如 @Cacheable）
-    2. 其他 YAML 特殊字符（如 *, &, ! 等）
-    
-    Args:
-        yaml_content: 原始 YAML 字符串
-        
-    Returns:
-        修复后的 YAML 字符串
-    """
-    # 匹配 YAML 数组中以 @ 开头的未引号项：[..., @xxx, ...] 或 [..., @xxx]
-    # 将其转换为引号包裹的形式：[..., "@xxx", ...]
-    
-    def quote_special_array_item(match):
-        """为数组中的特殊字符项添加引号"""
-        prefix = match.group(1)  # 逗号或左括号
-        item = match.group(2)    # 特殊字符开头的项
-        suffix = match.group(3)  # 逗号或右括号
-        return f'{prefix}"{item}"{suffix}'
-    
-    # 处理 @ 开头的数组项（常见于 Java 注解如 @Cacheable）
-    # 模式：匹配 [xxx, @yyy, zzz] 中的 @yyy
-    yaml_content = re.sub(
-        r'(\[|\,\s*)(@[\w\-\.]+)(\s*[\],])',
-        quote_special_array_item,
-        yaml_content
-    )
-    
-    # 处理 * 开头的数组项（如 *args）
-    yaml_content = re.sub(
-        r'(\[|\,\s*)(\*[\w\-\.]+)(\s*[\],])',
-        quote_special_array_item,
-        yaml_content
-    )
-    
-    # 处理 & 开头的数组项（如 &ref）
-    yaml_content = re.sub(
-        r'(\[|\,\s*)(\&[\w\-\.]+)(\s*[\],])',
-        quote_special_array_item,
-        yaml_content
-    )
-    
-    # 处理 ! 开头的数组项（如 !important）
-    yaml_content = re.sub(
-        r'(\[|\,\s*)(\![\w\-\.]+)(\s*[\],])',
-        quote_special_array_item,
-        yaml_content
-    )
-    
-    return yaml_content
-
-
-def _parse_yaml_roadmap(yaml_content: str) -> dict:
-    """
-    解析 YAML 格式的路线图
-    
-    Args:
-        yaml_content: YAML 字符串
-        
-    Returns:
-        包含 framework 和 design_rationale 的字典
-        
-    Raises:
-        ValueError: YAML 解析失败
-    """
-    try:
-        # 预处理 YAML 内容，修复特殊字符问题
-        sanitized_content = _sanitize_yaml_special_chars(yaml_content)
-        
-        if sanitized_content != yaml_content:
-            logger.debug(
-                "yaml_content_sanitized",
-                original_length=len(yaml_content),
-                sanitized_length=len(sanitized_content),
-            )
-        
-        data = yaml.safe_load(sanitized_content)
-        
-        if not isinstance(data, dict):
-            raise ValueError(f"YAML 解析结果不是字典: {type(data)}")
-        
-        # 提取 design_rationale
-        design_rationale = data.pop("design_rationale", "")
-        
-        # 确保必填字段存在
-        required_fields = ["roadmap_id", "title", "stages"]
-        missing_fields = [f for f in required_fields if f not in data]
-        if missing_fields:
-            raise ValueError(f"YAML 缺少必填字段: {missing_fields}")
-        
-        # 确保 stages 是列表
-        if not isinstance(data.get("stages"), list):
-            raise ValueError(f"stages 字段必须是数组，实际类型: {type(data.get('stages'))}")
-        
-        # 补全可选字段
-        if "total_estimated_hours" not in data:
-            # 计算总时长
-            total_hours = 0.0
-            for stage in data.get("stages", []):
-                for module in stage.get("modules", []):
-                    for concept in module.get("concepts", []):
-                        total_hours += concept.get("estimated_hours", 0.0)
-            data["total_estimated_hours"] = total_hours
-        
-        if "recommended_completion_weeks" not in data:
-            # 假设每周学习10小时
-            data["recommended_completion_weeks"] = max(1, int(data.get("total_estimated_hours", 0) / 10))
-        
-        # 补全或修正 stage.order（缺失或无效时自动修正）
-        # 注意：order 必须 >= 1，LLM 可能错误输出 0 或负数
-        for idx, stage in enumerate(data.get("stages", []), start=1):
-            if "order" not in stage or not isinstance(stage.get("order"), int) or stage["order"] < 1:
-                stage["order"] = idx
-        
-        # 补全 concept 的默认字段（如果LLM遗漏）
-        for stage in data.get("stages", []):
-            for module in stage.get("modules", []):
-                for concept in module.get("concepts", []):
-                    # 补全 content_status 等字段
-                    if "content_status" not in concept:
-                        concept["content_status"] = "pending"
-                    if "content_ref" not in concept:
-                        concept["content_ref"] = None
-                    if "content_version" not in concept:
-                        concept["content_version"] = "v1"
-                    if "content_summary" not in concept:
-                        concept["content_summary"] = None
-        
-        logger.info(
-            "yaml_roadmap_parsed",
-            stages_count=len(data.get("stages", [])),
-            roadmap_id=data.get("roadmap_id"),
-        )
-        
-        return {
-            "framework": data,
-            "design_rationale": design_rationale
-        }
-        
-    except yaml.YAMLError as e:
-        logger.error("yaml_parse_error", error=str(e), yaml_content_preview=yaml_content[:500])
-        raise ValueError(f"YAML 解析失败: {e}")
-    except Exception as e:
-        logger.error("yaml_processing_error", error=str(e), error_type=type(e).__name__)
-        raise ValueError(f"YAML 处理失败: {e}")
-
-
-def _try_extract_json(content: str) -> str | None:
-    """
-    尝试从内容中提取JSON
-    
-    支持：
-    1. 直接的JSON对象 { ... }
-    2. 被 ```json ... ``` 包裹的JSON
-    3. 被 ``` ... ``` 包裹的JSON
-    
-    Returns:
-        提取的JSON字符串，如果不是JSON则返回None
-    """
-    content = content.strip()
-    
-    # 尝试1: 检测 ```json ... ``` 或 ``` ... ``` 包裹
-    json_code_block_patterns = [
-        r'```json\s*\n(.*?)\n```',  # ```json ... ```
-        r'```\s*\n(\{.*?\})\s*\n```',  # ``` { ... } ```
-    ]
-    
-    for pattern in json_code_block_patterns:
-        match = re.search(pattern, content, re.DOTALL)
-        if match:
-            json_str = match.group(1).strip()
-            # 验证是否是有效的JSON
-            try:
-                json.loads(json_str)
-                logger.debug("json_extracted_from_code_block", pattern=pattern)
-                return json_str
-            except json.JSONDecodeError:
-                continue
-    
-    # 尝试2: 直接是JSON对象（以 { 开始，以 } 结束）
-    if content.startswith('{') and content.endswith('}'):
-        try:
-            json.loads(content)
-            logger.debug("json_detected_directly")
-            return content
-        except json.JSONDecodeError:
-            pass
-    
-    # 不是JSON格式
-    return None
-
-
-def _parse_json_roadmap(json_str: str) -> dict:
-    """
-    解析JSON格式的路线图，并补全缺失的必需字段
-    
-    Args:
-        json_str: JSON字符串
-        
-    Returns:
-        符合 CurriculumDesignOutput 的字典
-    """
-    try:
-        data = json.loads(json_str)
-        
-        # 处理wrapped格式：{"output": {...}} 或 {"roadmap": {...}}
-        if "stages" not in data:
-            for wrap_key in ["output", "roadmap", "framework", "data", "result"]:
-                if wrap_key in data and isinstance(data[wrap_key], dict):
-                    logger.debug(f"json_unwrapping_from_key", key=wrap_key)
-                    data = data[wrap_key]
-                    break
-        
-        # 再次检查是否包含 stages 字段
-        if "stages" not in data:
-            raise ValueError(f"JSON格式不完整，缺少'stages'字段。实际键: {list(data.keys())}")
-        
-        # 补全 stage.order（如果缺失）
-        for idx, stage in enumerate(data["stages"], start=1):
-            if "order" not in stage:
-                stage["order"] = idx
-                logger.debug("json_补全_stage_order", stage_id=stage.get("stage_id"), order=idx)
-        
-        # 计算 total_estimated_hours（如果缺失）
-        if "total_estimated_hours" not in data or "total_hours" in data:
-            total_hours = 0.0
-            for stage in data["stages"]:
-                for module in stage.get("modules", []):
-                    for concept in module.get("concepts", []):
-                        total_hours += concept.get("estimated_hours", 0.0)
-            
-            data["total_estimated_hours"] = data.get("total_hours", total_hours)
-            logger.debug("json_计算_total_estimated_hours", total=data["total_estimated_hours"])
-        
-        # 计算 recommended_completion_weeks（如果缺失）
-        if "recommended_completion_weeks" not in data:
-            # 从 weeks 字段获取，或根据总小时数估算
-            if "weeks" in data:
-                data["recommended_completion_weeks"] = data["weeks"]
-            else:
-                # 假设每周学习10小时（可调整）
-                hours_per_week = 10.0
-                data["recommended_completion_weeks"] = max(
-                    1, int(data["total_estimated_hours"] / hours_per_week)
-                )
-            logger.debug(
-                "json_计算_recommended_completion_weeks",
-                weeks=data["recommended_completion_weeks"]
-            )
-        
-        # 提取 design_rationale
-        design_rationale = data.pop("design_rationale", "")
-        
-        # 返回标准格式
-        return {
-            "framework": data,
-            "design_rationale": design_rationale
-        }
-            
-    except json.JSONDecodeError as e:
-        raise ValueError(f"JSON解析失败: {e}")
-
-
-def _parse_compact_roadmap(content: str) -> dict:
-    """
-    解析路线图输出（支持 YAML、JSON 和旧的文本格式）
-    
-    优先级：
-    1. YAML 格式（推荐）- 结构化、易读、可靠
-    2. JSON 格式（兼容）- 结构化、但冗长
-    3. 文本格式（已废弃）- 仅作为回退兼容
-    
-    Args:
-        content: LLM 输出内容
-        
-    Returns:
-        包含 framework 和 design_rationale 的字典
-        
-    Raises:
-        ValueError: 无法解析任何支持的格式
-    """
-    errors = {}
-    
-    # 1. 优先尝试 YAML 格式
-    yaml_content = _try_extract_yaml(content)
-    if yaml_content:
-        try:
-            result = _parse_yaml_roadmap(yaml_content)
-            logger.info("parse_format_detected", format="yaml")
-            return result
-        except Exception as e:
-            errors['yaml'] = str(e)
-            logger.warning(
-                "yaml_parse_failed",
-                error=str(e),
-                yaml_preview=yaml_content[:200] if yaml_content else None,
-            )
-    
-    # 2. 回退到 JSON 格式
-    json_content = _try_extract_json(content)
-    if json_content:
-        try:
-            result = _parse_json_roadmap(json_content)
-            logger.info("parse_format_detected", format="json")
-            return result
-        except Exception as e:
-            errors['json'] = str(e)
-            logger.warning(
-                "json_parse_failed",
-                error=str(e),
-            )
-    
-    # 3. 所有格式都失败
-    logger.error(
-        "all_parse_formats_failed",
-        errors=errors,
-        content_preview=content[:500],
-        content_length=len(content),
-    )
-    
-    error_msg = "无法解析路线图输出。请确保输出为有效的 YAML 或 JSON 格式。\n"
-    if errors:
-        error_msg += "解析错误:\n"
-        for fmt, err in errors.items():
-            error_msg += f"  - {fmt.upper()}: {err}\n"
-    
-    raise ValueError(error_msg)
-
-
-def _extract_keywords_from_description(name: str, description: str) -> list[str]:
-    """
-    从概念名称和描述中提取关键词
-    
-    Args:
-        name: 概念名称
-        description: 概念描述
-        
-    Returns:
-        关键词列表（2-5个）
-    """
-    # 简单实现：提取名称中的关键词
-    # 可以后续改进为更智能的关键词提取
-    keywords = []
-    
-    # 从名称中提取（去除常见的停用词）
-    stop_words = {'和', '与', '的', '了', '在', '是', '有', '对', '为', '以', '等'}
-    name_words = re.findall(r'[\u4e00-\u9fff]+|[a-zA-Z]+', name)
-    
-    for word in name_words:
-        if word not in stop_words and len(word) > 1:
-            keywords.append(word)
-            if len(keywords) >= 3:
-                break
-    
-    # 如果关键词不够，从描述中补充
-    if len(keywords) < 2:
-        desc_words = re.findall(r'[\u4e00-\u9fff]+|[a-zA-Z]+', description)
-        for word in desc_words:
-            if word not in stop_words and word not in keywords and len(word) > 1:
-                keywords.append(word)
-                if len(keywords) >= 3:
-                    break
-    
-    return keywords[:5] if keywords else ["学习", "掌握"]
-
-
-def _ensure_unique_roadmap_id(roadmap_id: str) -> str:
-    """
-    确保 roadmap_id 的唯一性
-    
-    在 LLM 生成的描述性 roadmap_id 基础上添加 8 位 UUID 后缀，
-    避免不同用户或同一用户多次请求生成相同的 roadmap_id。
-    
-    Args:
-        roadmap_id: LLM 生成的原始 roadmap_id（如 "python-web-dev"）
-        
-    Returns:
-        带唯一后缀的 roadmap_id（如 "python-web-dev-a1b2c3d4"）
-    """
-    unique_suffix = uuid.uuid4().hex[:8]
-    return f"{roadmap_id}-{unique_suffix}"
-
-
-def _ensure_unique_concept_ids(framework_dict: dict, roadmap_id: str) -> dict:
-    """
-    确保 concept_id 的唯一性
-    
-    在原始 concept_id（如 c-1-1-1）基础上添加 roadmap_id 前缀，
-    确保跨 roadmap 的全局唯一性。
-    
-    格式: {roadmap_id}:c-{stage}-{module}-{concept}
-    例如: python-web-dev-a1b2c3d4:c-1-1-1
-    
-    Args:
-        framework_dict: 框架数据字典
-        roadmap_id: 路线图 ID
-        
-    Returns:
-        更新后的框架数据字典
-    """
-    # 创建旧 ID 到新 ID 的映射（用于更新 prerequisites）
-    id_mapping = {}
-    
-    for stage in framework_dict.get("stages", []):
-        for module in stage.get("modules", []):
-            for concept in module.get("concepts", []):
-                old_id = concept.get("concept_id")
-                if old_id and not old_id.startswith(roadmap_id):
-                    # 添加 roadmap_id 前缀
-                    new_id = f"{roadmap_id}:{old_id}"
-                    id_mapping[old_id] = new_id
-                    concept["concept_id"] = new_id
-    
-    # 更新 prerequisites 中的引用
-    for stage in framework_dict.get("stages", []):
-        for module in stage.get("modules", []):
-            for concept in module.get("concepts", []):
-                prerequisites = concept.get("prerequisites", [])
-                if prerequisites:
-                    concept["prerequisites"] = [
-                        id_mapping.get(prereq, prereq) for prereq in prerequisites
-                    ]
-    
-    logger.debug(
-        "concept_ids_updated",
-        roadmap_id=roadmap_id,
-        concepts_updated=len(id_mapping),
-    )
-    
-    return framework_dict
 
 
 class CurriculumArchitectAgent(BaseAgent):
     """
     课程架构师 Agent
     
-    配置从环境变量加载：
-    - ARCHITECT_PROVIDER: 模型提供商（默认: anthropic）
-    - ARCHITECT_MODEL: 模型名称（默认: claude-3-5-sonnet-20241022）
-    - ARCHITECT_BASE_URL: 自定义 API 端点（可选）
-    - ARCHITECT_API_KEY: API 密钥（必需）
+    配置从环境变量加载:
+    - ARCHITECT_PROVIDER: 模型提供商(默认: anthropic)
+    - ARCHITECT_MODEL: 模型名称(默认: claude-3-5-sonnet-20241022)
+    - ARCHITECT_BASE_URL: 自定义 API 端点(可选)
+    - ARCHITECT_API_KEY: API 密钥(必需)
+    
+    性能优化:
+    - 使用简化的 response_model 提升结构化提取速度
+    - 转换后补充完整字段的默认值
+    - 自动检查并修复依赖关系
     """
     
     def __init__(
@@ -531,437 +49,434 @@ class CurriculumArchitectAgent(BaseAgent):
             model_name=model_name or settings.ARCHITECT_MODEL,
             base_url=base_url or settings.ARCHITECT_BASE_URL,
             api_key=api_key or settings.ARCHITECT_API_KEY,
-            temperature=0.7,
-            max_tokens=32768, 
+            temperature=0.1,
         )
     
-    async def design(
-        self,
-        intent_analysis: IntentAnalysisOutput,
-        user_preferences: LearningPreferences,
-        roadmap_id: str,
-    ) -> CurriculumDesignOutput:
+    def _convert_to_full_framework(self, simplified: SimplifiedRoadmapFramework) -> RoadmapFramework:
+        """
+        将简化的路线图框架转换为完整框架
+        
+        补充所有后续阶段需要的字段默认值：
+        - content_status: "pending"
+        - tutorial_id: None
+        - content_ref: None
+        - content_version: "v1"
+        - content_summary: None
+        - resources_status: "pending"
+        - resources_id: None
+        - resources_count: 0
+        - quiz_status: "pending"
+        - quiz_id: None
+        - quiz_questions_count: 0
+        
+        性能优化：使用列表推导式替代嵌套 for 循环
+        
+        Args:
+            simplified: 简化的路线图框架
+            
+        Returns:
+            完整的路线图框架
+        """
+        logger.debug(
+            "converting_simplified_to_full_framework",
+            roadmap_id=simplified.roadmap_id,
+            stages_count=len(simplified.stages),
+        )
+        
+        # ⚡ 使用辅助函数 + 列表推导式替代嵌套循环
+        def _convert_concept(s_concept) -> Concept:
+            """转换单个 Concept（补充默认值）"""
+            return Concept(
+                # 第一阶段提取的字段
+                concept_id=s_concept.concept_id,
+                name=s_concept.name,
+                description=s_concept.description,
+                estimated_hours=s_concept.estimated_hours,
+                prerequisites=s_concept.prerequisites,
+                difficulty=s_concept.difficulty,
+                keywords=s_concept.keywords,
+                # 补充默认值（后续阶段填充）
+                content_status="pending",
+                tutorial_id=None,
+                content_ref=None,
+                content_version="v1",
+                content_summary=None,
+                resources_status="pending",
+                resources_id=None,
+                resources_count=0,
+                quiz_status="pending",
+                quiz_id=None,
+                quiz_questions_count=0,
+            )
+        
+        def _convert_module(s_module) -> Module:
+            """转换单个 Module"""
+            return Module(
+                module_id=s_module.module_id,
+                name=s_module.name,
+                description=s_module.description,
+                concepts=[_convert_concept(c) for c in s_module.concepts],
+            )
+        
+        def _convert_stage(s_stage) -> Stage:
+            """转换单个 Stage"""
+            return Stage(
+                stage_id=s_stage.stage_id,
+                name=s_stage.name,
+                description=s_stage.description,
+                order=s_stage.order,
+                modules=[_convert_module(m) for m in s_stage.modules],
+            )
+        
+        # ⚡ 一行列表推导式完成所有转换
+        full_stages = [_convert_stage(s) for s in simplified.stages]
+        
+        # 构建完整框架
+        full_framework = RoadmapFramework(
+            roadmap_id=simplified.roadmap_id,
+            title=simplified.title,
+            stages=full_stages,
+            total_estimated_hours=simplified.total_estimated_hours,
+            recommended_completion_weeks=simplified.recommended_completion_weeks,
+        )
+        
+        logger.debug(
+            "conversion_completed",
+            roadmap_id=full_framework.roadmap_id,
+            modules_count=sum(len(stage.modules) for stage in full_framework.stages),
+            concepts_count=sum(
+                len(module.concepts)
+                for stage in full_framework.stages
+                for module in stage.modules
+            ),
+        )
+        
+        return full_framework
+    
+    def _check_and_fix_dependencies(self, framework: RoadmapFramework) -> Tuple[RoadmapFramework, List[str]]:
+        """
+        检查并修复依赖关系
+        
+        执行以下检查和修复：
+        1. 检查前置概念是否存在于路线图中（不存在则移除）
+        2. 检查是否存在循环依赖（存在则移除循环边）
+        3. 检查前置概念的顺序是否合理（前置概念应出现在当前概念之前）
+        
+        性能优化：
+        - 一次性构建概念映射（位置 + 对象引用）
+        - 使用字典查找替代嵌套循环查找
+        
+        Args:
+            framework: 完整的路线图框架
+            
+        Returns:
+            (修复后的框架, 修复日志列表)
+        """
+        logger.info(
+            "checking_dependencies",
+            roadmap_id=framework.roadmap_id,
+        )
+        
+        fixes: List[str] = []
+        
+        # ⚡ 1. 一次性构建所有映射（避免重复遍历）
+        # concept_id -> (stage_order, module_idx, concept_idx)
+        concept_positions: Dict[str, Tuple[int, int, int]] = {}
+        # concept_id -> Concept 对象（用于快速查找和修改）
+        concept_map: Dict[str, Concept] = {}
+        
+        for stage in framework.stages:
+            for module_idx, module in enumerate(stage.modules):
+                for concept_idx, concept in enumerate(module.concepts):
+                    concept_positions[concept.concept_id] = (stage.order, module_idx, concept_idx)
+                    concept_map[concept.concept_id] = concept
+        
+        all_concept_ids = set(concept_map.keys())
+        
+        logger.debug(
+            "dependency_check_prepared",
+            total_concepts=len(all_concept_ids),
+        )
+        
+        # ⚡ 2. 批量检查并修复所有概念的前置关系
+        for concept_id, concept in concept_map.items():
+            current_pos = concept_positions[concept_id]
+            valid_prereqs = []
+            
+            for prereq_id in concept.prerequisites:
+                # 检查 1: 前置概念是否存在
+                if prereq_id not in all_concept_ids:
+                    fix_msg = f"移除不存在的前置概念: {concept_id} -> {prereq_id}"
+                    fixes.append(fix_msg)
+                    logger.warning(
+                        "invalid_prerequisite_removed",
+                        concept_id=concept_id,
+                        invalid_prereq=prereq_id,
+                    )
+                    continue
+                
+                # 检查 2: 前置概念是否在当前概念之前
+                prereq_pos = concept_positions[prereq_id]
+                if prereq_pos >= current_pos:
+                    fix_msg = f"移除顺序错误的前置概念: {concept_id} -> {prereq_id} (前置概念应出现在更早的位置)"
+                    fixes.append(fix_msg)
+                    logger.warning(
+                        "invalid_prerequisite_order",
+                        concept_id=concept_id,
+                        prereq_id=prereq_id,
+                        current_pos=current_pos,
+                        prereq_pos=prereq_pos,
+                    )
+                    continue
+                
+                valid_prereqs.append(prereq_id)
+            
+            # 更新为有效的前置列表
+            concept.prerequisites = valid_prereqs
+        
+        # ⚡ 3. 检查循环依赖（使用 DFS + 字典查找）
+        cycles = self._detect_cycles(concept_map)
+        if cycles:
+            for cycle in cycles:
+                # 移除循环中的最后一条边
+                last_concept_id = cycle[-1]
+                prev_concept_id = cycle[-2]
+                
+                # ⚡ 使用字典直接查找（O(1)），不需要嵌套循环
+                concept = concept_map.get(last_concept_id)
+                if concept and prev_concept_id in concept.prerequisites:
+                    concept.prerequisites.remove(prev_concept_id)
+                    fix_msg = f"移除循环依赖边: {last_concept_id} -> {prev_concept_id}"
+                    fixes.append(fix_msg)
+                    logger.warning(
+                        "cycle_removed",
+                        cycle=" -> ".join(cycle),
+                        removed_edge=f"{last_concept_id} -> {prev_concept_id}",
+                    )
+        
+        logger.info(
+            "dependency_check_completed",
+            roadmap_id=framework.roadmap_id,
+            fixes_count=len(fixes),
+        )
+        
+        return framework, fixes
+    
+    def _detect_cycles(self, concept_map: Dict[str, Concept]) -> List[List[str]]:
+        """
+        使用 DFS 检测循环依赖
+        
+        性能优化：直接使用 concept_map，避免重复遍历 framework
+        
+        Args:
+            concept_map: 概念映射字典 (concept_id -> Concept)
+            
+        Returns:
+            循环列表（每个循环是概念 ID 列表）
+        """
+        # ⚡ 构建邻接表（直接从 concept_map，不需要遍历 framework）
+        graph: Dict[str, List[str]] = {
+            cid: concept.prerequisites
+            for cid, concept in concept_map.items()
+        }
+        
+        # DFS 检测循环
+        cycles = []
+        visited = set()
+        rec_stack = set()
+        path = []
+        
+        def dfs(node: str) -> bool:
+            visited.add(node)
+            rec_stack.add(node)
+            path.append(node)
+            
+            for neighbor in graph.get(node, []):
+                if neighbor not in visited:
+                    if dfs(neighbor):
+                        return True
+                elif neighbor in rec_stack:
+                    # 找到循环
+                    cycle_start = path.index(neighbor)
+                    cycle = path[cycle_start:] + [neighbor]
+                    cycles.append(cycle)
+                    return True
+            
+            path.pop()
+            rec_stack.remove(node)
+            return False
+        
+        for node in graph:
+            if node not in visited:
+                dfs(node)
+        
+        return cycles
+    
+    def _prepare_prompt_context(self, input_data: CurriculumDesignInput) -> dict:
+        """
+        准备 Prompt 模板的上下文变量
+        
+        Args:
+            input_data: 课程设计输入
+            
+        Returns:
+            包含所有模板变量的字典
+        """
+        intent = input_data.intent_analysis
+        prefs = input_data.user_preferences
+        
+        # 获取语言偏好
+        lang_prefs = prefs.get_language_preferences()
+        primary_lang = lang_prefs.primary_language
+        secondary_lang = lang_prefs.secondary_language if lang_prefs.secondary_language != primary_lang else None
+        
+        return {
+            # 用户目标和需求分析
+            "user_goal": prefs.learning_goal,
+            "parsed_goal": intent.parsed_goal,
+            "key_technologies": intent.key_technologies,
+            "difficulty_profile": intent.difficulty_profile,
+            "time_constraint": intent.time_constraint,
+            "recommended_focus": intent.recommended_focus,
+            "user_profile_summary": intent.user_profile_summary,
+            "skill_gap_analysis": intent.skill_gap_analysis,
+            "personalized_suggestions": intent.personalized_suggestions,
+            
+            # 用户画像
+            "current_level": prefs.current_level,
+            "career_background": prefs.career_background,
+            "available_hours_per_week": prefs.available_hours_per_week,
+            "motivation": prefs.motivation,
+            
+            # 语言偏好
+            "primary_language": primary_lang,
+            "secondary_language": secondary_lang,
+            
+            # Roadmap ID（关键！必须保持一致）
+            "roadmap_id": intent.roadmap_id,
+        }
+    
+    async def execute(self, input_data: CurriculumDesignInput) -> CurriculumDesignOutput:
         """
         设计三层学习路线图框架
         
+        性能优化：
+        1. 使用简化的 response_model 提升结构化提取速度（减少无效字段）
+        2. 转换后补充完整字段的默认值
+        3. 自动检查并修复依赖关系
+        
         Args:
-            intent_analysis: 需求分析结果
-            user_preferences: 用户偏好
-            roadmap_id: 路线图 ID（在需求分析完成后生成）
+            input_data: CurriculumDesignInput 对象(包含 intent_analysis 和 user_preferences)
             
         Returns:
-            路线图框架设计结果
+            CurriculumDesignOutput: 课程设计输出（包含完整的 framework）
         """
-        # 获取语言偏好
-        language_prefs = user_preferences.get_language_preferences()
+        intent_analysis = input_data.intent_analysis
+        roadmap_id = intent_analysis.roadmap_id
         
         logger.info(
             "curriculum_design_started",
-            learning_goal=user_preferences.learning_goal[:50] + "..." if len(user_preferences.learning_goal) > 50 else user_preferences.learning_goal,
-            current_level=user_preferences.current_level,
-            available_hours=user_preferences.available_hours_per_week,
+            roadmap_id=roadmap_id,
             tech_stack_count=len(intent_analysis.key_technologies),
-            primary_language=language_prefs.primary_language,
+            current_level=input_data.user_preferences.current_level,
         )
         
-        # 加载 System Prompt
+        # 准备 Prompt 上下文变量
+        logger.debug("curriculum_design_preparing_context", roadmap_id=roadmap_id)
+        prompt_context = self._prepare_prompt_context(input_data)
+        
+        # 加载并渲染 Prompt 模板
         logger.debug("curriculum_design_loading_prompt", template="curriculum_architect.j2")
-        system_prompt = self._load_system_prompt(
-            "curriculum_architect.j2",
-            agent_name="Curriculum Architect",
-            role_description="资深课程设计师，根据用户需求设计科学的 Stage→Module→Concept 三层学习路线图，确保知识递进合理、时间分配科学。",
-            user_goal=user_preferences.learning_goal,
-            intent_analysis=intent_analysis,
-            language_preferences=language_prefs.model_dump() if language_prefs else None,
-        )
+        system_prompt = self._load_system_prompt("curriculum_architect.j2", **prompt_context)
         
-        # 构建语言信息
-        language_info = f"- 主要语言: {language_prefs.primary_language}"
-        if language_prefs.secondary_language and language_prefs.secondary_language != language_prefs.primary_language:
-            language_info += f"\n- 次要语言: {language_prefs.secondary_language}"
-        
-        # 构建用户消息
-        user_message = f"""
-请根据以下需求分析结果设计学习路线图框架：
-
-**需求分析结果**:
-- 结构化学习目标: {intent_analysis.parsed_goal}
-- 关键技术栈: {", ".join(intent_analysis.key_technologies)}
-- 难度画像: {intent_analysis.difficulty_profile}
-- 时间约束: {intent_analysis.time_constraint}
-- 建议学习重点: {", ".join(intent_analysis.recommended_focus)}
-
-**用户偏好**:
-- 每周可投入时间: {user_preferences.available_hours_per_week} 小时
-- 当前水平: {user_preferences.current_level}
-- 内容偏好: {", ".join(user_preferences.content_preference)}
-{language_info}
-
-请设计一个科学的三层学习路线图框架（Stage→Module→Concept），确保：
-1. 知识递进合理，前置关系清晰
-2. 时间分配符合用户的时间约束
-3. 每个 Concept 都有明确的描述和预估时长
-4. 总时长和推荐完成周数合理
-5. **路线图标题、阶段名称、模块名称和概念描述使用用户的主要语言（{language_prefs.primary_language}）**
-
-**重要**: 请以标准 JSON 格式返回结果，严格遵循 prompt 中定义的 JSON Schema 和示例格式。
-"""
-        
+        # 构建消息列表（只需要 system prompt，所有信息都在模板中）
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
         ]
         
-        # 调用 LLM，使用 response_format 强制 JSON 输出
+        # ⭐ 性能优化：使用简化的 response_model
         logger.info(
             "curriculum_design_calling_llm",
             model=self.model_name,
             provider=self.model_provider,
-            max_tokens=self.max_tokens,
-            response_format="json_object",
+            use_two_stage=True,
+            optimization="使用简化的 response_model 提升结构化提取速度",
         )
-        response = await self._call_llm(
+        
+        simplified_framework = await self._call_llm(
             messages,
-            response_format={"type": "json_object"}
+            response_model=SimplifiedRoadmapFramework,  # ⭐ 使用简化模型
+            use_two_stage=True,
         )
         
-        # 解析输出
-        content = response.choices[0].message.content
-        logger.info(
-            "curriculum_design_llm_response_received",
-            response_length=len(content),
-            # 记录完整输出以便调试（截取前1000字符避免日志过大）
-            llm_output_preview=content[:1000] if len(content) > 1000 else content,
-            llm_output_full_length=len(content),
-        )
+        # 确保使用正确的 roadmap_id
+        simplified_framework.roadmap_id = roadmap_id
         
-        # 为了方便调试，在 warning 级别记录完整输出（可以通过日志级别控制）
-        logger.debug(
-            "curriculum_design_llm_full_output",
-            llm_output_full=content,
-        )
-        
-        try:
-            # 解析 JSON 格式的路线图
-            logger.debug("curriculum_design_parsing_json_format")
-            result_dict = json.loads(content)
-            
-            # 提取 design_rationale（如果存在）
-            design_rationale = result_dict.pop("design_rationale", "")
-            
-            # 处理 roadmap_id - 使用传入的roadmap_id
-            framework_dict = result_dict
-            framework_dict["roadmap_id"] = roadmap_id
-            logger.info(
-                "curriculum_design_using_roadmap_id",
-                roadmap_id=roadmap_id,
-            )
-            
-            # 确保 concept_id 唯一性（添加 roadmap_id 前缀）
-            final_roadmap_id = roadmap_id
-            framework_dict = _ensure_unique_concept_ids(framework_dict, final_roadmap_id)
-            
-            # 验证并构建输出
-            logger.debug("curriculum_design_validating_schema")
-            
-            # 添加详细的结构检查日志
-            logger.info(
-                "curriculum_design_structure_check",
-                has_stages=bool(framework_dict.get("stages")),
-                stages_count=len(framework_dict.get("stages", [])),
-                roadmap_id=framework_dict.get("roadmap_id"),
-            )
-            
-            # 检查每个 stage 和 module 的完整性
-            for stage_idx, stage in enumerate(framework_dict.get("stages", [])):
-                logger.debug(
-                    "stage_structure_check",
-                    stage_idx=stage_idx,
-                    stage_id=stage.get("stage_id"),
-                    has_modules=bool(stage.get("modules")),
-                    modules_count=len(stage.get("modules", [])),
-                )
-                for module_idx, module in enumerate(stage.get("modules", [])):
-                    logger.debug(
-                        "module_structure_check",
-                        stage_idx=stage_idx,
-                        module_idx=module_idx,
-                        module_id=module.get("module_id"),
-                        has_name=bool(module.get("name")),
-                        has_description=bool(module.get("description")),
-                        has_concepts=bool(module.get("concepts")),
-                        concepts_count=len(module.get("concepts", [])),
-                    )
-            
-            framework = RoadmapFramework.model_validate(framework_dict)
-            
-            result = CurriculumDesignOutput(
-                framework=framework,
-                design_rationale=design_rationale,
-            )
-            
-            # 统计路线图结构
-            total_modules = sum(len(stage.modules) for stage in framework.stages)
-            total_concepts = sum(
-                len(module.concepts)
-                for stage in framework.stages
-                for module in stage.modules
-            )
-            
-            logger.info(
-                "curriculum_design_success",
-                roadmap_id=framework.roadmap_id,
-                title=framework.title[:30] + "..." if len(framework.title) > 30 else framework.title,
-                stages_count=len(framework.stages),
-                modules_count=total_modules,
-                concepts_count=total_concepts,
-                total_hours=framework.total_estimated_hours,
-                completion_weeks=framework.recommended_completion_weeks,
-            )
-            return result
-            
-        except ValueError as e:
-            # 检查是否是 Pydantic ValidationError
-            error_str = str(e)
-            if "validation error" in error_str.lower():
-                # 提取验证错误的详细信息
-                logger.error(
-                    "curriculum_design_validation_error",
-                    error=error_str,
-                    parsed_data_keys=list(framework_dict.keys()) if 'framework_dict' in locals() else None,
-                    stages_count=len(framework_dict.get("stages", [])) if 'framework_dict' in locals() else 0,
-                    content_length=len(content),
-                    content_full=content,  # 记录完整输出以便调试
-                )
-            else:
-                logger.error(
-                    "curriculum_design_parse_error",
-                    error=error_str,
-                    content_length=len(content),
-                    content_preview=content[:500] + "..." if len(content) > 500 else content,
-                )
-            raise ValueError(f"LLM 输出格式解析失败: {e}\n请检查是否超出 token 限制或格式不正确")
-        except Exception as e:
+        # ====================================================================
+        # 关键验证：确保 LLM 生成了非空的课程结构
+        # ====================================================================
+        if not simplified_framework.stages:
             logger.error(
-                "curriculum_design_output_invalid",
-                error=str(e),
-                error_type=type(e).__name__,
-                content_length=len(content),
-                content_full=content,
-            )
-            raise ValueError(f"LLM 输出格式不符合 Schema: {e}")
-    
-    async def design_stream(
-        self,
-        intent_analysis: IntentAnalysisOutput,
-        user_preferences: LearningPreferences,
-        pre_generated_roadmap_id: str | None = None,
-    ) -> AsyncIterator[dict]:
-        """
-        流式设计路线图框架
-        
-        Args:
-            intent_analysis: 需求分析结果
-            user_preferences: 用户偏好
-            pre_generated_roadmap_id: 预生成的路线图 ID（可选，用于加速前端跳转）
-            
-        Yields:
-            {"type": "chunk", "content": "...", "agent": "curriculum_architect"}
-            {"type": "complete", "data": {...}, "agent": "curriculum_architect"}
-            {"type": "error", "error": "...", "agent": "curriculum_architect"}
-        """
-        # 获取语言偏好
-        language_prefs = user_preferences.get_language_preferences()
-        
-        logger.info(
-            "curriculum_design_stream_started",
-            learning_goal=user_preferences.learning_goal[:50] + "..." if len(user_preferences.learning_goal) > 50 else user_preferences.learning_goal,
-            current_level=user_preferences.current_level,
-            available_hours=user_preferences.available_hours_per_week,
-            tech_stack_count=len(intent_analysis.key_technologies),
-            primary_language=language_prefs.primary_language,
-        )
-        
-        try:
-            # 加载 System Prompt（复用现有逻辑）
-            logger.debug("curriculum_design_stream_loading_prompt", template="curriculum_architect.j2")
-            system_prompt = self._load_system_prompt(
-                "curriculum_architect.j2",
-                agent_name="Curriculum Architect",
-                role_description="资深课程设计师，根据用户需求设计科学的 Stage→Module→Concept 三层学习路线图，确保知识递进合理、时间分配科学。",
-                user_goal=user_preferences.learning_goal,
-                intent_analysis=intent_analysis,
-                language_preferences=language_prefs.model_dump() if language_prefs else None,
-            )
-            
-            # 构建语言信息
-            language_info = f"- 主要语言: {language_prefs.primary_language}"
-            if language_prefs.secondary_language and language_prefs.secondary_language != language_prefs.primary_language:
-                language_info += f"\n- 次要语言: {language_prefs.secondary_language}"
-            
-            # 构建用户消息（复用现有逻辑）
-            user_message = f"""
-请根据以下需求分析结果设计学习路线图框架：
-
-**需求分析结果**:
-- 结构化学习目标: {intent_analysis.parsed_goal}
-- 关键技术栈: {", ".join(intent_analysis.key_technologies)}
-- 难度画像: {intent_analysis.difficulty_profile}
-- 时间约束: {intent_analysis.time_constraint}
-- 建议学习重点: {", ".join(intent_analysis.recommended_focus)}
-
-**用户偏好**:
-- 每周可投入时间: {user_preferences.available_hours_per_week} 小时
-- 当前水平: {user_preferences.current_level}
-- 内容偏好: {", ".join(user_preferences.content_preference)}
-{language_info}
-
-请设计一个科学的三层学习路线图框架（Stage→Module→Concept），确保：
-1. 知识递进合理，前置关系清晰
-2. 时间分配符合用户的时间约束
-3. 每个 Concept 都有明确的描述和预估时长
-4. 总时长和推荐完成周数合理
-5. **路线图标题、阶段名称、模块名称和概念描述使用用户的主要语言（{language_prefs.primary_language}）**
-
-**重要**: 请以 YAML 格式返回结果，严格遵循 prompt 中定义的 YAML Schema 和示例格式。
-"""
-            
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ]
-            
-            # 流式调用 LLM
-            logger.info(
-                "curriculum_design_stream_calling_llm",
+                "curriculum_design_empty_stages",
+                roadmap_id=roadmap_id,
                 model=self.model_name,
                 provider=self.model_provider,
-                max_tokens=self.max_tokens,
+                message="LLM 返回了空的 stages 数组，课程结构生成失败。"
+                        "建议使用更强大的模型（如 Claude 或 GPT-4）进行课程设计。",
             )
-            
-            full_content = ""
-            async for chunk in self._call_llm_stream(messages):
-                full_content += chunk
-                # 推送流式片段
-                yield {
-                    "type": "chunk",
-                    "content": chunk,
-                    "agent": "curriculum_architect"
-                }
-            
-            logger.debug(
-                "curriculum_design_stream_response_received",
-                response_length=len(full_content),
+            raise ValueError(
+                f"课程设计失败：LLM 返回空的学习阶段列表。"
+                f"当前模型 {self.model_provider}/{self.model_name} 可能无法处理复杂的嵌套 JSON 结构。"
+                f"请检查模型配置或切换到 Claude/GPT-4 等更强大的模型。"
             )
-            
-            # 解析简洁格式的路线图
-            logger.debug("curriculum_design_stream_parsing_compact_format")
-            result_dict = _parse_compact_roadmap(full_content)
-            
-            # 处理 roadmap_id
-            framework_dict = result_dict.get("framework", result_dict)
-            
-            if pre_generated_roadmap_id:
-                # 使用预生成的 roadmap_id（来自 API 层）
-                framework_dict["roadmap_id"] = pre_generated_roadmap_id
-                logger.info(
-                    "curriculum_design_stream_using_pre_generated_roadmap_id",
-                    pre_generated_id=pre_generated_roadmap_id,
-                )
-            else:
-                # 确保 roadmap_id 唯一性（兼容旧的调用方式）
-                original_roadmap_id = framework_dict.get("roadmap_id", "roadmap")
-                unique_roadmap_id = _ensure_unique_roadmap_id(original_roadmap_id)
-                framework_dict["roadmap_id"] = unique_roadmap_id
-                logger.info(
-                    "curriculum_design_stream_roadmap_id_ensured_unique",
-                    original_id=original_roadmap_id,
-                    unique_id=unique_roadmap_id,
-                )
-            
-            # 确保 concept_id 唯一性（添加 roadmap_id 前缀）
-            final_roadmap_id = framework_dict["roadmap_id"]
-            framework_dict = _ensure_unique_concept_ids(framework_dict, final_roadmap_id)
-            
-            # 验证并构建输出
-            logger.debug("curriculum_design_stream_validating_schema")
-            framework = RoadmapFramework.model_validate(framework_dict)
-            design_rationale = result_dict.get("design_rationale", "")
-            
-            # 统计路线图结构
-            total_modules = sum(len(stage.modules) for stage in framework.stages)
-            total_concepts = sum(
-                len(module.concepts)
-                for stage in framework.stages
-                for module in stage.modules
-            )
-            
-            logger.info(
-                "curriculum_design_stream_success",
-                roadmap_id=framework.roadmap_id,
-                title=framework.title[:30] + "..." if len(framework.title) > 30 else framework.title,
-                stages_count=len(framework.stages),
-                modules_count=total_modules,
-                concepts_count=total_concepts,
-                total_hours=framework.total_estimated_hours,
-                completion_weeks=framework.recommended_completion_weeks,
-            )
-            
-            # 推送最终结果
-            yield {
-                "type": "complete",
-                "data": {
-                    "framework": framework.model_dump(),
-                    "design_rationale": design_rationale,
-                },
-                "agent": "curriculum_architect"
-            }
-            
-        except ValueError as e:
-            error_msg = f"LLM 输出格式解析失败: {str(e)}"
-            logger.error(
-                "curriculum_design_stream_parse_error",
-                error=str(e),
-                content_length=len(full_content) if 'full_content' in locals() else 0,
-                content_preview=full_content[:500] + "..." if 'full_content' in locals() and len(full_content) > 500 else full_content if 'full_content' in locals() else "",
-            )
-            
-            # 如果有trace_id可以记录到execution_logs (从调用方传入)
-            # 这里先发送错误事件给调用方处理
-            
-            yield {
-                "type": "error",
-                "error": f"{error_msg}\n请检查是否超出 token 限制或格式不正确",
-                "agent": "curriculum_architect",
-                "details": {
-                    "error_type": "parse_error",
-                    "content_preview": full_content[:500] if 'full_content' in locals() else "",
-                }
-            }
-        except Exception as e:
-            logger.error("curriculum_design_stream_error", error=str(e), error_type=type(e).__name__)
-            yield {
-                "type": "error",
-                "error": str(e),
-                "agent": "curriculum_architect",
-                "details": {
-                    "error_type": type(e).__name__,
-                }
-            }
-    
-    async def execute(self, input_data: CurriculumDesignInput) -> CurriculumDesignOutput:
-        """
-        实现基类的抽象方法
         
-        Args:
-            input_data: CurriculumDesignInput 对象（包含 intent_analysis 和 user_preferences）
-            
-        Returns:
-            CurriculumDesignOutput: 课程设计输出
-        """
-        return await self.design(
-            intent_analysis=input_data.intent_analysis,
-            user_preferences=input_data.user_preferences,
-            roadmap_id=input_data.intent_analysis.roadmap_id,
+        # ⭐ 转换为完整框架（补充默认值）
+        logger.info(
+            "converting_to_full_framework",
+            roadmap_id=roadmap_id,
         )
-
+        full_framework = self._convert_to_full_framework(simplified_framework)
+        
+        # ⭐ 检查并修复依赖关系
+        logger.info(
+            "checking_dependencies",
+            roadmap_id=roadmap_id,
+        )
+        full_framework, fixes = self._check_and_fix_dependencies(full_framework)
+        
+        if fixes:
+            logger.warning(
+                "dependencies_fixed",
+                roadmap_id=roadmap_id,
+                fixes_count=len(fixes),
+                fixes=fixes[:5],  # 只记录前 5 个修复
+            )
+        
+        # ⭐ ID规范化：确保所有Stage、Module、Concept的ID符合规范
+        logger.info("curriculum_design_normalizing_ids", roadmap_id=roadmap_id)
+        full_framework = normalize_framework_ids(full_framework)
+        
+        # 统计路线图结构
+        total_modules = sum(len(stage.modules) for stage in full_framework.stages)
+        total_concepts = sum(
+            len(module.concepts)
+            for stage in full_framework.stages
+            for module in stage.modules
+        )
+        
+        logger.info(
+            "curriculum_design_success",
+            roadmap_id=full_framework.roadmap_id,
+            title=full_framework.title[:30] + "..." if len(full_framework.title) > 30 else full_framework.title,
+            stages_count=len(full_framework.stages),
+            modules_count=total_modules,
+            concepts_count=total_concepts,
+            total_hours=full_framework.total_estimated_hours,
+            completion_weeks=full_framework.recommended_completion_weeks,
+            dependencies_fixed=len(fixes),
+        )
+        
+        # 构建输出
+        result = CurriculumDesignOutput(framework=full_framework)
+        
+        return result

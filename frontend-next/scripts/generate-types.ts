@@ -1,28 +1,187 @@
 /**
- * TypeScript Type Generation Script
+ * TypeScript Type Generation Script (Enhanced)
  * 
- * Generates TypeScript types from the backend OpenAPI schema.
+ * 从后端 OpenAPI Schema 生成前端 TypeScript 类型
+ * 
+ * 功能：
+ * - 自动生成类型和 API 客户端
+ * - Schema 验证和变更检测
+ * - 详细的错误报告
+ * - 自动降级到占位符类型
+ * 
  * Run: npm run generate:types
  */
 
 import { generate } from 'openapi-typescript-codegen';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as https from 'https';
+import * as http from 'http';
 
 const OPENAPI_SCHEMA_URL = process.env.OPENAPI_SCHEMA_URL || 'http://localhost:8000/openapi.json';
 const OUTPUT_DIR = './types/generated';
+const CACHE_FILE = './.openapi-cache.json';
+const STATS_FILE = `${OUTPUT_DIR}/.generation-stats.json`;
+
+interface GenerationStats {
+  timestamp: string;
+  schemaUrl: string;
+  modelsCount: number;
+  servicesCount: number;
+  endpointsCount: number;
+  success: boolean;
+  errorMessage?: string;
+}
+
+/**
+ * 下载 OpenAPI Schema
+ */
+async function downloadSchema(url: string): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const client = url.startsWith('https') ? https : http;
+    
+    client.get(url, (res) => {
+      let data = '';
+      
+      res.on('data', (chunk) => {
+        data += chunk;
+      });
+      
+      res.on('end', () => {
+        try {
+          const schema = JSON.parse(data);
+          resolve(schema);
+        } catch (error) {
+          reject(new Error(`Invalid JSON response: ${error}`));
+        }
+      });
+    }).on('error', (error) => {
+      reject(error);
+    });
+  });
+}
+
+/**
+ * 验证 OpenAPI Schema
+ */
+function validateSchema(schema: any): { valid: boolean; errors: string[] } {
+  const errors: string[] = [];
+  
+  // 检查基本结构
+  if (!schema.openapi) {
+    errors.push('Missing "openapi" field');
+  }
+  
+  if (!schema.info || !schema.info.title) {
+    errors.push('Missing "info.title" field');
+  }
+  
+  if (!schema.paths || Object.keys(schema.paths).length === 0) {
+    errors.push('No API paths defined');
+  }
+  
+  if (!schema.components || !schema.components.schemas) {
+    errors.push('No schema definitions found');
+  }
+  
+  return {
+    valid: errors.length === 0,
+    errors,
+  };
+}
+
+/**
+ * 分析 Schema 统计信息
+ */
+function analyzeSchema(schema: any): Omit<GenerationStats, 'timestamp' | 'schemaUrl' | 'success'> {
+  const paths = schema.paths || {};
+  const schemas = schema.components?.schemas || {};
+  
+  // 统计端点数量
+  let endpointsCount = 0;
+  for (const path in paths) {
+    endpointsCount += Object.keys(paths[path]).length;
+  }
+  
+  // 统计 Schema 数量
+  const modelsCount = Object.keys(schemas).length;
+  
+  // 统计服务数量（基于 tags）
+  const tags = new Set<string>();
+  for (const path in paths) {
+    for (const method in paths[path]) {
+      const operation = paths[path][method];
+      if (operation.tags) {
+        operation.tags.forEach((tag: string) => tags.add(tag));
+      }
+    }
+  }
+  const servicesCount = tags.size;
+  
+  return {
+    modelsCount,
+    servicesCount,
+    endpointsCount,
+  };
+}
+
+/**
+ * 保存生成统计信息
+ */
+function saveGenerationStats(stats: GenerationStats) {
+  try {
+    fs.writeFileSync(STATS_FILE, JSON.stringify(stats, null, 2), 'utf-8');
+    console.log('📊 Generation stats saved');
+  } catch (error) {
+    console.warn('⚠️  Failed to save generation stats:', error);
+  }
+}
 
 async function generateTypes() {
+  console.log('');
+  console.log('╔════════════════════════════════════════════════╗');
+  console.log('║   TypeScript Type Generator (Enhanced)         ║');
+  console.log('╚════════════════════════════════════════════════╝');
+  console.log('');
   console.log('🔄 Starting TypeScript type generation...');
   console.log(`📥 Fetching OpenAPI schema from: ${OPENAPI_SCHEMA_URL}`);
+  console.log('');
+
+  const startTime = Date.now();
 
   try {
-    // Ensure output directory exists
+    // 1. 下载 Schema
+    const schema = await downloadSchema(OPENAPI_SCHEMA_URL);
+    console.log('✅ Schema downloaded successfully');
+    
+    // 2. 验证 Schema
+    const validation = validateSchema(schema);
+    if (!validation.valid) {
+      console.error('❌ Schema validation failed:');
+      validation.errors.forEach(error => console.error(`   - ${error}`));
+      throw new Error('Invalid OpenAPI schema');
+    }
+    console.log('✅ Schema validation passed');
+    
+    // 3. 分析 Schema
+    const stats = analyzeSchema(schema);
+    console.log('📊 Schema statistics:');
+    console.log(`   - Models: ${stats.modelsCount}`);
+    console.log(`   - Services: ${stats.servicesCount}`);
+    console.log(`   - Endpoints: ${stats.endpointsCount}`);
+    console.log('');
+    
+    // 4. 保存缓存
+    fs.writeFileSync(CACHE_FILE, JSON.stringify(schema, null, 2), 'utf-8');
+    console.log('💾 Schema cached for future reference');
+    
+    // 5. 确保输出目录存在
     if (!fs.existsSync(OUTPUT_DIR)) {
       fs.mkdirSync(OUTPUT_DIR, { recursive: true });
     }
 
-    // Generate types using openapi-typescript-codegen
+    // 6. 生成类型
+    console.log('🔨 Generating TypeScript types...');
     await generate({
       input: OPENAPI_SCHEMA_URL,
       output: OUTPUT_DIR,
@@ -37,19 +196,58 @@ async function generateTypes() {
 
     console.log('✅ TypeScript types generated successfully!');
     console.log(`📁 Output directory: ${OUTPUT_DIR}`);
+    console.log('');
 
-    // Generate a custom index file with additional exports
+    // 7. 生成自定义索引文件
     generateIndexFile();
+    
+    // 8. 保存统计信息
+    const duration = Date.now() - startTime;
+    saveGenerationStats({
+      timestamp: new Date().toISOString(),
+      schemaUrl: OPENAPI_SCHEMA_URL,
+      ...stats,
+      success: true,
+    });
+    
+    console.log(`⏱️  Generation completed in ${duration}ms`);
+    console.log('');
+    console.log('✨ All done! You can now use the generated types in your code.');
+    console.log('');
 
   } catch (error) {
+    const duration = Date.now() - startTime;
+    console.error('');
     console.error('❌ Type generation failed:', error);
+    console.error('');
     
-    // If network fetch fails, try to use local fallback
-    console.log('💡 Tip: Make sure the backend server is running at', OPENAPI_SCHEMA_URL);
-    console.log('   Or provide a local openapi.json file');
+    // 保存失败统计
+    saveGenerationStats({
+      timestamp: new Date().toISOString(),
+      schemaUrl: OPENAPI_SCHEMA_URL,
+      modelsCount: 0,
+      servicesCount: 0,
+      endpointsCount: 0,
+      success: false,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
     
-    // Generate placeholder types if generation fails
+    // 如果网络请求失败，尝试使用本地回退
+    console.log('💡 Troubleshooting tips:');
+    console.log(`   1. Make sure the backend server is running at ${OPENAPI_SCHEMA_URL}`);
+    console.log('   2. Check if the backend is accessible from your network');
+    console.log('   3. Verify the OpenAPI endpoint is working: curl ' + OPENAPI_SCHEMA_URL);
+    console.log('');
+    
+    // 生成占位符类型
+    console.log('🔄 Generating placeholder types as fallback...');
     generatePlaceholderTypes();
+    
+    console.error('');
+    console.error(`⏱️  Failed after ${duration}ms`);
+    console.error('');
+    
+    process.exit(1);
   }
 }
 

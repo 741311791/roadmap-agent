@@ -4,6 +4,7 @@
 包含加入 Waitlist 的请求和响应模型
 """
 from pydantic import BaseModel, EmailStr
+from typing import Optional
 
 
 # ============================================================
@@ -30,8 +31,10 @@ class WaitlistJoinResponse(BaseModel):
         success: 是否成功
         message: 提示消息
         is_new: 是否为新用户（首次加入）
+        position: 在候补名单中的位置（可选）
     """
     success: bool
     message: str
     is_new: bool
+    position: Optional[int] = None  # 在候补名单中的位置
 

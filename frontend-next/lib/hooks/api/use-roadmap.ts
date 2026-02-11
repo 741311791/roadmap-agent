@@ -12,6 +12,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
+import { apiClient } from '@/lib/api/client';
 import type { RoadmapFramework } from '@/types/generated';
 
 /**
@@ -30,16 +31,16 @@ export function useRoadmap(roadmapId: string | undefined) {
         throw new Error('Roadmap ID is required');
       }
 
-      const response = await fetch(`/api/v1/roadmaps/${roadmapId}`);
+      // ✅ 使用 apiClient 替代原生 fetch
+      // apiClient 会自动：
+      // 1. 添加认证header（如果需要）
+      // 2. 提取 ResponseSchemaModel 中的 data 字段
+      // 3. 统一错误处理
+      const { data: roadmapDetail } = await apiClient.get(`/roadmaps/${roadmapId}`);
       
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || 'Failed to fetch roadmap');
-      }
-
-      const responseData = await response.json();
-      // 后端返回格式为 ResponseSchemaModel，实际数据在 data 字段中
-      const data: RoadmapFramework = responseData.data || responseData;
+      // ✅ 提取 framework 字段（如果存在）
+      // RoadmapDetailResponse 格式: {framework: {...}, roadmap_id: "...", status: "..."}
+      const data: RoadmapFramework = roadmapDetail.framework || roadmapDetail;
       
       // 同步到 Store
       setRoadmap(data);

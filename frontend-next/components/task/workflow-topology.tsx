@@ -33,7 +33,7 @@ import {
   FileSearch,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { approveRoadmap } from '@/lib/api/endpoints';
+import { tasksApi } from '@/lib/api/endpoints';
 import { NodeDetailPanel } from './node-detail-panel';
 import type { ExecutionLog } from '@/types/content-generation';
 
@@ -119,7 +119,7 @@ const MAIN_STAGES: WorkflowNode[] = [
     label: 'Content Generation',
     shortLabel: 'Content',
     description: 'Generating materials',
-    steps: ['content_generation_queued', 'content_generation', 'tutorial_generation', 'resource_recommendation', 'quiz_generation'],
+    steps: ['content_generation_queued', 'content_generation'],
   },
 ];
 
@@ -139,7 +139,7 @@ const VALIDATION_BRANCH: WorkflowBranch = {
       label: 'Edit Plan Analysis',
       shortLabel: 'Plan',
       description: 'Analyzing issues',
-      steps: ['validation_edit_plan_analysis'],
+      steps: ['edit_plan_analysis'],  // ✅ 共享节点
     },
     {
       id: 'edit1',
@@ -380,7 +380,7 @@ export function WorkflowTopology({
   // edit_source === 'human_review': 审核分支
   const validationBranchTriggered = executionLogs.some(
     log => 
-      (log.step === 'validation_edit_plan_analysis' || log.step === 'roadmap_edit') &&
+      (log.step === 'edit_plan_analysis' || log.step === 'roadmap_edit') &&
       log.details?.edit_source === 'validation_failed'
   );
   const reviewBranchTriggered = executionLogs.some(
@@ -509,7 +509,7 @@ export function WorkflowTopology({
     try {
       setReviewStatus('submitting');
       setReviewError(null);
-      await approveRoadmap(taskId, true);
+      await tasksApi.approve(taskId, { approved: true });
       setReviewStatus('approved');
       onHumanReviewComplete?.();
     } catch (err: any) {
@@ -532,7 +532,7 @@ export function WorkflowTopology({
     try {
       setReviewStatus('submitting');
       setReviewError(null);
-      await approveRoadmap(taskId, false, feedback);
+      await tasksApi.approve(taskId, { approved: false, feedback });
       // 反馈提交成功后，重置为 waiting 状态，让工作流自然过渡
       // 不显示 'rejected' 状态的确认面板
       setReviewStatus('waiting');
@@ -743,7 +743,7 @@ export function WorkflowTopology({
 
                     {/* Human Review 内嵌面板（替代上方分支） */}
                     {showHumanReviewPanel && (
-                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 w-full max-w-[280px] mb-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 w-full max-w-[220px] mb-4 animate-in fade-in slide-in-from-top-2 duration-300">
                         <HumanReviewInlinePanel
                           roadmapTitle={roadmapTitle}
                           stagesCount={stagesCount}
@@ -955,7 +955,7 @@ function HumanReviewInlinePanel({
   // 用户提交反馈后，直接让工作流过渡到下一步，不显示中间确认面板
 
   return (
-    <div className="p-4 bg-accent/5 border-2 border-accent rounded-xl shadow-md space-y-3">
+    <div className="p-3 bg-accent/5 border-2 border-accent rounded-xl shadow-md space-y-2.5">
       <div className="text-center">
         <p className="text-xs text-accent/80 font-medium">Review Required</p>
         {roadmapTitle && (
@@ -985,7 +985,7 @@ function HumanReviewInlinePanel({
         </div>
       )}
 
-      <div className="flex items-center justify-center gap-2">
+      <div className="flex items-center justify-center gap-1.5 w-full">
         {showFeedback ? (
           <>
             <Button
@@ -993,7 +993,7 @@ function HumanReviewInlinePanel({
               size="sm"
               onClick={onCancelFeedback}
               disabled={reviewStatus === 'submitting'}
-              className="h-7 text-xs"
+              className="h-7 text-xs px-2 flex-1 min-w-0"
             >
               Cancel
             </Button>
@@ -1002,7 +1002,7 @@ function HumanReviewInlinePanel({
               size="sm"
               onClick={onReject}
               disabled={reviewStatus === 'submitting' || !feedback.trim()}
-              className="h-7 text-xs"
+              className="h-7 text-xs px-2 flex-1 min-w-0"
             >
               {reviewStatus === 'submitting' ? (
                 <Loader2 className="w-3 h-3 mr-1 animate-spin" />
@@ -1019,7 +1019,7 @@ function HumanReviewInlinePanel({
               size="sm"
               onClick={onReject}
               disabled={reviewStatus === 'submitting'}
-              className="h-7 text-xs"
+              className="h-7 text-xs px-2.5 flex-1 min-w-0"
             >
               <X className="w-3 h-3 mr-1" />
               Change
@@ -1028,7 +1028,7 @@ function HumanReviewInlinePanel({
               size="sm"
               onClick={onApprove}
               disabled={reviewStatus === 'submitting'}
-              className="h-7 text-xs bg-accent hover:bg-accent/90 text-accent-foreground"
+              className="h-7 text-xs px-2.5 flex-1 min-w-0 bg-accent hover:bg-accent/90 text-accent-foreground"
             >
               {reviewStatus === 'submitting' ? (
                 <Loader2 className="w-3 h-3 mr-1 animate-spin" />

@@ -24,6 +24,7 @@ from app.schemas.roadmap import (
     RoadmapListResponse,
     ConceptRetryRequest,
     ConceptRetryResponse,
+    ChatModificationRequest,
 )
 
 # 概念Schemas
@@ -63,18 +64,18 @@ from app.schemas.quiz import (
     QuizSubmitResponse,
 )
 
-# 伴学Schemas
-from app.schemas.mentor import (
-    ChatStreamRequest,
-    ChatSessionResponse,
-    ChatMessageResponse,
-    LearningNoteResponse,
-    LearningNoteCreate,
-    LearningNoteUpdate,
-    PaginatedChatSessionsResponse,
-    PaginatedChatMessagesResponse,
-    PaginatedLearningNotesResponse,
-)
+# 伴学Schemas (已移除 mentor 模块)
+# from app.schemas.mentor import (
+#     ChatStreamRequest,
+#     ChatSessionResponse,
+#     ChatMessageResponse,
+#     LearningNoteResponse,
+#     LearningNoteCreate,
+#     LearningNoteUpdate,
+#     PaginatedChatSessionsResponse,
+#     PaginatedChatMessagesResponse,
+#     PaginatedLearningNotesResponse,
+# )
 
 # 用户Schemas
 from app.schemas.user import (
@@ -95,9 +96,27 @@ from app.schemas.task import (
     TaskStatusDetailResponse,
 )
 
+# Handler IO Schemas
+from app.schemas.handler_io import (
+    IntentAnalysisHandlerInput,
+    CurriculumDesignHandlerInput,
+    ValidationHandlerInput,
+    EditPlanHandlerInput,
+    # ✅ 移除：ValidationEditPlanHandlerInput（使用共享的EditPlanHandlerInput）
+    EditorHandlerInput,
+    ReviewHandlerInput,
+    ContentHandlerInput,
+    ConceptContentSaveResult,
+)
+
 # 封面图Schemas
 from app.schemas.cover_image import (
     CoverImageStatusResponse,
+    CoverImageResponse,
+    GenerateCoverImageRequest,
+    BatchGenerateRequest,
+    BatchGetCoverImagesRequest,
+    BatchCoverImageResponse,
 )
 
 # 任务恢复Schemas
@@ -131,6 +150,24 @@ from app.schemas.tech_assessment import (
     TechAssessmentResult,
 )
 
+# 内容Schemas (新增)
+from app.schemas.content import (
+    ConceptStatusResponse,
+    RoadmapConceptsStatusResponse,
+    ModifyContentRequest,
+    GenerateSingleConceptRequest,
+    ContentGenerationTaskResponse,
+)
+
+# 监控Schemas (新增)
+from app.schemas.monitoring import (
+    CeleryTaskInfo,
+    CeleryOverview,
+    CeleryTaskListResponse,
+    CeleryWorkerInfo,
+    CeleryWorkerListResponse,
+)
+
 __all__ = [
     # Common
     "ErrorResponse",
@@ -150,6 +187,7 @@ __all__ = [
     "RoadmapListResponse",
     "ConceptRetryRequest",
     "ConceptRetryResponse",
+    "ChatModificationRequest",
     # Concept
     "ConceptCreate",
     "ConceptUpdate",
@@ -175,11 +213,11 @@ __all__ = [
     "QuizSubmitRequest",
     "QuizDetail",
     "QuizSubmitResponse",
-    # Mentor
-    "MentorChatRequest",
-    "MentorChatResponse",
-    "MentorFeedbackRequest",
-    "MentorFeedbackResponse",
+    # Mentor (已移除)
+    # "MentorChatRequest",
+    # "MentorChatResponse",
+    # "MentorFeedbackRequest",
+    # "MentorFeedbackResponse",
     # User
     "UserCreate",
     "UserUpdate",
@@ -195,6 +233,23 @@ __all__ = [
     "TaskStatusDetailResponse",
     # Cover Image
     "CoverImageStatusResponse",
+    "CoverImageResponse",
+    "GenerateCoverImageRequest",
+    "BatchGenerateRequest",
+    "BatchGetCoverImagesRequest",
+    "BatchCoverImageResponse",
+    # Content
+    "ConceptStatusResponse",
+    "RoadmapConceptsStatusResponse",
+    "ModifyContentRequest",
+    "GenerateSingleConceptRequest",
+    "ContentGenerationTaskResponse",
+    # Monitoring
+    "CeleryTaskInfo",
+    "CeleryOverview",
+    "CeleryTaskListResponse",
+    "CeleryWorkerInfo",
+    "CeleryWorkerListResponse",
     # Task Recovery
     "TaskRecoveryReport",
     # Content Retry

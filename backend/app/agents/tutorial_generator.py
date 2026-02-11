@@ -1,22 +1,19 @@
 """
-Tutorial Generator Agent（教程生成器）
+Tutorial Generator Agent（基于 BaseAgent ReAct 模式）
 """
 import json
 import uuid
 from datetime import datetime
-from typing import AsyncIterator, List, Dict, Any
+from typing import Any, Dict
 from app.agents.base import BaseAgent
 from app.models.domain import (
     Concept,
     LearningPreferences,
     TutorialGenerationInput,
     TutorialGenerationOutput,
-    Tutorial,
-    TutorialSection,
     S3UploadRequest,
-    SearchQuery,
 )
-from app.core.tool_registry import tool_registry
+from app.tools.mcp_loader import load_context7_tools
 from app.config.settings import settings
 import structlog
 
@@ -25,13 +22,21 @@ logger = structlog.get_logger()
 
 class TutorialGeneratorAgent(BaseAgent):
     """
-    教程生成器 Agent
+    教程生成器 Agent（基于 BaseAgent ReAct 模式）
     
-    配置从环境变量加载：
-    - GENERATOR_PROVIDER: 模型提供商（默认: anthropic）
-    - GENERATOR_MODEL: 模型名称（默认: claude-3-5-sonnet-20241022）
-    - GENERATOR_BASE_URL: 自定义 API 端点（可选）
-    - GENERATOR_API_KEY: API 密钥（必需）
+    特性：
+    - 使用 BaseAgent._call_llm_with_tools_react（自动管理 ReAct 循环）
+    - 集成 Context7 MCP 工具（通过 langchain-mcp-adapters）
+    - 区分开发场景和非开发场景
+    - 无需额外的 LangChain Agent 依赖
+    
+    工具列表：
+    - resolve-library-id: 解析库的 Context7 ID（MCP，仅开发场景）
+    - query-docs: 查询官方文档（MCP，仅开发场景）
+    
+    场景分类：
+    - 开发场景：需要查询特定版本的技术文档（如React、Python、FastAPI）
+    - 非开发场景：使用LLM自有知识库（如烹饪、健身、语言学习）
     """
     
     def __init__(
@@ -49,126 +54,232 @@ class TutorialGeneratorAgent(BaseAgent):
             base_url=base_url or settings.GENERATOR_BASE_URL,
             api_key=api_key or settings.GENERATOR_API_KEY,
             temperature=0.8,
-            max_tokens=8000,  # 阿里云 qwen 模型实际限制: [1, 8192]
+            max_tokens=32768,
         )
-    
-    def _get_tools_definition(self) -> List[Dict[str, Any]]:
-        """
-        获取工具定义（符合 OpenAI Function Calling 格式）
         
-        Returns:
-            工具定义列表
-        """
+        # 存储 LangChain 工具实例（用于执行）
+        self._langchain_tools = {}
+    
+    def _get_required_constraints(self) -> list[str]:
+        """教程生成器需要的约束"""
+        from app.models.domain import ConstraintNames
         return [
-            {
-                "type": "function",
-                "function": {
-                    "name": "web_search",
-                    "description": "执行网络搜索以获取最新的学习资源、技术文档和教程信息。当需要获取某个技术概念的最新信息、最佳实践或示例代码时，可以使用此工具。",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "搜索查询字符串，例如：'React Hooks 最佳实践'、'Python 异步编程教程'",
-                            },
-                            "max_results": {
-                                "type": "integer",
-                                "description": "最大结果数量，默认5，范围1-20",
-                                "default": 5,
-                            },
-                        },
-                        "required": ["query"],
-                    },
-                },
-            }
+            # 通用约束
+            ConstraintNames.LANGUAGE,
+            ConstraintNames.USER_GOAL,
+            ConstraintNames.USER_PROFILE,
+            # 特定约束
+            ConstraintNames.DIFFICULTY,
+            ConstraintNames.CONTENT_FORMAT_PREFERENCE,
+            ConstraintNames.KEY_TECHNOLOGIES,
         ]
     
-    async def _handle_tool_calls(self, tool_calls: List[Any]) -> List[Dict[str, Any]]:
+    async def _get_tools(self, is_dev_scenario: bool = True) -> list[Dict]:
         """
-        处理 LLM 返回的工具调用请求
+        获取可用工具（OpenAI function calling 格式）
         
         Args:
-            tool_calls: 工具调用列表
-            
-        Returns:
-            工具调用结果列表（用于传递回 LLM）
-        """
-        tool_messages = []
+            is_dev_scenario: 是否为开发场景
+                - True: 加载Context7工具（查询官方文档）
+                - False: 不加载任何工具（使用LLM自有知识）
         
-        for tool_call in tool_calls:
-            tool_name = tool_call.function.name
-            tool_args = json.loads(tool_call.function.arguments)
-            tool_call_id = tool_call.id
-            
+        Returns:
+            OpenAI function calling 格式的工具列表
+        """
+        tools = []
+        
+        # 仅在开发场景下加载Context7工具
+        if is_dev_scenario:
+            try:
+                # 加载LangChain工具
+                context7_tools = await load_context7_tools()
+                
+                # 转换为OpenAI function calling格式
+                for tool in context7_tools:
+                    # 保存工具实例以供后续执行
+                    self._langchain_tools[tool.name] = tool
+                    
+                    # 获取参数schema（兼容多种格式）
+                    if hasattr(tool, 'args_schema') and tool.args_schema:
+                        # 如果是Pydantic模型，调用schema()
+                        if hasattr(tool.args_schema, 'schema'):
+                            parameters = tool.args_schema.schema()
+                        # 如果已经是字典，直接使用
+                        elif isinstance(tool.args_schema, dict):
+                            parameters = tool.args_schema
+                        else:
+                            parameters = {"type": "object", "properties": {}}
+                    else:
+                        parameters = {"type": "object", "properties": {}}
+                    
+                    # 转换为OpenAI格式
+                    tool_def = {
+                        "type": "function",
+                        "function": {
+                            "name": tool.name,
+                            "description": tool.description,
+                            "parameters": parameters
+                        }
+                    }
+                    tools.append(tool_def)
+                
+                logger.info(
+                    "tutorial_generator_tools_loaded",
+                    scenario="development",
+                    tools_count=len(tools),
+                    tools=[t["function"]["name"] for t in tools]
+                )
+            except Exception as e:
+                logger.warning(
+                    "context7_tools_loading_failed",
+                    error=str(e),
+                    message="Continue without tools (LLM knowledge only)"
+                )
+        else:
             logger.info(
-                "tool_call_received",
+                "tutorial_generator_no_tools_needed",
+                scenario="non_development",
+                message="Using LLM knowledge base only"
+            )
+        
+        return tools
+    
+    def _get_system_prompt(
+        self, 
+        concept: Concept, 
+        context: dict, 
+        user_preferences: LearningPreferences,
+        is_dev_scenario: bool = True
+    ) -> str:
+        """
+        加载 ReAct 风格的 System Prompt
+        
+        使用新模板：tutorial_generator_react.j2
+        
+        Args:
+            concept: 概念信息
+            context: 上下文
+            user_preferences: 用户偏好
+            is_dev_scenario: 是否为开发场景
+        """
+        language_prefs = user_preferences.get_language_preferences()
+        
+        return self._load_system_prompt(
+            "tutorial_generator_react.j2",
+            concept=concept,
+            context=context,
+            user_preferences=user_preferences,
+            language_preferences=language_prefs.model_dump() if language_prefs else None,
+            is_dev_scenario=is_dev_scenario,
+        )
+    
+    async def _execute_tool(
+        self,
+        tool_name: str,
+        tool_args: Dict[str, Any]
+    ) -> Any:
+        """
+        执行工具调用（调用LangChain工具）
+        
+        Args:
+            tool_name: 工具名称
+            tool_args: 工具参数
+        
+        Returns:
+            工具执行结果
+        
+        Raises:
+            ValueError: 工具不存在
+        """
+        if tool_name not in self._langchain_tools:
+            raise ValueError(f"Tool '{tool_name}' not found in registered tools")
+        
+        tool = self._langchain_tools[tool_name]
+        
+        try:
+            # 调用LangChain工具
+            result = await tool.ainvoke(tool_args)
+            
+            logger.debug(
+                "tool_executed",
                 tool_name=tool_name,
-                tool_args=tool_args,
-                tool_call_id=tool_call_id,
+                args=tool_args,
+                result_preview=str(result)[:200]
             )
             
-            # 处理 web_search 工具调用
-            if tool_name == "web_search":
-                try:
-                    # 获取搜索工具
-                    search_tool = tool_registry.get("web_search_v1")
-                    if not search_tool:
-                        raise RuntimeError("Web Search Tool 未注册")
-                    
-                    # 构建搜索查询
-                    search_query = SearchQuery(
-                        query=tool_args["query"],
-                        max_results=tool_args.get("max_results", 5),
-                    )
-                    
-                    # 执行搜索
-                    search_result = await search_tool.execute(search_query)
-                    
-                    # 格式化搜索结果
-                    formatted_results = []
-                    for idx, result in enumerate(search_result.results[:5], 1):
-                        formatted_results.append(
-                            f"{idx}. {result['title']}\n"
-                            f"   URL: {result['url']}\n"
-                            f"   摘要: {result['snippet']}\n"
-                        )
-                    
-                    result_text = "\n".join(formatted_results) if formatted_results else "未找到相关结果"
-                    
-                    logger.info(
-                        "tool_call_success",
-                        tool_name=tool_name,
-                        results_count=len(search_result.results),
-                    )
-                    
-                    # 构建工具响应消息
-                    tool_messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "content": result_text,
-                    })
-                    
-                except Exception as e:
-                    logger.error(
-                        "tool_call_failed",
-                        tool_name=tool_name,
-                        error=str(e),
-                    )
-                    tool_messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "content": f"工具调用失败: {str(e)}",
-                    })
-            else:
-                logger.warning("unknown_tool_call", tool_name=tool_name)
-                tool_messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "content": f"未知工具: {tool_name}",
-                })
+            return result
+            
+        except Exception as e:
+            logger.error(
+                "tool_execution_failed",
+                tool_name=tool_name,
+                args=tool_args,
+                error=str(e)
+            )
+            raise
+    
+    async def _is_development_scenario(self, concept: Concept) -> bool:
+        """
+        判断是否为开发场景（使用LLM智能判断）
         
-        return tool_messages
+        开发场景的特征：
+        - 涉及编程语言、框架、库等技术栈
+        - 需要查询特定版本的官方文档
+        - 对依赖版本敏感
+        
+        非开发场景的特征：
+        - 烹饪、健身、语言学习等生活技能
+        - 不涉及技术文档和代码
+        
+        Args:
+            concept: 概念信息
+            
+        Returns:
+            是否为开发场景
+        """
+        # 构建判断Prompt
+        prompt = f"""请判断以下学习概念是否为"开发场景"。
+
+概念名称：{concept.name}
+概念描述：{concept.description or "无"}
+
+定义：
+- **开发场景**：涉及编程语言、框架、库、API、工具等技术栈，需要查询官方文档和代码示例。例如：学习React、Python、FastAPI、LangGraph、Docker等。
+- **非开发场景**：生活技能、兴趣爱好、语言学习等，不涉及编程和技术文档。例如：烹饪、健身、英语口语、绘画、音乐等。
+
+请仅回答 "YES" 或 "NO"（不要有任何其他内容）：
+- YES：这是开发场景
+- NO：这不是开发场景"""
+
+        try:
+            # 调用LLM判断
+            messages = [{"role": "user", "content": prompt}]
+            response = await self._call_llm(messages)
+            
+            # 提取响应内容
+            content = response.choices[0].message.content.strip().upper()
+            is_dev = content == "YES"
+            
+            logger.info(
+                "scenario_detection_completed",
+                concept_id=concept.concept_id,
+                concept_name=concept.name,
+                scenario="development" if is_dev else "non_development",
+                llm_response=content
+            )
+            
+            return is_dev
+            
+        except Exception as e:
+            # 如果LLM调用失败，默认为开发场景（保守策略）
+            logger.warning(
+                "scenario_detection_failed",
+                concept_id=concept.concept_id,
+                concept_name=concept.name,
+                error=str(e),
+                fallback="development"
+            )
+            return True
     
     async def generate(
         self,
@@ -177,31 +288,62 @@ class TutorialGeneratorAgent(BaseAgent):
         user_preferences: LearningPreferences,
     ) -> TutorialGenerationOutput:
         """
-        为给定的 Concept 生成详细教程
+        生成教程（使用 BaseAgent ReAct 模式）
+        
+        流程：
+        1. 判断开发场景 vs 非开发场景
+        2. 加载工具（开发场景加载Context7，非开发场景无工具）
+        3. 使用 BaseAgent._call_llm_with_tools_react 调用LLM
+        4. 解析输出并上传 S3
         
         Args:
             concept: 要生成教程的概念
-            context: 上下文信息（前置概念、所属模块等）
+            context: 上下文信息
             user_preferences: 用户偏好
             
         Returns:
-            教程生成结果（包含 S3 URL）
+            教程生成结果
         """
-        # 获取语言偏好
-        language_prefs = user_preferences.get_language_preferences()
+        # 1. 判断场景类型（使用LLM智能判断）
+        is_dev_scenario = await self._is_development_scenario(concept)
         
-        # 加载 System Prompt
-        system_prompt = self._load_system_prompt(
-            "tutorial_generator.j2",
-            agent_name="Tutorial Generator",
-            role_description="专业教程撰写者，为每个 Concept 生成结构化、易懂、实用的教程内容，包含理论、示例、练习。",
+        # 2. 加载工具（OpenAI function calling格式）
+        tools = await self._get_tools(is_dev_scenario=is_dev_scenario)
+        
+        # 3. 构建System Prompt
+        system_prompt = self._get_system_prompt(
             concept=concept,
             context=context,
             user_preferences=user_preferences,
-            language_preferences=language_prefs.model_dump() if language_prefs else None,
+            is_dev_scenario=is_dev_scenario,
         )
         
-        # 构建用户消息
+        # 4. 构建用户消息
+        language_prefs = user_preferences.get_language_preferences()
+        
+        if is_dev_scenario:
+            scenario_reminder = """
+**重要提醒**：
+1. 这是开发场景，必须使用工具查询官方文档（禁止臆造）
+2. 使用 resolve-library-id + query-docs 获取最新或指定版本的官方文档
+3. 确保代码示例符合查询到的版本要求
+4. **关键**：在收集完官方文档信息后，必须生成最终的 JSON 格式教程
+5. **最终输出格式**：纯 JSON 对象，包含 markdown_content 和 metadata 字段
+6. **禁止**：不要把工具调用信息作为最终答案返回
+
+**执行流程**：
+- Step 1: 调用工具查询官方文档
+- Step 2: 分析和整理收集到的信息
+- Step 3: **必须**生成完整的 JSON 格式教程内容
+"""
+        else:
+            scenario_reminder = """
+**重要提醒**：
+1. 这是非开发场景，直接使用你的知识库生成教程
+2. 确保内容准确、实用、易懂
+3. **最终输出格式**：纯 JSON 对象，包含 markdown_content 和 metadata 字段
+"""
+        
         user_message = f"""
 请为以下概念生成详细的教程内容：
 
@@ -211,571 +353,516 @@ class TutorialGeneratorAgent(BaseAgent):
 - 难度: {concept.difficulty}
 - 预估学习时长: {concept.estimated_hours} 小时
 - 前置概念: {", ".join(concept.prerequisites) if concept.prerequisites else "无"}
-- 关键词: {", ".join(concept.keywords) if concept.keywords else "无"}
-
-**上下文信息**:
-- 所属阶段: {context.get("stage_name", "未知")}
-- 所属模块: {context.get("module_name", "未知")}
 
 **用户偏好**:
 - 内容偏好: {", ".join(user_preferences.content_preference)}
 - 当前水平: {user_preferences.current_level}
 - 主要语言: {language_prefs.primary_language}
 
-请生成一个完整、结构化的教程，包含：
-1. 概述
-2. 前置知识回顾（如有）
-3. 核心概念讲解
-4. 实践示例
-5. 总结
+{scenario_reminder}
 
-注意：
-- **教程内容必须使用主要语言（{language_prefs.primary_language}）编写**
-- 教程应专注于理论讲解和实践示例，不要包含推荐学习资源（这些将由专门的资源推荐 Agent 生成）
-- 不要包含练习题或实战练习（这些将由专门的测验生成 Agent 生成）
+**【关键】最终输出格式要求**：
+⚠️ 重要：当你完成所有工具调用和信息收集后，你的最终响应必须直接输出一个有效的 JSON 对象。
 
-教程内容请使用 Markdown 格式，确保结构清晰、内容易懂、示例实用。
+✅ 正确的最终响应格式（必须以左花括号开始）：
+{{
+  "markdown_content": "完整的 Markdown 教程内容",
+  "metadata": {{
+    "title": "教程标题",
+    "summary": "简短摘要",
+    "estimated_completion_time": 90
+  }}
+}}
 
-生成后，请将完整教程内容上传到 S3 存储，并返回包含 content_url 的结果。
+❌ 错误的最终响应：
+- ❌ 不要在JSON前添加任何文字（包括"Thought:"、"Action:"、"Final Answer:"等）
+- ❌ 不要使用代码块标记（不要用```json```包裹）
+- ❌ 不要只输出思考过程而不输出JSON
+- ❌ 不要输出工具调用信息作为最终答案
+
+📌 执行步骤：
+1. 如果需要查询文档，先调用工具收集信息
+2. 信息收集完成后，**直接输出JSON对象**（以 {{ 开始，以 }} 结束）
+3. 确保 JSON 对象包含 markdown_content 和 metadata 两个字段
+4. **最后一步：检查你的输出是否以 {{ 开始** - 如果不是，请删除前面的文字
+
+请立即开始执行任务！
 """
+        
+        # 5. 调用 BaseAgent ReAct 方法（自动管理工具调用循环）
+        logger.info(
+            "tutorial_generation_start",
+            concept_id=concept.concept_id,
+            concept_name=concept.name,
+            scenario="development" if is_dev_scenario else "non_development",
+            tools_count=len(tools),
+        )
         
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
+            {"role": "user", "content": user_message}
         ]
         
-        # 获取工具定义
-        tools = self._get_tools_definition()
-        
-        # 调用 LLM（支持工具调用）
-        max_iterations = 5  # 最多允许5轮工具调用
-        iteration = 0
-        content = None  # 初始化 content 变量，避免 UnboundLocalError
-        
-        while iteration < max_iterations:
-            logger.info(
-                "tutorial_generation_llm_call",
-                concept_id=concept.concept_id,
-                iteration=iteration,
-            )
-            
-            response = await self._call_llm(messages, tools=tools)
-            message = response.choices[0].message
-            
-            # 检查是否有工具调用
-            if hasattr(message, 'tool_calls') and message.tool_calls:
-                logger.info(
-                    "tutorial_generation_tool_calls_detected",
-                    concept_id=concept.concept_id,
-                    tool_calls_count=len(message.tool_calls),
-                )
-                
-                # 将 assistant 的消息添加到对话历史
-                messages.append({
-                    "role": "assistant",
-                    "content": message.content or "",
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            }
-                        }
-                        for tc in message.tool_calls
-                    ]
-                })
-                
-                # 处理工具调用
-                tool_messages = await self._handle_tool_calls(message.tool_calls)
-                messages.extend(tool_messages)
-                
-                iteration += 1
-                continue
-            
-            # 没有工具调用，获取最终内容
-            content = message.content
-            break
-        
-        if iteration >= max_iterations:
-            logger.error(
-                "tutorial_generation_max_iterations_reached",
-                concept_id=concept.concept_id,
-            )
-            raise ValueError(
-                f"教程生成失败：工具调用循环达到最大次数（{max_iterations}）仍未获得最终内容。"
-                "可能原因：LLM 持续进行工具调用而未输出最终结果。"
-            )
-        
-        # 解析输出
-        if not content:
-            raise ValueError("LLM 未返回任何内容")
-        
-        try:
-            # 新的两段式格式：Markdown 内容 + 分隔符 + JSON 元数据
-            separator = "===TUTORIAL_METADATA==="
-            
-            if separator in content:
-                # 两段式格式
-                parts = content.split(separator, 1)
-                tutorial_markdown = parts[0].strip()
-                json_part = parts[1].strip()
-                
-                # 去除可能的代码块标记
-                if json_part.startswith("```json"):
-                    json_part = json_part[7:]
-                if json_part.startswith("```"):
-                    json_part = json_part[3:]
-                if json_part.endswith("```"):
-                    json_part = json_part[:-3]
-                json_part = json_part.strip()
-                
-                # 解析 JSON 元数据
-                metadata = json.loads(json_part)
-                
-                logger.info(
-                    "tutorial_generation_two_part_format_detected",
-                    concept_id=concept.concept_id,
-                    markdown_length=len(tutorial_markdown),
-                    metadata_keys=list(metadata.keys()),
-                )
-            else:
-                # 兼容旧格式：尝试解析 JSON（可能包含 markdown 代码块）
-                logger.warning(
-                    "tutorial_generation_old_format_detected",
-                    concept_id=concept.concept_id,
-                    message="LLM 未使用两段式格式，尝试解析旧格式 JSON",
-                )
-                
-                json_content = content.strip()
-                
-                # 如果包含 ```json 代码块，提取其中的内容
-                if "```json" in json_content:
-                    json_start = json_content.find("```json") + 7
-                    json_end = json_content.find("```", json_start)
-                    if json_end > json_start:
-                        json_content = json_content[json_start:json_end].strip()
-                # 如果包含普通 ``` 代码块
-                elif json_content.startswith("```") and "```" in json_content[3:]:
-                    json_start = 3
-                    json_end = json_content.find("```", json_start)
-                    if json_end > json_start:
-                        json_content = json_content[json_start:json_end].strip()
-                
-                # 解析 JSON
-                metadata = json.loads(json_content)
-                
-                # 从 JSON 中提取教程内容
-                tutorial_markdown = metadata.get("tutorial_content", "")
-                if not tutorial_markdown:
-                    tutorial_markdown = metadata.get("content", "")
-                
-                if not tutorial_markdown:
-                    raise ValueError("无法从 LLM 输出中提取教���内容")
-            
-            # 验证必需字段
-            if not tutorial_markdown:
-                raise ValueError("教程内容为空")
-            
-            # 获取版本号（从 context 中获取，默认为 1）
-            content_version = context.get("content_version", 1)
-            
-            # 生成教程 ID（使用 UUID 确保全局唯一）
-            tutorial_id = str(uuid.uuid4())
-            
-            # 上传到 S3
-            s3_tool = tool_registry.get("s3_storage_v1")
-            if not s3_tool:
-                raise RuntimeError("S3 Storage Tool 未注册")
-            
-            # 构建 S3 Key（包含版本号）
-            roadmap_id = context.get("roadmap_id", "unknown")
-            s3_key = f"{roadmap_id}/concepts/{concept.concept_id}/v{content_version}.md"
-            
-            from app.models.domain import S3UploadRequest
-            upload_request = S3UploadRequest(
-                key=s3_key,
-                content=tutorial_markdown,
-                content_type="text/markdown",
-            )
-            
-            upload_result = await s3_tool.execute(upload_request)
-            
-            # 构建输出（包含版本信息）
-            # ⚠️ 重要：content_url 存储 S3 Key（不是预签名 URL）
-            # 这样可以避免 7 天后链接失效的问题
-            # 前端通过后端代理端点下载：GET /api/v1/roadmaps/{roadmap_id}/concepts/{concept_id}/tutorials/latest/content
-            result = TutorialGenerationOutput(
-                concept_id=concept.concept_id,
-                tutorial_id=tutorial_id,
-                title=metadata.get("title", concept.name),
-                summary=metadata.get("summary", concept.description[:500] if concept.description else ""),
-                content_url=s3_key,  # ✅ 存储 S3 Key 而不是预签名 URL
-                content_status="completed",
-                estimated_completion_time=metadata.get("estimated_completion_time", int(concept.estimated_hours * 60)),
-                generated_at=datetime.now(),
-                content_version=content_version,  # 传递版本号
-            )
-            
-            logger.info(
-                "tutorial_generation_success",
-                concept_id=concept.concept_id,
-                tutorial_id=tutorial_id,
-                s3_key=s3_key,  # 记录 S3 Key
-                content_version=content_version,
-            )
-            return result
-            
-        except json.JSONDecodeError as e:
-            logger.error("tutorial_generation_json_parse_error", error=str(e), content=content[:500])
-            raise ValueError(f"LLM 输出不是有效的 JSON 格式: {e}")
-        except Exception as e:
-            logger.error("tutorial_generation_failed", concept_id=concept.concept_id, error=str(e))
-            raise ValueError(f"教程生成失败: {e}")
-    
-    async def generate_stream(
-        self,
-        concept: Concept,
-        context: dict,
-        user_preferences: LearningPreferences,
-    ) -> AsyncIterator[dict]:
-        """
-        流式生成单个教程
-        
-        Args:
-            concept: 要生成教程的概念
-            context: 上下文信息（前置概念、所属模块等）
-            user_preferences: 用户偏好
-            
-        Yields:
-            {"type": "tutorial_chunk", "concept_id": "...", "content": "..."}
-            {"type": "tutorial_complete", "concept_id": "...", "data": {...}}
-            {"type": "tutorial_error", "concept_id": "...", "error": "..."}
-        """
-        # 获取语言偏好
-        language_prefs = user_preferences.get_language_preferences()
-        
-        logger.info(
-            "tutorial_generation_stream_started",
-            concept_id=concept.concept_id,
-            concept_name=concept.name,
-            primary_language=language_prefs.primary_language,
+        # 使用BaseAgent的ReAct方法
+        response = await self._call_llm(
+            messages=messages,
+            tools=tools if tools else None,
+            use_react=True if tools else False,
+            max_iterations=20,  # 允许更多轮次的工具调用
         )
         
-        try:
-            # 加载 System Prompt（复用现有逻辑）
-            system_prompt = self._load_system_prompt(
-                "tutorial_generator.j2",
-                agent_name="Tutorial Generator",
-                role_description="专业教程撰写者，为每个 Concept 生成结构化、易懂、实用的教程内容，包含理论、示例、练习。",
-                concept=concept,
-                context=context,
-                user_preferences=user_preferences,
-                language_preferences=language_prefs.model_dump() if language_prefs else None,
-            )
-            
-            # 构建用户消息（复用现有逻辑）
-            user_message = f"""
-请为以下概念生成详细的教程内容：
-
-**概念信息**:
-- 名称: {concept.name}
-- 描述: {concept.description}
-- 难度: {concept.difficulty}
-- 预估学习时长: {concept.estimated_hours} 小时
-- 前置概念: {", ".join(concept.prerequisites) if concept.prerequisites else "无"}
-- 关键词: {", ".join(concept.keywords) if concept.keywords else "无"}
-
-**上下文信息**:
-- 所属阶段: {context.get("stage_name", "未知")}
-- 所属模块: {context.get("module_name", "未知")}
-
-**用户偏好**:
-- 内容偏好: {", ".join(user_preferences.content_preference)}
-- 当前水平: {user_preferences.current_level}
-- 主要语言: {language_prefs.primary_language}
-
-请生成一个完整、结构化的教程，包含：
-1. 概述
-2. 前置知识回顾（如有）
-3. 核心概念讲解
-4. 实践示例
-5. 总结
-
-注意：
-- **教程内容必须使用主要语言（{language_prefs.primary_language}）编写**
-- 教程应专注于理论讲解和实践示例，不要包含推荐学习资源（这些将由专门的资源推荐 Agent 生成）
-- 不要包含练习题或实战练习（这些将由专门的测验生成 Agent 生成）
-
-教程内容请使用 Markdown 格式，确保结构清晰、内容易懂、示例实用。
-"""
-            
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ]
-            
-            # 获取工具定义
-            tools = self._get_tools_definition()
-            
-            # 首先进行非流式调用以处理工具调用
-            # （注意：流式调用时处理工具调用比较复杂，这里采用先处理工具调用，再流式生成最终内容的策略）
-            max_iterations = 5
-            iteration = 0
-            
-            logger.info(
-                "tutorial_generation_stream_tool_phase",
-                concept_id=concept.concept_id,
-            )
-            
-            # 工具调用阶段（非流式）
-            tool_calls_completed = False
-            while iteration < max_iterations:
-                response = await self._call_llm(messages, tools=tools)
-                message = response.choices[0].message
-                
-                # 检查是否有工具调用
-                if hasattr(message, 'tool_calls') and message.tool_calls:
-                    logger.info(
-                        "tutorial_generation_stream_tool_calls_detected",
-                        concept_id=concept.concept_id,
-                        tool_calls_count=len(message.tool_calls),
-                    )
-                    
-                    # 推送工具调用事件
-                    for tc in message.tool_calls:
-                        yield {
-                            "type": "tool_call",
-                            "concept_id": concept.concept_id,
-                            "tool_name": tc.function.name,
-                            "tool_args": json.loads(tc.function.arguments),
-                        }
-                    
-                    # 将 assistant 的消息添加到对话历史
-                    messages.append({
-                        "role": "assistant",
-                        "content": message.content or "",
-                        "tool_calls": [
-                            {
-                                "id": tc.id,
-                                "type": "function",
-                                "function": {
-                                    "name": tc.function.name,
-                                    "arguments": tc.function.arguments,
-                                }
-                            }
-                            for tc in message.tool_calls
-                        ]
-                    })
-                    
-                    # 处理工具调用
-                    tool_messages = await self._handle_tool_calls(message.tool_calls)
-                    messages.extend(tool_messages)
-                    
-                    # 推送工具结果事件
-                    yield {
-                        "type": "tool_result",
-                        "concept_id": concept.concept_id,
-                        "results_count": len(tool_messages),
-                    }
-                    
-                    iteration += 1
-                    continue
-                
-                # 没有工具调用，准备流式生成最终内容
-                tool_calls_completed = True
-                break
-            
-            # 检查是否因达到最大迭代次数而退出
-            if not tool_calls_completed and iteration >= max_iterations:
-                logger.error(
-                    "tutorial_generation_stream_max_iterations_reached",
-                    concept_id=concept.concept_id,
-                )
-                yield {
-                    "type": "tutorial_error",
-                    "concept_id": concept.concept_id,
-                    "error": f"工具调用循环达到最大次数（{max_iterations}）仍未完成，无法生成教程内容"
-                }
-                return
-            
-            # 流式生成最终内容
-            logger.info(
-                "tutorial_generation_stream_content_phase",
-                concept_id=concept.concept_id,
-                model=self.model_name,
-                provider=self.model_provider,
-            )
-            
-            full_content = ""
-            async for chunk in self._call_llm_stream(messages):
-                full_content += chunk
-                # 推送流式片段
-                yield {
-                    "type": "tutorial_chunk",
-                    "concept_id": concept.concept_id,
-                    "content": chunk
-                }
-            
-            logger.debug(
-                "tutorial_generation_stream_response_received",
-                concept_id=concept.concept_id,
-                response_length=len(full_content),
-            )
-            
-            # 解析内容并上传 S3
-            try:
-                # 新的两段式格式：Markdown 内容 + 分隔符 + JSON 元数据
-                separator = "===TUTORIAL_METADATA==="
-                
-                if separator in full_content:
-                    # 两段式格式
-                    parts = full_content.split(separator, 1)
-                    tutorial_markdown = parts[0].strip()
-                    json_part = parts[1].strip()
-                    
-                    # 去除可能的代码块标记
-                    if json_part.startswith("```json"):
-                        json_part = json_part[7:]
-                    if json_part.startswith("```"):
-                        json_part = json_part[3:]
-                    if json_part.endswith("```"):
-                        json_part = json_part[:-3]
-                    json_part = json_part.strip()
-                    
-                    # 解析 JSON 元数据
-                    metadata = json.loads(json_part)
-                    
-                    logger.info(
-                        "tutorial_generation_stream_two_part_format_detected",
-                        concept_id=concept.concept_id,
-                        markdown_length=len(tutorial_markdown),
-                    )
-                else:
-                    # 兼容旧格式
-                    logger.warning(
-                        "tutorial_generation_stream_old_format_detected",
-                        concept_id=concept.concept_id,
-                    )
-                    
-                    json_content = full_content.strip()
-                    
-                    # 如果包含 ```json 代码块，提取其中的内容
-                    if "```json" in json_content:
-                        json_start = json_content.find("```json") + 7
-                        json_end = json_content.find("```", json_start)
-                        if json_end > json_start:
-                            json_content = json_content[json_start:json_end].strip()
-                    # 如果包含普通 ``` 代码块
-                    elif json_content.startswith("```") and "```" in json_content[3:]:
-                        json_start = 3
-                        json_end = json_content.find("```", json_start)
-                        if json_end > json_start:
-                            json_content = json_content[json_start:json_end].strip()
-                    
-                    # 解析 JSON
-                    metadata = json.loads(json_content)
-                    
-                    # 提取教程内容（Markdown格式）
-                    tutorial_markdown = metadata.get("tutorial_content", "")
-                    if not tutorial_markdown:
-                        tutorial_markdown = metadata.get("content", "")
-                    
-                    # 如果还是没有内容，使用原始内容
-                    if not tutorial_markdown:
-                        tutorial_markdown = full_content
-                
-                # 获取版本号（从 context 中获取，默认为 1）
-                content_version = context.get("content_version", 1)
-                
-                # 生成教程 ID（使用 UUID 确保全局唯一）
-                tutorial_id = str(uuid.uuid4())
-                
-                # 上传到 S3
-                s3_tool = tool_registry.get("s3_storage_v1")
-                if not s3_tool:
-                    raise RuntimeError("S3 Storage Tool 未注册")
-                
-                # 构建 S3 Key（包含版本号）
-                roadmap_id = context.get("roadmap_id", "unknown")
-                s3_key = f"{roadmap_id}/concepts/{concept.concept_id}/v{content_version}.md"
-                
-                upload_request = S3UploadRequest(
-                    key=s3_key,
-                    content=tutorial_markdown,
-                    content_type="text/markdown",
-                )
-                
-                upload_result = await s3_tool.execute(upload_request)
-                
-                # 构建输出（包含版本信息）
-                result = TutorialGenerationOutput(
-                    concept_id=concept.concept_id,
-                    tutorial_id=tutorial_id,
-                    title=metadata.get("title", concept.name),
-                    summary=metadata.get("summary", concept.description[:500] if concept.description else ""),
-                    content_url=upload_result.url,
-                    content_status="completed",
-                    estimated_completion_time=metadata.get("estimated_completion_time", int(concept.estimated_hours * 60)),
-                    generated_at=datetime.now(),
-                    content_version=content_version,  # 传递版本号
-                )
-                
-                logger.info(
-                    "tutorial_generation_stream_success",
-                    concept_id=concept.concept_id,
-                    tutorial_id=tutorial_id,
-                    content_url=upload_result.url,
-                    content_version=content_version,
-                )
-                
-                # 推送完成事件（包含版本信息）
-                yield {
-                    "type": "tutorial_complete",
-                    "concept_id": concept.concept_id,
-                    "data": {
-                        "tutorial_id": result.tutorial_id,
-                        "title": result.title,
-                        "summary": result.summary,
-                        "content_url": result.content_url,
-                        "content_status": result.content_status,
-                        "estimated_completion_time": result.estimated_completion_time,
-                        "content_version": content_version,
-                    }
-                }
-                
-            except json.JSONDecodeError as e:
-                logger.error(
-                    "tutorial_generation_stream_json_parse_error",
-                    concept_id=concept.concept_id,
-                    error=str(e),
-                    content=full_content[:500],
-                )
-                yield {
-                    "type": "tutorial_error",
-                    "concept_id": concept.concept_id,
-                    "error": f"JSON 解析错误: {str(e)}"
-                }
-                
-        except Exception as e:
+        # 6. 提取最终输出
+        content = response.choices[0].message.content
+        
+        # 验证内容是字符串
+        if not isinstance(content, str):
             logger.error(
-                "tutorial_generation_stream_error",
+                "tutorial_generation_invalid_content_type",
                 concept_id=concept.concept_id,
-                error=str(e),
-                error_type=type(e).__name__,
+                content_type=type(content).__name__,
             )
-            yield {
-                "type": "tutorial_error",
-                "concept_id": concept.concept_id,
-                "error": str(e)
-            }
+            raise TypeError(
+                f"Final message content is not a string, got {type(content).__name__}. "
+                "The Agent may not have produced a final text response."
+            )
+        
+        if not content.strip():
+            logger.error(
+                "tutorial_generation_empty_content",
+                concept_id=concept.concept_id,
+            )
+            raise ValueError("Final message content is empty")
+        
+        logger.info(
+            "tutorial_generation_llm_completed",
+            concept_id=concept.concept_id,
+            content_length=len(content),
+            content_preview=content[:500] if len(content) > 500 else content,
+        )
+        
+        # 7. 解析两段式输出
+        tutorial_markdown, metadata = await self._parse_output(content, concept)
+        
+        # 8. 上传到 S3
+        s3_key = await self._upload_to_s3(
+            tutorial_markdown,
+            concept.concept_id,
+            context
+        )
+        
+        # 9. 返回结果
+        return TutorialGenerationOutput(
+            concept_id=concept.concept_id,
+            tutorial_id=str(uuid.uuid4()),
+            title=metadata.get("title", concept.name),
+            summary=metadata.get("summary", concept.description[:100] if concept.description else ""),
+            content_url=s3_key,
+            content_status="completed",
+            estimated_completion_time=metadata.get("estimated_completion_time", int(concept.estimated_hours * 60)),
+            generated_at=datetime.now(),
+            content_version=context.get("content_version", 1),
+        )
     
     async def execute(self, input_data: TutorialGenerationInput) -> TutorialGenerationOutput:
-        """实现基类的抽象方法"""
+        """实现基类抽象方法"""
         return await self.generate(
             concept=input_data.concept,
             context=input_data.context,
             user_preferences=input_data.user_preferences,
         )
+    
+    # ============================================================
+    # 辅助方法（保留旧版本逻辑）
+    # ============================================================
+    
+    def _extract_json_object(self, content: str, concept_id: str) -> str | None:
+        """
+        从文本中提取JSON对象（使用正则表达式的健壮策略）
+        
+        Args:
+            content: 包含JSON的文本
+            concept_id: 概念ID（用于日志）
+            
+        Returns:
+            提取的JSON字符串，如果找不到返回None
+        """
+        import re
+        
+        # 策略: 使用正则表达式查找JSON对象（支持嵌套）
+        # 这个正则表达式会匹配从{开始到对应的}结束的内容
+        json_pattern = r'\{(?:[^{}]|(?:\{(?:[^{}]|(?:\{[^{}]*\}))*\}))*\}'
+        matches = re.findall(json_pattern, content, re.DOTALL)
+        
+        if matches:
+            # 尝试解析每个匹配，返回第一个有效的JSON
+            for match in sorted(matches, key=len, reverse=True):  # 优先尝试最长的匹配
+                try:
+                    json.loads(match)  # 验证是否是有效JSON
+                    logger.info(
+                        "tutorial_json_extracted_by_regex",
+                        concept_id=concept_id,
+                        extracted_length=len(match),
+                        extracted_preview=match[:200]
+                    )
+                    return match
+                except json.JSONDecodeError:
+                    continue
+        
+        return None
+    
+    async def _parse_output(self, content: str, concept: Concept) -> tuple[str, dict]:
+        """
+        解析 JSON 格式的输出
+        
+        期望格式：
+        {
+            "markdown_content": "完整的 Markdown 教程内容",
+            "metadata": {
+                "title": "教程标题",
+                "summary": "简短摘要",
+                "estimated_completion_time": 90
+            }
+        }
+        
+        Args:
+            content: LLM 返回的内容（应该是 JSON 格式）
+            concept: 概念信息
+        
+        Returns:
+            (Markdown 内容, 元数据字典) 元组
+            
+        Raises:
+            ValueError: 当格式错误或必填字段缺失时
+            json.JSONDecodeError: 当 JSON 解析失败时
+            TypeError: 当返回类型不是字典时
+        """
+        # 记录接收到的原始内容
+        logger.info(
+            "tutorial_parse_output_start",
+            concept_id=concept.concept_id,
+            content_length=len(content),
+            content_preview=content[:200],
+        )
+        
+        # 去除可能的ReAct思考过程前缀
+        json_content = content.strip()
+        
+        # 如果内容以"Thought:"开头,尝试找到JSON部分
+        if json_content.startswith("Thought:"):
+            # 尝试找到JSON对象的开始位置
+            json_start = json_content.find("{")
+            if json_start != -1:
+                # 尝试找到匹配的JSON对象结束位置
+                # 策略：从第一个{开始，找到完整的JSON对象
+                brace_count = 0
+                in_string = False
+                escape_next = False
+                json_end = json_start
+                
+                for i in range(json_start, len(json_content)):
+                    char = json_content[i]
+                    
+                    if escape_next:
+                        escape_next = False
+                        continue
+                    
+                    if char == '\\':
+                        escape_next = True
+                        continue
+                    
+                    if char == '"' and not in_string:
+                        in_string = True
+                    elif char == '"' and in_string:
+                        in_string = False
+                    elif char == '{' and not in_string:
+                        brace_count += 1
+                    elif char == '}' and not in_string:
+                        brace_count -= 1
+                        if brace_count == 0:
+                            json_end = i + 1
+                            break
+                
+                if json_end > json_start:
+                    json_content = json_content[json_start:json_end]
+                else:
+                    # 如果找不到完整的JSON对象，仍然使用从第一个{开始的内容
+                    json_content = json_content[json_start:]
+                
+                logger.info(
+                    "tutorial_react_thought_stripped",
+                    concept_id=concept.concept_id,
+                    message="Removed ReAct thought prefix, extracted JSON",
+                    extracted_json_preview=json_content[:300],  # 增加：记录提取后的内容
+                    extracted_json_length=len(json_content)
+                )
+            else:
+                # 检测到 ReAct Thought 但没有 JSON：说明 LLM 提前终止
+                logger.warning(
+                    "tutorial_react_incomplete_response",
+                    concept_id=concept.concept_id,
+                    content_preview=json_content[:500],
+                    message="LLM returned only ReAct thought without JSON. Attempting recovery..."
+                )
+                
+                # 兜底策略：使用补充 prompt 强制生成 JSON
+                recovery_prompt = f"""
+你之前的思考过程已经完成：
 
+{json_content[:1000]}
+
+现在，请直接输出完整的 JSON 格式教程内容。
+
+⚠️ 严格要求：
+1. **第一个字符必须是左花括号 {{**
+2. 不要添加任何前缀文字（如"Thought:"、"Action:"、"Final Answer:"等）
+3. 不要使用代码块标记（不要用```包裹）
+4. 使用标准JSON格式（双引号、正确转义）
+
+JSON格式示例：
+{{
+  "markdown_content": "完整的 Markdown 教程内容（包含所有章节）",
+  "metadata": {{
+    "title": "教程标题",
+    "summary": "简短摘要",
+    "estimated_completion_time": 90
+  }}
+}}
+
+请立即输出JSON（以 {{ 开始）：
+"""
+                
+                try:
+                    # 进行补充调用
+                    recovery_messages = [
+                        {"role": "user", "content": recovery_prompt}
+                    ]
+                    recovery_response = await self._call_llm(recovery_messages)
+                    recovery_content = recovery_response.choices[0].message.content
+                    
+                    if not recovery_content or not recovery_content.strip():
+                        raise ValueError("Recovery call returned empty content")
+                    
+                    logger.info(
+                        "tutorial_react_recovery_success",
+                        concept_id=concept.concept_id,
+                        recovery_content_length=len(recovery_content),
+                        recovery_content_preview=recovery_content[:200]
+                    )
+                    
+                    # 使用恢复后的内容
+                    json_content = recovery_content.strip()
+                    
+                except Exception as recovery_error:
+                    logger.error(
+                        "tutorial_react_recovery_failed",
+                        concept_id=concept.concept_id,
+                        recovery_error=str(recovery_error),
+                        original_content_preview=json_content[:500]
+                    )
+                    raise ValueError(
+                        f"LLM returned ReAct thought but no JSON object found, and recovery failed. "
+                        f"Original content preview: {json_content[:200]}, "
+                        f"Recovery error: {str(recovery_error)}"
+                    )
+        
+        # 去除可能的代码块标记
+        if json_content.startswith("```json"):
+            json_content = json_content[7:]
+        elif json_content.startswith("```"):
+            json_content = json_content[3:]
+        
+        if json_content.endswith("```"):
+            json_content = json_content[:-3]
+        
+        json_content = json_content.strip()
+        
+        # 额外的清理：移除JSON前后可能的文本
+        # 如果内容不是以{开始，尝试找到第一个{
+        if json_content and not json_content.startswith("{"):
+            first_brace = json_content.find("{")
+            if first_brace != -1:
+                json_content = json_content[first_brace:]
+                logger.info(
+                    "tutorial_json_additional_cleanup",
+                    concept_id=concept.concept_id,
+                    message="Removed leading non-JSON text"
+                )
+        
+        # 如果内容不是以}结束，尝试找到最后一个}
+        if json_content and not json_content.endswith("}"):
+            last_brace = json_content.rfind("}")
+            if last_brace != -1:
+                json_content = json_content[:last_brace + 1]
+                logger.info(
+                    "tutorial_json_additional_cleanup_trailing",
+                    concept_id=concept.concept_id,
+                    message="Removed trailing non-JSON text"
+                )
+        
+        # 验证不为空
+        if not json_content:
+            logger.error(
+                "tutorial_json_content_empty",
+                concept_id=concept.concept_id,
+                original_length=len(content),
+            )
+            raise ValueError(
+                f"JSON content is empty after preprocessing. "
+                f"Original content length: {len(content)}, "
+                f"Preview: {content[:200]}"
+            )
+        
+        # 解析 JSON
+        try:
+            output = json.loads(json_content)
+        except json.JSONDecodeError as e:
+            # 详细记录JSON解析失败的信息
+            logger.warning(
+                "tutorial_json_parse_failed_attempt_extraction",
+                concept_id=concept.concept_id,
+                error_msg=str(e),
+                error_line=e.lineno,
+                error_col=e.colno,
+                error_pos=e.pos,
+                json_content_length=len(json_content),
+                json_content_preview=json_content[:500],  # 记录更多内容以便诊断
+                json_content_first_100_chars=repr(json_content[:100]),  # 使用repr显示转义字符
+            )
+            
+            # 最后的兜底策略：使用正则表达式提取JSON
+            logger.info(
+                "tutorial_attempting_regex_extraction",
+                concept_id=concept.concept_id,
+                message="Attempting to extract JSON using regex"
+            )
+            
+            extracted_json = self._extract_json_object(content, concept.concept_id)
+            
+            if extracted_json:
+                try:
+                    output = json.loads(extracted_json)
+                    logger.info(
+                        "tutorial_regex_extraction_success",
+                        concept_id=concept.concept_id,
+                        message="Successfully extracted and parsed JSON using regex"
+                    )
+                except json.JSONDecodeError as regex_error:
+                    logger.error(
+                        "tutorial_regex_extraction_failed",
+                        concept_id=concept.concept_id,
+                        regex_error=str(regex_error)
+                    )
+                    raise ValueError(
+                        f"Failed to parse JSON for concept {concept.concept_id} even after regex extraction. "
+                        f"Original error: {str(e)} at line {e.lineno}, column {e.colno}. "
+                        f"Content preview (first 500 chars): {json_content[:500]}"
+                    ) from e
+            else:
+                logger.error(
+                    "tutorial_no_json_found",
+                    concept_id=concept.concept_id,
+                    message="Could not find valid JSON object in content"
+                )
+                raise ValueError(
+                    f"Failed to parse JSON for concept {concept.concept_id}. "
+                    f"Error: {str(e)} at line {e.lineno}, column {e.colno}. "
+                    f"Content preview (first 500 chars): {json_content[:500]}"
+                ) from e
+        
+        # 类型检查：必须是字典
+        if not isinstance(output, dict):
+            logger.error(
+                "tutorial_output_invalid_type",
+                concept_id=concept.concept_id,
+                expected_type="dict",
+                actual_type=type(output).__name__,
+                output_preview=str(output)[:200],
+            )
+            raise TypeError(
+                f"Expected JSON object (dict), but got {type(output).__name__}. "
+                f"Output preview: {str(output)[:200]}"
+            )
+        
+        # 提取字段
+        tutorial_markdown = output.get("markdown_content", "")
+        metadata = output.get("metadata", {})
+        
+        # 验证必填字段
+        if not tutorial_markdown:
+            logger.error(
+                "tutorial_markdown_empty",
+                concept_id=concept.concept_id,
+                output_keys=list(output.keys()),
+            )
+            raise ValueError(
+                f"markdown_content field is empty or missing. "
+                f"Available keys: {list(output.keys())}"
+            )
+        
+        if not metadata:
+            logger.error(
+                "tutorial_metadata_empty",
+                concept_id=concept.concept_id,
+                output_keys=list(output.keys()),
+            )
+            raise ValueError(
+                f"metadata field is missing or empty. "
+                f"Available keys: {list(output.keys())}"
+            )
+        
+        # 确保元数据包含所有必填字段
+        if "title" not in metadata:
+            metadata["title"] = concept.name
+        if "summary" not in metadata:
+            metadata["summary"] = concept.description[:100] if concept.description else ""
+        if "estimated_completion_time" not in metadata:
+            metadata["estimated_completion_time"] = int(concept.estimated_hours * 60)
+        
+        logger.info(
+            "tutorial_output_parsed",
+            concept_id=concept.concept_id,
+            format="json",
+            markdown_length=len(tutorial_markdown),
+            metadata_keys=list(metadata.keys()),
+        )
+        
+        return tutorial_markdown, metadata
+    
+    async def _upload_to_s3(
+        self, 
+        markdown: str, 
+        concept_id: str, 
+        context: dict
+    ) -> str:
+        """
+        上传教程到 S3
+        
+        Returns:
+            S3 Key（不是预签名 URL）
+        """
+        from app.tools.tool_helpers import tool_registry
+        
+        s3_tool = tool_registry.get("s3_upload")
+        if not s3_tool:
+            raise RuntimeError("S3 Storage Tool 未注册")
+        
+        # 构建 S3 Key
+        roadmap_id = context.get("roadmap_id", "unknown")
+        content_version = context.get("content_version", 1)
+        s3_key = f"{roadmap_id}/concepts/{concept_id}/v{content_version}.md"
+        
+        upload_request = S3UploadRequest(
+            key=s3_key,
+            content=markdown,
+            content_type="text/markdown",
+        )
+        
+        await s3_tool.execute(upload_request)
+        
+        logger.info(
+            "tutorial_uploaded_to_s3",
+            concept_id=concept_id,
+            s3_key=s3_key,
+        )
+        
+        return s3_key

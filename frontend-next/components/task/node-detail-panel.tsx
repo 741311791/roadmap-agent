@@ -71,17 +71,17 @@ const NODE_TO_STEPS: Record<string, { steps: string[]; label: string; editSource
     color: 'text-amber-600',
   },
   content: {
-    steps: ['content_generation', 'tutorial_generation', 'resource_recommendation', 'quiz_generation'],
+    steps: ['content_generation'],
     label: 'Content Generation',
     icon: Sparkles,
     color: 'text-sage-600',
   },
   plan1: {
-    steps: ['validation_edit_plan_analysis'],
-    label: 'Validation Edit Plan',
+    steps: ['edit_plan_analysis'],  // ✅ 共享节点
+    label: 'Edit Plan Analysis',
     icon: FileText,
     color: 'text-amber-600',
-    editSource: 'validation_failed',
+    editSource: 'validation_failed',  // ✅ 通过editSource区分来源
   },
   edit1: {
     steps: ['roadmap_edit'],

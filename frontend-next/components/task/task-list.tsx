@@ -182,7 +182,7 @@ export function TaskList({ tasks, isLoading, onRetry, onDelete, onCancel }: Task
                     <Link
                       href={`/tasks/${task.task_id}`}
                       className="block truncate max-w-[220px] hover:text-sage-600 hover:underline transition-colors"
-                      title={task.title}
+                      title={task.title || undefined}
                     >
                       {task.title}
                     </Link>
@@ -254,7 +254,7 @@ export function TaskList({ tasks, isLoading, onRetry, onDelete, onCancel }: Task
                               size="icon"
                               variant="ghost"
                               onClick={() => setSelectedErrorLog({
-                                title: task.title,
+                                title: task.title || 'Unknown Task',
                                 message: task.error_message || 'No error message available'
                               })}
                               className="h-8 w-8"

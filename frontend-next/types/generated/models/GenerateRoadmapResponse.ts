@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { TaskStatus } from '../constants';
 /**
  * 路线图生成响应
  */
@@ -13,7 +14,7 @@ export type GenerateRoadmapResponse = {
     /**
      * 任务状态（pending/processing/completed/failed）
      */
-    status: string;
+    status: TaskStatus;
     /**
      * 响应消息
      */

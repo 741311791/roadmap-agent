@@ -45,10 +45,7 @@ export type LearningPreferences = {
     /**
      * 技术栈列表
      */
-    tech_stack?: Array<{
-        name: string;
-        proficiency: 'beginner' | 'intermediate' | 'advanced';
-    }> | null;
+    tech_stack?: null;
     /**
      * 偏好的学习语言（向后兼容）
      */

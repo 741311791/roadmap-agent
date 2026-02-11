@@ -13,8 +13,8 @@ import uuid
 from datetime import datetime
 
 from app.db.session import get_session
-from app.services.retrieval_service import RetrievalService
-from app.services.content_service import ContentService
+from app.services.roadmaps.retrieval_service import RetrievalService
+from app.services.content.content_service import ContentService
 from app.services.concept_service import ConceptService
 from app.models.database import (
     RoadmapMetadata,
@@ -23,13 +23,6 @@ from app.models.database import (
     User,
 )
 from app.core.auth.password import get_password_hash
-
-
-@pytest.fixture
-async def test_session():
-    """创建测试数据库会话"""
-    async for session in get_session():
-        yield session
 
 
 @pytest.fixture
@@ -98,7 +91,7 @@ async def test_roadmap(test_session: AsyncSession, test_user: User):
         status="completed",
         total_estimated_hours=5.0,
         recommended_completion_weeks=1,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
     )
     
     test_session.add(roadmap)
@@ -272,7 +265,7 @@ async def test_content_service_tutorial_generation_mock(
     mock_tutorial_output.content_url = "s3://test-bucket/tutorial.md"
     mock_tutorial_output.content_status = "completed"
     mock_tutorial_output.estimated_completion_time = 30
-    mock_tutorial_output.generated_at = datetime.utcnow()
+    mock_tutorial_output.generated_at = datetime.now(timezone.utc)
     
     with patch.object(service.tutorial_agent, "generate", return_value=mock_tutorial_output):
         # 执行教程生成

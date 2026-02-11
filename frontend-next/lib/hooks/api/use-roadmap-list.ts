@@ -8,7 +8,7 @@
  */
 
 import { useQuery } from '@tanstack/react-query';
-import type { RoadmapListResponse } from '@/types/generated';
+import type { RoadmapListResponse } from '@/lib/api/endpoints/roadmaps';
 
 interface UseRoadmapListOptions {
   userId: string | undefined;
@@ -37,8 +37,9 @@ export function useRoadmapList(options: UseRoadmapListOptions) {
       params.append('limit', limit.toString());
       params.append('offset', offset.toString());
 
+      // ✅ 路径更新：/roadmaps/user/{userId} → /roadmaps/users/{userId}
       const response = await fetch(
-        `/api/v1/roadmaps/user/${userId}?${params.toString()}`
+        `/api/v1/roadmaps/users/${userId}?${params.toString()}`
       );
 
       if (!response.ok) {

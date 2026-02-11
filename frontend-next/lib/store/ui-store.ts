@@ -39,6 +39,9 @@ export interface UIState {
 
   // 主题
   theme: 'light' | 'dark' | 'system';
+  
+  // 语言
+  locale: 'en' | 'zh';
 }
 
 /**
@@ -64,6 +67,9 @@ export interface UIActions {
 
   // 主题
   setTheme: (theme: 'light' | 'dark' | 'system') => void;
+  
+  // 语言
+  setLocale: (locale: 'en' | 'zh') => void;
 }
 
 /**
@@ -86,6 +92,7 @@ export const useUIStore = create<UIStore>()(
         reviewDialog: { isOpen: false },
         isMobileMenuOpen: false,
         theme: 'system',
+        locale: 'en', // 默认英文，将在Provider中初始化为浏览器语言或localStorage值
 
         // 侧边栏
         toggleLeftSidebar: () =>
@@ -128,6 +135,15 @@ export const useUIStore = create<UIStore>()(
 
         // 主题
         setTheme: (theme) => set({ theme }),
+        
+        // 语言
+        setLocale: (locale) => {
+          set({ locale });
+          // 同步到localStorage
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('locale', locale);
+          }
+        },
       }),
       {
         name: 'ui-storage',

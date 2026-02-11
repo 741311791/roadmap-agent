@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { app__schemas__user__StageSummary } from './app__schemas__user__StageSummary';
 /**
  * 路线图历史项
  */
@@ -13,5 +14,11 @@ export type RoadmapHistoryItem = {
     completed_concepts: number;
     topic?: (string | null);
     status?: (string | null);
+    stages?: (Array<app__schemas__user__StageSummary> | null);
+    task_id?: (string | null);
+    task_status?: (string | null);
+    current_step?: (string | null);
+    deleted_at?: (string | null);
+    deleted_by?: (string | null);
 };
 

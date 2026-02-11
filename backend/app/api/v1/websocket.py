@@ -22,7 +22,7 @@ import time
 import structlog
 from jose import jwt, JWTError
 
-from app.services.notification_service import notification_service, TaskEvent
+from app.services.shared.notification_service import notification_service, TaskEvent
 from app.crud.crud_task import TaskCRUD, get_task_crud
 from app.models.database import RoadmapTask
 from app.db.session import async_session_maker
@@ -244,8 +244,9 @@ async def _send_current_status(websocket: WebSocket, task_id: str):
     """发送任务的当前状态"""
     try:
         async with async_session_maker() as session:
-            repo = RoadmapRepository(session)
-            task = await repo.get_task(task_id)
+            # ✅ 使用已导入的 get_task_crud() 代替未定义的 RoadmapRepository
+            task_crud = get_task_crud()
+            task = await task_crud.get_by_task_id(session, task_id)
             
             if task:
                 await websocket.send_json({
@@ -270,21 +271,8 @@ async def _send_current_status(websocket: WebSocket, task_id: str):
             task_id=task_id,
             error=str(e),
         )
-        # 发送错误消息前检查连接状态，避免在已关闭的连接上发送
-        try:
-            if websocket.client_state == WebSocketState.CONNECTED:
-                await websocket.send_json({
-                    "type": "error",
-                    "task_id": task_id,
-                    "message": f"获取任务状态失败: {str(e)}",
-                })
-        except Exception as send_error:
-            # WebSocket 已关闭，记录调试日志
-            logger.debug(
-                "websocket_already_closed",
-                task_id=task_id,
-                error=str(send_error),
-            )
+        # ⚠️ 不尝试发送错误消息，避免在已关闭的连接上发送导致竞态条件
+        # WebSocket 连接状态在检查和发送之间可能改变
 
 
 async def _forward_redis_events(websocket: WebSocket, task_id: str):
@@ -316,17 +304,7 @@ async def _forward_redis_events(websocket: WebSocket, task_id: str):
             task_id=task_id,
             error=str(e),
         )
-        # 发送错误消息前检查连接状态
-        try:
-            if websocket.client_state == WebSocketState.CONNECTED:
-                await websocket.send_json({
-                    "type": "error",
-                    "task_id": task_id,
-                    "message": f"事件订阅失败: {str(e)}",
-                })
-        except Exception:
-            # WebSocket 已关闭，忽略
-            pass
+        # ⚠️ 不尝试发送错误消息，避免竞态条件
 
 
 async def _handle_client_messages(websocket: WebSocket, task_id: str):

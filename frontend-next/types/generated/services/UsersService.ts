@@ -2,110 +2,309 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { RoadmapHistoryResponse } from '../models/RoadmapHistoryResponse';
+import type { ResponseSchemaModel_UserProfileResponse_ } from '../models/ResponseSchemaModel_UserProfileResponse_';
 import type { UserProfileRequest } from '../models/UserProfileRequest';
-import type { UserProfileResponse } from '../models/UserProfileResponse';
+import type { UserRead } from '../models/UserRead';
+import type { UserUpdate } from '../models/UserUpdate';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class UsersService {
     /**
      * Get User Profile
-     * 获取用户画像
+     * 获取用户画像（从JWT自动提取user_id）
      *
      * Args:
-     * user_id: 用户 ID
+     * db: 数据库会话
+     * current_user: 当前用户（从JWT提取）
+     * service: 用户服务
      *
      * Returns:
      * 用户画像数据，如果不存在则返回默认值
-     * @returns UserProfileResponse Successful Response
-     * @throws ApiError
-     */
-    public static getUserProfileApiV1UsersUserIdProfileGet({
-        userId,
-    }: {
-        userId: string,
-    }): CancelablePromise<UserProfileResponse> {
-        return __request(OpenAPI, {
-            method: 'GET',
-            url: '/api/v1/users/{user_id}/profile',
-            path: {
-                'user_id': userId,
-            },
-            errors: {
-                422: `Validation Error`,
-            },
-        });
-    }
-    /**
-     * Save User Profile
-     * 保存或更新用户画像
      *
-     * Args:
-     * user_id: 用户 ID
-     * request: 用户画像数据
-     *
-     * Returns:
-     * 保存后的用户画像
-     * @returns UserProfileResponse Successful Response
-     * @throws ApiError
-     */
-    public static saveUserProfileApiV1UsersUserIdProfilePut({
-        userId,
-        requestBody,
-    }: {
-        userId: string,
-        requestBody: UserProfileRequest,
-    }): CancelablePromise<UserProfileResponse> {
-        return __request(OpenAPI, {
-            method: 'PUT',
-            url: '/api/v1/users/{user_id}/profile',
-            path: {
-                'user_id': userId,
-            },
-            body: requestBody,
-            mediaType: 'application/json',
-            errors: {
-                422: `Validation Error`,
-            },
-        });
-    }
-    /**
-     * Get User Roadmaps
-     * 获取用户的所有路线图列表
-     *
-     * Args:
-     * user_id: 用户 ID
-     * limit: 返回数量限制（默认50）
-     * offset: 分页偏移（默认0）
-     *
-     * Returns:
-     * 用户的路线图列表
-     * @returns RoadmapHistoryResponse Successful Response
-     * @throws ApiError
-     */
-    public static getUserRoadmapsApiV1UsersUserIdRoadmapsGet({
-        userId,
-        limit = 50,
-        offset,
-    }: {
-        userId: string,
-        limit?: number,
-        offset?: number,
-    }): CancelablePromise<RoadmapHistoryResponse> {
-        return __request(OpenAPI, {
-            method: 'GET',
-            url: '/api/v1/users/{user_id}/roadmaps',
-            path: {
-                'user_id': userId,
-            },
-            query: {
-                'limit': limit,
-                'offset': offset,
-            },
-            errors: {
-                422: `Validation Error`,
-            },
-        });
-    }
-}
+     * Example:
+     * ```json
+     * {
+         * "code": 200,
+         * "msg": "Success",
+         * "data": {
+             * "user_id": "user-123",
+             * "industry": "Technology",
+             * "current_role": "Software Engineer",
+             * "tech_stack": [
+                 * {
+                     * "technology": "Python",
+                     * "proficiency": "intermediate",
+                     * "capability_analysis": {}
+                     * }
+                     * ],
+                     * "primary_language": "zh",
+                     * "weekly_commitment_hours": 10,
+                     * "learning_style": ["text", "hands_on"],
+                     * "ai_personalization": true
+                     * }
+                     * }
+                     * ```
+                     * @returns ResponseSchemaModel_UserProfileResponse_ Successful Response
+                     * @throws ApiError
+                     */
+                    public static getUserProfileApiV1UsersProfileGet(): CancelablePromise<ResponseSchemaModel_UserProfileResponse_> {
+                        return __request(OpenAPI, {
+                            method: 'GET',
+                            url: '/api/v1/users/profile',
+                        });
+                    }
+                    /**
+                     * Get User Profile
+                     * 获取用户画像（从JWT自动提取user_id）
+                     *
+                     * Args:
+                     * db: 数据库会话
+                     * current_user: 当前用户（从JWT提取）
+                     * service: 用户服务
+                     *
+                     * Returns:
+                     * 用户画像数据，如果不存在则返回默认值
+                     *
+                     * Example:
+                     * ```json
+                     * {
+                         * "code": 200,
+                         * "msg": "Success",
+                         * "data": {
+                             * "user_id": "user-123",
+                             * "industry": "Technology",
+                             * "current_role": "Software Engineer",
+                             * "tech_stack": [
+                                 * {
+                                     * "technology": "Python",
+                                     * "proficiency": "intermediate",
+                                     * "capability_analysis": {}
+                                     * }
+                                     * ],
+                                     * "primary_language": "zh",
+                                     * "weekly_commitment_hours": 10,
+                                     * "learning_style": ["text", "hands_on"],
+                                     * "ai_personalization": true
+                                     * }
+                                     * }
+                                     * ```
+                                     * @returns ResponseSchemaModel_UserProfileResponse_ Successful Response
+                                     * @throws ApiError
+                                     */
+                                    public static getUserProfileApiV1UsersProfileGet1(): CancelablePromise<ResponseSchemaModel_UserProfileResponse_> {
+                                        return __request(OpenAPI, {
+                                            method: 'GET',
+                                            url: '/api/v1/users/profile',
+                                        });
+                                    }
+                                    /**
+                                     * Save User Profile
+                                     * 保存或更新用户画像（从JWT自动提取user_id）
+                                     *
+                                     * Args:
+                                     * request: 用户画像数据
+                                     * db: 数据库会话（自动commit/rollback）
+                                     * current_user: 当前用户（从JWT提取）
+                                     * service: 用户服务
+                                     *
+                                     * Returns:
+                                     * 保存后的用户画像
+                                     *
+                                     * Example Request:
+                                     * ```json
+                                     * {
+                                         * "industry": "Technology",
+                                         * "current_role": "Software Engineer",
+                                         * "tech_stack": [
+                                             * {
+                                                 * "technology": "Python",
+                                                 * "proficiency": "intermediate"
+                                                 * }
+                                                 * ],
+                                                 * "primary_language": "zh",
+                                                 * "weekly_commitment_hours": 15,
+                                                 * "learning_style": ["text", "hands_on"],
+                                                 * "ai_personalization": true
+                                                 * }
+                                                 * ```
+                                                 * @returns ResponseSchemaModel_UserProfileResponse_ Successful Response
+                                                 * @throws ApiError
+                                                 */
+                                                public static saveUserProfileApiV1UsersProfilePut({
+                                                    requestBody,
+                                                }: {
+                                                    requestBody: UserProfileRequest,
+                                                }): CancelablePromise<ResponseSchemaModel_UserProfileResponse_> {
+                                                    return __request(OpenAPI, {
+                                                        method: 'PUT',
+                                                        url: '/api/v1/users/profile',
+                                                        body: requestBody,
+                                                        mediaType: 'application/json',
+                                                        errors: {
+                                                            422: `Validation Error`,
+                                                        },
+                                                    });
+                                                }
+                                                /**
+                                                 * Save User Profile
+                                                 * 保存或更新用户画像（从JWT自动提取user_id）
+                                                 *
+                                                 * Args:
+                                                 * request: 用户画像数据
+                                                 * db: 数据库会话（自动commit/rollback）
+                                                 * current_user: 当前用户（从JWT提取）
+                                                 * service: 用户服务
+                                                 *
+                                                 * Returns:
+                                                 * 保存后的用户画像
+                                                 *
+                                                 * Example Request:
+                                                 * ```json
+                                                 * {
+                                                     * "industry": "Technology",
+                                                     * "current_role": "Software Engineer",
+                                                     * "tech_stack": [
+                                                         * {
+                                                             * "technology": "Python",
+                                                             * "proficiency": "intermediate"
+                                                             * }
+                                                             * ],
+                                                             * "primary_language": "zh",
+                                                             * "weekly_commitment_hours": 15,
+                                                             * "learning_style": ["text", "hands_on"],
+                                                             * "ai_personalization": true
+                                                             * }
+                                                             * ```
+                                                             * @returns ResponseSchemaModel_UserProfileResponse_ Successful Response
+                                                             * @throws ApiError
+                                                             */
+                                                            public static saveUserProfileApiV1UsersProfilePut1({
+                                                                requestBody,
+                                                            }: {
+                                                                requestBody: UserProfileRequest,
+                                                            }): CancelablePromise<ResponseSchemaModel_UserProfileResponse_> {
+                                                                return __request(OpenAPI, {
+                                                                    method: 'PUT',
+                                                                    url: '/api/v1/users/profile',
+                                                                    body: requestBody,
+                                                                    mediaType: 'application/json',
+                                                                    errors: {
+                                                                        422: `Validation Error`,
+                                                                    },
+                                                                });
+                                                            }
+                                                            /**
+                                                             * Users:Current User
+                                                             * @returns UserRead Successful Response
+                                                             * @throws ApiError
+                                                             */
+                                                            public static usersCurrentUserApiV1UsersMeGet(): CancelablePromise<UserRead> {
+                                                                return __request(OpenAPI, {
+                                                                    method: 'GET',
+                                                                    url: '/api/v1/users/me',
+                                                                    errors: {
+                                                                        401: `Missing token or inactive user.`,
+                                                                    },
+                                                                });
+                                                            }
+                                                            /**
+                                                             * Users:Patch Current User
+                                                             * @returns UserRead Successful Response
+                                                             * @throws ApiError
+                                                             */
+                                                            public static usersPatchCurrentUserApiV1UsersMePatch({
+                                                                requestBody,
+                                                            }: {
+                                                                requestBody: UserUpdate,
+                                                            }): CancelablePromise<UserRead> {
+                                                                return __request(OpenAPI, {
+                                                                    method: 'PATCH',
+                                                                    url: '/api/v1/users/me',
+                                                                    body: requestBody,
+                                                                    mediaType: 'application/json',
+                                                                    errors: {
+                                                                        400: `Bad Request`,
+                                                                        401: `Missing token or inactive user.`,
+                                                                        422: `Validation Error`,
+                                                                    },
+                                                                });
+                                                            }
+                                                            /**
+                                                             * Users:User
+                                                             * @returns UserRead Successful Response
+                                                             * @throws ApiError
+                                                             */
+                                                            public static usersUserApiV1UsersIdGet({
+                                                                id,
+                                                            }: {
+                                                                id: string,
+                                                            }): CancelablePromise<UserRead> {
+                                                                return __request(OpenAPI, {
+                                                                    method: 'GET',
+                                                                    url: '/api/v1/users/{id}',
+                                                                    path: {
+                                                                        'id': id,
+                                                                    },
+                                                                    errors: {
+                                                                        401: `Missing token or inactive user.`,
+                                                                        403: `Not a superuser.`,
+                                                                        404: `The user does not exist.`,
+                                                                        422: `Validation Error`,
+                                                                    },
+                                                                });
+                                                            }
+                                                            /**
+                                                             * Users:Patch User
+                                                             * @returns UserRead Successful Response
+                                                             * @throws ApiError
+                                                             */
+                                                            public static usersPatchUserApiV1UsersIdPatch({
+                                                                id,
+                                                                requestBody,
+                                                            }: {
+                                                                id: string,
+                                                                requestBody: UserUpdate,
+                                                            }): CancelablePromise<UserRead> {
+                                                                return __request(OpenAPI, {
+                                                                    method: 'PATCH',
+                                                                    url: '/api/v1/users/{id}',
+                                                                    path: {
+                                                                        'id': id,
+                                                                    },
+                                                                    body: requestBody,
+                                                                    mediaType: 'application/json',
+                                                                    errors: {
+                                                                        400: `Bad Request`,
+                                                                        401: `Missing token or inactive user.`,
+                                                                        403: `Not a superuser.`,
+                                                                        404: `The user does not exist.`,
+                                                                        422: `Validation Error`,
+                                                                    },
+                                                                });
+                                                            }
+                                                            /**
+                                                             * Users:Delete User
+                                                             * @returns void
+                                                             * @throws ApiError
+                                                             */
+                                                            public static usersDeleteUserApiV1UsersIdDelete({
+                                                                id,
+                                                            }: {
+                                                                id: string,
+                                                            }): CancelablePromise<void> {
+                                                                return __request(OpenAPI, {
+                                                                    method: 'DELETE',
+                                                                    url: '/api/v1/users/{id}',
+                                                                    path: {
+                                                                        'id': id,
+                                                                    },
+                                                                    errors: {
+                                                                        401: `Missing token or inactive user.`,
+                                                                        403: `Not a superuser.`,
+                                                                        404: `The user does not exist.`,
+                                                                        422: `Validation Error`,
+                                                                    },
+                                                                });
+                                                            }
+                                                        }

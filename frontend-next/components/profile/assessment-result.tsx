@@ -41,28 +41,36 @@ export function AssessmentResult({
 
       const { analyzeTechCapability } = await import('@/lib/api/endpoints');
       
-      // 调用能力分析API，但不保存到后端
-      const analysisResult = await analyzeTechCapability(
+      // 触发异步能力分析任务
+      const taskResponse = await analyzeTechCapability(
         technology,
         proficiency,
-        userId,
-        assessmentId,
-        answers,
-        false // 不保存到后端，由前端更新 store
+        {
+          user_id: userId,
+          assessment_id: assessmentId,
+          answers: answers,
+          save_to_profile: true, // 保存到后端用户画像
+        }
       );
       
-      // 更新 Zustand store 中的技术栈项
-      // 将能力分析结果附加到技术栈项
-      updateTechStack(technology, {
-        proficiency: proficiency as 'beginner' | 'intermediate' | 'expert',
-        capability_analysis: analysisResult as any, // 添加能力分析结果
+      console.log('[AssessmentResult] Capability analysis task triggered:', {
+        task_id: taskResponse.task_id,
+        technology: taskResponse.technology,
+        status: taskResponse.status,
       });
 
-      console.log('[AssessmentResult] Capability analysis saved to store:', technology);
-      onAnalysisComplete?.(analysisResult);
+      // 显示成功提示并关闭对话框
+      alert(
+        `✨ ${taskResponse.message}\n\n` +
+        `任务ID: ${taskResponse.task_id}\n\n` +
+        `分析完成后，结果将自动保存到您的用户画像中。`
+      );
+      
+      // 关闭对话框
+      onClose();
     } catch (err: any) {
-      console.error('Failed to analyze capability:', err);
-      setAnalysisError(err.message || 'Capability analysis failed, please try again later');
+      console.error('Failed to trigger capability analysis:', err);
+      setAnalysisError(err.message || 'Failed to start capability analysis, please try again later');
     } finally {
       setIsAnalyzing(false);
     }
@@ -103,45 +111,45 @@ export function AssessmentResult({
   const IconComponent = config.icon;
 
   return (
-    <div className="space-y-6 py-4">
+    <div className="space-y-4 sm:space-y-6 py-4">
       {/* Result Summary */}
-      <div className="text-center space-y-4">
-        <div className={`w-20 h-20 mx-auto rounded-full ${config.bgColor} flex items-center justify-center border-2 ${config.borderColor}`}>
-          <IconComponent className={`w-10 h-10 ${config.iconColor}`} />
+      <div className="text-center space-y-3 sm:space-y-4">
+        <div className={`w-16 h-16 sm:w-20 sm:h-20 mx-auto rounded-full ${config.bgColor} flex items-center justify-center border-2 ${config.borderColor}`}>
+          <IconComponent className={`w-8 h-8 sm:w-10 sm:h-10 ${config.iconColor}`} />
         </div>
         
-        <div>
-          <h3 className="text-2xl font-bold text-foreground">{config.title}</h3>
-          <p className="text-muted-foreground mt-2">{config.subtitle}</p>
+        <div className="px-4">
+          <h3 className="text-xl sm:text-2xl font-bold text-foreground">{config.title}</h3>
+          <p className="text-sm sm:text-base text-muted-foreground mt-2">{config.subtitle}</p>
         </div>
       </div>
 
       {/* Score Details */}
       <Card className="border-2">
-        <CardContent className="p-6">
-          <div className="grid grid-cols-3 gap-6 text-center">
+        <CardContent className="p-4 sm:p-6">
+          <div className="grid grid-cols-3 gap-3 sm:gap-6 text-center">
             <div className="space-y-1">
-              <div className="text-4xl font-bold text-foreground">
+              <div className="text-2xl sm:text-4xl font-bold text-foreground">
                 {result.score}
               </div>
-              <div className="text-sm text-muted-foreground">Total Score</div>
+              <div className="text-xs sm:text-sm text-muted-foreground">Total Score</div>
               <div className="text-xs text-muted-foreground">
                 out of {result.max_score}
               </div>
             </div>
             
             <div className="space-y-1">
-              <div className="text-4xl font-bold text-foreground">
+              <div className="text-2xl sm:text-4xl font-bold text-foreground">
                 {result.percentage.toFixed(1)}%
               </div>
-              <div className="text-sm text-muted-foreground">Accuracy</div>
+              <div className="text-xs sm:text-sm text-muted-foreground">Accuracy</div>
             </div>
             
             <div className="space-y-1">
-              <div className="text-4xl font-bold text-foreground">
+              <div className="text-2xl sm:text-4xl font-bold text-foreground">
                 {result.correct_count}/{result.total_questions}
               </div>
-              <div className="text-sm text-muted-foreground">Correct</div>
+              <div className="text-xs sm:text-sm text-muted-foreground">Correct</div>
             </div>
           </div>
         </CardContent>
@@ -149,10 +157,10 @@ export function AssessmentResult({
 
       {/* Additional Info */}
       <Card className={`${config.bgColor} border-2 ${config.borderColor}`}>
-        <CardContent className="p-5">
+        <CardContent className="p-4 sm:p-5">
           <div className="space-y-2">
-            <h4 className="font-semibold text-foreground">Scoring Rules</h4>
-            <ul className="text-sm text-muted-foreground space-y-1">
+            <h4 className="text-sm sm:text-base font-semibold text-foreground">Scoring Rules</h4>
+            <ul className="text-xs sm:text-sm text-muted-foreground space-y-1">
               <li>• Easy questions: 1 point each</li>
               <li>• Medium questions: 2 points each</li>
               <li>• Hard questions: 3 points each</li>
@@ -162,8 +170,8 @@ export function AssessmentResult({
       </Card>
 
       {/* Message */}
-      <div className="text-center">
-        <p className="text-sm text-muted-foreground">
+      <div className="text-center px-4">
+        <p className="text-xs sm:text-sm text-muted-foreground whitespace-pre-wrap break-words">
           {result.message}
         </p>
       </div>
@@ -178,29 +186,29 @@ export function AssessmentResult({
       )}
 
       {/* Actions */}
-      <div className="flex gap-3 pt-2">
+      <div className="flex flex-col sm:flex-row gap-3 pt-2">
         <Button
           variant="outline"
-          className="flex-1"
+          className="flex-1 w-full text-sm sm:text-base"
           onClick={onClose}
           size="lg"
         >
           Got It
         </Button>
         <Button
-          className="flex-1 bg-gradient-to-r from-sage-600 to-sage-700 hover:from-sage-700 hover:to-sage-800 text-white"
+          className="flex-1 w-full bg-gradient-to-r from-sage-600 to-sage-700 hover:from-sage-700 hover:to-sage-800 text-white text-sm sm:text-base"
           onClick={handleAnalyze}
           disabled={isAnalyzing}
           size="lg"
         >
           {isAnalyzing ? (
             <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              <Loader2 className="mr-2 h-3 w-3 sm:h-4 sm:w-4 animate-spin" />
               Analyzing...
             </>
           ) : (
             <>
-              <Sparkles className="mr-2 h-4 w-4" />
+              <Sparkles className="mr-2 h-3 w-3 sm:h-4 sm:w-4" />
               Capability Analysis
             </>
           )}

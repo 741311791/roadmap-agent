@@ -2,6 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ContentStatus } from '../constants';
+import type { TaskStatus } from '../constants';
 /**
  * 教程详情响应
  *
@@ -43,7 +45,7 @@ export type TutorialDetailResponse = {
     /**
      * 内容生成状态
      */
-    content_status: string;
+    content_status: TaskStatus;
     /**
      * 预计完成时间（分钟）
      */

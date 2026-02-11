@@ -17,7 +17,7 @@ import structlog
 from app.models.database import User, WaitlistEmail, beijing_now
 from app.core.auth.user_manager import UserManager
 from app.core.auth.schemas import UserCreate
-from app.services.email_service import EmailService
+from app.services.shared.email_service import EmailService
 
 logger = structlog.get_logger()
 

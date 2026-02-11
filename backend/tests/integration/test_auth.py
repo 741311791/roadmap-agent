@@ -8,7 +8,7 @@
 - 黑名单机制
 """
 import pytest
-from httpx import AsyncClient
+from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import AsyncSession
 from unittest.mock import patch, AsyncMock
 import uuid
@@ -23,15 +23,8 @@ from app.core.auth.password import get_password_hash
 @pytest.fixture
 async def client():
     """创建测试客户端"""
-    async with AsyncClient(app=app, base_url="http://test") as ac:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
-
-
-@pytest.fixture
-async def test_session():
-    """创建测试数据库会话"""
-    async for session in get_session():
-        yield session
 
 
 @pytest.fixture

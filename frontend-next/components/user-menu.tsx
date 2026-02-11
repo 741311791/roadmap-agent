@@ -127,13 +127,11 @@ export function UserMenu({ compact = false, className }: UserMenuProps) {
         </DropdownMenuItem>
         
         <DropdownMenuItem 
-          onClick={() => router.push('/settings')}
+          onClick={() => router.push('/app-settings')}
           className="cursor-pointer"
-          disabled
         >
           <Settings className="mr-2 h-4 w-4" />
           <span>App Settings</span>
-          <span className="ml-auto text-xs text-muted-foreground">Soon</span>
         </DropdownMenuItem>
         
         <DropdownMenuSeparator />

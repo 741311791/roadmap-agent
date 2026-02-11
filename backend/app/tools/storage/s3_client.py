@@ -19,10 +19,16 @@ logger = structlog.get_logger()
 
 
 class S3StorageTool(BaseTool[S3UploadRequest, S3UploadResult]):
-    """S3 兼容对象存储工具（支持 Cloudflare R2、AWS S3、MinIO）"""
+    """S3 兼容对象存储工具（已适配统一工具框架）"""
     
     def __init__(self):
-        super().__init__(tool_id="s3_storage_v1")
+        # ✅ 适配新的 BaseTool 签名
+        super().__init__(
+            tool_id="s3_storage_v2",
+            name="s3_upload",
+            description="Upload content to S3-compatible object storage (Cloudflare R2, AWS S3, MinIO)",
+            args_schema=S3UploadRequest,
+        )
         
         # 创建 aioboto3 会话
         self.session = aioboto3.Session()

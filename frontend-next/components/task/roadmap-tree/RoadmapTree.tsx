@@ -168,22 +168,23 @@ export function RoadmapTree({
   
   // 获取历史版本列表
   useEffect(() => {
-    if (!showHistoryButton || !taskId || !roadmapId) return;
+    if (!showHistoryButton || !roadmapId) return;
     
     const fetchHistory = async () => {
       setHistoryLoading(true);
       try {
-        const history = await roadmapsApi.getFullEditHistory(taskId, roadmapId);
-        setHistoryVersions(history.versions);
+        const history = await roadmapsApi.getFullEditHistory(roadmapId);
+        setHistoryVersions(history.versions || []);
       } catch (error) {
         console.error('Failed to fetch edit history:', error);
+        setHistoryVersions([]); // 出错时重置为空数组
       } finally {
         setHistoryLoading(false);
       }
     };
     
     fetchHistory();
-  }, [taskId, roadmapId, showHistoryButton]);
+  }, [roadmapId, showHistoryButton]);
   
   // 版本选择处理
   const handleVersionSelect = useCallback((versionNumber: number) => {
@@ -314,18 +315,25 @@ export function RoadmapTree({
   
   // 全部展开/折叠
   const handleToggleAll = useCallback(() => {
-    const expandableNodeIds: string[] = [];
-    stages.forEach(stage => {
-      expandableNodeIds.push(stage.stage_id);
-      stage.modules.forEach(module => {
-        expandableNodeIds.push(module.module_id);
-      });
-    });
-    
     const newState: ExpansionState = {};
-    expandableNodeIds.forEach(id => {
-      newState[id] = !allExpanded;
-    });
+    
+    if (allExpanded) {
+      // 收缩：恢复默认2级树形结构（Stage展开，Module折叠）
+      stages.forEach(stage => {
+        newState[stage.stage_id] = true;  // Stage 保持展开
+        stage.modules.forEach(module => {
+          newState[module.module_id] = false;  // Module 折叠
+        });
+      });
+    } else {
+      // 展开：显示3级树形结构（Stage和Module都展开）
+      stages.forEach(stage => {
+        newState[stage.stage_id] = true;
+        stage.modules.forEach(module => {
+          newState[module.module_id] = true;
+        });
+      });
+    }
     
     setExpansionState(newState);
   }, [stages, allExpanded]);
@@ -544,7 +552,7 @@ export function RoadmapTree({
                     <DropdownMenuContent align="end" className="w-80 max-h-96 overflow-y-auto">
                       <DropdownMenuLabel className="text-xs">Version History</DropdownMenuLabel>
                       <DropdownMenuSeparator />
-                      {historyVersions.length === 0 ? (
+                      {!historyVersions || historyVersions.length === 0 ? (
                         <div className="px-2 py-4 text-center text-xs text-muted-foreground">
                           {historyLoading ? 'Loading...' : 'No edit history available'}
                         </div>

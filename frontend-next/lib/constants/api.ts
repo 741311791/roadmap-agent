@@ -28,14 +28,6 @@ export const WS_CONFIG = {
 } as const;
 
 /**
- * 轮询配置
- */
-export const POLLING_CONFIG = {
-  INTERVAL: 2000, // 2秒
-  MAX_RETRIES: 3,
-} as const;
-
-/**
  * 请求重试配置
  */
 export const RETRY_CONFIG = {

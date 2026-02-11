@@ -11,7 +11,20 @@ export {
   useIsMobile,
   useIsTablet,
   useIsDesktop,
+  useIsWide,
+  useDeviceType,
+  useIsTouchDevice,
+  type DeviceType,
 } from './use-media-query';
+export {
+  useBreakpoint,
+  useBreakpointValue,
+  useOrientation,
+  breakpoints,
+  type Breakpoint,
+  type BreakpointState,
+  type Orientation,
+} from './use-breakpoint';
 export { useLocalStorage } from './use-local-storage';
 export { useIntersectionObserver } from './use-intersection-observer';
 export { useClipboard } from './use-clipboard';

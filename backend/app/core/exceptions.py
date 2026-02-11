@@ -3,7 +3,7 @@
 
 提供全局异常处理所需的数据结构和工具函数。
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
 from pydantic import BaseModel, Field
@@ -57,7 +57,7 @@ class ErrorDetail(BaseModel):
     message: str = Field(..., description="用户友好的错误描述")
     details: Optional[dict[str, Any]] = Field(None, description="业务相关详情（可选）")
     request_id: Optional[str] = Field(None, description="请求唯一标识")
-    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat(), description="错误发生时间（UTC）")
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="错误发生时间（UTC）")
     debug_info: Optional[DebugInfo] = Field(None, description="调试信息（仅开发环境）")
 
 

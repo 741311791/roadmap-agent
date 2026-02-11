@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useState, useEffect, useCallback } from "react";
+import { useTranslations } from "next-intl";
 import { motion, AnimatePresence } from "framer-motion";
 import confetti from "canvas-confetti";
 import { ArrowRight, Sparkles } from "lucide-react";
@@ -54,6 +55,7 @@ const WaitlistForm: React.FC<WaitlistFormProps> = ({
   showTitle = false,
   className = ""
 }) => {
+  const t = useTranslations('waitlist');
   const [email, setEmail] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [localSubmitting, setLocalSubmitting] = useState(false);
@@ -91,11 +93,11 @@ const WaitlistForm: React.FC<WaitlistFormProps> = ({
       setEmail('');
     } catch (error) {
       console.error('Failed to submit:', error);
-      toast.error("Something went wrong. Please try again.");
+      toast.error(t('errorMessage'));
     } finally {
       setLocalSubmitting(false);
     }
-  }, [email, onSubmit]);
+  }, [email, onSubmit, t]);
 
   const isLoading = isSubmitting || localSubmitting;
 
@@ -124,10 +126,10 @@ const WaitlistForm: React.FC<WaitlistFormProps> = ({
           <Sparkles className="w-8 h-8 text-sage-600" />
         </motion.div>
         <h2 className="text-3xl md:text-4xl font-serif font-bold bg-gradient-to-b from-sage-600 to-sage-800 bg-clip-text text-transparent">
-          You're on the List!
+          {t('successTitle')}
         </h2>
         <p className="text-base md:text-lg text-charcoal-light/80">
-          We'll notify you as soon as access becomes available.
+          {t('successMessage')}
         </p>
       </div>
     </motion.div>
@@ -158,13 +160,13 @@ const WaitlistForm: React.FC<WaitlistFormProps> = ({
           variants={childVariants}
         >
           <h2 className="text-3xl md:text-4xl font-serif font-bold bg-gradient-to-b from-sage-700 to-sage-900 bg-clip-text text-transparent">
-            Join the Waitlist for
+            {t('title')}
             <span
               className={`pl-2 ${
                 isSmallScreen ? "" : "block"
               } bg-gradient-to-r from-sage-500 to-sage-700 bg-clip-text text-transparent`}
             >
-              Fast Learning
+              {t('titleHighlight')}
             </span>
           </h2>
         </motion.div>
@@ -200,7 +202,7 @@ const WaitlistForm: React.FC<WaitlistFormProps> = ({
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="Enter your email"
+            placeholder={t('emailPlaceholder')}
             className={`${
               isSmallScreen
                 ? "px-5 py-4 w-full text-base focus:outline-none rounded-full border-2 border-sage-200/50 bg-white/95 backdrop-blur-md shadow-md focus:border-sage-400 focus:ring-2 focus:ring-sage-400/20 transition-all"
@@ -235,11 +237,11 @@ const WaitlistForm: React.FC<WaitlistFormProps> = ({
                   transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
                   className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full"
                 />
-                Joining...
+                {t('joining')}
               </>
             ) : (
               <>
-                Join Waitlist
+                {t('joinButton')}
                 <ArrowRight className="w-4 h-4" />
               </>
             )}

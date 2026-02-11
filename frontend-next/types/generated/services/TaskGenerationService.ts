@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ResponseSchemaModel_CancelTaskResponse_ } from '../models/ResponseSchemaModel_CancelTaskResponse_';
+import type { ResponseSchemaModel_DeleteTaskResponse_ } from '../models/ResponseSchemaModel_DeleteTaskResponse_';
 import type { ResponseSchemaModel_GenerateRoadmapResponse_ } from '../models/ResponseSchemaModel_GenerateRoadmapResponse_';
 import type { UserRequest } from '../models/UserRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
@@ -116,4 +117,60 @@ export class TaskGenerationService {
                             },
                         });
                     }
-                }
+                    /**
+                     * Delete Task
+                     * 删除路线图生成任务
+                     *
+                     * 删除任务记录。如果任务正在执行（processing状态），会先自动取消任务再删除。
+                     *
+                     * 流程：
+                     * 1. 验证任务存在且属于当前用户
+                     * 2. 如果任务状态为 processing，先取消任务
+                     * 3. 删除任务记录
+                     *
+                     * Args:
+                     * task_id: 任务 ID
+                     * current_user: 当前登录用户
+                     * generation_service: 生成服务
+                     *
+                     * Returns:
+                     * 删除结果
+                     *
+                     * Raises:
+                     * NotFoundError: 任务不存在
+                     * ForbiddenError: 无权限删除此任务
+                     * InternalServerError: 删除失败
+                     *
+                     * Example:
+                     * ```json
+                     * {
+                         * "code": 200,
+                         * "msg": "Success",
+                         * "data": {
+                             * "success": true,
+                             * "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                             * "message": "任务已删除",
+                             * "previous_status": "failed"
+                             * }
+                             * }
+                             * ```
+                             * @returns ResponseSchemaModel_DeleteTaskResponse_ Successful Response
+                             * @throws ApiError
+                             */
+                            public static deleteTaskApiV1TasksTaskIdDelete({
+                                taskId,
+                            }: {
+                                taskId: string,
+                            }): CancelablePromise<ResponseSchemaModel_DeleteTaskResponse_> {
+                                return __request(OpenAPI, {
+                                    method: 'DELETE',
+                                    url: '/api/v1/tasks/{task_id}',
+                                    path: {
+                                        'task_id': taskId,
+                                    },
+                                    errors: {
+                                        422: `Validation Error`,
+                                    },
+                                });
+                            }
+                        }

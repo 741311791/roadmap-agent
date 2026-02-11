@@ -6,6 +6,14 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Label } from '@/components/ui/label';
+import {
   Sparkles,
   ArrowRight,
   ArrowLeft,
@@ -20,6 +28,7 @@ import {
   FileText,
   Headphones,
   Wrench,
+  Languages,
 } from 'lucide-react';
 import { getUserProfile, getRoadmapStatus, type UserProfileData } from '@/lib/api/endpoints';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
@@ -37,6 +46,8 @@ interface FormData {
   motivation: string;
   careerBackground: string;
   contentPreferences: string[];
+  primaryLanguage: string;
+  secondaryLanguage: string | null;
 }
 
 const contentOptions = [
@@ -44,6 +55,17 @@ const contentOptions = [
   { id: 'text', label: 'Text', icon: FileText, desc: 'Documentation, articles, books' },
   { id: 'audio', label: 'Audio', icon: Headphones, desc: 'Podcasts, audio content' },
   { id: 'hands_on', label: 'Hands-on', icon: Wrench, desc: 'Interactive exercises, projects' },
+];
+
+const languageOptions = [
+  { value: 'en', label: 'English' },
+  { value: 'zh', label: '中文 (Chinese)' },
+  { value: 'es', label: 'Español (Spanish)' },
+  { value: 'ja', label: '日本語 (Japanese)' },
+  { value: 'ko', label: '한국어 (Korean)' },
+  { value: 'fr', label: 'Français (French)' },
+  { value: 'de', label: 'Deutsch (German)' },
+  { value: 'pt', label: 'Português (Portuguese)' },
 ];
 
 const levelOptions = [
@@ -61,10 +83,7 @@ const stepProgress: Record<string, { progress: number; status: string }> = {
   'human_review': { progress: 55, status: 'Awaiting human review...' },
   'content_generation_queued': { progress: 65, status: 'Queueing content generation...' },
   'content_generation': { progress: 70, status: 'Generating learning content...' },
-  'tutorial_generation': { progress: 75, status: 'Generating tutorial content...' },
-  'resource_recommendation': { progress: 85, status: 'Recommending resources...' },
-  'quiz_generation': { progress: 90, status: 'Generating quiz questions...' },
-  'finalizing': { progress: 95, status: 'Finalizing...' },
+  // ✅ 移除：finalizing步骤（不需要）
   'completed': { progress: 100, status: 'Generation complete!' },
 };
 
@@ -88,6 +107,8 @@ export default function NewRoadmapClient() {
     motivation: '',
     careerBackground: '',
     contentPreferences: ['visual', 'text'],
+    primaryLanguage: 'en',
+    secondaryLanguage: null,
   });
 
   // Use new Hooks
@@ -178,6 +199,8 @@ export default function NewRoadmapClient() {
               contentPreferences: profile.learning_style?.length > 0 
                 ? profile.learning_style 
                 : prev.contentPreferences,
+              primaryLanguage: profile.primary_language || 'en',
+              secondaryLanguage: profile.secondary_language || null,
             }));
           }
         }
@@ -237,6 +260,7 @@ export default function NewRoadmapClient() {
         current_level: formData.currentLevel,
         career_background: formData.careerBackground || 'Not specified',
         content_preference: formData.contentPreferences as any,
+        preferred_language: formData.primaryLanguage,
         // Include profile data if available
         ...(userProfile && hasCompletedProfile ? {
           industry: userProfile.industry,
@@ -245,7 +269,6 @@ export default function NewRoadmapClient() {
             name: item.technology,
             proficiency: (item.proficiency === 'expert' ? 'advanced' : item.proficiency) as 'beginner' | 'intermediate' | 'advanced',
           })),
-          preferred_language: userProfile.primary_language,
         } : {}),
       },
     };
@@ -481,6 +504,60 @@ export default function NewRoadmapClient() {
                     </button>
                   );
                 })}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-3">
+                <Languages size={14} className="inline mr-1" />
+                Language Preferences
+              </label>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label className="text-xs uppercase tracking-wider text-muted-foreground">
+                    Primary Language
+                  </Label>
+                  <Select
+                    value={formData.primaryLanguage}
+                    onValueChange={(value) =>
+                      setFormData({ ...formData, primaryLanguage: value })
+                    }
+                  >
+                    <SelectTrigger className="bg-white">
+                      <SelectValue placeholder="Select language" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {languageOptions.map((lang) => (
+                        <SelectItem key={lang.value} value={lang.value}>
+                          {lang.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs uppercase tracking-wider text-muted-foreground">
+                    Secondary Language (Optional)
+                  </Label>
+                  <Select
+                    value={formData.secondaryLanguage || 'none'}
+                    onValueChange={(value) =>
+                      setFormData({ ...formData, secondaryLanguage: value === 'none' ? null : value })
+                    }
+                  >
+                    <SelectTrigger className="bg-white">
+                      <SelectValue placeholder="Select language" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">None</SelectItem>
+                      {languageOptions.map((lang) => (
+                        <SelectItem key={lang.value} value={lang.value}>
+                          {lang.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             </div>
 

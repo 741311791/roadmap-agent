@@ -17,7 +17,8 @@ dependencies = [
     "asyncpg>=0.30.0",
     "redis[hiredis]>=5.2.0",
     "langgraph>=1.0.2",
-    "litellm>=1.69.0",
+    "litellm>=1.81.1",
+    "instructor>=1.0.0",
     "aiohttp>=3.9.2",
     "httpx>=0.28.1",
     "aioboto3>=13.3.0",
@@ -38,6 +39,8 @@ dependencies = [
     "openai>=2.8.1",
     "ddgs>=9.9.3",
     "tavily-python>=0.5.0",
+    # MCP (Model Context Protocol) 支持
+    "mcp>=1.0.0", # MCP Python SDK
     # FastAPI Users 认证相关
     "fastapi-users[sqlalchemy]>=13.0.0",
     "python-jose[cryptography]>=3.3.0",
@@ -45,11 +48,16 @@ dependencies = [
     "resend>=2.0.0",
     # Celery 异步任务队列
     "celery>=5.4.0",
-    "celery-pool-asyncio>=0.2.0",  # ✅ 稳定版本，生产环境验证
+    "celery-pool-asyncio>=0.2.0", # ✅ 稳定版本，生产环境验证
     "kombu>=5.4.0",
     "flower>=2.0.0",
     # 定时任务调度
     "schedule>=1.2.0",
+    # API 可视化工具
+    "fastapi-voyager>=0.14.0",
+    "langchain>=1.2.6",
+    "langchain-litellm>=0.3.0",
+    "langchain-mcp-adapters>=0.1.0",
 ]
 
 [project.optional-dependencies]
@@ -93,7 +101,7 @@ sqlmodel = "^0.0.22"
 asyncpg = "^0.30.0"
 redis = {extras = ["hiredis"], version = "^5.2.0"}
 langgraph = "^1.0.2"
-litellm = "^1.69.0"
+litellm = "^1.81.1"
 aiohttp = "^3.9.2"
 httpx = "^0.28.1"
 aioboto3 = "^13.3.0"
@@ -112,6 +120,7 @@ psycopg = {extras = ["binary"], version = "^3.1.0"}
 langgraph-checkpoint-postgres = "^1.0.0"
 psycopg-pool = "^3.2.0"
 tavily-python = "^0.5.0"
+mcp = "^1.0.0"  # MCP (Model Context Protocol) 支持
 schedule = "^1.2.0"
 
 [tool.poetry.group.dev.dependencies]
@@ -147,12 +156,14 @@ default-groups = ["dev"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-# 关键修复：将 fixture loop scope 设置为 session，确保所有测试共享同一个 event loop
-asyncio_default_fixture_loop_scope = "session"
+# 修复事件循环冲突：为每个测试函数创建独立的事件循环
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 markers = [
     "integration: 集成测试",
     "e2e: 端到端测试",
+    "real: 真实E2E测试（需要真实服务运行）",
     "slow: 慢速测试（包含完整工作流和教程生成）",
+    "benchmark: 性能基准测试",
 ]
 

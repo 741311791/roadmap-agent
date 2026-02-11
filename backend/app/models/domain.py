@@ -14,6 +14,9 @@ from pydantic import BaseModel, Field, field_serializer
 from typing import List, Optional, Literal, Dict, Any, Tuple
 from datetime import datetime
 
+# 导入项目统一的时间函数（北京时间，无时区信息）
+from app.models.database import beijing_now
+
 
 # ============================================================
 # 1. 用户输入模型
@@ -179,7 +182,7 @@ class RoadmapFramework(BaseModel):
     """完整的三层路线图框架"""
     roadmap_id: str
     title: str = Field(..., description="路线图标题，如 '全栈开发学习路线'")
-    stages: List[Stage] = Field(default_factory=list, min_length=0, description="路线图阶段列表，生成过程中可能为空")
+    stages: List[Stage] = Field(default_factory=list, description="路线图阶段列表")
     total_estimated_hours: float
     recommended_completion_weeks: int
 
@@ -358,7 +361,7 @@ class Tutorial(BaseModel):
     
     # 元数据（用于追踪和版本管理）
     version: str = Field(default="v1", description="教程版本")
-    generated_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=beijing_now, description="创建时间")
     storage_url: Optional[str] = Field(None, description="存储位置的完整 URL")
 
 
@@ -377,6 +380,33 @@ class ContentFormatWeights(BaseModel):
     text: float = Field(default=0.25, ge=0.0, le=1.0, description="文本类内容权重")
     audio: float = Field(default=0.25, ge=0.0, le=1.0, description="音频类内容权重")
     hands_on: float = Field(default=0.25, ge=0.0, le=1.0, description="实操类内容权重")
+
+
+# ============================================================
+# 约束系统（用户画像约束）
+# ============================================================
+
+# 约束文本字典类型
+UserConstraints = Dict[str, str]  # {"约束名称": "约束内容"}
+
+
+class ConstraintNames:
+    """约束名称常量"""
+    # 通用约束（所有 Agent）
+    LANGUAGE = "生成语言约束"
+    USER_GOAL = "用户目标约束"
+    USER_PROFILE = "用户画像约束"
+    
+    # 特定约束
+    DIFFICULTY = "难度约束"
+    TIME_CONSTRAINT = "时间约束"
+    LEARNING_PATH_TYPE = "学习路径类型约束"
+    SKILL_GAP = "技能差距约束"
+    RECOMMENDED_FOCUS = "推荐重点约束"
+    CONTENT_FORMAT_PREFERENCE = "内容格式偏好约束"
+    LANGUAGE_RESOURCE_ALLOCATION = "语言资源分配约束"
+    KEY_TECHNOLOGIES = "技术栈约束"
+    PERSONALIZED_SUGGESTIONS = "个性化建议约束"
 
 
 class IntentAnalysisOutput(BaseModel):
@@ -423,6 +453,12 @@ class IntentAnalysisOutput(BaseModel):
         default=None,
         description="路线图唯一标识（有语义的英文短语 + 唯一后缀）"
     )
+    
+    # 约束文本字典（新增）
+    full_analysis_data: UserConstraints = Field(
+        default_factory=dict,
+        description="约束文本字典，格式：{'约束名称': '约束内容'}"
+    )
 
 
 # --- A2: Curriculum Architect (课程架构师) ---
@@ -431,58 +467,101 @@ class CurriculumDesignInput(BaseModel):
     user_preferences: LearningPreferences
 
 
+# --- 简化模型（用于第一阶段 LLM 结构化提取）---
+
+class SimplifiedConcept(BaseModel):
+    """
+    简化的 Concept 模型（仅第一阶段需要的字段）
+    
+    用于 LLM 结构化提取，减少嵌套深度和无效字段，提升响应速度。
+    """
+    concept_id: str
+    name: str = Field(..., description="概念名称，如 'React Hooks 原理'")
+    description: str = Field(..., description="简短描述（1-2 句话）")
+    estimated_hours: float = Field(..., ge=0.5, description="预估学习时长（小时）")
+    prerequisites: List[str] = Field(default=[], description="前置概念 ID 列表")
+    difficulty: Literal["easy", "medium", "hard"] = "medium"
+    keywords: List[str] = Field(default=[], description="关键词标签")
+
+
+class SimplifiedModule(BaseModel):
+    """简化的 Module 模型（仅第一阶段需要的字段）"""
+    module_id: str
+    name: str = Field(..., description="模块名称，如 'React 核心'")
+    description: str
+    concepts: List[SimplifiedConcept] = Field(..., min_length=1)
+
+
+class SimplifiedStage(BaseModel):
+    """简化的 Stage 模型（仅第一阶段需要的字段）"""
+    stage_id: str
+    name: str = Field(..., description="阶段名称，如 '前端基础'")
+    description: str
+    order: int = Field(..., ge=1, description="阶段顺序")
+    modules: List[SimplifiedModule] = Field(..., min_length=1)
+
+
+class SimplifiedRoadmapFramework(BaseModel):
+    """
+    简化的路线图框架（仅第一阶段需要的字段）
+    
+    用于 LLM 结构化提取，提升响应速度。
+    转换为完整 RoadmapFramework 时会补充其他字段的默认值。
+    """
+    roadmap_id: str
+    title: str = Field(..., description="路线图标题，如 '全栈开发学习路线'")
+    stages: List[SimplifiedStage] = Field(default_factory=list, description="路线图阶段列表")
+    total_estimated_hours: float
+    recommended_completion_weeks: int
+
+
 class CurriculumDesignOutput(BaseModel):
+    """
+    课程架构师输出
+    
+    重构说明:
+    - 移除 design_rationale 字段,只保留核心的 framework
+    - 设计理由通过日志记录,不作为输出结构的一部分
+    """
     framework: RoadmapFramework
-    design_rationale: str = Field(..., description="设计理由说明")
 
 
 # --- A2E: Roadmap Editor (路线图编辑师) ---
 
-class EditIntent(BaseModel):
+class StageEditTask(BaseModel):
     """
-    单条修改意图
+    Stage 级别的修改任务（极简版）
     
-    用于将用户的自然语言反馈解析为结构化的修改计划。
-    每个 EditIntent 代表一个具体的修改操作。
+    重构说明（第三版）：
+    - 移除所有工程化设计（dependencies、order、priority）
+    - 只保留核心字段：action、stage_id、instruction
+    - 完全依赖 LLM 的语义理解能力
     """
-    intent_type: Literal["add", "remove", "modify", "reorder", "merge", "split"] = Field(
-        ..., description="修改类型：add（添加）、remove（删除）、modify（修改）、reorder（重排）、merge（合并）、split（拆分）"
+    action: Literal["CREATE", "UPDATE", "REGENERATE"] = Field(
+        ..., description="动作类型：CREATE（创建新Stage）、UPDATE（修改现有Stage，包括增删改模块/概念）、REGENERATE（重建整个路线图）"
     )
-    target_type: Literal["stage", "module", "concept"] = Field(
-        ..., description="修改目标类型：stage（阶段）、module（模块）、concept（概念）"
+    stage_id: Optional[str] = Field(
+        None, description="目标 Stage ID（UPDATE 时必需，CREATE/REGENERATE 时为 None）"
     )
-    target_id: Optional[str] = Field(
-        None, description="目标 ID（如 'stage-2', 'mod-1-1', 'c-1-1-1'），新增时可为空"
-    )
-    target_path: str = Field(
-        ..., description="目标位置路径（如 'Stage 2 > Module 1 > Concept 3'）"
-    )
-    description: str = Field(
-        ..., description="具体修改内容描述"
-    )
-    priority: Literal["must", "should", "could"] = Field(
-        default="must", description="优先级：must（必须执行）、should（应该执行）、could（可选执行）"
+    instruction: str = Field(
+        ..., description="清晰的自然语言指令，描述该 Stage 需要如何调整（LLM 会理解并执行）"
     )
 
 
 class EditPlan(BaseModel):
     """
-    路线图修改计划
+    路线图修改计划（极简版）
     
-    由 EditPlanAnalyzerAgent 生成，将用户的自然语言反馈
-    解析为结构化的修改计划，指导 RoadmapEditorAgent 精确执行。
+    重构说明（第三版）：
+    - 移除所有工程化字段（execution_strategy、preservation_requirements）
+    - 只保留核心：feedback_summary + tasks
+    - LLM 会根据 tasks 自己判断如何修改、保留什么
     """
     feedback_summary: str = Field(
         ..., description="用户反馈的简明摘要"
     )
-    intents: List[EditIntent] = Field(
-        ..., description="结构化的修改意图列表，按优先级排序"
-    )
-    scope_analysis: str = Field(
-        ..., description="影响范围分析，说明此次修改会影响哪些部分"
-    )
-    preservation_requirements: List[str] = Field(
-        default=[], description="必须保留不变的元素（如：'Stage 1 完整结构'、'所有已完成的 Concept'）"
+    tasks: List[StageEditTask] = Field(
+        ..., description="Stage 级别的修改任务列表"
     )
 
 
@@ -494,16 +573,17 @@ class EditPlanAnalyzerInput(BaseModel):
 
 
 class EditPlanAnalyzerOutput(BaseModel):
-    """修改计划分析器输出"""
+    """
+    修改计划分析器输出
+    
+    重构说明：
+    - 移除 needs_clarification 和 clarification_questions
+    - 即使用户反馈模糊，也需要给出具体的修改计划
+    - 在输入到 EditPlanAnalyzer 之前会通过其他方式确认修改请求有效
+    """
     edit_plan: EditPlan = Field(..., description="解析后的结构化修改计划")
     confidence: float = Field(
         ..., ge=0, le=1, description="解析置信度（0-1）"
-    )
-    needs_clarification: bool = Field(
-        default=False, description="是否需要向用户澄清"
-    )
-    clarification_questions: List[str] = Field(
-        default=[], description="如果需要澄清，要问用户的问题"
     )
 
 
@@ -527,12 +607,18 @@ class RoadmapEditInput(BaseModel):
 
 
 class RoadmapEditOutput(BaseModel):
-    """路线图编辑输出"""
+    """
+    路线图编辑输出
+    
+    重构说明：
+    - 采用新旧对比引擎自动生成 modified_node_ids
+    - 移除手动标注的 preserved_elements
+    """
     framework: RoadmapFramework = Field(..., description="修改后的路线图框架")
     modification_summary: str = Field(..., description="修改说明：解决了哪些问题，做了哪些调整")
-    preserved_elements: List[str] = Field(
+    modified_node_ids: List[str] = Field(
         default=[], 
-        description="保留的原有元素（如：保留了Stage 1的完整结构）"
+        description="被修改的节点 ID 列表（通过新旧对比自动生成，包括 stage_id/module_id/concept_id）"
     )
 
 
@@ -551,7 +637,16 @@ class DimensionScore(BaseModel):
 
 class StructuralSuggestion(BaseModel):
     """结构化修改建议"""
-    action: Literal["add_concept", "add_module", "add_stage", "modify_concept", "reorder_stage", "merge_modules"]
+    action: Literal[
+        "add_concept",
+        "add_module",
+        "add_stage",
+        "modify_concept",
+        "reorder_stage",
+        "reorder_module",
+        "reorder_concepts",
+        "merge_modules"
+    ]
     target_location: str = Field(..., description="目标位置，如 'Stage 2 > Module 1 之后'")
     content: str = Field(..., description="建议的具体内容")
     reason: str = Field(..., description="为什么需要此修改")
@@ -609,7 +704,7 @@ class TutorialGenerationOutput(BaseModel):
     content_status: Literal["completed", "failed"] = "completed"
     content_version: int = Field(default=1, description="内容版本号，从 1 开始")
     estimated_completion_time: int
-    generated_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=beijing_now, description="创建时间")
 
 
 # --- A5: Resource Recommender (资源推荐师) ---
@@ -617,7 +712,7 @@ class Resource(BaseModel):
     """单个学习资源"""
     title: str = Field(..., description="资源标题")
     url: str = Field(..., description="资源 URL")
-    type: Literal["article", "video", "book", "course", "documentation", "tool"] = Field(
+    type: Literal["article", "video", "book", "course", "documentation", "tool", "hands_on"] = Field(
         ..., description="资源类型"
     )
     description: str = Field(..., description="资源简介")
@@ -659,7 +754,7 @@ class ResourceRecommendationOutput(BaseModel):
         default=[],
         description="使用的搜索查询（用于追踪）"
     )
-    generated_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=beijing_now, description="创建时间")
 
 
 # --- A6: Quiz Generator (测验生成器) ---
@@ -697,7 +792,7 @@ class QuizGenerationOutput(BaseModel):
     quiz_id: str = Field(..., description="测验唯一标识（UUID 格式，确保全局唯一）")
     questions: List[QuizQuestion] = Field(..., description="测验题目列表")
     total_questions: int = Field(..., description="题目总数")
-    generated_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=beijing_now, description="创建时间")
 
 
 # ============================================================
@@ -784,111 +879,6 @@ class S3DownloadResult(BaseModel):
 # 6. 内容修改相关模型（Modifier Agents）
 # ============================================================
 
-from enum import Enum
-
-
-class ModificationType(str, Enum):
-    """修改目标类型"""
-    TUTORIAL = "tutorial"
-    RESOURCES = "resources"
-    QUIZ = "quiz"
-    CONCEPT = "concept"
-
-
-class SingleModificationIntent(BaseModel):
-    """单个修改意图"""
-    modification_type: ModificationType = Field(..., description="修改目标类型")
-    target_id: str = Field(..., description="目标 ID（concept_id）")
-    target_name: str = Field(..., description="目标名称，便于展示")
-    specific_requirements: List[str] = Field(..., description="具体修改要求列表")
-    priority: Literal["high", "medium", "low"] = Field(
-        default="medium", description="优先级"
-    )
-
-
-class ModificationAnalysisInput(BaseModel):
-    """修改意图分析输入"""
-    user_message: str = Field(..., description="用户的自然语言修改意见")
-    roadmap_id: str = Field(..., description="路线图 ID")
-    current_context: Optional[Dict[str, Any]] = Field(
-        None, 
-        description="当前上下文（如用户正在查看的 concept_id）"
-    )
-
-
-class ModificationAnalysisOutput(BaseModel):
-    """修改意图分析输出（支持多目标）"""
-    intents: List[SingleModificationIntent] = Field(
-        ..., description="识别出的所有修改意图"
-    )
-    overall_confidence: float = Field(
-        ..., ge=0, le=1, description="整体置信度"
-    )
-    needs_clarification: bool = Field(
-        default=False, description="是否需要向用户澄清"
-    )
-    clarification_questions: List[str] = Field(
-        default=[], description="如果需要澄清，要问用户的问题"
-    )
-    analysis_reasoning: str = Field(..., description="分析推理过程")
-
-
-# --- Tutorial Modifier Agent ---
-
-class TutorialModificationInput(BaseModel):
-    """教程修改输入"""
-    concept: Concept = Field(..., description="要修改教程的概念")
-    context: Dict[str, Any] = Field(
-        default={}, description="上下文信息：所属阶段、模块等"
-    )
-    user_preferences: LearningPreferences = Field(..., description="用户偏好")
-    existing_content_url: str = Field(..., description="现有教程内容的 S3 URL")
-    modification_requirements: List[str] = Field(
-        ..., description="具体修改要求列表"
-    )
-
-
-class TutorialModificationOutput(BaseModel):
-    """教程修改输出"""
-    concept_id: str = Field(..., description="概念 ID")
-    tutorial_id: str = Field(..., description="新教程 ID（UUID 格式）")
-    title: str = Field(..., description="教程标题")
-    summary: str = Field(..., max_length=500, description="教程摘要")
-    content_url: str = Field(..., description="新版本的 S3 URL")
-    content_version: int = Field(..., description="新版本号")
-    modification_summary: str = Field(..., description="修改说明")
-    changes_made: List[str] = Field(..., description="具体修改点列表")
-    estimated_completion_time: int = Field(..., description="预估完成时间（分钟）")
-    generated_at: datetime = Field(default_factory=datetime.now)
-
-
-# --- Resource Modifier Agent ---
-
-class ResourceModificationInput(BaseModel):
-    """资源修改输入"""
-    concept: Concept = Field(..., description="要修改资源的概念")
-    context: Dict[str, Any] = Field(
-        default={}, description="上下文信息：所属阶段、模块等"
-    )
-    user_preferences: LearningPreferences = Field(..., description="用户偏好")
-    existing_resources: List[Resource] = Field(..., description="现有资源列表")
-    modification_requirements: List[str] = Field(
-        ..., description="具体修改要求列表"
-    )
-
-
-class ResourceModificationOutput(BaseModel):
-    """资源修改输出"""
-    id: str = Field(..., description="新资源推荐记录 ID（UUID 格式）")
-    concept_id: str = Field(..., description="概念 ID")
-    resources: List[Resource] = Field(..., description="修改后的资源列表")
-    modification_summary: str = Field(..., description="修改说明")
-    changes_made: List[str] = Field(..., description="具体修改点列表")
-    search_queries_used: List[str] = Field(
-        default=[], description="使用的搜索查询"
-    )
-    generated_at: datetime = Field(default_factory=datetime.now)
-
 
 # --- Quiz Modifier Agent ---
 
@@ -913,14 +903,14 @@ class QuizModificationOutput(BaseModel):
     total_questions: int = Field(..., description="题目总数")
     modification_summary: str = Field(..., description="修改说明")
     changes_made: List[str] = Field(..., description="具体修改点列表")
-    generated_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=beijing_now, description="创建时间")
 
 
 # --- 批量修改结果 ---
 
 class SingleModificationResult(BaseModel):
     """单个修改结果"""
-    modification_type: ModificationType = Field(..., description="修改类型")
+    modification_type: Literal["tutorial", "resource", "quiz"] = Field(..., description="修改类型")
     target_id: str = Field(..., description="目标 ID")
     target_name: str = Field(..., description="目标名称")
     success: bool = Field(..., description="是否成功")
@@ -1041,43 +1031,3 @@ class LearningNote(BaseModel):
     updated_at: datetime
 
 
-class MentorAgentInput(BaseModel):
-    """伴学Agent输入"""
-    user_message: str = Field(..., description="用户消息")
-    user_id: str = Field(..., description="用户 ID")
-    roadmap_id: str = Field(..., description="路线图 ID")
-    concept_id: Optional[str] = Field(None, description="当前学习的概念 ID")
-    session_history: List[ChatMessage] = Field(
-        default=[], description="最近N条历史消息"
-    )
-    # 上下文信息（由API层填充）
-    concept_name: Optional[str] = Field(None, description="概念名称")
-    concept_description: Optional[str] = Field(None, description="概念描述")
-    tutorial_summary: Optional[str] = Field(None, description="教程摘要")
-    roadmap_title: Optional[str] = Field(None, description="路线图标题")
-    user_background: Optional[str] = Field(None, description="用户职业背景")
-    user_level: Optional[str] = Field(None, description="用户技术水平")
-    motivation: Optional[str] = Field(None, description="学习动机")
-
-
-class IntentRecognitionResult(BaseModel):
-    """意图识别结果"""
-    intent: Literal["qa", "quiz_request", "note_record", "explanation_request", "analogy_request"]
-    confidence: float = Field(..., ge=0, le=1, description="置信度")
-    reason: str = Field(..., description="判断理由")
-
-
-class MentorAgentOutput(BaseModel):
-    """伴学Agent输出"""
-    response: str = Field(..., description="AI回复内容")
-    intent_type: str = Field(..., description="识别出的意图类型")
-    tool_calls: List[str] = Field(default=[], description="调用的工具列表")
-    metadata: Dict[str, Any] = Field(default={}, description="额外元数据")
-
-
-class NoteRecordResult(BaseModel):
-    """笔记记录结果"""
-    title: str = Field(..., description="笔记标题")
-    content: str = Field(..., description="笔记内容（Markdown格式）")
-    tags: List[str] = Field(default=[], description="标签列表")
-    key_points: List[str] = Field(default=[], description="关键要点")

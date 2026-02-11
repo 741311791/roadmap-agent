@@ -19,7 +19,8 @@ class ApprovalRequest(BaseModel):
 
 class ApprovalResponse(BaseModel):
     """审核响应模型"""
-    success: bool
-    message: str
-    task_id: str
+    status: str = Field(..., description="审核状态：approved/rejected")
+    message: str = Field(..., description="状态消息")
+    task_id: str = Field(..., description="任务ID")
+    feedback: Optional[str] = Field(None, description="反馈意见")
 

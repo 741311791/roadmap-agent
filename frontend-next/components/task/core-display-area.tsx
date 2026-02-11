@@ -355,14 +355,95 @@ function getWaitingStatusText(currentStep: string): string {
 /**
  * 路线图加载等待组件
  * 
+ * 显示路线图骨架屏动画，让用户感知路线图正在生成
+ * 
  * @param currentStep 当前工作流步骤，用于显示对应的状态文本
  */
 function RoadmapWaitingSkeleton({ currentStep = 'curriculum_design' }: { currentStep?: string | null }) {
   return (
-    <div className="flex-1 flex items-center justify-center py-12">
-      <div className="text-center space-y-3">
-        <Loader2 className="w-8 h-8 text-sage-500 animate-spin mx-auto" />
-        <p className="text-sm text-muted-foreground">{getWaitingStatusText(currentStep || 'curriculum_design')}</p>
+    <div className="flex-1 space-y-6 py-6">
+      {/* 状态文本 */}
+      <div className="flex items-center gap-2 justify-center mb-8">
+        <div className="relative">
+          <Loader2 className="w-6 h-6 text-sage-600 animate-spin" />
+          <div className="absolute inset-0 w-6 h-6 border-2 border-sage-200 rounded-full animate-ping" />
+        </div>
+        <p className="text-base text-sage-700 dark:text-sage-300 font-semibold tracking-wide">
+          {getWaitingStatusText(currentStep || 'curriculum_design')}
+        </p>
+      </div>
+      
+      {/* 骨架图 - 模拟路线图结构 */}
+      <div className="space-y-6 relative">
+        {/* 连接线背景 */}
+        <div className="absolute left-8 top-12 bottom-12 w-0.5 bg-gradient-to-b from-sage-200 via-sage-100 to-transparent dark:from-sage-700 dark:via-sage-800 opacity-40" />
+        
+        {/* Stage 1 骨架 - 带卡片容器 */}
+        <div className="relative pl-16 group">
+          {/* 节点圆点 */}
+          <div className="absolute left-6 top-3 w-5 h-5 rounded-full bg-sage-400 dark:bg-sage-600 animate-pulse border-4 border-white dark:border-gray-900 shadow-lg" 
+               style={{ animationDuration: '2s' }} />
+          
+          <div className="space-y-3 animate-fade-in" style={{ animationDelay: '0ms' }}>
+            {/* Stage 标题 */}
+            <Skeleton className="h-9 w-36 rounded-lg bg-gradient-to-r from-sage-200 to-sage-100 dark:from-sage-700 dark:to-sage-800" />
+            
+            {/* Concepts 卡片组 */}
+            <div className="grid grid-cols-2 gap-3">
+              <Skeleton className="h-20 rounded-xl bg-white dark:bg-gray-800 border-2 border-sage-100 dark:border-sage-800 shadow-sm" />
+              <Skeleton className="h-20 rounded-xl bg-white dark:bg-gray-800 border-2 border-sage-100 dark:border-sage-800 shadow-sm" />
+              <Skeleton className="h-20 rounded-xl bg-white dark:bg-gray-800 border-2 border-sage-100 dark:border-sage-800 shadow-sm" />
+            </div>
+          </div>
+        </div>
+        
+        {/* Stage 2 骨架 */}
+        <div className="relative pl-16 group">
+          <div className="absolute left-6 top-3 w-5 h-5 rounded-full bg-sage-400 dark:bg-sage-600 animate-pulse border-4 border-white dark:border-gray-900 shadow-lg" 
+               style={{ animationDuration: '2s', animationDelay: '200ms' }} />
+          
+          <div className="space-y-3 animate-fade-in" style={{ animationDelay: '200ms' }}>
+            <Skeleton className="h-9 w-40 rounded-lg bg-gradient-to-r from-sage-200 to-sage-100 dark:from-sage-700 dark:to-sage-800" />
+            
+            <div className="grid grid-cols-2 gap-3">
+              <Skeleton className="h-20 rounded-xl bg-white dark:bg-gray-800 border-2 border-sage-100 dark:border-sage-800 shadow-sm" />
+              <Skeleton className="h-20 rounded-xl bg-white dark:bg-gray-800 border-2 border-sage-100 dark:border-sage-800 shadow-sm" />
+              <Skeleton className="h-20 rounded-xl bg-white dark:bg-gray-800 border-2 border-sage-100 dark:border-sage-800 shadow-sm" />
+              <Skeleton className="h-20 rounded-xl bg-white dark:bg-gray-800 border-2 border-sage-100 dark:border-sage-800 shadow-sm" />
+            </div>
+          </div>
+        </div>
+        
+        {/* Stage 3 骨架 */}
+        <div className="relative pl-16 group">
+          <div className="absolute left-6 top-3 w-5 h-5 rounded-full bg-sage-400 dark:bg-sage-600 animate-pulse border-4 border-white dark:border-gray-900 shadow-lg" 
+               style={{ animationDuration: '2s', animationDelay: '400ms' }} />
+          
+          <div className="space-y-3 animate-fade-in" style={{ animationDelay: '400ms' }}>
+            <Skeleton className="h-9 w-32 rounded-lg bg-gradient-to-r from-sage-200 to-sage-100 dark:from-sage-700 dark:to-sage-800" />
+            
+            <div className="grid grid-cols-2 gap-3">
+              <Skeleton className="h-20 rounded-xl bg-white dark:bg-gray-800 border-2 border-sage-100 dark:border-sage-800 shadow-sm" />
+              <Skeleton className="h-20 rounded-xl bg-white dark:bg-gray-800 border-2 border-sage-100 dark:border-sage-800 shadow-sm" />
+            </div>
+          </div>
+        </div>
+        
+        {/* Stage 4 骨架 */}
+        <div className="relative pl-16 group">
+          <div className="absolute left-6 top-3 w-5 h-5 rounded-full bg-sage-400 dark:bg-sage-600 animate-pulse border-4 border-white dark:border-gray-900 shadow-lg" 
+               style={{ animationDuration: '2s', animationDelay: '600ms' }} />
+          
+          <div className="space-y-3 animate-fade-in" style={{ animationDelay: '600ms' }}>
+            <Skeleton className="h-9 w-36 rounded-lg bg-gradient-to-r from-sage-200 to-sage-100 dark:from-sage-700 dark:to-sage-800" />
+            
+            <div className="grid grid-cols-2 gap-3">
+              <Skeleton className="h-20 rounded-xl bg-white dark:bg-gray-800 border-2 border-sage-100 dark:border-sage-800 shadow-sm" />
+              <Skeleton className="h-20 rounded-xl bg-white dark:bg-gray-800 border-2 border-sage-100 dark:border-sage-800 shadow-sm" />
+              <Skeleton className="h-20 rounded-xl bg-white dark:bg-gray-800 border-2 border-sage-100 dark:border-sage-800 shadow-sm" />
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -416,9 +497,6 @@ export function CoreDisplayArea({
   const CONTENT_GENERATION_STEPS = [
     'content_generation',
     'content_generation_queued',
-    'tutorial_generation',
-    'resource_recommendation',
-    'quiz_generation',
   ];
   const isInContentGeneration = currentStep ? CONTENT_GENERATION_STEPS.includes(currentStep) : false;
   const isTaskCompleted = status === 'completed' || status === 'partial_failure';

@@ -2,15 +2,40 @@
 资源推荐CRUD操作
 """
 from typing import Optional, List
+from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
 from app.crud.base import BaseCRUD
-from app.models.database import ResourceRecommendationMetadata
+from app.models.database import ResourceRecommendationMetadata, beijing_now
 from app.schemas.resource import ResourceCreate, ResourceUpdate
 
 logger = structlog.get_logger()
+
+
+def _ensure_naive_datetime(dt: datetime) -> datetime:
+    """
+    确保datetime对象无时区信息（防御性函数）
+    
+    如果输入的datetime带有时区信息，转换为北京时间并移除时区。
+    如果已经无时区信息，直接返回。
+    
+    Args:
+        dt: 待处理的datetime对象
+        
+    Returns:
+        无时区信息的datetime对象
+    """
+    if dt.tzinfo is None:
+        # 已经无时区，直接返回
+        return dt
+    
+    # 有时区信息，转换为北京时间（UTC+8）并移除时区
+    from datetime import timezone, timedelta
+    BEIJING_TZ = timezone(timedelta(hours=8))
+    beijing_time = dt.astimezone(BEIJING_TZ)
+    return beijing_time.replace(tzinfo=None)
 
 class ResourceCRUD(BaseCRUD[ResourceRecommendationMetadata, ResourceCreate, ResourceUpdate]):
     """
@@ -72,7 +97,9 @@ class ResourceCRUD(BaseCRUD[ResourceRecommendationMetadata, ResourceCreate, Reso
         roadmap_id: str,
     ) -> ResourceRecommendationMetadata:
         """
-        保存资源推荐元数据（幂等操作）
+        保存资源推荐元数据（UPSERT 模式）
+        
+        通过业务键 (roadmap_id, concept_id) 查找现有记录，存在则更新，不存在则插入。
         
         Args:
             session: 数据库会话
@@ -82,15 +109,20 @@ class ResourceCRUD(BaseCRUD[ResourceRecommendationMetadata, ResourceCreate, Reso
         Returns:
             保存的元数据记录
         """
-        # 先检查是否已存在（通过主键id）
-        existing = await self.get(session, resource_output.id)
+        # ✅ 通过业务键 (roadmap_id, concept_id) 查找现有记录
+        existing = await self.get_by_concept(
+            session=session,
+            roadmap_id=roadmap_id,
+            concept_id=resource_output.concept_id,
+        )
         
         if existing:
-            # 更新现有记录
+            # ✅ 更新现有记录（幂等 UPSERT）
+            existing.id = resource_output.id  # 更新 ID（可能变化）
             existing.resources = [r.model_dump() for r in resource_output.resources]
             existing.resources_count = len(resource_output.resources)
             existing.search_queries_used = resource_output.search_queries_used
-            existing.generated_at = resource_output.generated_at
+            existing.created_at = _ensure_naive_datetime(resource_output.created_at)
             
             await session.flush()
             await session.refresh(existing)
@@ -105,7 +137,7 @@ class ResourceCRUD(BaseCRUD[ResourceRecommendationMetadata, ResourceCreate, Reso
             
             return existing
         else:
-            # 创建新记录
+            # ✅ 创建新记录
             metadata = ResourceRecommendationMetadata(
                 id=resource_output.id,
                 concept_id=resource_output.concept_id,
@@ -113,7 +145,7 @@ class ResourceCRUD(BaseCRUD[ResourceRecommendationMetadata, ResourceCreate, Reso
                 resources=[r.model_dump() for r in resource_output.resources],
                 resources_count=len(resource_output.resources),
                 search_queries_used=resource_output.search_queries_used,
-                generated_at=resource_output.generated_at,
+                created_at=_ensure_naive_datetime(resource_output.created_at),
             )
             
             session.add(metadata)

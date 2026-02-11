@@ -6,8 +6,7 @@
 import type { 
   RoadmapFramework, 
   Tutorial, 
-  ResourceRecommendations, 
-  ResourceRecommendation,
+  ResourceRecommendationOutput,
   Quiz,
   QuizQuestion,
   TutorialWithContent,
@@ -53,7 +52,7 @@ export interface TutorialResponse {
  * 资源推荐响应
  */
 export interface ResourcesResponse {
-  resources: ResourceRecommendation[];  // 直接是数组
+  resources: ResourceRecommendationOutput[];  // 直接是数组
   resources_count: number;
   status: 'completed' | 'generating' | 'failed';
 }

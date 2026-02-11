@@ -244,3 +244,113 @@ async def get_errors(
         limit=limit,
     ))
 
+
+@router.get("/{task_id}/subgraph-progress")
+async def get_subgraph_progress(
+    task_id: str,
+    current_user: CurrentUser,
+) -> ResponseSchemaModel:
+    """
+    查询子图执行进度（双 Checkpointer 架构）
+    
+    使用子图 checkpointer 查询当前任务的子图状态：
+    - 已完成的 Concept 数量
+    - 失败的 Concept 列表
+    - 可恢复性（是否可以断点续传）
+    
+    双 Checkpointer 架构：
+    - 使用 child_checkpointer（命名空间：child_graph）查询子图状态
+    - 与父图状态完全隔离
+    - 支持细粒度的断点续传
+    
+    Args:
+        task_id: 任务ID
+        current_user: 当前用户
+    
+    Returns:
+        子图进度信息
+        
+    Raises:
+        NotFoundError: 任务不存在
+        ForbiddenError: 无权限查看此任务
+    """
+    logger.info(
+        "get_subgraph_progress_requested",
+        task_id=task_id,
+        user_id=current_user.id,
+    )
+    
+    # 创建并初始化 OrchestratorFactory
+    from app.core.orchestrator_factory import OrchestratorFactory
+    
+    factory = OrchestratorFactory()
+    await factory.initialize()
+    
+    # ✅ 使用子图 checkpointer 查询进度
+    child_checkpointer = factory.get_child_checkpointer()
+    config = {"configurable": {"thread_id": task_id}}
+    
+    try:
+        state_snapshot = await child_checkpointer.aget(config)
+    except Exception as e:
+        logger.error(
+            "failed_to_query_subgraph_progress",
+            task_id=task_id,
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+        state_snapshot = None
+    
+    if not state_snapshot:
+        return response_base.success(
+            message="子图尚未执行或已完成",
+            data={
+                "resumable": False,
+                "completed_nodes": 0,
+                "total_nodes": 0,
+                "failed_nodes": [],
+                "pending_nodes": [],
+            }
+        )
+    
+    # 解析子图进度
+    tasks = state_snapshot.tasks if hasattr(state_snapshot, "tasks") else []
+    
+    # 统计各状态的任务
+    completed_tasks = []
+    failed_tasks = []
+    pending_tasks = []
+    
+    for task in tasks:
+        task_status = task.get("status", "unknown") if isinstance(task, dict) else "unknown"
+        task_name = task.get("name", "unknown") if isinstance(task, dict) else "unknown"
+        
+        if task_status == "completed":
+            completed_tasks.append(task_name)
+        elif task_status == "failed":
+            failed_tasks.append({
+                "node_name": task_name,
+                "error": task.get("error", "Unknown error") if isinstance(task, dict) else "Unknown error",
+            })
+        else:
+            pending_tasks.append(task_name)
+    
+    logger.info(
+        "subgraph_progress_retrieved",
+        task_id=task_id,
+        completed_count=len(completed_tasks),
+        failed_count=len(failed_tasks),
+        pending_count=len(pending_tasks),
+    )
+    
+    return response_base.success(
+        message="子图进度查询成功",
+        data={
+            "resumable": len(failed_tasks) > 0 or len(pending_tasks) > 0,
+            "completed_nodes": len(completed_tasks),
+            "failed_nodes": failed_tasks,
+            "pending_nodes": pending_tasks,
+            "total_nodes": len(tasks),
+        }
+    )
+

@@ -70,12 +70,12 @@ export function TutorialViewer({
   const tableOfContents = tutorial.sections.map(section => ({
     id: section.section_id,
     title: section.title,
-    order: section.order
+    order: (section as any).order || 0
   }));
 
   // 合并所有章节内容用于渲染
   const fullContent = tutorial.sections
-    .sort((a, b) => a.order - b.order)
+    .sort((a, b) => ((a as any).order || 0) - ((b as any).order || 0))
     .map(section => `## ${section.title}\n\n${section.content}`)
     .join('\n\n');
 
@@ -146,13 +146,16 @@ function TutorialHeader({
   tutorial: Tutorial;
   scrollProgress: number;
 }) {
-  const getDifficultyColor = (difficulty: string) => {
+  const getDifficultyColor = (difficulty?: string) => {
     switch (difficulty) {
       case 'easy':
+      case 'beginner':
         return 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300';
       case 'medium':
+      case 'intermediate':
         return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/50 dark:text-yellow-300';
       case 'hard':
+      case 'advanced':
         return 'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300';
       default:
         return 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300';
@@ -168,9 +171,11 @@ function TutorialHeader({
               <CardTitle className="text-2xl mb-2">{tutorial.title}</CardTitle>
               <p className="text-muted-foreground">{tutorial.summary}</p>
             </div>
+            {tutorial.difficulty && (
             <Badge className={getDifficultyColor(tutorial.difficulty)}>
               {tutorial.difficulty}
             </Badge>
+            )}
           </div>
 
           {/* 元数据 */}

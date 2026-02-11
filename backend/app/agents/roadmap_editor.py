@@ -1,14 +1,16 @@
 """
 Roadmap Editor Agent（路线图编辑师）
 
-重构说明：
-- 统一使用 EditPlan 作为修改指令来源
-- 移除了 validation_issues 直接处理逻辑
-- 所有修改来源（验证失败、人工反馈）都通过 EditPlanAnalyzerAgent 转换为 EditPlan
+重构说明（第三版 - 极简版）：
+- 移除 StageProcessor（过度工程化）
+- 移除依赖关系和并行处理逻辑
+- 采用两阶段生成（效仿 IntentAnalyzer）
+- 使用 LLM 生成修改总结
+- 完全依赖 LLM 的语义理解能力
 """
-import json
-import re
 from app.agents.base import BaseAgent
+from app.agents.framework_diff import compute_modified_node_ids
+from app.agents.framework_normalizer import normalize_framework_ids
 from app.models.domain import (
     RoadmapFramework,
     LearningPreferences,
@@ -22,11 +24,15 @@ import structlog
 logger = structlog.get_logger()
 
 
-
-
 class RoadmapEditorAgent(BaseAgent):
     """
-    路线图编辑师 Agent
+    路线图编辑师 Agent（极简版）
+    
+    重构后职责：
+    - 接收 EditPlan（只包含 tasks）
+    - 使用两阶段生成修改整个 RoadmapFramework
+    - 使用 FrameworkDiff 自动生成 modified_node_ids
+    - 调用 LLM 生成修改总结
     
     配置从环境变量加载：
     - EDITOR_PROVIDER: 模型提供商（默认: anthropic）
@@ -50,115 +56,59 @@ class RoadmapEditorAgent(BaseAgent):
             base_url=base_url or settings.EDITOR_BASE_URL,
             api_key=api_key or settings.EDITOR_API_KEY,
             temperature=0.4,  # 较低温度，确保修改的严谨性
-            max_tokens=32768,
+            max_tokens=20000,
         )
     
-    def _build_user_message(
-        self,
-        existing_framework: RoadmapFramework,
-        user_preferences: LearningPreferences,
-        edit_plan: EditPlan,
-    ) -> str:
-        """
-        构建用户消息（简化版：统一使用 EditPlan）
-        
-        Args:
-            existing_framework: 现有路线图框架
-            user_preferences: 用户偏好
-            edit_plan: 修改计划（必需）
-            
-        Returns:
-            格式化的用户消息
-        """
-        # 基础路线图信息
-        base_info = f"""
-**现有路线图框架**:
-- 标题: {existing_framework.title}
-- 总预估时长: {existing_framework.total_estimated_hours} 小时
-- 推荐完成周数: {existing_framework.recommended_completion_weeks} 周
-- 阶段数量: {len(existing_framework.stages)}
-
-**用户约束**:
-- 每周可投入时间: {user_preferences.available_hours_per_week} 小时
-- 当前水平: {user_preferences.current_level}
-- 学习目标: {user_preferences.learning_goal}
-"""
-        
-        # 格式化修改意图列表
-        intents_text = "\n".join([
-            f"- **[{intent.priority.upper()}]** {intent.intent_type} {intent.target_type} @ {intent.target_path}\n  描述: {intent.description}"
-            for intent in edit_plan.intents
-        ])
-        
-        # 格式化保留要求
-        preservation_text = "\n".join([f"- {item}" for item in edit_plan.preservation_requirements]) if edit_plan.preservation_requirements else "- 修改计划中未提及的所有内容"
-        
-        return f"""
-请根据以下修改计划编辑学习路线图：
-
-{base_info}
-
-**修改计划摘要**:
-{edit_plan.feedback_summary}
-
-**修改意图列表（请严格按照此计划执行）**:
-{intents_text}
-
-**影响范围分析**:
-{edit_plan.scope_analysis}
-
-**⚠️ 必须保留不变的部分**:
-{preservation_text}
-
-**执行要求**:
-1. **严格执行**: 只修改计划中指定的内容，不要擅自修改其他部分
-2. **优先级顺序**: 优先处理 priority=must 的意图，然后处理 should，最后处理 could
-3. **保持稳定**: 计划中未提及的 Stage/Module/Concept 必须保持原样（包括 ID、名称、内容）
-4. **最小改动**: 即使是要修改的部分，也要尽量保留原有的合理设计
-5. **ID 保持**: 除非是新增或删除，否则保持所有 ID 不变
-
-请以 YAML 格式返回修改后的完整路线图框架。
-"""
+    def _get_required_constraints(self) -> list[str]:
+        """路线图编辑器需要的约束"""
+        from app.models.domain import ConstraintNames
+        return [
+            # 通用约束
+            ConstraintNames.LANGUAGE,
+            ConstraintNames.USER_GOAL,
+            ConstraintNames.USER_PROFILE,
+            # 特定约束
+            ConstraintNames.SKILL_GAP,
+            ConstraintNames.RECOMMENDED_FOCUS,
+        ]
     
-    async def edit(
-        self,
-        existing_framework: RoadmapFramework,
-        user_preferences: LearningPreferences,
-        edit_plan: EditPlan,
-        modification_context: str | None = None,
-    ) -> RoadmapEditOutput:
+    async def execute(self, input_data: RoadmapEditInput) -> RoadmapEditOutput:
         """
-        基于 EditPlan 修改现有路线图框架（简化版）
+        基于 EditPlan 修改路线图框架（极简版）
         
-        重构说明：
-        - 统一使用 EditPlan 作为修改指令来源
-        - 移除了 validation_issues 直接处理逻辑
-        - 所有修改来源都通过 EditPlanAnalyzerAgent 转换为 EditPlan
+        执行流程：
+        1. 构建 Prompt（包含所有 tasks 和 existing_framework）
+        2. 使用两阶段生成新的 RoadmapFramework
+        3. 使用 FrameworkDiff 自动生成 modified_node_ids
+        4. 调用 LLM 生成修改总结
         
         Args:
-            existing_framework: 现有路线图框架
-            user_preferences: 用户偏好
-            edit_plan: 结构化的修改计划（必需，来自 EditPlanAnalyzerAgent）
-            modification_context: 修改上下文说明
+            input_data: 包含现有框架、用户偏好和修改计划
             
         Returns:
-            修改后的路线图框架
+            修改后的路线图框架（包含 modified_node_ids 和 LLM 生成的总结）
         """
-        # 构建修改上下文
-        if not modification_context:
-            must_count = sum(1 for i in edit_plan.intents if i.priority == "must")
-            should_count = sum(1 for i in edit_plan.intents if i.priority == "should")
-            modification_context = f"修改计划包含 {must_count} 个必须执行、{should_count} 个建议执行的意图"
+        existing_framework = input_data.existing_framework
+        user_preferences = input_data.user_preferences
+        edit_plan = input_data.edit_plan
+        
+        logger.info(
+            "roadmap_edit_started",
+            roadmap_id=existing_framework.roadmap_id,
+            tasks_count=len(edit_plan.tasks),
+        )
+        
+        # ====================================================================
+        # 阶段 1: 使用两阶段生成修改路线图
+        # ====================================================================
+        logger.info("roadmap_edit_stage1_two_stage_generation")
         
         # 加载 System Prompt
         system_prompt = self._load_system_prompt(
             "roadmap_editor.j2",
             agent_name="Roadmap Editor",
-            role_description="路线图编辑专家，基于 EditPlan 对现有路线图进行精确修改，保留未涉及部分，解决指定问题。",
+            role_description="路线图编辑专家，根据修改任务调整路线图框架。",
             user_goal=user_preferences.learning_goal,
-            existing_framework=existing_framework,
-            modification_context=modification_context,
-            edit_plan=edit_plan,
         )
         
         # 构建用户消息
@@ -168,72 +118,195 @@ class RoadmapEditorAgent(BaseAgent):
             edit_plan=edit_plan,
         )
         
-        logger.info(
-            "roadmap_edit_started",
-            roadmap_id=existing_framework.roadmap_id,
-            intents_count=len(edit_plan.intents),
-            must_count=sum(1 for i in edit_plan.intents if i.priority == "must"),
-            should_count=sum(1 for i in edit_plan.intents if i.priority == "should"),
-        )
-        
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ]
         
-        # 调用 LLM，使用 response_format 强制 JSON 输出
+        # 使用两阶段生成（思维链 + 结构化提取）
         logger.info(
-            "roadmap_edit_calling_llm",
-            intents_count=len(edit_plan.intents),
-            response_format="json_object",
+            "roadmap_edit_calling_llm_two_stage",
+            model=self.model_name,
+            tasks_count=len(edit_plan.tasks),
         )
-        response = await self._call_llm(
+        
+        updated_framework = await self._call_llm(
             messages,
-            response_format={"type": "json_object"}
+            response_model=RoadmapFramework,
+            use_two_stage=True,  # 启用两阶段生成
         )
         
-        # 解析输出
-        content = response.choices[0].message.content
+        # ✅ 关键修复：强制使用原始的roadmap_id，防止LLM生成新ID
+        # 这确保了数据库更新而不是创建新记录
+        original_roadmap_id = existing_framework.roadmap_id
+        if updated_framework.roadmap_id != original_roadmap_id:
+            logger.warning(
+                "roadmap_id_mismatch_fixed",
+                original_id=original_roadmap_id,
+                llm_generated_id=updated_framework.roadmap_id,
+                message="LLM生成了不同的roadmap_id，已强制使用原始ID",
+            )
+            updated_framework.roadmap_id = original_roadmap_id
         
-        try:
-            # 解析 JSON 格式
-            logger.debug("roadmap_edit_parsing_json_format")
-            result_dict = json.loads(content)
-            
-            # 提取字段
-            modification_summary = result_dict.pop("modification_summary", "")
-            preserved_elements = result_dict.pop("preserved_elements", [])
-            
-            # 验证并构建输出
-            framework = RoadmapFramework.model_validate(result_dict)
-            
-            result = RoadmapEditOutput(
-                framework=framework,
-                modification_summary=modification_summary,
-                preserved_elements=preserved_elements,
+        # ✅ ID规范化：移除LLM生成的非标准ID（如xxx-new）
+        # 确保所有Stage、Module、Concept的ID符合规范
+        logger.info("roadmap_edit_normalizing_ids")
+        updated_framework = normalize_framework_ids(updated_framework)
+        
+        # 验证：确保修改后的路线图有非空的阶段列表
+        if not updated_framework.stages:
+            logger.error(
+                "roadmap_edit_empty_stages",
+                roadmap_id=existing_framework.roadmap_id,
             )
-            
-            logger.info(
-                "roadmap_edit_success",
-                roadmap_id=framework.roadmap_id,
-                intents_executed=len(edit_plan.intents),
-                preserved_count=len(preserved_elements),
+            raise ValueError(
+                "路线图编辑失败：修改后的路线图没有任何学习阶段。"
             )
-            return result
-            
-        except json.JSONDecodeError as e:
-            logger.error("roadmap_edit_json_parse_error", error=str(e), content=content[:500])
-            raise ValueError(f"LLM 输出不是有效的 JSON 格式: {e}")
-        except Exception as e:
-            logger.error("roadmap_edit_output_invalid", error=str(e), content=content[:500])
-            raise ValueError(f"LLM 输出格式不符合 Schema: {e}")
+        
+        # ====================================================================
+        # 阶段 2: 使用 FrameworkDiff 对比新旧框架
+        # ====================================================================
+        logger.info("roadmap_edit_stage2_diff")
+        
+        modified_node_ids = compute_modified_node_ids(
+            old_framework=existing_framework,
+            new_framework=updated_framework,
+        )
+        
+        # ====================================================================
+        # 阶段 3: 调用 LLM 生成修改总结
+        # ====================================================================
+        logger.info("roadmap_edit_stage3_generate_summary")
+        
+        modification_summary = await self._generate_modification_summary(
+            old_framework=existing_framework,
+            new_framework=updated_framework,
+            tasks=edit_plan.tasks,
+            modified_node_ids=modified_node_ids,
+        )
+        
+        logger.info(
+            "roadmap_edit_success",
+            roadmap_id=updated_framework.roadmap_id,
+            tasks_executed=len(edit_plan.tasks),
+            modified_nodes_count=len(modified_node_ids),
+            stages_count=len(updated_framework.stages),
+        )
+        
+        # 构建输出
+        return RoadmapEditOutput(
+            framework=updated_framework,
+            modification_summary=modification_summary,
+            modified_node_ids=modified_node_ids,
+        )
     
-    async def execute(self, input_data: RoadmapEditInput) -> RoadmapEditOutput:
-        """实现基类的抽象方法"""
-        return await self.edit(
-            existing_framework=input_data.existing_framework,
-            user_preferences=input_data.user_preferences,
-            edit_plan=input_data.edit_plan,
-            modification_context=input_data.modification_context,
-        )
+    def _build_user_message(
+        self,
+        existing_framework: RoadmapFramework,
+        user_preferences: LearningPreferences,
+        edit_plan: EditPlan,
+    ) -> str:
+        """
+        构建用户消息
+        
+        Args:
+            existing_framework: 现有路线图框架
+            user_preferences: 用户偏好
+            edit_plan: 修改计划
+            
+        Returns:
+            格式化的用户消息
+        """
+        # 格式化修改任务
+        tasks_text = "\n".join([
+            f"- [{task.action}] {task.stage_id or 'NEW'}: {task.instruction}"
+            for task in edit_plan.tasks
+        ])
+        
+        return f"""
+请根据以下修改任务编辑学习路线图：
 
+**修改计划摘要**:
+{edit_plan.feedback_summary}
+
+**修改任务列表**:
+{tasks_text}
+
+**当前路线图框架**:
+```json
+{existing_framework.model_dump_json(indent=2)}
+```
+
+**用户约束**:
+- 学习目标: {user_preferences.learning_goal}
+- 当前水平: {user_preferences.current_level}
+- 每周可投入时间: {user_preferences.available_hours_per_week} 小时
+
+请返回修改后的完整路线图框架。
+"""
+    
+    async def _generate_modification_summary(
+        self,
+        old_framework: RoadmapFramework,
+        new_framework: RoadmapFramework,
+        tasks: list,
+        modified_node_ids: list[str],
+    ) -> str:
+        """
+        调用 LLM 生成修改总结
+        
+        Args:
+            old_framework: 旧版框架
+            new_framework: 新版框架
+            tasks: 修改任务列表
+            modified_node_ids: 被修改的节点 ID 列表
+            
+        Returns:
+            修改总结文本
+        """
+        logger.info(
+            "generating_modification_summary",
+            modified_nodes_count=len(modified_node_ids),
+        )
+        
+        # 构建总结生成 Prompt
+        tasks_summary = "\n".join([
+            f"- [{task.action}] {task.stage_id or 'NEW'}: {task.instruction}"
+            for task in tasks
+        ])
+        
+        prompt = f"""
+请总结路线图的修改内容（50字以内）。
+
+**执行的修改任务**:
+{tasks_summary}
+
+**修改统计**:
+- 旧版阶段数: {len(old_framework.stages)}
+- 新版阶段数: {len(new_framework.stages)}
+- 旧版总时长: {old_framework.total_estimated_hours}h
+- 新版总时长: {new_framework.total_estimated_hours}h
+- 被修改的节点数: {len(modified_node_ids)}
+
+请用一句话简洁地总结修改内容，例如：
+- "删除了 2 个高级概念，简化了阶段 2"
+- "新增了前端开发阶段（HTML/CSS/JavaScript）"
+- "精简了阶段 2 和阶段 3，总时长从 90h 降至 60h"
+"""
+        
+        # 调用 LLM 获取文本总结
+        messages = [{"role": "user", "content": prompt}]
+        
+        response = await self._standard_call(
+            messages=messages,
+            tools=None,
+        )
+        
+        summary = response.choices[0].message.content.strip()
+        
+        logger.info(
+            "modification_summary_generated",
+            summary=summary,
+        )
+        
+        return summary

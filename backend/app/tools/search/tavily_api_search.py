@@ -25,20 +25,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.tools.base import BaseTool
 from app.models.domain import SearchQuery, SearchResult
 from app.core.tavily_key_manager import TavilyKeyManager
-from app.utils.rate_limiter import get_tavily_rate_limiter
+from app.core.rate_limiter import get_rate_limiter
 
 logger = structlog.get_logger()
 
 
 class TavilyAPISearchTool(BaseTool[SearchQuery, SearchResult]):
     """
-    Tavily API 搜索工具（使用全局速率限制器）
+    Tavily API 搜索工具（已适配统一工具框架）
     
     特性：
     - 使用官方 TavilyClient（按照官方示例调用）
     - 支持两种模式：从数据库读取 Key 或使用预分配 Key
     - 全局速率控制（每分钟 100 次，基于 Redis，多进程共享）
     - 支持高级搜索参数（search_depth, time_range, include_domains 等）
+    - 自动生成 LLM Function Schema
     """
     
     def __init__(
@@ -60,7 +61,16 @@ class TavilyAPISearchTool(BaseTool[SearchQuery, SearchResult]):
         Raises:
             ValueError: 如果 db_session 和 pre_allocated_key 都未提供
         """
-        super().__init__(tool_id="tavily_api_search")
+        # ✅ 适配新的 BaseTool 签名
+        super().__init__(
+            tool_id="tavily_api_search_v2",
+            name="tavily_search",
+            description=(
+                "High-quality web search using Tavily API. "
+                "Provides accurate and up-to-date information from reliable sources."
+            ),
+            args_schema=SearchQuery,
+        )
         
         # 验证至少提供一种初始化方式
         if not db_session and not pre_allocated_key:
@@ -69,8 +79,8 @@ class TavilyAPISearchTool(BaseTool[SearchQuery, SearchResult]):
         # 预分配的 API Key（优先使用）
         self._pre_allocated_key = pre_allocated_key
         
-        # 数据库仓储（仅在未提供预分配 Key 时使用）
-        self.repo = TavilyKeyRepository(db_session) if db_session else None
+        # 数据库会话（仅在未提供预分配 Key 时使用）
+        self._db_session = db_session
         
         # TavilyClient 缓存（按 API Key 索引）
         self._clients: Dict[str, TavilyClient] = {}
@@ -110,34 +120,28 @@ class TavilyAPISearchTool(BaseTool[SearchQuery, SearchResult]):
         
         功能：
         - 局部并发控制（最多3个并发，防止单实例过载）
-        - 全局速率限制（每分钟100次，基于 Redis，多进程共享）
+        - 全局速率限制（使用统一的APIRateLimiter，基于 Redis，多进程共享）
         - 避免触发 API 限流
         - 使用 asyncio.to_thread 包装同步调用
         """
-        # 获取全局速率限制器
-        rate_limiter = await get_tavily_rate_limiter()
+        # ⭐ 使用统一的全局速率限制器
+        rate_limiter = get_rate_limiter()
         
         # 局部并发控制
         async with self._search_semaphore:
-            # 全局速率限制（会自动等待直到有配额）
-            try:
-                await rate_limiter.acquire(timeout=30.0)  # 最多等待 30 秒
-            except TimeoutError as e:
-                logger.error(
-                    "tavily_api_rate_limit_timeout",
-                    message=str(e),
-                )
-                raise ValueError("Tavily API rate limit exceeded, please try again later")
+            # ⭐ 全局速率限制（会自动等待直到有配额）
+            await rate_limiter.acquire("tavily")
             
             # 使用 asyncio.to_thread 在线程中执行同步调用
             result = await asyncio.to_thread(func, *args, **kwargs)
             
             # 记录请求执行（用于监控）
-            current_count = await rate_limiter.get_current_count()
+            usage = await rate_limiter.get_current_usage("tavily")
             logger.debug(
                 "tavily_api_request_executed",
-                requests_in_last_minute=current_count,
-                max_requests=100,
+                requests_in_last_minute=usage.get("current_count", 0),
+                max_requests=usage.get("limit", 0),
+                usage_percent=usage.get("usage_percent", 0),
             )
             
             return result
@@ -160,8 +164,12 @@ class TavilyAPISearchTool(BaseTool[SearchQuery, SearchResult]):
             return self._pre_allocated_key
         
         # 回退到数据库查询（原有行为）
-        if self.repo:
-            key_record = await self.repo.get_best_key()
+        if self._db_session:
+            from app.core.tavily_key_manager import TavilyKeyManager
+            from app.models.database import TavilyAPIKey
+            
+            manager = TavilyKeyManager(TavilyAPIKey)
+            key_record = await manager.get_best_key(self._db_session)
             if key_record:
                 return key_record.api_key
         
@@ -184,9 +192,17 @@ class TavilyAPISearchTool(BaseTool[SearchQuery, SearchResult]):
             搜索结果
             
         Raises:
-            ValueError: 如果没有可用的 API Key
+            ValueError: 如果没有可用的 API Key 或查询为空
             Exception: 如果 API 调用失败
         """
+        # 验证查询不为空
+        if not input_data.query or not input_data.query.strip():
+            logger.error(
+                "tavily_api_search_empty_query",
+                query=input_data.query,
+            )
+            raise ValueError("搜索查询不能为空")
+        
         # 获取高级参数（使用默认值）
         search_depth = getattr(input_data, 'search_depth', 'advanced') or 'advanced'
         time_range = getattr(input_data, 'time_range', None)
@@ -244,7 +260,7 @@ class TavilyAPISearchTool(BaseTool[SearchQuery, SearchResult]):
                 response = client.search(**search_kwargs)
                 return response
             
-            # 执行搜索（带速率限制）
+            # 执行搜索（带全局速率限制）
             data = await self._rate_limited_request(do_search)
             
             # Tavily SDK 返回格式：{"results": [{"title", "url", "content", "score", "published_date"}], ...}

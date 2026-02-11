@@ -9,6 +9,8 @@ export { useAuthStore } from './auth-store';
 export { useRoadmapStore } from './roadmap-store';
 export type { RoadmapStore, RoadmapState, RoadmapActions, GenerationPhase, TutorialProgress } from './roadmap-store';
 
+export { useTaskStore, selectTaskId, selectTaskStatus, selectTaskProgress, selectTaskError } from './task-store';
+
 export { useChatStore } from './chat-store';
 export type { ChatStore, ChatState, ChatActions, Message } from './chat-store';
 

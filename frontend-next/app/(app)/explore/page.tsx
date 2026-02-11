@@ -7,7 +7,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { EmptyState } from '@/components/common/empty-state';
 import { FeaturedRoadmapCard, type FeaturedRoadmap } from '@/components/roadmap';
 import { ChevronLeft, TrendingUp, LayoutGrid, List } from 'lucide-react';
-import { getFeaturedRoadmaps } from '@/lib/api/endpoints';
+import { roadmapsApi } from '@/lib/api/endpoints';
 import { batchFetchCoverImagesFromAPI } from '@/lib/cover-image';
 import { cn } from '@/lib/utils';
 
@@ -32,8 +32,8 @@ export default function ExplorePage() {
     const fetchFeaturedRoadmaps = async () => {
       try {
         setIsLoading(true);
-        const response = await getFeaturedRoadmaps(100, 0); // 获取所有精选路线图
-        const featuredData: FeaturedRoadmap[] = response.roadmaps
+        const response = await roadmapsApi.getFeatured({ limit: 100, offset: 0 }); // 获取所有精选路线图
+        const featuredData: FeaturedRoadmap[] = response.items
           .filter(item => item.status === 'completed') // 只显示已完成的路线图
           .map((item) => ({
             id: item.roadmap_id,

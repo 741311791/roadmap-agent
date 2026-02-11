@@ -95,8 +95,7 @@ class EditPlanHandler(NodeOutputHandler[EditPlanHandlerInput]):
             edit_plan=edit_plan,  # ✅ 传入 EditPlan 对象
             feedback_id=feedback_record.id,  # ✅ 关联用户反馈记录
             confidence=str(edit_plan_output.confidence),  # ✅ 保存置信度
-            needs_clarification=edit_plan_output.needs_clarification,
-            clarification_questions=edit_plan_output.clarification_questions,
+            # 第三版重构后移除了 needs_clarification 和 clarification_questions
         )
         
         logger.info(

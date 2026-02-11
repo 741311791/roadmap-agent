@@ -11,13 +11,12 @@ import {
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { KnowledgeRail } from '@/components/roadmap/immersive/knowledge-rail';
 import { LearningStage } from '@/components/roadmap/immersive/learning-stage';
-import { MentorSidecar } from '@/components/roadmap/immersive/mentor-sidecar';
 import { useRoadmap } from '@/lib/hooks/api/use-roadmap';
 import { useTutorial } from '@/lib/hooks/api/use-tutorial';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import { useAuthStore } from '@/lib/store/auth-store';
 import { 
-  getRoadmapActiveTask, 
+  getRoadmapActiveTask,
   getUserProfile,
   getRoadmapProgress
 } from '@/lib/api/endpoints';
@@ -34,7 +33,6 @@ import { isConceptIdValid, findConceptById, calculateRoadmapProgress } from '@/l
  * 布局:
  * - 左侧: KnowledgeRail (知识导航栏)
  * - 中间: LearningStage (学习舞台)
- * - 右侧: MentorSidecar (AI 导师侧边栏)
  */
 export default function RoadmapDetailPage() {
   const params = useParams();
@@ -77,8 +75,7 @@ export default function RoadmapDetailPage() {
   const [activeTask, setActiveTask] = useState<{ taskId: string; status: string; taskType?: string } | null>(null);
   const [userPreferences, setUserPreferences] = useState<LearningPreferences | undefined>(undefined);
 
-  // UI State - 折叠状态和抽屉状态
-  const [isMentorCollapsed, setIsMentorCollapsed] = useState(false);
+  // UI State - 抽屉状态
   const [isKnowledgeRailOpen, setIsKnowledgeRailOpen] = useState(false);
 
   // 1. Sync Roadmap Data to Store
@@ -135,17 +132,29 @@ export default function RoadmapDetailPage() {
       
       try {
         // 并行加载所有数据
-        const [profile, progressList, activeTask] = await Promise.all([
-          getUserProfile(userId).catch(err => {
+        const [profile, progressList, activeTaskData] = await Promise.all([
+          getUserProfile().catch(err => {
             console.error('[RoadmapDetail] Failed to load user preferences:', err);
+            // 401错误会触发登录跳转，不应该返回默认值
+            if (err?.status === 401 || err?.response?.status === 401) {
+              throw err;
+            }
             return null;
           }),
           getRoadmapProgress(roadmapId).catch(err => {
             console.error('[RoadmapDetail] Failed to load progress:', err);
+            // 401错误会触发登录跳转，不应该返回默认值
+            if (err?.status === 401 || err?.response?.status === 401) {
+              throw err;
+            }
             return [];
           }),
           getRoadmapActiveTask(roadmapId).catch(err => {
             console.error('[RoadmapDetail] Failed to check active task:', err);
+            // 401错误会触发登录跳转，不应该返回默认值
+            if (err?.status === 401 || err?.response?.status === 401) {
+              throw err;
+            }
             return null;
           }),
         ]);
@@ -166,18 +175,18 @@ export default function RoadmapDetailPage() {
         // 设置学习进度
         if (progressList.length > 0) {
           const progressMap: Record<string, boolean> = {};
-          progressList.forEach(p => {
+          progressList.forEach((p: any) => {
             progressMap[p.concept_id] = p.is_completed;
           });
           setConceptProgressMap(progressMap);
         }
         
         // 设置活跃任务
-        if (activeTask?.has_active_task && activeTask.task_id) {
+        if (activeTaskData?.has_active_task && activeTaskData.task_id) {
           setActiveTask({ 
-            taskId: activeTask.task_id, 
-            status: activeTask.status ?? 'pending',
-            taskType: activeTask.task_type ?? undefined
+            taskId: activeTaskData.task_id, 
+            status: activeTaskData.status ?? 'pending',
+            taskType: activeTaskData.task_type ?? undefined
           });
         }
       } catch (error) {
@@ -328,24 +337,6 @@ export default function RoadmapDetailPage() {
             )} 
           />
 
-          {/* RIGHT: Mentor Sidecar - 在中等及以上屏幕显示 */}
-          <ResizablePanel 
-            defaultSize={isMentorCollapsed ? 3 : 25} 
-            minSize={isMentorCollapsed ? 3 : 20} 
-            maxSize={isMentorCollapsed ? 3 : 35} 
-            className={cn(
-              isMentorCollapsed ? "min-w-[48px]" : "min-w-[300px]",
-              "hidden md:block"
-            )}
-          >
-            <MentorSidecar 
-              conceptContext={getActiveConcept()?.name}
-              roadmapId={roadmapId}
-              conceptId={selectedConceptId || undefined}
-              isCollapsed={isMentorCollapsed}
-              onToggleCollapse={() => setIsMentorCollapsed(!isMentorCollapsed)}
-            />
-          </ResizablePanel>
         </ResizablePanelGroup>
       </div>
     </div>

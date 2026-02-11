@@ -21,7 +21,8 @@ export interface TutorialWithContent {
   concept_id: string;
   title?: string;
   summary?: string;
-  content_status?: 'completed' | 'generating' | 'failed' | 'pending';
+  status?: 'completed' | 'pending' | 'failed';
+  content_status?: 'completed' | 'pending' | 'failed'; // 别名字段，向后兼容
   version?: number;
   generated_at?: string;
   
@@ -54,17 +55,19 @@ export function useTutorial(
       const meta = await getLatestTutorial(roadmapId, conceptId);
 
       // 2. 如果教程状态为 completed，下载完整的 Markdown 内容
+      const status = meta?.content_status;
       let fullContent: string | undefined;
-      if (meta && meta.content_status === 'completed') {
+      if (status === 'completed') {
         try {
-          fullContent = await downloadTutorialContent(roadmapId, conceptId);
+          const blob = await downloadTutorialContent(roadmapId, conceptId);
+          fullContent = await blob.text();
         } catch (error) {
           console.error('Failed to download tutorial content:', error);
           fullContent = '# Error loading content\n\nPlease try again later.';
         }
-      } else if (meta?.content_status === 'generating') {
+      } else if (status === 'pending') {
         fullContent = '# Content is being generated\n\nPlease wait...';
-      } else if (meta?.content_status === 'failed') {
+      } else if (status === 'failed') {
         fullContent = '# Content generation failed\n\nPlease retry.';
       } else {
         fullContent = '# No content available yet\n\nThis concept is still pending generation.';
@@ -74,10 +77,11 @@ export function useTutorial(
         tutorial_id: meta?.tutorial_id || '',
         concept_id: conceptId,
         title: meta?.title,
-        summary: meta?.summary,
-        content_status: meta?.content_status,
-        version: meta?.version,
-        generated_at: meta?.generated_at,
+        summary: meta?.summary || undefined,
+        status: status as 'completed' | 'pending' | 'failed' | undefined,
+        content_status: status as 'completed' | 'pending' | 'failed' | undefined, // 别名字段
+        version: meta?.content_version,
+        generated_at: meta?.created_at || undefined,
         full_content: fullContent,
       };
     },

@@ -5,10 +5,12 @@
 import type { LearningPreferences } from './LearningPreferences';
 /**
  * 修改内容请求
+ *
+ * 用于教程、资源、测验的增量修改。
  */
 export type ModifyContentRequest = {
     /**
-     * 用户ID
+     * 用户 ID
      */
     user_id: string;
     /**

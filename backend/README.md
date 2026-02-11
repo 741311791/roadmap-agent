@@ -16,6 +16,40 @@
 - **异步任务**: Celery（日志队列处理）
 - **任务监控**: Flower
 
+## 🔧 核心功能
+
+### 统一工具框架（Unified Tool Framework）
+
+支持 **RESTful API** 和 **MCP (Model Context Protocol)** 两种工具协议：
+
+- ✅ **协议无关**: Agent 无需知道工具来源（RESTful 还是 MCP）
+- ✅ **动态扩展**: 通过配置文件添加新工具，无需修改代码
+- ✅ **自动转换**: JSON Schema 自动转换为 Pydantic 模型
+- ✅ **统一调用**: 所有工具通过 `ToolRegistry` 统一管理和调用
+
+#### MCP 集成
+
+通过 MCP 协议，可以接入标准化的工具生态：
+
+```json
+// backend/mcp_servers.json
+{
+  "servers": [
+    {
+      "name": "filesystem",
+      "description": "File system operations",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem"],
+      "enabled": true
+    }
+  ]
+}
+```
+
+详见：[MCP 集成指南](docs/MCP_INTEGRATION_GUIDE.md)
+
+---
+
 ## 🏗️ 系统架构
 
 ```
@@ -276,53 +310,60 @@ uv run alembic upgrade head
 
 ### 步骤 8: 启动开发服务器
 
-**方式 1: 使用快速启动脚本（推荐）**
+**开发模式（推荐）- 支持热重载**
 
 ```bash
-./scripts/start_dev.sh
+# 使用 uv 运行（单进程，支持 --reload）
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --reload
 ```
 
-**方式 2: 手动启动**
+**或使用 Makefile**
 
 ```bash
-# 使用 uv 运行
-uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+# 从项目根目录执行
+make dev-backend
 ```
 
 **启动成功标志**：
 ```
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [xxxxx] using WatchFiles
+INFO:     Started server process [xxxxx]
 INFO:     Application startup complete.
 ```
 
-### 步骤 9: 启动 Celery Worker（必需，用于日志处理）
+**生产模式（多进程，无热重载）**
+
+```bash
+# 多进程模式（不支持 --reload）
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+```
+
+### 步骤 9: 启动 Celery Worker（必需，用于异步任务处理）
 
 **在新终端中启动 Celery Worker**：
 
 ```bash
 cd backend
+
+# 启动 Celery Worker（监听 default 队列，处理所有异步任务）
 uv run celery -A app.core.celery_app worker \
     --loglevel=info \
-    --queues=logs \
-    --concurrency=4 \
-    --hostname=logs@%h \
-    --max-tasks-per-child=1000
-```
-
-或使用启动脚本：
-
-```bash
-./scripts/start_celery_worker.sh
+    --concurrency=8 \
+    --hostname=worker@%h \
+    --max-tasks-per-child=500
 ```
 
 **启动成功标志**：
 ```
--------------- logs@yourhostname v5.6.0 (recovery)
+-------------- worker@yourhostname v5.6.0 (recovery)
 --- ***** ----- 
 -- ******* ---- macOS-15.2-arm64-arm-64bit
 ...
-[INFO/MainProcess] logs@yourhostname ready.
+[INFO/MainProcess] worker@yourhostname ready.
 ```
+
+> **架构说明**：系统使用单一 `default` 队列处理所有异步任务（日志、路线图生成、内容生成等），符合 MVP 原则，简化部署和维护。
 
 ### 步骤 10: 启动 Flower 监控（可选，推荐）
 
@@ -331,12 +372,6 @@ uv run celery -A app.core.celery_app worker \
 ```bash
 cd backend
 uv run celery -A app.core.celery_app flower --port=5555
-```
-
-或使用启动脚本：
-
-```bash
-./scripts/start_flower.sh
 ```
 
 然后访问 **http://localhost:5555** 查看 Celery 任务监控界面。
@@ -348,15 +383,15 @@ uv run celery -A app.core.celery_app flower --port=5555
 - **健康检查**: http://localhost:8000/health
 - **Celery 监控 (Flower)**: http://localhost:5555
 
-## 🔄 Celery 异步日志队列
+## 🔄 Celery 异步任务队列
 
 ### 概述
 
-本项目使用 Celery 作为异步任务队列，处理所有执行日志的数据库写入操作。这样可以：
+本项目使用 Celery 作为异步任务队列，处理所有异步任务。这样可以：
 
-- ✅ **完全解耦**：日志写入不占用主应用数据库连接池
-- ✅ **高性能**：批量处理日志，减少数据库操作
-- ✅ **可扩展**：可以启动多个 Celery Worker 处理日志
+- ✅ **完全解耦**：异步任务不占用主应用数据库连接池
+- ✅ **高性能**：批量处理任务，减少数据库操作
+- ✅ **可扩展**：可以启动多个 Celery Worker 处理任务
 - ✅ **可靠性**：支持任务重试和故障恢复
 
 ### 架构
@@ -365,18 +400,24 @@ uv run celery -A app.core.celery_app flower --port=5555
 ┌─────────────────────────────────────────────────────────────┐
 │                    FastAPI 应用进程                           │
 │                                                               │
-│  所有工作流节点 → ExecutionLogger → 本地缓冲区 → Celery 任务  │
+│  API 请求 → 提交任务到 Celery → Redis 队列（default）        │
 │                                                      ↓        │
 └──────────────────────────────────────────────────────┼────────┘
                                                        ↓
                                               ┌────────────────┐
                                               │  Redis Broker  │
+                                              │ (default 队列)  │
                                               └────────┬───────┘
                                                        ↓
 ┌─────────────────────────────────────────────────────┴────────┐
 │                  Celery Worker 进程                           │
 │                                                               │
-│  批量收集日志 → 批量写入数据库 → 独立数据库连接池             │
+│  处理所有任务 → 独立数据库连接池                              │
+│  - 日志写入                                                   │
+│  - 路线图生成                                                 │
+│  - 内容生成                                                   │
+│  - 工作流恢复                                                 │
+│  - 定时维护                                                   │
 │                                                               │
 └───────────────────────────────────────────────────────────────┘
 ```
@@ -389,29 +430,21 @@ uv run celery -A app.core.celery_app flower --port=5555
 # 1. 启动 Redis（如果使用 Docker）
 docker-compose up -d redis
 
-# 2. 启动 FastAPI 应用
-uv run uvicorn app.main:app --workers 4 --reload --host 0.0.0.0 --port 8000
+# 2. 启动 FastAPI 应用（开发模式）
+uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+# 或生产模式（多进程，无热重载）
+# uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
 
 # 3. 启动 Celery Worker（新终端）
-# logs worker
 uv run celery -A app.core.celery_app worker \
     --loglevel=info \
-    --queues=logs \
     --concurrency=4 \
-    --pool=prefork \
-    --hostname=logs@%h \
+    --hostname=worker@%h \
     --max-tasks-per-child=500
 
-# content worker
-uv run celery -A app.core.celery_app worker \
-    --loglevel=info \
-    --queues=content_generation \
-    --concurrency=2 \
-    --pool=prefork \
-    --hostname=content@%h \
-    --max-tasks-per-child=50
 # 4. 启动 Flower 监控（可选，新终端）
-celery -A app.core.celery_app flower --port=5555
+uv run celery -A app.core.celery_app flower --port=5555
 ```
 
 **使用 Docker Compose 一键启动**：
@@ -424,7 +457,7 @@ docker-compose up -d
 - FastAPI 应用（端口 8000）
 - PostgreSQL（端口 5432）
 - Redis（端口 6379）
-- Celery Worker（后台运行）
+- Celery Worker（后台运行，监听 default 队列）
 - Flower 监控（端口 5555）
 
 ### 监控和调试
@@ -439,7 +472,8 @@ celery -A app.core.celery_app inspect active
 
 ```bash
 redis-cli
-> LLEN logs  # 查看队列长度
+> LLEN celery  # 查看 default 队列长度
+> KEYS celery*  # 查看所有 Celery 相关的 key
 ```
 
 **使用 Flower 监控界面**：
@@ -454,13 +488,18 @@ redis-cli
 主要配置项在 `app/core/celery_app.py` 中：
 
 ```python
-# 本地缓冲区配置（ExecutionLogger）
-buffer_size = 50        # 达到 50 条日志时发送
-flush_interval = 2.0    # 超过 2 秒时发送
+# 任务队列配置
+# - 统一使用 default 队列，简化架构
+# - 所有任务通过 Redis 队列异步处理
 
 # Worker 配置
-concurrency = 4         # 并发工作进程数
-max_tasks_per_child = 1000  # 每个进程最多处理 1000 个任务后重启
+worker_prefetch_multiplier = 1  # 每次只预取 1 个任务
+worker_max_tasks_per_child = 500  # 每 500 个任务重启进程
+task_time_limit = 600  # 10 分钟硬超时
+task_soft_time_limit = 540  # 9 分钟软超时
+
+# 启动参数（开发环境推荐）
+concurrency = 4  # 并发工作进程数
 ```
 
 ### 详细文档
@@ -519,10 +558,9 @@ tests/
 
 ### Railway 多服务部署（推荐）
 
-引入 Celery 后，系统需要运行多个服务：
+引入 Celery 后，系统需要运行两个服务：
 - **API 服务**：FastAPI 应用
-- **Celery Worker (Logs)**：处理执行日志队列
-- **Celery Worker (Content)**：处理内容生成队列
+- **Celery Worker**：处理所有异步任务（统一队列）
 
 Railway 支持在同一个项目中部署多个服务，共享环境变量和基础设施。
 
@@ -532,7 +570,7 @@ Railway 支持在同一个项目中部署多个服务，共享环境变量和基
    - PostgreSQL 数据库（Railway 插件）
    - Redis（Upstash Redis 插件）
 
-2. **创建三个服务**
+2. **创建两个服务**
 
 **服务 1：API Service**
 ```yaml
@@ -547,31 +585,23 @@ Environment Variables:
   REDIS_URL: ${{Redis.REDIS_URL}}
   JWT_SECRET_KEY: your-secret-key
   OPENAI_API_KEY: your-api-key
+  ANTHROPIC_API_KEY: your-anthropic-key
+  TAVILY_API_KEY: your-tavily-key
 ```
 
-**服务 2：Celery Worker (Logs)**
+**服务 2：Celery Worker**
 ```yaml
-Name: roadmap-celery-logs
+Name: roadmap-celery-worker
 Dockerfile: backend/Dockerfile.railway
 Root Directory: backend
 Environment Variables:
-  SERVICE_TYPE: celery_logs
-  CELERY_LOGS_CONCURRENCY: 2
-  DATABASE_URL: ${{Postgres.DATABASE_URL}}
-  REDIS_URL: ${{Redis.REDIS_URL}}
-```
-
-**服务 3：Celery Worker (Content)**
-```yaml
-Name: roadmap-celery-content
-Dockerfile: backend/Dockerfile.railway
-Root Directory: backend
-Environment Variables:
-  SERVICE_TYPE: celery_content
-  CELERY_CONTENT_CONCURRENCY: 2
+  SERVICE_TYPE: celery_worker
+  CELERY_CONCURRENCY: 4
   DATABASE_URL: ${{Postgres.DATABASE_URL}}
   REDIS_URL: ${{Redis.REDIS_URL}}
   OPENAI_API_KEY: ${{roadmap-api.OPENAI_API_KEY}}
+  ANTHROPIC_API_KEY: ${{roadmap-api.ANTHROPIC_API_KEY}}
+  TAVILY_API_KEY: ${{roadmap-api.TAVILY_API_KEY}}
 ```
 
 3. **验证部署**
@@ -579,7 +609,7 @@ Environment Variables:
 # 检查 API 服务
 curl https://your-railway-url.railway.app/health
 
-# 查看 Railway Dashboard 日志，确认 Workers 已启动
+# 查看 Railway Dashboard 日志，确认 Worker 已启动
 ```
 
 #### 详细部署文档
@@ -601,8 +631,7 @@ docker-compose up -d
 - FastAPI 应用（端口 8000）
 - PostgreSQL（端口 5432）
 - Redis（端口 6379）
-- Celery Worker (Logs)
-- Celery Worker (Content)
+- Celery Worker（监听 default 队列）
 - Flower 监控（端口 5555）
 
 ### 环境变量配置
@@ -742,32 +771,31 @@ uv run celery -A app.core.celery_app worker --loglevel=debug
 
 # 清空 Redis 队列（如果任务堆积）
 redis-cli
-> DEL logs
+> DEL celery
+> KEYS celery*  # 查看所有相关 key
 ```
 
-### 日志未写入数据库
+### 任务未被执行
 
 **问题排查步骤**：
 
 1. **检查 Celery Worker 是否运行**：
    ```bash
-   celery -A app.core.celery_app inspect active
+   uv run celery -A app.core.celery_app inspect active
    ```
 
 2. **检查队列中的任务**：
    ```bash
    redis-cli
-   > LLEN logs
+   > LLEN celery  # 查看 default 队列长度
+   > KEYS celery*  # 查看所有 Celery 相关的 key
    ```
 
 3. **查看 Flower 监控**：
    访问 http://localhost:5555 查看任务状态
 
-4. **手动刷新日志缓冲区**（在代码中）：
-   ```python
-   from app.services.execution_logger import execution_logger
-   await execution_logger.flush()
-   ```
+4. **查看 Worker 日志**：
+   检查 Celery Worker 终端输出，查看是否有任务执行记录
 
 ### 端口 8000 已被占用
 
@@ -775,7 +803,10 @@ redis-cli
 # 查找占用端口的进程
 lsof -i :8000
 
-# 使用其他端口启动
+# 结束占用端口的进程
+kill -9 <PID>
+
+# 或使用其他端口启动
 uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
 ```
 

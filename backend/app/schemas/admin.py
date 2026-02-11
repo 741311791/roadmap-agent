@@ -130,6 +130,30 @@ class UpdateTavilyAPIKeyRequest(BaseModel):
     plan_limit: Optional[int] = None
 
 
+class BatchUpdateTavilyKeysRequest(BaseModel):
+    """批量更新Tavily API Keys请求（通过官方API查询配额）"""
+    api_keys: List[str] = Field(description="待更新的API Key列表")
+
+
+class BatchUpdateTavilyKeysResponse(BaseModel):
+    """批量更新Tavily API Keys响应"""
+    success: int
+    failed: int
+    errors: List[dict]
+
+
+class BatchDeleteTavilyKeysRequest(BaseModel):
+    """批量删除Tavily API Keys请求"""
+    api_keys: List[str] = Field(description="待删除的API Key列表")
+
+
+class BatchDeleteTavilyKeysResponse(BaseModel):
+    """批量删除Tavily API Keys响应"""
+    success: int
+    failed: int
+    errors: List[dict]
+
+
 class DeleteTavilyAPIKeyResponse(BaseModel):
     """删除Tavily API Key响应"""
     success: bool

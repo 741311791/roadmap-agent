@@ -14,11 +14,10 @@
 4. 避免 HTTP 请求结束后 Session 关闭的问题
 """
 from app.core.celery_app import celery_app
-from app.services.cover_image_service import CoverImageService
+from app.services.roadmaps.cover_image_service import CoverImageService
 from app.db.celery_session import get_celery_session
 from app.crud.crud_roadmap import get_roadmap_crud
 import structlog
-import asyncio
 
 logger = structlog.get_logger()
 
@@ -60,10 +59,12 @@ def generate_cover_image_task(self, roadmap_id: str, prompt: str = None):
             retry_count=self.request.retries,
         )
         
-        # ✅ 在 Worker 进程中创建独立 Session
-        # 使用 asyncio.run() 执行异步逻辑
-        # 注意：Celery worker 运行在独立线程，可以安全创建新的事件循环
-        result = asyncio.run(_generate_cover_image_async(roadmap_id, prompt))
+        # ✅ 在 Worker 进程的持久事件循环中执行异步逻辑
+        # 注意：使用 run_async_in_worker_loop() 替代 asyncio.run()，
+        #      避免创建新的 event loop（可能与 OrchestratorFactory 的 Lock 冲突）
+        from app.tasks.event_loop_manager import run_async_in_worker_loop
+        
+        result = run_async_in_worker_loop(_generate_cover_image_async(roadmap_id, prompt))
         
         logger.info(
             "cover_image_task_completed",

@@ -2,15 +2,40 @@
 教程CRUD操作
 """
 from typing import Optional, List
+from datetime import datetime
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
 from app.crud.base import BaseCRUD
-from app.models.database import TutorialMetadata
+from app.models.database import TutorialMetadata, beijing_now
 from app.schemas.tutorial import TutorialCreate, TutorialUpdate
 
 logger = structlog.get_logger()
+
+
+def _ensure_naive_datetime(dt: datetime) -> datetime:
+    """
+    确保datetime对象无时区信息（防御性函数）
+    
+    如果输入的datetime带有时区信息，转换为北京时间并移除时区。
+    如果已经无时区信息，直接返回。
+    
+    Args:
+        dt: 待处理的datetime对象
+        
+    Returns:
+        无时区信息的datetime对象
+    """
+    if dt.tzinfo is None:
+        # 已经无时区，直接返回
+        return dt
+    
+    # 有时区信息，转换为北京时间（UTC+8）并移除时区
+    from datetime import timezone, timedelta
+    BEIJING_TZ = timezone(timedelta(hours=8))
+    beijing_time = dt.astimezone(BEIJING_TZ)
+    return beijing_time.replace(tzinfo=None)
 
 class TutorialCRUD(BaseCRUD[TutorialMetadata, TutorialCreate, TutorialUpdate]):
     """
@@ -168,7 +193,7 @@ class TutorialCRUD(BaseCRUD[TutorialMetadata, TutorialCreate, TutorialUpdate]):
             existing.content_version = tutorial_output.content_version
             existing.is_latest = True
             existing.estimated_completion_time = tutorial_output.estimated_completion_time
-            existing.generated_at = tutorial_output.generated_at
+            existing.created_at = _ensure_naive_datetime(tutorial_output.created_at)
             
             await session.flush()
             metadata = existing
@@ -192,7 +217,7 @@ class TutorialCRUD(BaseCRUD[TutorialMetadata, TutorialCreate, TutorialUpdate]):
                 content_version=tutorial_output.content_version,
                 is_latest=True,  # 新版本默认为最新
                 estimated_completion_time=tutorial_output.estimated_completion_time,
-                generated_at=tutorial_output.generated_at,
+                created_at=_ensure_naive_datetime(tutorial_output.created_at),
             )
             
             session.add(metadata)

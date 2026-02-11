@@ -1,11 +1,17 @@
 """
-Agent Factory
+Agent Factory（已集成统一工具框架）
 
 统一创建和管理所有 Agent 实例。
 
-设计模式：工厂模式
+设计模式：
+- 工厂模式：封装 Agent 的创建逻辑
+- 注册中心模式：管理所有可用工具（ToolRegistry）
+
+职责：
 - 封装 Agent 的创建逻辑
 - 从配置中读取 LLM 参数
+- 初始化并管理 ToolRegistry
+- 注册所有可用工具
 - 支持依赖注入
 - 简化测试（可替换为 Mock Agent）
 
@@ -14,18 +20,19 @@ Agent Factory
 from app.agents.factory import AgentFactory
 from app.config.settings import settings
 
-# 创建工厂
+# 创建工厂（会自动初始化 ToolRegistry）
 factory = AgentFactory(settings)
 
 # 创建 Agent
-intent_analyzer = factory.create_intent_analyzer()
-result = await intent_analyzer.execute(user_request)
+tutorial_generator = factory.create_tutorial_generator()
+result = await tutorial_generator.execute(input_data)
 ```
 """
 from typing import Protocol, Optional
 import structlog
 
 from app.config.settings import Settings
+from app.tools.registry import ToolRegistry
 from app.agents.protocol import (
     IntentAnalyzerProtocol,
     CurriculumArchitectProtocol,
@@ -34,9 +41,6 @@ from app.agents.protocol import (
     TutorialGeneratorProtocol,
     ResourceRecommenderProtocol,
     QuizGeneratorProtocol,
-    ModificationAnalyzerProtocol,
-    TutorialModifierProtocol,
-    ResourceModifierProtocol,
     QuizModifierProtocol,
 )
 
@@ -45,12 +49,14 @@ logger = structlog.get_logger(__name__)
 
 class AgentFactory:
     """
-    Agent 工厂类
+    Agent 工厂类（已集成统一工具框架）
     
     职责：
     1. 根据配置创建 Agent 实例
-    2. 确保所有 Agent 配置正确
-    3. 提供统一的 Agent 创建接口
+    2. 初始化并管理 ToolRegistry
+    3. 注册所有可用工具
+    4. 确保所有 Agent 配置正确
+    5. 提供统一的 Agent 创建接口
     """
     
     def __init__(self, settings: Settings):
@@ -61,7 +67,64 @@ class AgentFactory:
             settings: 应用配置对象
         """
         self.settings = settings
-        logger.info("agent_factory_initialized")
+        
+        # ✅ 初始化工具注册中心
+        self.tool_registry = ToolRegistry()
+        
+        # ✅ 注册所有可用工具
+        self._register_default_tools()
+        
+        logger.info(
+            "agent_factory_initialized",
+            tools_count=len(self.tool_registry.list_tools()),
+            tools=self.tool_registry.list_tools(),
+        )
+    
+    def _register_default_tools(self):
+        """
+        注册默认工具
+        
+        包括：
+        - 搜索工具（WebSearchRouter）
+        - Mentor 工具（获取教程、用户画像、路线图元数据等）
+        - 笔记工具（记录笔记、标记完成）
+        """
+        # ============================================================
+        # 1. 注册搜索工具
+        # ============================================================
+        from app.tools.search.web_search_router import WebSearchRouter
+        
+        self.tool_registry.register(WebSearchRouter())
+        
+        # ============================================================
+        # 2. 注册 Mentor 工具
+        # ============================================================
+        from app.tools.mentor.get_concept_tutorial_tool import GetConceptTutorialTool
+        from app.tools.mentor.get_user_profile_tool import GetUserProfileTool
+        from app.tools.mentor.get_roadmap_metadata_tool import GetRoadmapMetadataTool
+        from app.tools.mentor.mark_content_complete_tool import MarkContentCompleteTool
+        
+        self.tool_registry.register(GetConceptTutorialTool())
+        self.tool_registry.register(GetUserProfileTool())
+        self.tool_registry.register(GetRoadmapMetadataTool())
+        self.tool_registry.register(MarkContentCompleteTool())
+        
+        logger.info(
+            "default_tools_registered",
+            tools_count=len(self.tool_registry.list_tools()),
+        )
+    
+    # ============================================================
+    # initialize_mcp_servers 方法已废弃 (2026-01-19)
+    # 原因：统一使用官方 langchain-mcp-adapters
+    # 现在Agent直接在需要时加载MCP工具，不通过registry统一初始化
+    # ============================================================
+    
+    # async def initialize_mcp_servers(...): 已删除
+    # 
+    # 如需使用MCP工具，请参考：
+    # - app/tools/mcp_loader.py - 官方langchain-mcp-adapters加载器
+    # - app/agents/tutorial_generator.py - 使用示例（场景区分加载）
     
     def create_intent_analyzer(self) -> IntentAnalyzerProtocol:
         """
@@ -204,7 +267,7 @@ class AgentFactory:
         tavily_key: Optional[str] = None
     ) -> ResourceRecommenderProtocol:
         """
-        创建资源推荐器
+        创建资源推荐器（已集成统一工具框架）
         
         推荐学习资源：
         - 视频教程
@@ -227,6 +290,7 @@ class AgentFactory:
             base_url=self.settings.RECOMMENDER_BASE_URL,
             api_key=self.settings.RECOMMENDER_API_KEY,
             tavily_key=tavily_key,
+            tool_registry=self.tool_registry,  # ✅ 注入 ToolRegistry
         )
     
     def create_quiz_generator(self) -> QuizGeneratorProtocol:
@@ -255,90 +319,6 @@ class AgentFactory:
     # Modifier Agents（内容修改）
     # ============================================================
     
-    def create_modification_analyzer(self) -> ModificationAnalyzerProtocol:
-        """
-        创建修改分析器
-        
-        分析用户的修改请求：
-        - 判断修改类型（教程/资源/测验）
-        - 提取修改意图
-        - 生成修改指令
-        
-        Returns:
-            ModificationAnalyzerAgent 实例
-        """
-        from app.agents.modification_analyzer import ModificationAnalyzerAgent
-        
-        # 如果未配置独立 API Key，复用 ANALYZER_API_KEY
-        api_key = (
-            self.settings.MODIFICATION_ANALYZER_API_KEY 
-            or self.settings.ANALYZER_API_KEY
-        )
-        
-        return ModificationAnalyzerAgent(
-            agent_id="modification_analyzer",
-            model_provider=self.settings.MODIFICATION_ANALYZER_PROVIDER,
-            model_name=self.settings.MODIFICATION_ANALYZER_MODEL,
-            base_url=self.settings.MODIFICATION_ANALYZER_BASE_URL,
-            api_key=api_key,
-        )
-    
-    def create_tutorial_modifier(self) -> TutorialModifierProtocol:
-        """
-        创建教程修改器
-        
-        修改现有教程内容：
-        - 更新文本内容
-        - 修改代码示例
-        - 调整难度等级
-        
-        Returns:
-            TutorialModifierAgent 实例
-        """
-        from app.agents.tutorial_modifier import TutorialModifierAgent
-        
-        # 如果未配置独立 API Key，复用 GENERATOR_API_KEY
-        api_key = (
-            self.settings.TUTORIAL_MODIFIER_API_KEY 
-            or self.settings.GENERATOR_API_KEY
-        )
-        
-        return TutorialModifierAgent(
-            agent_id="tutorial_modifier",
-            model_provider=self.settings.TUTORIAL_MODIFIER_PROVIDER,
-            model_name=self.settings.TUTORIAL_MODIFIER_MODEL,
-            base_url=self.settings.TUTORIAL_MODIFIER_BASE_URL,
-            api_key=api_key,
-        )
-    
-    def create_resource_modifier(self) -> ResourceModifierProtocol:
-        """
-        创建资源修改器
-        
-        修改资源推荐内容：
-        - 更新资源链接
-        - 修改推荐理由
-        - 调整资源类型
-        
-        Returns:
-            ResourceModifierAgent 实例
-        """
-        from app.agents.resource_modifier import ResourceModifierAgent
-        
-        # 如果未配置独立 API Key，复用 RECOMMENDER_API_KEY
-        api_key = (
-            self.settings.RESOURCE_MODIFIER_API_KEY 
-            or self.settings.RECOMMENDER_API_KEY
-        )
-        
-        return ResourceModifierAgent(
-            agent_id="resource_modifier",
-            model_provider=self.settings.RESOURCE_MODIFIER_PROVIDER,
-            model_name=self.settings.RESOURCE_MODIFIER_MODEL,
-            base_url=self.settings.RESOURCE_MODIFIER_BASE_URL,
-            api_key=api_key,
-        )
-    
     def create_quiz_modifier(self) -> QuizModifierProtocol:
         """
         创建测验修改器
@@ -366,6 +346,10 @@ class AgentFactory:
             base_url=self.settings.QUIZ_MODIFIER_BASE_URL,
             api_key=api_key,
         )
+    
+    # ============================================================
+    # Learning & Mentor Agents（学习与导师）
+    # ============================================================
 
 
 # ============================================================

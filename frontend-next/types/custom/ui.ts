@@ -1,50 +1,106 @@
 /**
- * Frontend UI-specific Types
- * These types are used only in the frontend and not shared with backend
+ * 前端UI组件专用类型
  */
 
-// View modes for roadmap display
-export type ViewMode = 'list' | 'flow';
+/**
+ * 视图模式
+ */
+export type ViewMode = 'flow' | 'list' | 'immersive';
 
-// Sidebar collapse states
-export interface SidebarState {
-  leftCollapsed: boolean;
-  rightCollapsed: boolean;
-}
-
-// Toast notification config
+/**
+ * Toast配置
+ */
 export interface ToastConfig {
   id: string;
   title: string;
   description?: string;
-  variant: 'default' | 'success' | 'error' | 'warning';
+  variant: 'default' | 'success' | 'error' | 'warning' | 'info';
   duration?: number;
 }
 
-// Dialog state
+/**
+ * Dialog状态
+ */
 export interface DialogState {
   isOpen: boolean;
   title?: string;
+  description?: string;
   content?: React.ReactNode;
-  onConfirm?: () => void;
+  onConfirm?: () => void | Promise<void>;
   onCancel?: () => void;
+  confirmText?: string;
+  cancelText?: string;
 }
 
-// Theme mode
-export type ThemeMode = 'light' | 'dark' | 'system';
-
-// Navigation item
-export interface NavItem {
-  id: string;
-  label: string;
-  href: string;
-  icon?: React.ComponentType<{ className?: string }>;
-  badge?: string | number;
+/**
+ * 加载状态
+ */
+export interface LoadingState {
+  isLoading: boolean;
+  loadingText?: string;
+  progress?: number;
 }
 
-// Breadcrumb item
-export interface BreadcrumbItem {
-  label: string;
-  href?: string;
+/**
+ * 错误状态
+ */
+export interface ErrorState {
+  hasError: boolean;
+  errorMessage?: string;
+  errorCode?: string;
+  canRetry?: boolean;
 }
 
+/**
+ * 侧边栏状态
+ */
+export interface SidebarState {
+  isCollapsed: boolean;
+  activeTab?: string;
+  width?: number;
+}
+
+/**
+ * 拖拽状态
+ */
+export interface DragState {
+  isDragging: boolean;
+  draggedId?: string;
+  draggedType?: 'concept' | 'module' | 'stage';
+  dropTargetId?: string;
+}
+
+/**
+ * 选择状态
+ */
+export interface SelectionState {
+  selectedIds: Set<string>;
+  selectionMode: 'single' | 'multiple';
+  lastSelectedId?: string;
+}
+
+/**
+ * 通用组件Props
+ */
+export interface BaseComponentProps {
+  className?: string;
+  style?: React.CSSProperties;
+  children?: React.ReactNode;
+}
+
+/**
+ * 可关闭组件Props
+ */
+export interface ClosableComponentProps extends BaseComponentProps {
+  onClose?: () => void;
+}
+
+/**
+ * 可确认组件Props
+ */
+export interface ConfirmableComponentProps extends ClosableComponentProps {
+  onConfirm?: () => void | Promise<void>;
+  confirmText?: string;
+  cancelText?: string;
+  isLoading?: boolean;
+}

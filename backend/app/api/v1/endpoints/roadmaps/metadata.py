@@ -214,7 +214,7 @@ async def get_roadmap_comparison(
         raise errors.NotFoundError(msg="没有足够的版本进行对比（至少需要2个版本）")
     
     return response_base.success(data=RoadmapComparisonResponse(
-        task_id=task_id,
+        roadmap_id=roadmap_id,
         current_version=comparison.get("current_version", 0),
         previous_version=comparison.get("previous_version", 0),
         comparison=comparison,
@@ -365,26 +365,40 @@ async def get_edit_history_full(
     # 构建完整编辑历史
     result = []
     for edit in edits:
+        # 基本编辑信息（使用实际存在的字段）
         edit_data = {
             "id": edit.id,
             "timestamp": edit.created_at.isoformat() if edit.created_at else None,
-            "edit_source": edit.edit_source,  # validation_failed / human_review
-            "edit_plan_id": edit.edit_plan_id,
-            "changes_made": edit.changes_made,
-            "diff_summary": edit.diff_summary,
-            "version": getattr(edit, 'version', None),
+            "task_id": edit.task_id,
+            "edit_round": edit.edit_round,
+            "diff_summary": edit.modification_summary,
+            "modified_node_ids": edit.modified_node_ids,
+            "origin_framework": edit.origin_framework_data,
+            "modified_framework": edit.modified_framework_data,
         }
         
-        # 如果有edit_plan_id，获取编辑计划详情
-        if edit.edit_plan_id:
-            edit_plan = await edit_plan_crud.get_by_id(db, edit.edit_plan_id)
-            if edit_plan:
-                edit_data["edit_plan"] = {
-                    "id": edit_plan.id,
-                    "analysis": edit_plan.analysis,
-                    "modifications": edit_plan.modifications,
-                    "priority_order": edit_plan.priority_order,
-                }
+        # 通过 task_id 查找对应的 EditPlanRecord，获取编辑来源
+        edit_plans = await edit_plan_crud.get_by_task_id(db, edit.task_id)
+        if edit_plans:
+            # 取最新的编辑计划
+            latest_plan = edit_plans[0] if isinstance(edit_plans, list) else edit_plans
+            
+            # 判断编辑来源
+            if latest_plan.feedback_id is None:
+                edit_data["edit_source"] = "validation_failed"
+            else:
+                edit_data["edit_source"] = "human_review"
+            
+            # 添加编辑计划详情
+            edit_data["edit_plan"] = {
+                "id": latest_plan.id,
+                "feedback_summary": latest_plan.feedback_summary,
+                "scope_analysis": latest_plan.scope_analysis,
+                "intents": latest_plan.intents,
+            }
+        else:
+            # 没有编辑计划，可能是旧数据
+            edit_data["edit_source"] = "unknown"
         
         result.append(edit_data)
     

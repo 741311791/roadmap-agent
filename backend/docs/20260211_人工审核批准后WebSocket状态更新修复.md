@@ -93,35 +93,45 @@ await self._send_progress_notification(
 
 **修复逻辑**：
 ```python
-# ✅ 关键修复：从 output 提取 current_step，而不是使用 node_name
-# 原因：某些节点（如 human_review）完成后会返回新的 current_step
+# ✅ 关键修复：从 output 强制提取 current_step（必须存在）
+# 原因：
+# 1. output 是 executor 传递的 final_state（完整的工作流状态）
+# 2. 所有节点都返回 current_step 字段（已验证）
+# 3. current_step 代表工作流的逻辑状态，不同于物理节点名称 node_name
 # 例如：human_review 批准后返回 current_step="content_generation_queued"
-# 如果使用 node_name="human_review"，前端会收到错误的步骤信息，导致UI不更新
-current_step_in_output = _safe_get(output, "current_step")
-notification_step = current_step_in_output if current_step_in_output else node_name
+#       但 node_name="human_review"，前端需要收到 "content_generation_queued"
+current_step = _safe_get(output, "current_step")
+
+# ⚠️ 严格校验：current_step 必须存在
+# 如果缺失，说明状态机有严重bug，直接抛出异常（Fail Fast）
+if not current_step:
+    logger.critical("CRITICAL: final_state 中缺少 current_step！")
+    raise ValueError(
+        f"CRITICAL BUG: Node {node_name} completed but final_state has no current_step. "
+        f"This breaks frontend state sync."
+    )
 
 # 3. 发送 WebSocket 通知
 logger.info(
     "coordinator_sending_websocket",
     task_id=task_id,
     node_name=node_name,
-    current_step_in_output=current_step_in_output,
-    notification_step=notification_step,  # ✅ 新增：显示实际使用的步骤
+    current_step=current_step,  # ✅ 总是使用 current_step
     extra_data=extra_data,
 )
 
 await self._send_progress_notification(
     task_id=task_id,
-    step=notification_step,  # ✅ 修复：使用 output 中的 current_step（如果存在）
+    step=current_step,  # ✅ 强制使用 current_step（不使用 node_name fallback）
     status="completed",
     extra_data=extra_data,
 )
 ```
 
 **修复原理**：
-1. **优先使用状态**：从`output`中提取`current_step`，这是Node函数返回的**逻辑状态**
-2. **降级兼容**：如果`output`中没有`current_step`，则使用`node_name`作为fallback
-3. **状态传递一致性**：确保WebSocket通知的`step`与工作流的实际状态一致
+1. **强制使用状态**：从`output`（即`final_state`）中提取`current_step`，这是工作流的**逻辑状态**
+2. **Fail Fast原则**：如果`current_step`不存在，立即抛出异常，暴露状态机bug
+3. **状态传递一致性**：确保WebSocket通知的`step`严格等于工作流的`current_step`，不使用`node_name`fallback
 
 ---
 
@@ -213,7 +223,13 @@ step="content_generation_queued" → mapToDisplayStep() → "content_generation"
 
 ### 不受影响的节点
 
-对于`current_step == node_name`的节点（大多数情况），修复逻辑会fallback到`node_name`，行为与修复前一致，**无副作用**。
+对于`current_step == node_name`的节点（大多数情况），修复逻辑仍然使用`current_step`，行为更加严格和一致。
+
+### 副作用和风险
+
+- ✅ **更高的健壮性**：强制要求所有节点返回`current_step`，提前发现状态机bug
+- ⚠️ **Fail Fast**：如果某个节点未返回`current_step`，会直接抛出异常（而不是静默使用fallback）
+- 📊 **所有现有节点已验证**：通过代码审查确认所有节点都正确返回了`current_step`，不会触发异常
 
 ---
 

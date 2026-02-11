@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ResponseSchemaModel } from '../models/ResponseSchemaModel';
 import type { ResponseSchemaModel_ExecutionLogListResponse_ } from '../models/ResponseSchemaModel_ExecutionLogListResponse_';
 import type { ResponseSchemaModel_TraceSummaryResponse_ } from '../models/ResponseSchemaModel_TraceSummaryResponse_';
 import type { CancelablePromise } from '../core/CancelablePromise';
@@ -153,6 +154,49 @@ export class TaskTraceService {
             },
             query: {
                 'limit': limit,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Get Subgraph Progress
+     * 查询子图执行进度（双 Checkpointer 架构）
+     *
+     * 使用子图 checkpointer 查询当前任务的子图状态：
+     * - 已完成的 Concept 数量
+     * - 失败的 Concept 列表
+     * - 可恢复性（是否可以断点续传）
+     *
+     * 双 Checkpointer 架构：
+     * - 使用 child_checkpointer（命名空间：child_graph）查询子图状态
+     * - 与父图状态完全隔离
+     * - 支持细粒度的断点续传
+     *
+     * Args:
+     * task_id: 任务ID
+     * current_user: 当前用户
+     *
+     * Returns:
+     * 子图进度信息
+     *
+     * Raises:
+     * NotFoundError: 任务不存在
+     * ForbiddenError: 无权限查看此任务
+     * @returns ResponseSchemaModel Successful Response
+     * @throws ApiError
+     */
+    public static getSubgraphProgressApiV1TasksTaskIdSubgraphProgressGet({
+        taskId,
+    }: {
+        taskId: string,
+    }): CancelablePromise<ResponseSchemaModel> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/tasks/{task_id}/subgraph-progress',
+            path: {
+                'task_id': taskId,
             },
             errors: {
                 422: `Validation Error`,

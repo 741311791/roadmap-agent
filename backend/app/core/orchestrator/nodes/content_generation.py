@@ -37,7 +37,7 @@ async def content_generation_node(
     config: RunnableConfig,
 ) -> dict:
     """
-    内容生成节点（纯函数 - 重构版）
+    内容生成节点（双 Checkpointer 架构 - V3）
     
     调用内容生成子图（两层 Fan-Out/Fan-In 架构）。
     子图内部会：
@@ -46,9 +46,15 @@ async def content_generation_node(
     3. Fan-In 收集并保存元数据
     4. 最终汇总并批量更新 Framework
     
+    双 Checkpointer 架构：
+    1. 主图 checkpointer 记录："我正在执行 content_generation 节点"
+    2. 子图 checkpointer 记录："我在并发执行哪些 Concept，哪些已完成"
+    3. 共享 thread_id（task_id），实现逻辑关联
+    4. LangGraph 自动跳过已完成的节点，只重试失败的部分
+    
     Args:
         state: 工作流状态
-        config: 运行时配置（包含RuntimeContext）
+        config: 运行时配置（包含RuntimeContext和thread_id）
     
     Returns:
         状态更新字典：
@@ -115,17 +121,20 @@ async def content_generation_node(
     concepts = extract_concepts_from_framework(framework)
     
     logger.info(
-        "content_generation_node_start_v2",
+        "content_generation_node_start_v3_dual_checkpointer",
         task_id=task_id,
         roadmap_id=roadmap_id,
         concept_count=len(concepts),
-        architecture="two_layer_fanout_fanin",
+        architecture="dual_checkpointer",
     )
     
-    # 构建子图（新架构）
-    subgraph = build_content_generation_subgraph()
+    # ✅ 双 Checkpointer 架构：获取子图专用的 checkpointer
+    child_checkpointer = ctx.child_checkpointer
     
-    # 准备子图输入状态（新架构）
+    # ✅ 构建子图时传入独立的 checkpointer
+    subgraph = build_content_generation_subgraph(checkpointer=child_checkpointer)
+    
+    # 准备子图输入状态
     sub_state = {
         "roadmap_id": roadmap_id,
         "concepts": concepts,
@@ -135,8 +144,19 @@ async def content_generation_node(
         "concept_results": [],  # Reducer 自动累加
     }
     
-    # 执行子图（config会自动传递给子图）
-    result = await subgraph.ainvoke(sub_state, config)
+    # ✅ 关键：为子图创建独立的 thread_id（添加 :child 后缀）
+    # 这样主图和子图可以共享同一个 checkpointer，但通过不同的 thread_id 隔离状态
+    # 主图 thread_id: {task_id}
+    # 子图 thread_id: {task_id}:child
+    child_config = {
+        "configurable": {
+            "thread_id": f"{task_id}:child",  # 添加 :child 后缀以区分主图和子图
+            "runtime_context": config["configurable"]["runtime_context"],
+        }
+    }
+    
+    # LangGraph 会自动跳过已完成的节点，只执行失败的部分
+    result = await subgraph.ainvoke(sub_state, child_config)
     
     # 统计结果
     concept_results = result.get("concept_results", [])
@@ -147,12 +167,13 @@ async def content_generation_node(
     failed_count = len(concept_results) - successful_count
     
     logger.info(
-        "content_generation_node_completed_v2",
+        "content_generation_node_completed_v3_dual_checkpointer",
         task_id=task_id,
         roadmap_id=roadmap_id,
         total_concepts=len(concept_results),
         successful_count=successful_count,
         failed_count=failed_count,
+        architecture="dual_checkpointer",
     )
     
     # 构造主图状态更新（新架构不再返回 tutorial_refs 等字段）

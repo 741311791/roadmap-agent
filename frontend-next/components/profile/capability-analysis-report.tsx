@@ -30,6 +30,15 @@ export function CapabilityAnalysisReport({
   onClose,
   showActions = true,
 }: CapabilityAnalysisReportProps) {
+  // 防御性检查：确保所有必需的数组字段存在
+  const safeResult = {
+    ...result,
+    strengths: result.strengths || [],
+    weaknesses: result.weaknesses || [],
+    knowledge_gaps: result.knowledge_gaps || [],
+    learning_suggestions: result.learning_suggestions || [],
+  };
+
   // 获取优先级配置
   const getPriorityConfig = (priority: string) => {
     switch (priority) {
@@ -65,7 +74,10 @@ export function CapabilityAnalysisReport({
 
   // 获取能力验证图标
   const getVerificationIcon = () => {
-    const { claimed_level, verified_level } = result.proficiency_verification;
+    const { claimed_level, verified_level } = safeResult.proficiency_verification || {};
+    if (!claimed_level || !verified_level) {
+      return <Minus className="w-5 h-5 text-muted-foreground" />;
+    }
     if (verified_level === claimed_level) {
       return <CheckCircle2 className="w-5 h-5 text-sage-700" />;
     } else if (verified_level < claimed_level) {
@@ -98,8 +110,8 @@ export function CapabilityAnalysisReport({
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-muted-foreground leading-relaxed">
-            {result.overall_assessment}
+          <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-wrap">
+            {safeResult.overall_assessment || 'No assessment available'}
           </p>
         </CardContent>
       </Card>
@@ -115,14 +127,14 @@ export function CapabilityAnalysisReport({
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            {result.strengths.length > 0 ? (
-              result.strengths.map((strength, index) => (
+            {safeResult.strengths.length > 0 ? (
+              safeResult.strengths.map((strength, index) => (
                 <div
                   key={index}
                   className="flex items-start gap-2 text-sm text-sage-800"
                 >
                   <span className="text-sage-600 mt-0.5">✓</span>
-                  <span>{strength}</span>
+                  <span className="whitespace-pre-wrap">{strength}</span>
                 </div>
               ))
             ) : (
@@ -140,14 +152,14 @@ export function CapabilityAnalysisReport({
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            {result.weaknesses.length > 0 ? (
-              result.weaknesses.map((weakness, index) => (
+            {safeResult.weaknesses.length > 0 ? (
+              safeResult.weaknesses.map((weakness, index) => (
                 <div
                   key={index}
                   className="flex items-start gap-2 text-sm text-muted-foreground"
                 >
                   <span className="text-muted-foreground mt-0.5">•</span>
-                  <span>{weakness}</span>
+                  <span className="whitespace-pre-wrap">{weakness}</span>
                 </div>
               ))
             ) : (
@@ -158,7 +170,7 @@ export function CapabilityAnalysisReport({
       </div>
 
       {/* 知识缺口 */}
-      {result.knowledge_gaps.length > 0 && (
+      {safeResult.knowledge_gaps.length > 0 && (
         <Card className="border-2">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -167,7 +179,7 @@ export function CapabilityAnalysisReport({
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            {result.knowledge_gaps.map((gap, index) => {
+            {safeResult.knowledge_gaps.map((gap, index) => {
               const config = getPriorityConfig(gap.priority);
               const IconComponent = config.icon;
 
@@ -195,7 +207,7 @@ export function CapabilityAnalysisReport({
                       </Badge>
                     </div>
 
-                    <p className="text-sm text-muted-foreground leading-relaxed">
+                    <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-wrap">
                       {gap.description}
                     </p>
 
@@ -212,7 +224,7 @@ export function CapabilityAnalysisReport({
                               className="text-sm text-muted-foreground flex items-start gap-2"
                             >
                               <span className="text-sage-600 mt-0.5">•</span>
-                              <span>{rec}</span>
+                              <span className="whitespace-pre-wrap">{rec}</span>
                             </li>
                           ))}
                         </ul>
@@ -227,7 +239,7 @@ export function CapabilityAnalysisReport({
       )}
 
       {/* 学习建议 */}
-      {result.learning_suggestions.length > 0 && (
+      {safeResult.learning_suggestions.length > 0 && (
         <Card className="border-2 border-sage-200 bg-sage-50/20">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-sage-900">
@@ -237,13 +249,13 @@ export function CapabilityAnalysisReport({
           </CardHeader>
           <CardContent>
             <ul className="space-y-2">
-              {result.learning_suggestions.map((suggestion, index) => (
+              {safeResult.learning_suggestions.map((suggestion, index) => (
                 <li
                   key={index}
                   className="text-sm text-sage-800 flex items-start gap-2"
                 >
                   <span className="text-sage-600 mt-0.5">→</span>
-                  <span>{suggestion}</span>
+                  <span className="whitespace-pre-wrap">{suggestion}</span>
                 </li>
               ))}
             </ul>
@@ -260,47 +272,53 @@ export function CapabilityAnalysisReport({
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <div className="text-sm text-muted-foreground">Claimed Level</div>
-              <div className="text-lg font-semibold text-foreground">
-                {result.proficiency_verification.claimed_level}
+          {safeResult.proficiency_verification ? (
+            <>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <div className="text-sm text-muted-foreground">Claimed Level</div>
+                  <div className="text-lg font-semibold text-foreground">
+                    {safeResult.proficiency_verification.claimed_level || 'N/A'}
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <div className="text-sm text-muted-foreground">Verified Level</div>
+                  <div className="flex items-center gap-2">
+                    {getVerificationIcon()}
+                    <span className="text-lg font-semibold text-foreground">
+                      {safeResult.proficiency_verification.verified_level || 'N/A'}
+                    </span>
+                  </div>
+                </div>
               </div>
-            </div>
-            <div className="space-y-2">
-              <div className="text-sm text-muted-foreground">Verified Level</div>
-              <div className="flex items-center gap-2">
-                {getVerificationIcon()}
-                <span className="text-lg font-semibold text-foreground">
-                  {result.proficiency_verification.verified_level}
-                </span>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">Confidence</span>
+                  <span
+                    className={cn(
+                      'text-sm font-medium',
+                      getConfidenceColor(safeResult.proficiency_verification.confidence || 'low')
+                    )}
+                  >
+                    {safeResult.proficiency_verification.confidence === 'high'
+                      ? 'High'
+                      : safeResult.proficiency_verification.confidence === 'medium'
+                      ? 'Medium'
+                      : 'Low'}
+                  </span>
+                </div>
               </div>
-            </div>
-          </div>
 
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">Confidence</span>
-              <span
-                className={cn(
-                  'text-sm font-medium',
-                  getConfidenceColor(result.proficiency_verification.confidence)
-                )}
-              >
-                {result.proficiency_verification.confidence === 'high'
-                  ? 'High'
-                  : result.proficiency_verification.confidence === 'medium'
-                  ? 'Medium'
-                  : 'Low'}
-              </span>
-            </div>
-          </div>
-
-          <div className="pt-3 border-t">
-            <p className="text-sm text-muted-foreground leading-relaxed">
-              {result.proficiency_verification.reasoning}
-            </p>
-          </div>
+              <div className="pt-3 border-t">
+                <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-wrap">
+                  {safeResult.proficiency_verification.reasoning || 'No reasoning available'}
+                </p>
+              </div>
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">No verification data available</p>
+          )}
         </CardContent>
       </Card>
 
@@ -313,41 +331,53 @@ export function CapabilityAnalysisReport({
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Beginner */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">Beginner Questions</span>
-              <span className="text-sm text-muted-foreground">
-                {result.score_breakdown.beginner.correct}/{result.score_breakdown.beginner.total} (
-                {result.score_breakdown.beginner.percentage.toFixed(1)}%)
-              </span>
-            </div>
-            <Progress value={result.score_breakdown.beginner.percentage} className="h-2" />
-          </div>
+          {safeResult.score_breakdown ? (
+            <>
+              {/* Beginner */}
+              {safeResult.score_breakdown.beginner && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium">Beginner Questions</span>
+                    <span className="text-sm text-muted-foreground">
+                      {safeResult.score_breakdown.beginner.correct}/{safeResult.score_breakdown.beginner.total} (
+                      {safeResult.score_breakdown.beginner.percentage.toFixed(1)}%)
+                    </span>
+                  </div>
+                  <Progress value={safeResult.score_breakdown.beginner.percentage} className="h-2" />
+                </div>
+              )}
 
-          {/* Intermediate */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">Intermediate Questions</span>
-              <span className="text-sm text-muted-foreground">
-                {result.score_breakdown.intermediate.correct}/{result.score_breakdown.intermediate.total} (
-                {result.score_breakdown.intermediate.percentage.toFixed(1)}%)
-              </span>
-            </div>
-            <Progress value={result.score_breakdown.intermediate.percentage} className="h-2" />
-          </div>
+              {/* Intermediate */}
+              {safeResult.score_breakdown.intermediate && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium">Intermediate Questions</span>
+                    <span className="text-sm text-muted-foreground">
+                      {safeResult.score_breakdown.intermediate.correct}/{safeResult.score_breakdown.intermediate.total} (
+                      {safeResult.score_breakdown.intermediate.percentage.toFixed(1)}%)
+                    </span>
+                  </div>
+                  <Progress value={safeResult.score_breakdown.intermediate.percentage} className="h-2" />
+                </div>
+              )}
 
-          {/* Expert */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">Expert Questions</span>
-              <span className="text-sm text-muted-foreground">
-                {result.score_breakdown.expert.correct}/{result.score_breakdown.expert.total} (
-                {result.score_breakdown.expert.percentage.toFixed(1)}%)
-              </span>
-            </div>
-            <Progress value={result.score_breakdown.expert.percentage} className="h-2" />
-          </div>
+              {/* Expert */}
+              {safeResult.score_breakdown.expert && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium">Expert Questions</span>
+                    <span className="text-sm text-muted-foreground">
+                      {safeResult.score_breakdown.expert.correct}/{safeResult.score_breakdown.expert.total} (
+                      {safeResult.score_breakdown.expert.percentage.toFixed(1)}%)
+                    </span>
+                  </div>
+                  <Progress value={safeResult.score_breakdown.expert.percentage} className="h-2" />
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">No score breakdown available</p>
+          )}
         </CardContent>
       </Card>
 

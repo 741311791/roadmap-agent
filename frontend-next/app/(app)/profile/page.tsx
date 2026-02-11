@@ -37,7 +37,7 @@ import { useAuthStore } from '@/lib/store/auth-store';
 import { useUserProfileStore } from '@/lib/store/user-profile-store';
 import { useAutoSave, useSaveStatus } from '@/lib/hooks/use-auto-save';
 import { TechAssessmentDialog } from '@/components/profile';
-import type { TechStackItem } from '@/lib/api/endpoints';
+import type { TechStackItem } from '@/types/generated';
 
 // Types
 type LearningStyleType = 'visual' | 'text' | 'audio' | 'hands_on';
@@ -236,7 +236,9 @@ export default function ProfilePage() {
   // 将tech_stack转换为带id的格式（用于UI）
   const techStackWithIds: TechStackRowItem[] = React.useMemo(() => {
     if (!profile?.tech_stack) return [];
-    return profile.tech_stack.map((item, index) => ({
+    // 类型断言：后端返回Record<string, any>[]，但实际是TechStackItem[]
+    const techStack = profile.tech_stack as unknown as TechStackItem[];
+    return techStack.map((item: TechStackItem, index: number) => ({
       ...item,
       id: `tech-${item.technology}-${index}`,
     }));
@@ -282,7 +284,7 @@ export default function ProfilePage() {
       } else {
         // 已存在的项，删除旧的，添加新的
         removeTechStack(oldTechnology);
-        const oldItem = profile?.tech_stack.find(t => t.technology === oldTechnology);
+        const oldItem = profile?.tech_stack?.find(t => t.technology === oldTechnology);
         addTechStack({ 
           technology: value, 
           proficiency: (oldItem?.proficiency || 'beginner') as 'beginner' | 'intermediate' | 'expert'
@@ -300,7 +302,7 @@ export default function ProfilePage() {
   };
 
   const selectAllLearningStyles = () => {
-    if (profile?.learning_style.length === LEARNING_STYLES.length) {
+    if (profile?.learning_style && profile.learning_style.length === LEARNING_STYLES.length) {
       setLearningStyles([]);
     } else {
       setLearningStyles(LEARNING_STYLES.map((s) => s.value));
@@ -610,7 +612,7 @@ export default function ProfilePage() {
                   </span>
                 </div>
                 <Slider
-                  value={[profile.weekly_commitment_hours]}
+                  value={[profile.weekly_commitment_hours || 10]}
                   onValueChange={([value]) => updateProfile({ weekly_commitment_hours: value })}
                   min={2}
                   max={40}
@@ -635,7 +637,7 @@ export default function ProfilePage() {
                   onClick={selectAllLearningStyles}
                   className="text-sm text-sage-600 hover:text-sage-700 hover:underline"
                 >
-                  {profile.learning_style.length === LEARNING_STYLES.length ? 'Deselect All' : 'Select All'}
+                  {profile.learning_style && profile.learning_style.length === LEARNING_STYLES.length ? 'Deselect All' : 'Select All'}
                 </button>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -643,7 +645,7 @@ export default function ProfilePage() {
                   <LearningStyleCard
                     key={style.value}
                     style={style}
-                    isSelected={profile.learning_style.includes(style.value)}
+                    isSelected={profile.learning_style?.includes(style.value) || false}
                     onSelect={() => toggleLearningStyle(style.value)}
                   />
                 ))}

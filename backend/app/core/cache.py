@@ -53,9 +53,14 @@ async def get_or_set_cache(
         ```
     """
     # 1. 尝试从缓存读取
-    cached_data = await redis_client.get_json(key, type_=model_type)
+    # 注意：msgspec 不支持直接解码为 Pydantic 模型，所以不传递 type_ 参数
+    # 先获取 dict，然后手动转换为 Pydantic 模型
+    cached_data = await redis_client.get_json(key)
     if cached_data:
         logger.debug("cache_hit", key=key)
+        # 如果指定了 Pydantic 模型类型，将 dict 转换为模型实例
+        if isinstance(cached_data, dict) and issubclass(model_type, BaseModel):
+            return model_type.model_validate(cached_data)
         return cached_data
     
     # 2. 缓存未命中，调用获取函数

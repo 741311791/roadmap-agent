@@ -458,6 +458,70 @@ def mock_quiz_agent():
 
 
 # ============================================================
+# 测试数据库管理器初始化
+# ============================================================
+
+# ============================================================
+# OrchestratorFactory 初始化（API测试需要）
+# ============================================================
+
+@pytest.fixture
+async def initialized_orchestrator():
+    """
+    为需要OrchestratorFactory的测试初始化
+    
+    某些API端点（如status查询、cancel等）依赖WorkflowExecutor。
+    使用function scope避免与事件循环冲突。
+    """
+    from app.core.orchestrator_factory import OrchestratorFactory
+    
+    try:
+        # 如果已经初始化，直接返回
+        if not OrchestratorFactory._initialized:
+            await OrchestratorFactory.initialize()
+        yield
+        # 不在这里cleanup，因为可能被多个测试共享
+    except Exception as e:
+        # 如果初始化失败（如数据库未启动），跳过
+        import warnings
+        warnings.warn(f"OrchestratorFactory initialization failed: {e}")
+        yield
+
+
+# ============================================================
+# 数据库会话 Fixtures（改进的清理策略）
+# ============================================================
+
+@pytest.fixture
+async def test_session():
+    """
+    测试数据库会话fixture（改进版）
+    
+    核心改进：
+    1. 使用应用的async_session_maker（避免创建新引擎）
+    2. 在yield前后显式管理事务
+    3. 确保在当前事件循环中完成清理
+    """
+    from app.db.session import async_session_maker
+    
+    async with async_session_maker() as session:
+        try:
+            # 开始事务
+            await session.begin()
+            yield session
+        except Exception:
+            # 出错时回滚
+            await session.rollback()
+            raise
+        else:
+            # 测试成功也回滚（保持数据隔离）
+            await session.rollback()
+        finally:
+            # 确保会话关闭
+            await session.close()
+
+
+# ============================================================
 # OrchestratorFactory 初始化 Fixture
 # ============================================================
 

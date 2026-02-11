@@ -11,7 +11,7 @@ LangGraph 1.0 最佳实践：
 - 失败任务的 Checkpoint 保留更长时间（30 天）
 """
 import structlog
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import text
 
 from app.core.celery_app import celery_app
@@ -36,13 +36,13 @@ def cleanup_old_checkpoints(self) -> dict:
     Returns:
         dict: 清理结果统计
     """
-    import asyncio
-    
     logger.info("checkpoint_cleanup_started")
     
     try:
-        # 在 Worker 进程的事件循环中执行异步清理
-        result = asyncio.run(_cleanup_old_checkpoints_async())
+        # 在 Worker 进程的持久事件循环中执行异步清理
+        from app.tasks.event_loop_manager import run_async_in_worker_loop
+        
+        result = run_async_in_worker_loop(_cleanup_old_checkpoints_async())
         
         logger.info(
             "checkpoint_cleanup_completed",
@@ -73,8 +73,8 @@ async def _cleanup_old_checkpoints_async() -> dict:
         dict: 清理结果统计
     """
     # 计算截止时间
-    completed_cutoff = datetime.utcnow() - timedelta(days=7)
-    failed_cutoff = datetime.utcnow() - timedelta(days=30)
+    completed_cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    failed_cutoff = datetime.now(timezone.utc) - timedelta(days=30)
     
     logger.info(
         "checkpoint_cleanup_executing",
@@ -117,8 +117,7 @@ async def _cleanup_old_checkpoints_async() -> dict:
             {"cutoff": failed_cutoff}
         )
         deleted_failed = result_failed.rowcount
-        
-        await session.commit()
+        # ✅ 不需要手动 commit，get_celery_session() 自动处理
     
     total_deleted = deleted_completed + deleted_failed
     
@@ -152,12 +151,12 @@ def monitor_checkpoint_size(self) -> dict:
     Returns:
         dict: 监控结果
     """
-    import asyncio
-    
     logger.info("checkpoint_size_monitoring_started")
     
     try:
-        result = asyncio.run(_monitor_checkpoint_size_async())
+        from app.tasks.event_loop_manager import run_async_in_worker_loop
+        
+        result = run_async_in_worker_loop(_monitor_checkpoint_size_async())
         
         logger.info(
             "checkpoint_size_monitoring_completed",

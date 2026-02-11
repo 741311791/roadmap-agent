@@ -13,54 +13,56 @@
  */
 
 import React, { useEffect, useState, useRef } from 'react';
+import { useTranslations } from 'next-intl';
 import { motion, AnimatePresence } from 'motion/react';
 import { Sparkles, Database, Code, LineChart, CheckCircle, PartyPopper } from 'lucide-react';
 import Xarrow, { Xwrapper, useXarrow } from 'react-xarrows';
 
-// 丰富的数据结构
-const treeData = [
-  {
-    id: 'foundation',
-    label: 'Foundation',
-    icon: Code,
-    delay: 0.2,
-    children: [
-      { id: 'syntax', label: 'Python Syntax', delay: 0.8, progress: 85 },
-      { id: 'env', label: 'Virtual Env', delay: 1.0, progress: 100 },
-      { id: 'types', label: 'Type Hinting', delay: 1.2, progress: 65 },
-    ]
-  },
-  {
-    id: 'data',
-    label: 'Data Handling',
-    icon: Database,
-    delay: 0.6,
-    children: [
-      { id: 'pandas', label: 'Pandas', delay: 1.2, progress: 75 },
-      { id: 'sql', label: 'SQL Basics', delay: 1.4, progress: 90 },
-      { id: 'etl', label: 'ETL Pipelines', delay: 1.6, progress: 55 },
-    ]
-  },
-  {
-    id: 'analysis',
-    label: 'Analysis',
-    icon: LineChart,
-    delay: 1.0,
-    children: [
-      { id: 'viz', label: 'Data Viz', delay: 1.6, progress: 80 },
-      { id: 'stats', label: 'Statistics', delay: 1.8, progress: 70 },
-      { id: 'bi', label: 'BI Tools', delay: 2.0, progress: 45 },
-    ]
-  }
-];
-
 export function WorkflowAnimation() {
+  const t = useTranslations('workflow');
   const [step, setStep] = useState(0);
   // 0: Initial
   // 1: Typing
   // 2: Generating (Pulse)
   // 3: Expanded
   // 4: Complete (Celebration)
+  
+  // 丰富的数据结构
+  const treeData = [
+    {
+      id: 'foundation',
+      label: t('foundation'),
+      icon: Code,
+      delay: 0.2,
+      children: [
+        { id: 'syntax', label: t('pythonSyntax'), delay: 0.8, progress: 85 },
+        { id: 'env', label: t('virtualEnv'), delay: 1.0, progress: 100 },
+        { id: 'types', label: t('typeHinting'), delay: 1.2, progress: 65 },
+      ]
+    },
+    {
+      id: 'data',
+      label: t('dataHandling'),
+      icon: Database,
+      delay: 0.6,
+      children: [
+        { id: 'pandas', label: t('pandas'), delay: 1.2, progress: 75 },
+        { id: 'sql', label: t('sqlBasics'), delay: 1.4, progress: 90 },
+        { id: 'etl', label: t('etlPipelines'), delay: 1.6, progress: 55 },
+      ]
+    },
+    {
+      id: 'analysis',
+      label: t('analysis'),
+      icon: LineChart,
+      delay: 1.0,
+      children: [
+        { id: 'viz', label: t('dataViz'), delay: 1.6, progress: 80 },
+        { id: 'stats', label: t('statistics'), delay: 1.8, progress: 70 },
+        { id: 'bi', label: t('biTools'), delay: 2.0, progress: 45 },
+      ]
+    }
+  ];
 
   useEffect(() => {
     const loop = async () => {
@@ -109,7 +111,7 @@ export function WorkflowAnimation() {
             
             {/* Left: Input Card */}
             <div className="relative z-20 w-full max-w-[340px] lg:w-auto shrink-0 self-center">
-              <InputCard step={step} />
+              <InputCard step={step} t={t} />
               
               {/* Connection Point (Output) - 只在桌面端显示完整路径时显示 */}
               {step >= 3 && (
@@ -161,14 +163,14 @@ export function WorkflowAnimation() {
             <div className="hidden lg:block flex-1 relative min-w-0">
               <AnimatePresence>
                 {step >= 3 && (
-                  <TreeStructure />
+                  <TreeStructure treeData={treeData} />
                 )}
               </AnimatePresence>
             </div>
 
             {/* Arrows Layer - 只在桌面端显示 */}
             <div className="hidden lg:block">
-              {step >= 3 && <ArrowsLayer />}
+              {step >= 3 && <ArrowsLayer treeData={treeData} />}
             </div>
 
           </div>
@@ -178,7 +180,7 @@ export function WorkflowAnimation() {
   );
 }
 
-function InputCard({ step }: { step: number }) {
+function InputCard({ step, t }: { step: number; t: any }) {
   return (
     <motion.div 
       className="w-full max-w-[340px] sm:w-[340px] bg-white/70 backdrop-blur-2xl border border-white/50 rounded-3xl p-6 shadow-[0_20px_40px_-12px_rgba(0,0,0,0.1)] relative overflow-hidden"
@@ -192,7 +194,7 @@ function InputCard({ step }: { step: number }) {
       <div className="relative z-10 space-y-6">
         <div>
           <h3 className="text-2xl font-serif font-semibold text-gray-800 mb-2">
-            What are your goals?
+            {t('inputTitle')}
           </h3>
         </div>
 
@@ -202,7 +204,7 @@ function InputCard({ step }: { step: number }) {
             <span className="text-gray-800 font-medium whitespace-nowrap overflow-hidden">
               {step === 0 && <span className="animate-pulse">|</span>}
               {step >= 1 && (
-                <Typewriter text="Master Python data science" />
+                <Typewriter text={t('inputPlaceholder')} />
               )}
             </span>
           </div>
@@ -288,15 +290,15 @@ function InputCard({ step }: { step: number }) {
                 transition={{ duration: 0.3 }}
               >
                 <CheckCircle className="w-5 h-5" />
-                Path Complete!
+                {t('pathComplete')}
               </motion.span>
             ) : step === 3 ? (
               <span className="flex items-center gap-2">
                 <Sparkles className="w-4 h-4 animate-spin-slow" />
-                Generating...
+                {t('generating')}
               </span>
             ) : (
-              "Generate Path"
+              t('generatePath')
             )}
             
             {/* Click Ripple Effect */}
@@ -354,7 +356,7 @@ function Delayed({ children, wait }: { children: React.ReactNode; wait: number }
   return show ? <>{children}</> : null;
 }
 
-function TreeStructure() {
+function TreeStructure({ treeData }: { treeData: any[] }) {
   return (
     <div className="relative w-full flex flex-col justify-center py-4">
       {/* DOM Nodes Layer */}
@@ -367,7 +369,7 @@ function TreeStructure() {
   );
 }
 
-function ArrowsLayer() {
+function ArrowsLayer({ treeData }: { treeData: any[] }) {
   const updateXarrow = useXarrow();
   const [ready, setReady] = useState(false);
 

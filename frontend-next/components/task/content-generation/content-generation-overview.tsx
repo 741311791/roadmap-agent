@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { StageAccordion } from './stage-accordion';
 import { parseContentGenerationStatus, formatRelativeTime } from '@/lib/utils/parse-content-status';
-import { getTaskLogs } from '@/lib/api/endpoints';
+import { tasksApi } from '@/lib/api/endpoints';
 import { useRoadmap } from '@/lib/hooks/api';
 import type { ExecutionLog } from '@/types/content-generation';
 
@@ -55,7 +55,7 @@ export function ContentGenerationOverview({
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
-      const logsData = await getTaskLogs(taskId, undefined, undefined, 2000);
+      const logsData = await tasksApi.getLogs(taskId);
       const allLogs = logsData.logs || [];
       
       // 按 step 分组，每个 step 最多 100 条

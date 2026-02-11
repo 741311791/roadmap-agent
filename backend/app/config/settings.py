@@ -160,7 +160,30 @@ class Settings(BaseSettings):
     # ==================== Web Search 配置 ====================
     TAVILY_API_KEY: str | None = Field(None, description="Tavily API 密钥（可选，单个 Key）")
     TAVILY_API_KEY_LIST: str | None = Field(None, description="Tavily API Key 列表（逗号分隔或 JSON 数组格式，优先于 TAVILY_API_KEY）")
+    TAVILY_RATE_LIMIT_PER_MINUTE: int = Field(100, description="Tavily API 速率限制（每分钟请求数，开发环境建议10，生产环境可设置100）")
     USE_DUCKDUCKGO_FALLBACK: bool = Field(True, description="是否使用 DuckDuckGo 作为备选搜索引擎")
+    
+    # ==================== API速率限制配置（全局IP级别）====================
+    # 这些限制是针对整个应用的全局速率限制，而非单个请求
+    # API厂商通常按IP识别并限制请求速率（RPM - Requests Per Minute）
+    # 建议设置为厂商限制的80%，留出安全余量
+    
+    OPENAI_RPM_LIMIT: int = Field(
+        3500,
+        description="OpenAI API 速率限制（每分钟请求数）。免费用户通常为60 RPM，付费用户可达3500+ RPM"
+    )
+    
+    ANTHROPIC_RPM_LIMIT: int = Field(
+        3500,
+        description="Anthropic API 速率限制（每分钟请求数）。Claude API 不同tier限制不同，建议保守设置"
+    )
+    
+    DEEPSEEK_RPM_LIMIT: int = Field(
+        3500,
+        description="DeepSeek API 速率限制（每分钟请求数）"
+    )
+    
+    # 注意：TAVILY_RATE_LIMIT_PER_MINUTE 已在上面定义，不重复
     
     # ==================== LLM 配置 ====================
     # A1: Intent Analyzer (需求分析师)
@@ -206,34 +229,6 @@ class Settings(BaseSettings):
     QUIZ_API_KEY: str = Field("your_openai_api_key_here", description="API 密钥")
     
     # ==================== Modifier Agents 配置（内容修改）====================
-    # 修改意图分析师（Modification Analyzer）
-    MODIFICATION_ANALYZER_PROVIDER: str = Field("openai", description="模型提供商")
-    MODIFICATION_ANALYZER_MODEL: str = Field("gpt-4o-mini", description="模型名称")
-    MODIFICATION_ANALYZER_BASE_URL: str | None = None
-    MODIFICATION_ANALYZER_API_KEY: str | None = Field(
-        None, description="API 密钥（默认复用 ANALYZER_API_KEY）"
-    )
-    
-    # 教程修改师（Tutorial Modifier）
-    # 注意：默认使用 OpenAI，如需使用 Anthropic 请在 .env 中配置：
-    #   TUTORIAL_MODIFIER_PROVIDER=anthropic
-    #   TUTORIAL_MODIFIER_MODEL=claude-3-5-sonnet-20241022
-    #   TUTORIAL_MODIFIER_API_KEY=your_anthropic_api_key
-    TUTORIAL_MODIFIER_PROVIDER: str = Field("openai", description="模型提供商")
-    TUTORIAL_MODIFIER_MODEL: str = Field("gpt-4o-mini", description="模型名称")
-    TUTORIAL_MODIFIER_BASE_URL: str | None = None
-    TUTORIAL_MODIFIER_API_KEY: str | None = Field(
-        None, description="API 密钥（默认复用 RECOMMENDER_API_KEY）"
-    )
-    
-    # 资源修改师（Resource Modifier）
-    RESOURCE_MODIFIER_PROVIDER: str = Field("openai", description="模型提供商")
-    RESOURCE_MODIFIER_MODEL: str = Field("gpt-4o-mini", description="模型名称")
-    RESOURCE_MODIFIER_BASE_URL: str | None = None
-    RESOURCE_MODIFIER_API_KEY: str | None = Field(
-        None, description="API 密钥（默认复用 RECOMMENDER_API_KEY）"
-    )
-    
     # 测验修改师（Quiz Modifier）
     QUIZ_MODIFIER_PROVIDER: str = Field("openai", description="模型提供商")
     QUIZ_MODIFIER_MODEL: str = Field("gpt-4o-mini", description="模型名称")
@@ -241,21 +236,6 @@ class Settings(BaseSettings):
     QUIZ_MODIFIER_API_KEY: str | None = Field(
         None, description="API 密钥（默认复用 QUIZ_API_KEY）"
     )
-    
-    @property
-    def get_modification_analyzer_api_key(self) -> str:
-        """获取修改意图分析师 API 密钥（优先使用专用配置，否则复用 ANALYZER）"""
-        return self.MODIFICATION_ANALYZER_API_KEY or self.ANALYZER_API_KEY
-    
-    @property
-    def get_tutorial_modifier_api_key(self) -> str:
-        """获取教程修改师 API 密钥（优先使用专用配置，否则复用 RECOMMENDER/OpenAI）"""
-        return self.TUTORIAL_MODIFIER_API_KEY or self.RECOMMENDER_API_KEY
-    
-    @property
-    def get_resource_modifier_api_key(self) -> str:
-        """获取资源修改师 API 密钥（优先使用专用配置，否则复用 RECOMMENDER）"""
-        return self.RESOURCE_MODIFIER_API_KEY or self.RECOMMENDER_API_KEY
     
     @property
     def get_quiz_modifier_api_key(self) -> str:
@@ -349,6 +329,22 @@ class Settings(BaseSettings):
     
     # 流式教程生成配置
     TUTORIAL_STREAM_BATCH_SIZE: int = Field(1, description="流式教程生成每批次并发数量（建议设置为1避免MinIO超时）")
+    
+    # 测试模式配置
+    TEST_MODE_TRUNCATE_FRAMEWORK: bool = Field(
+        False,
+        description="测试模式：在content_generation阶段前截断Framework，只保留第一个Stage的第一个Module的所有Concept"
+    )
+    
+    # 内容生成缓存配置
+    CONTENT_GEN_CACHE_ENABLED: bool = Field(
+        True,
+        description="是否启用内容生成数据缓存（Redis）"
+    )
+    CONTENT_GEN_CACHE_TTL: int = Field(
+        86400,
+        description="内容生成缓存过期时间（秒，默认24小时）"
+    )
 
     # ==================== 工作流控制配置 ====================
     # 核心 Agent（不可跳过）：Intent Analyzer、Curriculum Architect、Structure Validator、Content Generators
@@ -401,6 +397,20 @@ class Settings(BaseSettings):
     FRONTEND_URL: str = Field(
         "http://localhost:3000",
         description="前端应用 URL"
+    )
+    
+    # ==================== 错误日志文件配置（仅本地环境）====================
+    ENABLE_ERROR_LOG_FILE: bool = Field(
+        False,
+        description="是否启用错误日志文件（建议仅在本地开发环境启用）"
+    )
+    ERROR_LOG_FILE_PATH: str = Field(
+        "logs/err.log",
+        description="错误日志文件路径"
+    )
+    ERROR_LOG_FILE_MAX_SIZE: int = Field(
+        10 * 1024 * 1024,
+        description="错误日志文件最大大小（字节），默认10MB"
     )
 
 

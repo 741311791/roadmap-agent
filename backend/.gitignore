@@ -44,6 +44,10 @@ htmlcov/
 *.cover
 *.log
 
+# Logs
+logs/
+*.log
+
 # IDEs
 .vscode/
 .idea/
@@ -76,4 +80,9 @@ poetry.lock
 
 # Docker
 *.log
+
+# MCP Configuration (contains API keys)
+mcp_servers.json
+# Keep example file for reference
+!mcp_servers.example.json
 

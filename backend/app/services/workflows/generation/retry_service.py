@@ -298,10 +298,19 @@ class RetryService:
                 resume_from="last_checkpoint",
                 is_subgraph=is_subgraph,
             )
+        
+        except Exception as e:
+            logger.error(
+                "resume_from_checkpoint_failed",
+                task_id=task_id,
+                error=str(e),
+                exc_info=True,
+            )
+            raise BusinessError(f"断点续传失败: {str(e)}")
             
-        finally:
-            if factory:
-                await factory.cleanup()
+        # ⚠️ 不要在这里清理 Factory！
+        # OrchestratorFactory 是全局单例，应该在应用生命周期内保持
+        # 只在应用关闭时清理（main.py 的 shutdown 事件）
     
     async def _time_travel_to_node(
         self,
@@ -458,10 +467,20 @@ class RetryService:
                 resume_from=f"{request.target_node.value}_checkpoint_{checkpoint_id[:8]}",
                 is_subgraph=False,
             )
+        
+        except Exception as e:
+            logger.error(
+                "time_travel_failed",
+                task_id=task_id,
+                target_node=request.target_node.value if hasattr(request, 'target_node') else None,
+                error=str(e),
+                exc_info=True,
+            )
+            raise BusinessError(f"时间旅行失败: {str(e)}")
             
-        finally:
-            if factory:
-                await factory.cleanup()
+        # ⚠️ 不要在这里清理 Factory！
+        # OrchestratorFactory 是全局单例，应该在应用生命周期内保持
+        # 只在应用关闭时清理（main.py 的 shutdown 事件）
     
     async def _get_checkpoint_info(self, task_id: str) -> dict:
         """

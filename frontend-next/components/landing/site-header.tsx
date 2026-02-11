@@ -13,6 +13,7 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { 
   Sheet, 
@@ -24,17 +25,19 @@ import {
 import { Menu, ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { motion, useScroll, useMotionValueEvent } from 'motion/react';
-
-const navLinks = [
-  { name: 'Home', href: '/' },
-  { name: 'Methodology', href: '/methodology' },
-  { name: 'Pricing', href: '/pricing' },
-  { name: 'About', href: '/about' },
-];
+import { LanguageSwitcher } from '@/components/language-switcher';
 
 export function SiteHeader() {
+  const t = useTranslations();
   const { scrollY } = useScroll();
   const [isScrolled, setIsScrolled] = useState(false);
+
+  const navLinks = [
+    { name: t('marketing.home'), href: '/' },
+    { name: t('marketing.methodology'), href: '/methodology' },
+    { name: t('marketing.pricing'), href: '/pricing' },
+    { name: t('marketing.about'), href: '/about' },
+  ];
 
   useMotionValueEvent(scrollY, "change", (latest) => {
     setIsScrolled(latest > 20);
@@ -105,9 +108,10 @@ export function SiteHeader() {
         {/* Right: Actions */}
         <div className="flex items-center gap-4">
           <div className="hidden md:flex items-center gap-2">
+            <LanguageSwitcher variant="compact" />
             <Link href="/login">
               <Button variant="ghost" size="sm">
-                Log in
+                {t('header.logIn')}
               </Button>
             </Link>
           </div>
@@ -117,7 +121,7 @@ export function SiteHeader() {
             <SheetTrigger asChild>
               <Button variant="ghost" size="icon" className="md:hidden">
                 <Menu className="w-5 h-5" />
-                <span className="sr-only">Toggle menu</span>
+                <span className="sr-only">{t('header.menu')}</span>
               </Button>
             </SheetTrigger>
             <SheetContent side="right" className="w-[300px] sm:w-[400px]">
@@ -156,9 +160,10 @@ export function SiteHeader() {
                   ))}
                 </nav>
                 <div className="flex flex-col gap-3 mt-auto">
+                  <LanguageSwitcher variant="default" />
                   <Link href="/login" className="w-full">
                     <Button variant="outline" className="w-full justify-center">
-                      Log in
+                      {t('header.logIn')}
                     </Button>
                   </Link>
                 </div>

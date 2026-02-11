@@ -31,10 +31,12 @@ class RBACMiddleware(BaseHTTPMiddleware):
     """
     
     # 定义需要特殊权限的路径前缀
-    ADMIN_PATHS = [
-        "/api/v1/admin",
-        "/api/v1/management",
-    ]
+    # ⚠️ 已禁用：这些路径由 FastAPI Users 的依赖注入保护 (current_superuser)
+    # ADMIN_PATHS = [
+    #     "/api/v1/admin",
+    #     "/api/v1/management",
+    # ]
+    ADMIN_PATHS = []  # 空列表：所有管理员路由由路由级依赖注入保护
     
     # 公开路径（无需认证）
     PUBLIC_PATHS = [

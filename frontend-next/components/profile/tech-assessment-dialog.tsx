@@ -71,7 +71,7 @@ export function TechAssessmentDialog({
       // 首先尝试获取常规测验
       try {
         const data = await getTechAssessment(technology, proficiency);
-        setAssessment(data);
+        setAssessment(data as any);
         setAnswers({});
         setResult(null);
       } catch (err: any) {
@@ -80,11 +80,11 @@ export function TechAssessmentDialog({
           console.log('Assessment not found, trying custom generation...');
           setIsGenerating(true);
           
-          const customResponse = await getCustomTechAssessment(technology, proficiency);
+          const customResponse = await getCustomTechAssessment();
           
           if (customResponse.status === 'ready' && customResponse.assessment) {
             // 题库已存在，直接使用
-            setAssessment(customResponse.assessment);
+            setAssessment(customResponse.assessment as any);
             setAnswers({});
             setResult(null);
             setIsGenerating(false);
@@ -128,7 +128,7 @@ export function TechAssessmentDialog({
         answersArray
       );
       
-      setResult(evaluationResult);
+      setResult(evaluationResult as any);
     } catch (err: any) {
       console.error('Failed to evaluate assessment:', err);
       setError(err.message || 'Failed to evaluate assessment');
@@ -142,11 +142,11 @@ export function TechAssessmentDialog({
 
     try {
       setIsLoadingHistory(true);
-      const profile = await getUserProfile(userId);
+      const profile = await getUserProfile();
       
       if (profile && profile.tech_stack) {
         const techItem = profile.tech_stack.find(
-          (item: TechStackItemWithAnalysis) => 
+          (item: any) => 
             item.technology === technology && item.proficiency === proficiency
         );
 
@@ -154,12 +154,27 @@ export function TechAssessmentDialog({
           // 确保 analyzed_at 字段存在，如果不存在则使用当前时间
           const analyzed_at = techItem.capability_analysis.analyzed_at || new Date().toISOString();
           
-          setHistoricalAnalysis({
-            ...techItem.capability_analysis,
-            technology,
-            proficiency_level: proficiency,
-            analyzed_at,
-          } as CapabilityAnalysisResult & { analyzed_at: string });
+          // 验证必需字段是否存在
+          const hasRequiredFields = 
+            techItem.capability_analysis.overall_assessment &&
+            techItem.capability_analysis.proficiency_verification;
+          
+          if (hasRequiredFields) {
+            setHistoricalAnalysis({
+              ...techItem.capability_analysis,
+              technology,
+              proficiency_level: proficiency,
+              analyzed_at,
+              // 确保数组字段存在
+              strengths: techItem.capability_analysis.strengths || [],
+              weaknesses: techItem.capability_analysis.weaknesses || [],
+              knowledge_gaps: techItem.capability_analysis.knowledge_gaps || [],
+              learning_suggestions: techItem.capability_analysis.learning_suggestions || [],
+            } as CapabilityAnalysisResult & { analyzed_at: string });
+          } else {
+            console.warn('Historical analysis data is incomplete, ignoring');
+            setHistoricalAnalysis(null);
+          }
         } else {
           setHistoricalAnalysis(null);
         }
@@ -198,9 +213,9 @@ export function TechAssessmentDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={handleClose}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="w-[95vw] max-w-4xl max-h-[90vh] overflow-y-auto p-4 sm:p-6">
           <DialogHeader>
-            <DialogTitle className="text-2xl font-serif">
+            <DialogTitle className="text-xl sm:text-2xl font-serif break-words">
               {technology} - {proficiency} Assessment
             </DialogTitle>
             

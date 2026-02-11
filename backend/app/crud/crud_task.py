@@ -122,6 +122,31 @@ class TaskCRUD(BaseCRUD[RoadmapTask, TaskCreate, TaskUpdate]):
         )
         return list(result.scalars().all())
     
+    async def get_latest_by_roadmap_id(
+        self,
+        session: AsyncSession,
+        roadmap_id: str,
+    ) -> Optional[RoadmapTask]:
+        """
+        获取指定路线图的最新任务
+        
+        按 created_at 降序排列，返回第一条记录。
+        
+        Args:
+            session: 数据库会话
+            roadmap_id: 路线图ID
+            
+        Returns:
+            最新任务实例或None
+        """
+        result = await session.execute(
+            select(RoadmapTask)
+            .where(RoadmapTask.roadmap_id == roadmap_id)
+            .order_by(RoadmapTask.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+    
     # ========== Week 4扩展方法 ==========
     
     async def get_tasks_by_roadmap_ids_batch(
@@ -175,6 +200,7 @@ class TaskCRUD(BaseCRUD[RoadmapTask, TaskCreate, TaskUpdate]):
         status: str,
         error_message: Optional[str] = None,
         current_step: Optional[str] = None,
+        roadmap_id: Optional[str] = None,
     ) -> bool:
         """
         更新任务状态
@@ -185,6 +211,7 @@ class TaskCRUD(BaseCRUD[RoadmapTask, TaskCreate, TaskUpdate]):
             status: 新状态
             error_message: 错误信息（可选）
             current_step: 当前步骤（可选）
+            roadmap_id: 路线图ID（可选）
             
         Returns:
             是否成功
@@ -203,6 +230,9 @@ class TaskCRUD(BaseCRUD[RoadmapTask, TaskCreate, TaskUpdate]):
         if current_step is not None:
             task.current_step = current_step
         
+        if roadmap_id is not None:
+            task.roadmap_id = roadmap_id
+        
         if status in ["completed", "failed", "partial_failure"]:
             task.completed_at = beijing_now()
         
@@ -214,6 +244,43 @@ class TaskCRUD(BaseCRUD[RoadmapTask, TaskCreate, TaskUpdate]):
             task_id=task_id,
             status=status,
             current_step=current_step,
+            roadmap_id=roadmap_id,
+        )
+        
+        return True
+    
+    async def update_execution_summary(
+        self,
+        session: AsyncSession,
+        task_id: str,
+        execution_summary: dict,
+    ) -> bool:
+        """
+        更新任务的执行摘要
+        
+        Args:
+            session: 数据库会话
+            task_id: 任务ID
+            execution_summary: 执行摘要字典
+            
+        Returns:
+            是否成功
+        """
+        task = await self.get_by_task_id(session, task_id)
+        if not task:
+            logger.error("task_not_found_for_summary_update", task_id=task_id)
+            return False
+        
+        task.execution_summary = execution_summary
+        task.updated_at = beijing_now()
+        
+        session.add(task)
+        await session.flush()
+        
+        logger.info(
+            "task_execution_summary_updated",
+            task_id=task_id,
+            summary=execution_summary,
         )
         
         return True
@@ -321,6 +388,158 @@ class TaskCRUD(BaseCRUD[RoadmapTask, TaskCreate, TaskUpdate]):
         )
         
         return interrupted_tasks
+    
+    async def update_celery_id(
+        self,
+        session: AsyncSession,
+        task_id: str,
+        celery_task_id: str,
+    ) -> bool:
+        """
+        更新任务的Celery任务ID
+        
+        Args:
+            session: 数据库会话
+            task_id: 任务ID
+            celery_task_id: Celery任务ID
+            
+        Returns:
+            是否成功
+        """
+        task = await self.get_by_task_id(session, task_id)
+        if not task:
+            logger.error("task_not_found_for_celery_id_update", task_id=task_id)
+            return False
+        
+        task.celery_task_id = celery_task_id
+        task.updated_at = beijing_now()
+        
+        session.add(task)
+        await session.flush()
+        
+        logger.info(
+            "task_celery_id_updated",
+            task_id=task_id,
+            celery_task_id=celery_task_id,
+        )
+        
+        return True
+    
+    async def mark_task_recovery_failed(
+        self,
+        session: AsyncSession,
+        task_id: str,
+        reason: str,
+    ) -> bool:
+        """
+        标记任务恢复失败
+        
+        用于服务器重启后任务恢复失败的场景。
+        
+        Args:
+            session: 数据库会话
+            task_id: 任务ID
+            reason: 失败原因
+            
+        Returns:
+            是否成功
+        """
+        task = await self.get_by_task_id(session, task_id)
+        if not task:
+            logger.error("task_not_found_for_recovery_failed", task_id=task_id)
+            return False
+        
+        task.status = "failed"
+        task.error_message = f"任务恢复失败: {reason}"
+        task.current_step = "recovery_failed"
+        task.completed_at = beijing_now()
+        task.updated_at = beijing_now()
+        
+        session.add(task)
+        await session.flush()
+        
+        logger.info(
+            "task_marked_as_recovery_failed",
+            task_id=task_id,
+            reason=reason,
+        )
+        
+        return True
+    
+    async def update_content_generation_celery_id(
+        self,
+        session: AsyncSession,
+        task_id: str,
+        celery_id: str,
+    ) -> bool:
+        """
+        更新内容生成 Celery 任务 ID
+        
+        用于独立内容生成 Worker 的任务追踪。
+        
+        Args:
+            session: 数据库会话
+            task_id: 任务ID
+            celery_id: 内容生成 Celery 协调任务 ID
+            
+        Returns:
+            是否成功
+        """
+        task = await self.get_by_task_id(session, task_id)
+        if not task:
+            logger.error("task_not_found_for_content_celery_id_update", task_id=task_id)
+            return False
+        
+        task.content_generation_celery_id = celery_id
+        task.content_generation_status = "processing"
+        task.updated_at = beijing_now()
+        
+        session.add(task)
+        await session.flush()
+        
+        logger.info(
+            "task_content_generation_celery_id_updated",
+            task_id=task_id,
+            celery_id=celery_id,
+        )
+        
+        return True
+    
+    async def update_content_generation_status(
+        self,
+        session: AsyncSession,
+        task_id: str,
+        status: str,
+    ) -> bool:
+        """
+        更新内容生成状态
+        
+        Args:
+            session: 数据库会话
+            task_id: 任务ID
+            status: 内容生成状态（pending | processing | completed | partial_failure | failed）
+            
+        Returns:
+            是否成功
+        """
+        task = await self.get_by_task_id(session, task_id)
+        if not task:
+            logger.error("task_not_found_for_content_status_update", task_id=task_id)
+            return False
+        
+        task.content_generation_status = status
+        task.updated_at = beijing_now()
+        
+        session.add(task)
+        await session.flush()
+        
+        logger.info(
+            "task_content_generation_status_updated",
+            task_id=task_id,
+            status=status,
+        )
+        
+        return True
 
 
 # 工厂函数

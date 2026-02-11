@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { TreeNodeData, TreeNodeType, TreeNodeStatus, NodeDetailPopoverProps } from './types';
 import type { Concept, Module, Stage, LearningPreferences } from '@/types/generated/models';
-import { retryTutorial, retryResources, retryQuiz, type RetryContentRequest } from '@/lib/api/endpoints';
+import { contentApi, type RetryContentRequest } from '@/lib/api/endpoints';
 import { TaskWebSocket } from '@/lib/api/websocket';
 
 // Props 类型已在 types.ts 中定义，这里不再重复定义
@@ -173,59 +173,29 @@ export function NodeDetailPopover({
     setIsRetrying(contentType);
 
     try {
-      const request: RetryContentRequest = {
-        preferences: userPreferences as LearningPreferences,
-      };
+      const request: RetryContentRequest = {};
 
       let response;
       switch (contentType) {
         case 'tutorial':
-          response = await retryTutorial(roadmapId, conceptData.concept_id, request);
+          response = await contentApi.regenerateTutorial(roadmapId, conceptData.concept_id, request);
           break;
         case 'resources':
-          response = await retryResources(roadmapId, conceptData.concept_id, request);
+          response = await contentApi.regenerateResources(roadmapId, conceptData.concept_id, request);
           break;
         case 'quiz':
-          response = await retryQuiz(roadmapId, conceptData.concept_id, request);
+          response = await contentApi.regenerateQuiz(roadmapId, conceptData.concept_id, request);
           break;
       }
 
-      if (response.success && response.data?.task_id) {
-        // 订阅 WebSocket 以获取实时更新
-        const ws = new TaskWebSocket(response.data.task_id, {
-          onProgress: (event: any) => {
-            console.log('[NodeDetailPopover] Retry progress:', event);
-            if (event.status === 'completed' || event.status === 'failed') {
-              setIsRetrying(null);
-              onRetrySuccess?.();
-              if (wsRef.current) {
-                wsRef.current.disconnect();
-                wsRef.current = null;
-              }
-            }
-          },
-          onCompleted: () => {
-            setIsRetrying(null);
-            onRetrySuccess?.();
-            if (wsRef.current) {
-              wsRef.current.disconnect();
-              wsRef.current = null;
-            }
-          },
-          onFailed: () => {
-            setIsRetrying(null);
-            if (wsRef.current) {
-              wsRef.current.disconnect();
-              wsRef.current = null;
-            }
-          },
-        });
-
-        ws.connect(true);
-        wsRef.current = ws;
-      } else {
+      if (response.success) {
+        // 重新生成成功，刷新内容显示
+        console.log(`[NodeDetailPopover] ${contentType} 重新生成成功`, response);
         setIsRetrying(null);
         onRetrySuccess?.();
+      } else {
+        setIsRetrying(null);
+        throw new Error(response.message || '重新生成失败');
       }
     } catch (error) {
       console.error(`[NodeDetailPopover] Failed to retry ${contentType}:`, error);
@@ -340,11 +310,11 @@ export function NodeDetailPopover({
         )}
         
         {/* Module 额外信息 */}
-        {moduleData && moduleData.learning_objectives && moduleData.learning_objectives.length > 0 && (
+        {moduleData && (moduleData as any).learning_objectives && (moduleData as any).learning_objectives.length > 0 && (
           <div className="pt-2 border-t">
             <p className="text-xs text-muted-foreground mb-1">Learning Objectives:</p>
             <ul className="text-xs space-y-0.5 pl-3">
-              {moduleData.learning_objectives.slice(0, 3).map((obj, i) => (
+              {(moduleData as any).learning_objectives.slice(0, 3).map((obj: string, i: number) => (
                 <li key={i} className="text-muted-foreground list-disc">
                   {obj}
                 </li>

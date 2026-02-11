@@ -11,6 +11,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { useTranslations } from 'next-intl';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Target, 
@@ -28,48 +29,70 @@ import {
 interface Feature {
   id: string;
   icon: React.ElementType;
-  title: string;
-  description: string;
+  titleKey: string;
+  descriptionKey: string;
   card: React.ComponentType;
 }
 
-const features: Feature[] = [
+const featuresList: Omit<Feature, 'titleKey' | 'descriptionKey'>[] = [
   {
     id: 'identify-gaps',
     icon: Target,
-    title: 'AI-Powered Gap Analysis',
-    description:
-      'Advanced AI analyzes your goals, experience level, and current knowledge to identify precise learning gaps and create a personalized curriculum tailored to your needs.',
     card: IntentAnalysisCard,
   },
   {
     id: 'structured-path',
     icon: BookOpen,
-    title: 'Hierarchical Learning Structure',
-    description:
-      'Stage-Module-Concept hierarchy breaks down complex skills into manageable milestones. Each stage builds on previous knowledge, ensuring systematic and sustainable progress.',
     card: RoadmapCard,
   },
   {
     id: 'learn-by-doing',
     icon: RefreshCw,
-    title: 'Active Learning by Doing',
-    description:
-      'Every concept is reinforced through practical exercises, coding challenges, and real-world projects. Build portfolio-worthy work while mastering fundamental skills.',
     card: QuizCard,
   },
   {
     id: 'iterate-improve',
     icon: Lightbulb,
-    title: 'Continuous Iteration Loop',
-    description:
-      'Curated resources, instant feedback, and adaptive recommendations create a continuous improvement cycle. Learn from mistakes and refine your understanding through iteration.',
     card: ResourceCard,
   },
 ];
 
 export function FeaturesSection() {
-  const [activeFeature, setActiveFeature] = useState(features[0].id);
+  const t = useTranslations('features');
+  const tHero = useTranslations('hero');
+  
+  const features: Feature[] = [
+    {
+      id: 'identify-gaps',
+      icon: Target,
+      titleKey: 'gapAnalysisTitle',
+      descriptionKey: 'gapAnalysisDesc',
+      card: IntentAnalysisCard,
+    },
+    {
+      id: 'structured-path',
+      icon: BookOpen,
+      titleKey: 'structuredPathTitle',
+      descriptionKey: 'structuredPathDesc',
+      card: RoadmapCard,
+    },
+    {
+      id: 'learn-by-doing',
+      icon: RefreshCw,
+      titleKey: 'learnByDoingTitle',
+      descriptionKey: 'learnByDoingDesc',
+      card: QuizCard,
+    },
+    {
+      id: 'iterate-improve',
+      icon: Lightbulb,
+      titleKey: 'iterateImproveTitle',
+      descriptionKey: 'iterateImproveDesc',
+      card: ResourceCard,
+    },
+  ];
+  
+  const [activeFeature, setActiveFeature] = useState('identify-gaps');
   const [isPaused, setIsPaused] = useState(false);
 
   // 自动轮播逻辑
@@ -102,14 +125,13 @@ export function FeaturesSection() {
             transition={{ duration: 0.5 }}
           >
             <div className="inline-flex items-center gap-2 px-4 py-2 bg-muted border border-border rounded-full text-sage text-sm font-medium mb-6">
-              Fast Learning Philosophy
+              {t('sectionBadge')}
             </div>
             <h2 className="text-4xl md:text-5xl font-serif font-bold text-foreground mb-4">
-              Why Fast Learning Works
+              {t('sectionTitle')}
             </h2>
             <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-              Traditional learning is slow and passive. We flip the script with AI-powered active
-              learning that adapts to you.
+              {t('sectionDesc')}
             </p>
           </motion.div>
         </div>
@@ -179,7 +201,7 @@ export function FeaturesSection() {
                           isActive ? 'text-foreground' : 'text-foreground/70'
                         }`}
                       >
-                        {feature.title}
+                        {t(feature.titleKey as any)}
                       </h3>
 
                       {/* 描述文字 - 只在激活时显示 */}
@@ -192,7 +214,7 @@ export function FeaturesSection() {
                             transition={{ duration: 0.3 }}
                             className="text-sm leading-relaxed text-muted-foreground"
                           >
-                            {feature.description}
+                            {t(feature.descriptionKey as any)}
                           </motion.p>
                         )}
                       </AnimatePresence>
@@ -209,7 +231,7 @@ export function FeaturesSection() {
               className="mt-6 ml-8 text-xs text-muted-foreground flex items-center gap-2"
             >
               <div className={`w-2 h-2 rounded-full ${isPaused ? 'bg-muted-foreground/30' : 'bg-sage animate-pulse'}`} />
-              <span>{isPaused ? 'Paused' : 'Auto-rotating every 5s'}</span>
+              <span>{isPaused ? tHero('paused') : tHero('autoRotating')}</span>
             </motion.div>
           </div>
 

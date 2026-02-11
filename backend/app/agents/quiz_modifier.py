@@ -51,6 +51,18 @@ class QuizModifierAgent(BaseAgent):
             max_tokens=4096,
         )
     
+    def _get_required_constraints(self) -> list[str]:
+        """测验修改器需要的约束"""
+        from app.models.domain import ConstraintNames
+        return [
+            # 通用约束
+            ConstraintNames.LANGUAGE,
+            ConstraintNames.USER_GOAL,
+            ConstraintNames.USER_PROFILE,
+            # 特定约束
+            ConstraintNames.DIFFICULTY,
+        ]
+    
     async def modify(
         self,
         input_data: QuizModificationInput,

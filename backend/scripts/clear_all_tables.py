@@ -9,10 +9,16 @@
     python backend/scripts/clear_all_tables.py
     
 功能：
-    1. 清空所有业务表数据
+    1. 清空所有业务表数据（除排除的表）
     2. 清空所有checkpoint表数据（LangGraph状态）
     3. 使用TRUNCATE CASCADE避免外键约束问题
     4. 提供安全确认提示
+    
+排除的表（不会被清空）：
+    - users: 用户账号
+    - user_profiles: 用户画像
+    - tavily_api_keys: Tavily API密钥
+    - tech_stack_assessments: 技术栈评估
 """
 import asyncio
 import sys
@@ -67,6 +73,16 @@ CHECKPOINT_TABLES = [
     "checkpoints",
     "checkpoint_blobs",
     "checkpoint_writes",
+]
+
+# ============================================================
+# 排除的表（不会被清空）
+# ============================================================
+EXCLUDED_TABLES = [
+    "users",
+    "user_profiles",
+    "tavily_api_keys",
+    "tech_stack_assessments",
 ]
 
 # ============================================================
@@ -149,9 +165,9 @@ async def clear_all_tables(
         # 2. 确定要清空的表
         tables_to_clear = []
         
-        # 添加业务表
+        # 添加业务表（排除指定的表）
         for table in BUSINESS_TABLES:
-            if table in all_tables:
+            if table in all_tables and table not in EXCLUDED_TABLES:
                 tables_to_clear.append(table)
         
         # 添加checkpoint表（如果指定）
@@ -163,7 +179,9 @@ async def clear_all_tables(
         logger.info(
             "tables_to_clear",
             count=len(tables_to_clear),
-            tables=tables_to_clear
+            tables=tables_to_clear,
+            excluded_count=len(EXCLUDED_TABLES),
+            excluded_tables=EXCLUDED_TABLES
         )
         
         if not tables_to_clear:
@@ -221,8 +239,11 @@ def confirm_action() -> bool:
     print(f"数据库URL: {settings.DATABASE_URL}")
     print(f"环境: {settings.ENVIRONMENT}")
     print("\n此操作将清空以下表：")
-    print(f"  - 业务表 ({len(BUSINESS_TABLES)}张)")
+    print(f"  - 业务表 ({len([t for t in BUSINESS_TABLES if t not in EXCLUDED_TABLES])}张)")
     print(f"  - Checkpoint表 ({len(CHECKPOINT_TABLES)}张)")
+    print("\n🔒 以下表将被保留（不会清空）：")
+    for table in EXCLUDED_TABLES:
+        print(f"  - {table}")
     print("\n⚠️  此操作不可逆！")
     print("="*60)
     

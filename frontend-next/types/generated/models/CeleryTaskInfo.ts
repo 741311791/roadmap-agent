@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { TaskStatus } from '../constants';
 /**
  * Celery 任务信息
  *
@@ -35,7 +36,7 @@ export type CeleryTaskInfo = {
     /**
      * 任务状态
      */
-    status: string;
+    status: TaskStatus;
     /**
      * Worker 名称
      */

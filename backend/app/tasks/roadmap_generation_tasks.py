@@ -1,12 +1,13 @@
 """
 路线图生成 Celery 任务
 
-将完整的 LangGraph 工作流执行迁移到 Celery Worker，
-实现所有 LLM 调用的异步处理。
+架构重构（v2.0）：
+- 旧架构：Celery Task 层直接实现业务逻辑（重复代码严重）
+- 新架构：业务逻辑集中在 WorkflowExecutionService，Task 层仅负责异步调度
 
-架构变更：
-- 旧架构：FastAPI 进程直接执行 LangGraph 工作流（阻塞）
-- 新架构：FastAPI 分发任务 → Celery Worker 执行 LangGraph 工作流
+职责边界：
+- Service 层：业务逻辑编排、状态管理、数据持久化、通知发送
+- Task 层：异步任务调度、事件循环管理
 
 工作流阶段：
 1. Intent Analysis（意图分析）
@@ -15,52 +16,22 @@
 4. Human Review（人工审核，可选，会暂停）
 5. Content Generation（内容生成）
 
-架构优化（方案2 - Celery Signal）：
+架构优化（Celery Signal）：
 - 使用 Celery Signal 实现事件驱动的封面图生成
 - 路线图生成成功后自动触发封面图生成
 - 完全解耦，符合关注点分离原则
 """
-import asyncio
 import structlog
 from typing import Optional
-from datetime import datetime
-
-from app.core.celery_app import celery_app
-from app.core.orchestrator_factory import OrchestratorFactory
-# 使用 Celery 专用的数据库连接管理，避免 Fork 进程继承问题
-# CeleryRepositoryFactory 已删除，直接使用 CRUD
-from app.services.shared.notification_service import notification_service
-from app.models.constants import TaskStatus
-from app.models.domain import UserRequest, LearningPreferences
-from app.db.celery_session import get_celery_session
-from app.crud.crud_task import get_task_crud
 from celery.signals import task_success
 
-logger = structlog.get_logger()
+from app.core.celery_app import celery_app
+from app.tasks.utils import run_async
+from app.services.workflows.execution.workflow_execution_service import (
+    get_workflow_execution_service,
+)
 
-def run_async(coro):
-    """
-    在同步上下文中运行异步协程
-    
-    使用 asyncio.run() 确保每次执行都在干净的事件循环中进行，
-    避免事件循环冲突和资源泄漏。
-    
-    asyncio.run() 会自动：
-    1. 创建新的事件循环
-    2. 设置为当前事件循环
-    3. 运行协程
-    4. 清理所有未完成的任务
-    5. 关闭事件循环
-    
-    这是 Python 3.7+ 推荐的标准做法，避免手动管理事件循环。
-    
-    Args:
-        coro: 异步协程对象
-        
-    Returns:
-        协程的返回值
-    """
-    return asyncio.run(coro)
+logger = structlog.get_logger()
 
 
 @celery_app.task(
@@ -68,7 +39,7 @@ def run_async(coro):
     bind=True,
     acks_late=True,
     reject_on_worker_lost=True,
-    time_limit=1800,  # 30 分钟硬超时（路线图生成工作流包含多个阶段和 LLM 调用）
+    time_limit=1800,  # 30 分钟硬超时
     soft_time_limit=1680,  # 28 分钟软超时
 )
 def generate_roadmap(
@@ -79,14 +50,9 @@ def generate_roadmap(
     learning_preferences: Optional[dict] = None,
 ) -> dict:
     """
-    生成路线图的 Celery 任务
+    生成路线图的 Celery 任务（简化版）
     
-    执行完整的 LangGraph 工作流，包括：
-    - Intent Analysis
-    - Curriculum Design
-    - Structure Validation（循环）
-    - Human Review（可选，会暂停工作流）
-    - Content Generation
+    架构重构：仅负责异步调度，业务逻辑在 WorkflowExecutionService。
     
     Args:
         task_id: 任务 ID
@@ -96,10 +62,6 @@ def generate_roadmap(
         
     Returns:
         dict: 执行结果
-            - success: bool
-            - roadmap_id: str（如果成功）
-            - status: str（任务最终状态）
-            - error: str（如果失败）
     """
     logger.info(
         "celery_task_started",
@@ -109,9 +71,11 @@ def generate_roadmap(
     )
     
     try:
-        # 在 Worker 进程的事件循环中执行异步工作流
+        # ✅ 调用 Service 层，而不是重新实现业务逻辑
+        workflow_service = get_workflow_execution_service()
+        
         result = run_async(
-            _execute_roadmap_workflow(
+            workflow_service.execute_roadmap_workflow(
                 task_id=task_id,
                 user_request=user_request,
                 user_id=user_id,
@@ -127,255 +91,31 @@ def generate_roadmap(
             status=result.get("status"),
         )
         
-        # 关键修复：Celery 任务完成后，更新数据库中的任务状态
-        # 这样前端就不需要持续轮询，可以通过单次查询获取最终状态
-        run_async(_update_task_final_status(task_id, result))
+        # 更新数据库中的任务最终状态
+        run_async(workflow_service.update_task_final_status(task_id, result))
         
         return result
         
     except Exception as e:
+        # ✅ 简化错误日志（不输出完整堆栈）
+        from app.utils.log_formatters import truncate_string
+        
         logger.error(
             "celery_task_failed",
             task_id=task_id,
-            error=str(e),
-            exc_info=True,
+            error=truncate_string(str(e), max_length=200),
+            error_type=type(e).__name__,
         )
         
-        # 更新任务状态为失败（传递异常对象以获取完整堆栈）
-        run_async(_mark_task_failed(task_id, str(e), exception=e))
+        # 标记任务为失败状态
+        workflow_service = get_workflow_execution_service()
+        run_async(workflow_service.mark_task_failed(task_id, str(e), exception=e))
         
         return {
             "success": False,
             "status": "failed",
-            "error": str(e),
+            "error": truncate_string(str(e), max_length=200),
         }
-
-
-async def _execute_roadmap_workflow(
-    task_id: str,
-    user_request: str,
-    user_id: str,
-    learning_preferences: Optional[dict],
-    celery_task_id: str,
-) -> dict:
-    """
-    执行路线图生成工作流（异步）
-    
-    Args:
-        task_id: 任务 ID
-        user_request: 用户请求
-        user_id: 用户 ID
-        learning_preferences: 学习偏好
-        celery_task_id: Celery 任务 ID
-        
-    Returns:
-        dict: 执行结果
-    """
-    factory = None
-    
-    try:
-        # 验证任务记录是否存在（直接查询，不重试）
-        task_crud = get_task_crud()
-        async with get_celery_session() as session:
-            task = await task_crud.get_by_task_id(session, task_id)
-            if not task:
-                error_msg = f"Task {task_id} not found in database"
-                logger.error("task_not_found", task_id=task_id)
-                raise ValueError(error_msg)
-            
-            logger.info(
-                "task_record_found",
-                task_id=task_id,
-                task_status=task.status,
-            )
-        
-        # 更新任务状态为 processing
-        task_crud = get_task_crud()
-        async with get_celery_session() as session:
-            await task_crud.update_task_status(
-                session=session,
-                task_id=task_id,
-                status=TaskStatus.PROCESSING.value,
-                current_step="queued",
-            )
-            await session.commit()
-        
-        # 发送 WebSocket 通知
-        await notification_service.publish_progress(
-            task_id=task_id,
-            step="queued",
-            status=TaskStatus.PROCESSING.value,
-        )
-        
-        # 创建 Orchestrator Factory
-        factory = OrchestratorFactory()
-        await factory.initialize()
-        
-        # 创建工作流执行器
-        executor = factory.create_workflow_executor()
-        
-        # 构造 UserRequest 对象
-        user_request_obj = UserRequest(
-            user_id=user_id,
-            session_id=task_id,  # 使用 task_id 作为 session_id
-            preferences=LearningPreferences(**learning_preferences) if learning_preferences else LearningPreferences(
-                learning_goal=user_request,
-                available_hours_per_week=10,
-                motivation="Personal interest",
-                current_level="beginner",
-                career_background="Not specified",
-            ),
-            additional_context=user_request,
-        )
-        
-        # 执行工作流（会在 human_review 处暂停）
-        final_state = await executor.execute(
-            user_request=user_request_obj,
-            task_id=task_id,
-        )
-        
-        # 检查最终状态
-        roadmap_id = final_state.get("roadmap_id")
-        current_step = final_state.get("current_step", "completed")
-        
-        # 判断任务状态
-        if current_step == "human_review":
-            # 工作流在人工审核处暂停
-            status = TaskStatus.HUMAN_REVIEW
-            success = True
-            logger.info(
-                "workflow_paused_for_review",
-                task_id=task_id,
-                roadmap_id=roadmap_id,
-            )
-        elif current_step == "completed":
-            # 工作流完成
-            status = TaskStatus.COMPLETED
-            success = True
-            logger.info(
-                "workflow_completed",
-                task_id=task_id,
-                roadmap_id=roadmap_id,
-            )
-        else:
-            # 其他情况视为部分完成
-            status = TaskStatus.PARTIAL_FAILURE
-            success = False
-            logger.warning(
-                "workflow_incomplete",
-                task_id=task_id,
-                current_step=current_step,
-            )
-        
-        return {
-            "success": success,
-            "roadmap_id": roadmap_id,
-            "status": status.value,
-            "current_step": current_step,
-        }
-        
-    except Exception as e:
-        logger.error(
-            "workflow_execution_failed",
-            task_id=task_id,
-            error=str(e),
-            exc_info=True,
-        )
-        raise
-        
-    finally:
-        # 清理 Orchestrator Factory
-        if factory:
-            await factory.cleanup()
-
-
-async def _update_task_final_status(
-    task_id: str,
-    result: dict,
-):
-    """
-    更新任务最终状态（完成或部分失败）
-    
-    关键修复：Celery 任务执行完成后，必须更新数据库中的任务状态，
-    否则前端会持续轮询状态而无法获取最终结果。
-    
-    Args:
-        task_id: 任务 ID
-        result: 执行结果字典
-    """
-    try:
-        task_crud = get_task_crud()
-        async with get_celery_session() as session:
-            # 更新任务状态和 roadmap_id
-            task = await task_crud.get_by_task_id(session, task_id)
-            if task:
-                task.status = result.get("status", TaskStatus.COMPLETED.value)
-                task.current_step = result.get("current_step", "completed")
-                task.roadmap_id = result.get("roadmap_id")
-                session.add(task)
-                await session.commit()
-                
-                logger.info(
-                    "task_final_status_updated",
-                    task_id=task_id,
-                    status=task.status,
-                    roadmap_id=task.roadmap_id,
-                )
-            else:
-                logger.error(
-                    "task_not_found_for_status_update",
-                    task_id=task_id,
-                )
-    except Exception as e:
-        logger.error(
-            "failed_to_update_task_final_status",
-            task_id=task_id,
-            error=str(e),
-            exc_info=True,
-        )
-
-
-async def _mark_task_failed(
-    task_id: str,
-    error_message: str,
-    exception: Exception | None = None,
-):
-    """
-    标记任务为失败状态
-    
-    Args:
-        task_id: 任务 ID
-        error_message: 错误信息
-        exception: 原始异常对象（可选，用于提取堆栈跟踪）
-    """
-    try:
-        # 使用 Celery 专用的数据库连接
-        task_crud = get_task_crud()
-        async with get_celery_session() as session:
-            await task_crud.update_task_status(
-                session=session,
-                task_id=task_id,
-                status=TaskStatus.FAILED.value,
-                current_step="failed",
-                error_message=error_message,
-            )
-            await session.commit()
-        
-        # 发送 WebSocket 通知（传递异常对象以获取完整堆栈）
-        await notification_service.publish_failed(
-            task_id=task_id,
-            error=error_message,
-            step="failed",
-            exception=exception,
-        )
-        
-    except Exception as e:
-        logger.error(
-            "failed_to_mark_task_failed",
-            task_id=task_id,
-            error=str(e),
-            exc_info=True,
-        )
 
 
 # ============================================================

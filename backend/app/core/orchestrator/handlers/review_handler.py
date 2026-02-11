@@ -56,13 +56,13 @@ class ReviewHandler(NodeOutputHandler[ReviewHandlerInput]):
         )
         
         if human_approved:
-            # 审核通过，恢复processing状态
+            # 审核通过，更新为content_generation_queued状态
             task_crud = get_task_crud()
             await task_crud.update_task_status(
                 session=session,
                 task_id=task_id,
                 status="processing",
-                current_step="human_review_completed",
+                current_step="content_generation_queued",  # ✅ 修复：使用正确的WorkflowStep枚举值
             )
             
             logger.info(
@@ -72,7 +72,7 @@ class ReviewHandler(NodeOutputHandler[ReviewHandlerInput]):
             )
         else:
             # 等待人工审核或被拒绝
-            # 状态更新由ReviewNode中的interrupt处理
+            # 状态更新由ReviewHandler.on_start()处理（每次进入human_review节点时）
             logger.info(
                 "review_handler_pending",
                 task_id=task_id,
@@ -125,4 +125,6 @@ class ReviewHandler(NodeOutputHandler[ReviewHandlerInput]):
             roadmap_title=roadmap_title,
             stages_count=stages_count,
         )
+        
+        return None
 

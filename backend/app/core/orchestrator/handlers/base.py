@@ -85,6 +85,16 @@ class NodeOutputHandler(ABC, Generic[InputT]):
         """
         # 1. 自动将 dict 转换为强类型 Pydantic Model
         try:
+            # 🔍 调试日志：查看实际收到的数据结构
+            logger.info(
+                "handler_input_debug",
+                task_id=task_id,
+                handler_class=self.__class__.__name__,
+                output_type=type(output).__name__,
+                output_keys=list(output.keys()) if isinstance(output, dict) else "not_dict",
+                output_sample=str(output)[:300],  # 查看前300字符
+            )
+            
             typed_input = self.input_model_class.model_validate(output)
         except ValidationError as e:
             logger.error(
@@ -92,6 +102,7 @@ class NodeOutputHandler(ABC, Generic[InputT]):
                 task_id=task_id,
                 handler_class=self.__class__.__name__,
                 validation_errors=e.errors(),
+                output_sample=str(output)[:500],  # 添加实际数据样本
                 exc_info=True,
             )
             raise ValueError(

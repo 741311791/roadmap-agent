@@ -50,6 +50,30 @@ class EditPlanCRUD(BaseCRUD[EditPlanRecord, dict, dict]):
         result = await session.execute(stmt)
         return list(result.scalars().all())
     
+    async def get_by_task_id(
+        self,
+        session: AsyncSession,
+        task_id: str,
+    ) -> List[EditPlanRecord]:
+        """
+        根据任务ID获取编辑计划
+        
+        Args:
+            session: 数据库会话
+            task_id: 任务ID
+            
+        Returns:
+            编辑计划列表（按时间倒序）
+        """
+        stmt = (
+            select(EditPlanRecord)
+            .where(EditPlanRecord.task_id == task_id)
+            .order_by(desc(EditPlanRecord.created_at))
+        )
+        
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+    
     async def get_latest_by_roadmap_id(
         self,
         session: AsyncSession,
@@ -107,9 +131,10 @@ class EditPlanCRUD(BaseCRUD[EditPlanRecord, dict, dict]):
             roadmap_id=roadmap_id,
             feedback_id=feedback_id,
             feedback_summary=edit_plan.feedback_summary,
-            scope_analysis=edit_plan.scope_analysis,
-            intents=[intent.model_dump() for intent in edit_plan.intents],
-            preservation_requirements=edit_plan.preservation_requirements,
+            # 兼容旧字段，使用默认值（第三版重构后 EditPlan 已移除这些字段）
+            scope_analysis="N/A",
+            intents=[],
+            preservation_requirements=[],
             full_plan_data=edit_plan.model_dump(),
             confidence=confidence,
             needs_clarification=needs_clarification,
@@ -126,7 +151,7 @@ class EditPlanCRUD(BaseCRUD[EditPlanRecord, dict, dict]):
             roadmap_id=roadmap_id,
             feedback_id=feedback_id,
             plan_id=plan_record.id,
-            intents_count=len(edit_plan.intents),
+            tasks_count=len(edit_plan.tasks),
             confidence=confidence,
         )
         

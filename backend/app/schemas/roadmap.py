@@ -99,6 +99,34 @@ class TaskStatusResponse(BaseModel):
     created_at: datetime = Field(..., description="创建时间")
     updated_at: datetime = Field(..., description="更新时间")
 
+
+# ===== 流式生成相关 =====
+
+class ChatModificationRequest(BaseModel):
+    """
+    聊天修改请求
+    
+    用于流式修改路线图的聊天式交互。
+    """
+    user_message: str = Field(..., description="用户的自然语言修改意见")
+    context: Optional[dict] = Field(None, description="当前上下文（如正在查看的 concept_id）")
+    user_id: str = Field(..., description="用户 ID")
+    preferences: LearningPreferences = Field(..., description="用户学习偏好")
+    
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "user_message": "请增加更多关于 Python 面向对象编程的内容",
+                "context": {"concept_id": "concept-123"},
+                "user_id": "user-456",
+                "preferences": {
+                    "learning_goal": "Learn Python",
+                    "current_level": "intermediate",
+                }
+            }
+        }
+    }
+
 class RoadmapSummary(BaseModel):
     """路线图摘要（列表展示）"""
     roadmap_id: str = Field(..., description="路线图ID")
@@ -134,4 +162,62 @@ class RoadmapListResponse(BaseModel):
     total: int = Field(..., description="总数")
     page: int = Field(..., description="当前页")
     page_size: int = Field(..., description="每页数量")
+
+
+# ===== 路线图详情和操作响应 =====
+
+class RoadmapDetailResponse(BaseModel):
+    """路线图详情响应"""
+    roadmap_id: str = Field(..., description="路线图ID")
+    user_id: str = Field(..., description="用户ID")
+    learning_goal: str = Field(..., description="学习目标")
+    created_at: str = Field(..., description="创建时间")
+    updated_at: str = Field(..., description="更新时间")
+    
+    # ✅ framework 改为可选，生成中时为 None
+    framework: Optional[dict] = Field(None, description="路线图框架数据（生成中时为None）")
+    
+    status: str = Field(..., description="路线图状态")
+    title: Optional[str] = Field(None, description="标题")
+    description: Optional[str] = Field(None, description="描述")
+    
+    # ✅ 新增任务相关字段（用于生成中状态）
+    task_id: Optional[str] = Field(None, description="任务ID（生成中时有值）")
+    current_step: Optional[str] = Field(None, description="当前步骤（生成中时有值）")
+    message: Optional[str] = Field(None, description="状态消息（生成中时有值）")
+
+
+class RoadmapDeleteResponse(BaseModel):
+    """删除路线图响应（软删除）"""
+    message: str = Field(..., description="操作结果消息")
+    roadmap_id: str = Field(..., description="路线图ID")
+
+
+class RoadmapRestoreResponse(BaseModel):
+    """恢复路线图响应"""
+    message: str = Field(..., description="操作结果消息")
+    roadmap_id: str = Field(..., description="路线图ID")
+
+
+class RoadmapPermanentDeleteResponse(BaseModel):
+    """永久删除路线图响应"""
+    message: str = Field(..., description="操作结果消息")
+    roadmap_id: str = Field(..., description="路线图ID")
+
+
+class RoadmapStatusResponse(BaseModel):
+    """路线图状态响应"""
+    roadmap_id: str = Field(..., description="路线图ID")
+    status: str = Field(..., description="路线图状态")
+    task_id: Optional[str] = Field(None, description="关联任务ID")
+
+
+class RoadmapStatusQuickResponse(BaseModel):
+    """快速检查路线图状态响应"""
+    roadmap_id: str = Field(..., description="路线图ID")
+    status: str = Field(..., description="路线图状态")
+    has_active_task: bool = Field(..., description="是否有活跃任务")
+    active_task_id: Optional[str] = Field(None, description="活跃任务ID")
+    zombie_concepts: Optional[list[str]] = Field(None, description="僵尸概念ID列表")
+    zombie_count: int = Field(0, description="僵尸概念数量")
 

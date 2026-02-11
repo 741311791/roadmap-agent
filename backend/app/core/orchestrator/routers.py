@@ -30,19 +30,19 @@ class WorkflowRouter:
         """
         验证后的路由逻辑
         
-        路由规则（重构后）：
-        1. 验证失败且未达到最大重试次数 → 修改计划分析（validation_edit_plan_analysis）
+        路由规则：
+        1. 验证失败且未达到最大重试次数 → 编辑计划分析（edit_source=validation_failed）
         2. 验证失败且达到最大重试次数 → 人工审核（或跳过）
-        3. 验证通过 → 人工审核（或跳过）→ 教程生成（或结束）
+        3. 验证通过 → 人工审核（或跳过）
         
-        新流程：
-        structure_validation → [失败] → validation_edit_plan_analysis → roadmap_edit → structure_validation
+        流程：
+        structure_validation → [失败] → edit_plan_analysis → roadmap_edit → structure_validation
         
         Returns:
             下一个节点名称：
-            - "validation_edit_plan_analysis": 验证问题修改计划分析（新增）
+            - "edit_plan_analysis": 编辑计划分析（共享节点）
             - "human_review": 人工审核
-            - "tutorial_generation": 教程生成
+            - "content_generation": 内容生成
             - "end": 结束
         """
         validation_result = state.get("validation_result")
@@ -58,8 +58,8 @@ class WorkflowRouter:
                     task_id=state["task_id"],
                     message="验证未通过，将先分析修改计划再执行修改",
                 )
-                # 重构：验证失败后先进入修改计划分析节点
-                return "validation_edit_plan_analysis"
+                # ✅ 进入共享的编辑计划分析节点（edit_source会被设置为validation_failed）
+                return "edit_plan_analysis"
             else:
                 logger.warning(
                     "validation_failed_max_retries_exceeded",
@@ -73,15 +73,15 @@ class WorkflowRouter:
         if not self.config.skip_human_review:
             return "human_review"
         else:
-            # 跳过人工审核，直接进入内容生成
-            return "tutorial_generation"
+            # 跳过人工审核，主工作流结束（内容生成由独立Celery Worker处理）
+            return "end"
     
     def route_after_human_review(self, state: RoadmapState) -> str:
         """
         人工审核后的路由逻辑
         
         路由规则：
-        1. 用户批准 → 教程生成（或结束）
+        1. 用户批准 → 内容生成（或结束）
         2. 用户拒绝 → 编辑路线图 (A2E)
         
         Returns:

@@ -19,7 +19,7 @@ import { RoadmapCard, RoadmapListItem, MyRoadmap } from '@/components/roadmap';
 import { ChevronLeft, BookOpen, Plus, LayoutGrid, List } from 'lucide-react';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import { useAuthStore } from '@/lib/store/auth-store';
-import { getUserRoadmaps, deleteRoadmap } from '@/lib/api/endpoints';
+import { roadmapsApi } from '@/lib/api/endpoints';
 import { batchFetchCoverImagesFromAPI, batchGenerateCoverImages } from '@/lib/cover-image';
 import { cn } from '@/lib/utils';
 
@@ -43,16 +43,10 @@ export default function MyRoadmapsPage() {
   // Fetch user roadmaps
   useEffect(() => {
     const fetchRoadmaps = async () => {
-      const userId = getUserId();
-      if (!userId) {
-        setIsLoading(false);
-        return;
-      }
-      
       try {
         setIsLoading(true);
-        const response = await getUserRoadmaps(userId);
-        const historyData = response.roadmaps.map((item) => ({
+        const response = await roadmapsApi.getMyRoadmaps();
+        const historyData = response.items.map((item) => ({
           roadmap_id: item.roadmap_id,
           title: item.title,
           created_at: item.created_at,
@@ -128,16 +122,13 @@ export default function MyRoadmapsPage() {
   const handleDeleteConfirm = async () => {
     if (!roadmapToDelete) return;
     
-    const userId = getUserId();
-    if (!userId) return;
-    
       try {
         // ✅ 不再传递userId，后端从JWT Token自动提取
-        await deleteRoadmap(roadmapToDelete);
+        await roadmapsApi.delete(roadmapToDelete);
         
         // Refresh the list
-        const response = await getUserRoadmaps(userId);
-        const historyData = response.roadmaps.map((item) => ({
+        const response = await roadmapsApi.getMyRoadmaps();
+        const historyData = response.items.map((item) => ({
           roadmap_id: item.roadmap_id,
           title: item.title,
           created_at: item.created_at,

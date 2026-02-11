@@ -28,13 +28,6 @@ from tests.factories import (
 
 
 @pytest.fixture
-async def test_session():
-    """创建测试数据库会话"""
-    async for session in get_session():
-        yield session
-
-
-@pytest.fixture
 async def test_user(test_session: AsyncSession):
     """创建测试用户"""
     user = User(
@@ -122,7 +115,7 @@ async def test_content_generation_tutorial_success(
     - Mock S3 upload返回成功
     - 教程元数据正确保存
     """
-    from app.services.content_service import ContentService
+    from app.services.content.content_service import ContentService
     from app.models.domain import Concept, LearningPreferences
     
     # 创建服务实例
@@ -163,7 +156,7 @@ async def test_content_generation_resource_success(
     - Mock Tavily API返回搜索结果
     - 资源推荐正确保存
     """
-    from app.services.content_service import ContentService
+    from app.services.content.content_service import ContentService
     
     content_service = ContentService()
     
@@ -203,7 +196,7 @@ async def test_content_generation_quiz_success(
     - 测验题目结构正确
     - 难度分级正确
     """
-    from app.services.content_service import ContentService
+    from app.services.content.content_service import ContentService
     
     content_service = ContentService()
     
@@ -411,7 +404,7 @@ async def test_content_generation_retry_on_failure(
     - 重试逻辑正确执行
     - 失败概念正确记录
     """
-    from app.services.content_service import ContentService
+    from app.services.content.content_service import ContentService
     
     content_service = ContentService()
     

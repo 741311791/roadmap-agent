@@ -1,17 +1,14 @@
 """
 Quiz Generator Agent（测验生成器）
 """
-import json
 import uuid
 from datetime import datetime
-from typing import List, Dict, Any
 from app.agents.base import BaseAgent
 from app.models.domain import (
     Concept,
     LearningPreferences,
     QuizGenerationInput,
     QuizGenerationOutput,
-    QuizQuestion,
 )
 from app.config.settings import settings
 import structlog
@@ -50,23 +47,32 @@ class QuizGeneratorAgent(BaseAgent):
             max_tokens=4096,
         )
     
-    async def generate(
-        self,
-        concept: Concept,
-        context: dict,
-        user_preferences: LearningPreferences,
-    ) -> QuizGenerationOutput:
+    def _get_required_constraints(self) -> list[str]:
+        """测验生成器需要的约束"""
+        from app.models.domain import ConstraintNames
+        return [
+            # 通用约束
+            ConstraintNames.LANGUAGE,
+            ConstraintNames.USER_GOAL,
+            ConstraintNames.USER_PROFILE,
+            # 特定约束
+            ConstraintNames.DIFFICULTY,
+        ]
+    
+    async def execute(self, input_data: QuizGenerationInput) -> QuizGenerationOutput:
         """
         为给定的 Concept 生成测验题目
         
         Args:
-            concept: 要生成测验的概念
-            context: 上下文信息（所属阶段、模块等）
-            user_preferences: 用户偏好
+            input_data: 包含概念、上下文和用户偏好
             
         Returns:
             测验生成结果
         """
+        concept = input_data.concept
+        context = input_data.context
+        user_preferences = input_data.user_preferences
+        
         # 加载 System Prompt
         system_prompt = self._load_system_prompt(
             "quiz_generator.j2",
@@ -115,94 +121,23 @@ class QuizGeneratorAgent(BaseAgent):
             concept_name=concept.name,
         )
         
-        # 调用 LLM（不使用工具）
-        response = await self._call_llm(messages)
-        content = response.choices[0].message.content
-        
-        # 解析输出
-        if not content:
-            raise ValueError("LLM 未返回任何内容")
-        
-        try:
-            # 提取 JSON 内容
-            json_content = content.strip()
-            
-            # 如果包含 ```json 代码块，提取其中的内容
-            if "```json" in json_content:
-                json_start = json_content.find("```json") + 7
-                json_end = json_content.find("```", json_start)
-                if json_end > json_start:
-                    json_content = json_content[json_start:json_end].strip()
-            elif json_content.startswith("```") and "```" in json_content[3:]:
-                json_start = 3
-                json_end = json_content.find("```", json_start)
-                if json_end > json_start:
-                    json_content = json_content[json_start:json_end].strip()
-            
-            # 解析 JSON
-            data = json.loads(json_content)
-            
-            # 构建 QuizQuestion 列表
-            questions = []
-            for q in data.get("questions", []):
-                try:
-                    question = QuizQuestion(
-                        question_id=q.get("question_id", f"q{len(questions) + 1}"),
-                        question_type=q.get("question_type", "single_choice"),
-                        question=q.get("question", ""),
-                        options=q.get("options", []),
-                        correct_answer=q.get("correct_answer", [0]),
-                        explanation=q.get("explanation", ""),
-                        difficulty=q.get("difficulty", "medium"),
-                    )
-                    questions.append(question)
-                except Exception as e:
-                    logger.warning(
-                        "quiz_generator_parse_question_failed",
-                        error=str(e),
-                        question_data=q,
-                    )
-            
-            # 生成 quiz_id（使用完整 UUID 确保全局唯一，避免重复运行时主键冲突）
-            quiz_id = str(uuid.uuid4())
-            
-            # 构建输出
-            result = QuizGenerationOutput(
-                concept_id=concept.concept_id,
-                quiz_id=quiz_id,
-                questions=questions,
-                total_questions=len(questions),
-                generated_at=datetime.now(),
-            )
-            
-            logger.info(
-                "quiz_generator_success",
-                concept_id=concept.concept_id,
-                quiz_id=quiz_id,
-                questions_count=len(questions),
-            )
-            return result
-            
-        except json.JSONDecodeError as e:
-            logger.error(
-                "quiz_generator_json_parse_error",
-                error=str(e),
-                content=content[:500],
-            )
-            raise ValueError(f"LLM 输出不是有效的 JSON 格式: {e}")
-        except Exception as e:
-            logger.error(
-                "quiz_generator_failed",
-                concept_id=concept.concept_id,
-                error=str(e),
-            )
-            raise ValueError(f"测验生成失败: {e}")
-    
-    async def execute(self, input_data: QuizGenerationInput) -> QuizGenerationOutput:
-        """实现基类的抽象方法"""
-        return await self.generate(
-            concept=input_data.concept,
-            context=input_data.context,
-            user_preferences=input_data.user_preferences,
+        # 使用 instructor 调用 LLM，自动验证和重试
+        result = await self._call_llm(
+            messages,
+            response_model=QuizGenerationOutput
         )
-
+        
+        # 生成 quiz_id（使用完整 UUID 确保全局唯一）
+        result.quiz_id = str(uuid.uuid4())
+        result.concept_id = concept.concept_id
+        # ✅ created_at 有默认值，不需要手动设置
+        result.total_questions = len(result.questions)
+        
+        logger.info(
+            "quiz_generator_success",
+            concept_id=concept.concept_id,
+            quiz_id=result.quiz_id,
+            questions_count=len(result.questions),
+        )
+        
+        return result

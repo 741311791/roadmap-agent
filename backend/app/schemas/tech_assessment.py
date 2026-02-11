@@ -147,3 +147,12 @@ class AvailableTechnologiesResponse(BaseModel):
     technologies: List[str] = Field(..., description="技术栈名称列表")
     count: int = Field(..., description="技术栈总数")
 
+
+class AnalyzeTaskResponse(BaseModel):
+    """能力分析任务触发响应模型"""
+    status: str = Field(..., description="任务状态: processing")
+    task_id: str = Field(..., description="Celery任务ID")
+    message: str = Field(..., description="提示消息")
+    technology: str = Field(..., description="技术栈名称")
+    proficiency: str = Field(..., description="能力级别")
+

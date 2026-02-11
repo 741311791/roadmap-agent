@@ -9,5 +9,6 @@ import type { RoadmapHistoryItem } from './RoadmapHistoryItem';
 export type RoadmapHistoryResponse = {
     roadmaps: Array<RoadmapHistoryItem>;
     total: number;
+    in_progress_count?: number;
 };
 
