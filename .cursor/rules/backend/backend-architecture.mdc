@@ -1,0 +1,456 @@
+---
+alwaysApply: true
+---
+# 后端架构设计规范
+
+本规范定义后端项目的分层架构、依赖注入、工厂模式和错误处理规范。
+
+## 1. 分层架构职责定义
+
+### API层 (`app/api/v1/endpoints/`)
+**职责**: HTTP协议适配层
+
+✅ **可以做**:
+- 解析HTTP请求参数 (Query/Path/Body)
+- 调用Service层方法
+- 格式化HTTP响应
+- 参数验证 (通过Pydantic)
+- 依赖注入 (Session、User等)
+
+❌ **禁止做**:
+- 包含业务逻辑
+- 直接操作数据库
+- 跨层调用CRUD层
+- 直接创建Agent实例
+
+**示例**:
+```python
+# ✅ 正确: API层只负责HTTP适配
+@router.get("/roadmaps/{roadmap_id}")
+async def get_roadmap(
+    roadmap_id: Annotated[str, Path(description="路线图ID")],
+    db: CurrentSession,
+    user: CurrentUser
+) -> ResponseModel:
+    """获取路线图详情"""
+    roadmap = await roadmap_service.get_by_id(
+        db=db,
+        roadmap_id=roadmap_id,
+        user_id=user.id
+    )
+    return ResponseModel(success=True, data=roadmap)
+
+# ❌ 错误: API层包含业务逻辑
+@router.post("/roadmaps")
+async def create_roadmap(obj: CreateRequest, db: CurrentSession):
+    # ❌ 不应该在API层写业务逻辑
+    if await roadmap_crud.get_by_title(db, obj.title):
+        raise HTTPException(400, "标题重复")
+    
+    roadmap = await roadmap_crud.create(db, obj)
+    await db.commit()  # ❌ 不应该在API层commit
+    return roadmap
+```
+
+---
+
+### Service层 (`app/services/`)
+**职责**: 业务逻辑聚合层
+
+✅ **可以做**:
+- 实现业务规则和验证
+- 编排多个CRUD操作
+- 控制事务边界 (通过依赖注入的Session)
+- 处理缓存逻辑
+- 调用Agent和工具
+
+❌ **禁止做**:
+- 直接写SQL语句
+- 返回ORM模型给API层 (必须转换为Pydantic Schema)
+- 处理HTTP请求/响应
+- 在Service内部commit (由调用方控制事务)
+
+**示例**:
+```python
+# ✅ 正确: Service层编排业务逻辑
+class RoadmapService:
+    @staticmethod
+    async def create_with_validation(
+        db: AsyncSession,
+        user_id: str,
+        obj: CreateRoadmapRequest
+    ) -> RoadmapResponse:
+        """创建路线图(带业务验证)"""
+        # 1. 业务规则验证
+        existing = await roadmap_crud.get_by_title_and_user(
+            db, obj.title, user_id
+        )
+        if existing:
+            raise BusinessError("该用户已有同名路线图")
+        
+        # 2. 编排多个CRUD操作
+        roadmap = await roadmap_crud.create(db, obj)
+        await stats_crud.increment_user_roadmaps(db, user_id)
+        
+        # 3. 返回Pydantic Schema (不是ORM模型)
+        return RoadmapResponse.model_validate(roadmap)
+
+# ❌ 错误: Service层自己commit
+class RoadmapService:
+    async def create(self, db: AsyncSession, obj):
+        roadmap = await roadmap_crud.create(db, obj)
+        await db.commit()  # ❌ 事务应由调用方控制
+        return roadmap
+```
+
+---
+
+### CRUD层 (`app/crud/`)
+**职责**: 纯数据访问层
+
+✅ **可以做**:
+- 封装SQLAlchemy查询
+- 构建复杂查询条件
+- 提供通用CRUD方法 (get/create/update/delete)
+- 批量操作
+- 只flush不commit
+
+❌ **禁止做**:
+- 包含业务规则判断
+- 直接返回给API层
+- 自动commit事务
+- 调用其他Service
+
+**示例**:
+```python
+# ✅ 正确: CRUD层纯数据操作
+class CRUDRoadmap(CRUDBase[RoadmapMetadata]):
+    async def get_user_roadmaps(
+        self,
+        db: AsyncSession,
+        user_id: str,
+        status: str | None = None,
+        skip: int = 0,
+        limit: int = 20
+    ) -> list[RoadmapMetadata]:
+        """查询用户路线图列表"""
+        conditions = [self.model.user_id == user_id]
+        
+        if status:
+            conditions.append(self.model.status == status)
+        
+        stmt = (
+            select(self.model)
+            .where(and_(*conditions))
+            .order_by(self.model.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+        )
+        result = await db.execute(stmt)
+        return result.scalars().all()
+    
+    async def create(self, db: AsyncSession, obj) -> RoadmapMetadata:
+        """创建路线图"""
+        new_obj = self.model(**obj.model_dump())
+        db.add(new_obj)
+        await db.flush()  # ✅ 只flush,不commit
+        return new_obj
+
+# ❌ 错误: CRUD层包含业务逻辑
+class CRUDRoadmap:
+    async def create(self, db: AsyncSession, obj):
+        # ❌ 不应该在CRUD层做业务验证
+        if obj.title and len(obj.title) < 5:
+            raise ValueError("标题太短")
+        
+        new_obj = self.model(**obj.model_dump())
+        db.add(new_obj)
+        await db.commit()  # ❌ 不应该commit
+        return new_obj
+```
+
+---
+
+### 编排层 (`app/core/orchestrator/`)
+**职责**: LangGraph工作流编排
+
+**WorkflowBrain** - 工作流大脑:
+- ✅ 统一管理状态 (live_step缓存)
+- ✅ 数据库操作协调 (统一事务管理)
+- ✅ 日志记录 (结构化日志)
+- ✅ 通知发布 (WebSocket)
+- ✅ 错误处理 (异常捕获和状态回滚)
+
+**Node Runners** - 节点执行器:
+- ✅ 执行Agent并返回纯结果
+- ✅ 调用WorkflowBrain的保存方法
+- ❌ 不直接操作数据库
+- ❌ 不处理状态持久化
+
+**StateManager** - 状态管理器:
+- ✅ 管理live_step缓存 (内存+Redis)
+- ✅ 与LangGraph Checkpoint协调
+- ✅ 提供状态查询接口
+
+**示例**:
+```python
+# ✅ 正确: Runner使用WorkflowBrain统一管理
+async def intent_analysis_runner(
+    state: RoadmapState,
+    brain: WorkflowBrain
+) -> dict:
+    """意图分析节点执行器"""
+    async with brain.node_execution("intent_analysis", state):
+        # 1. 创建Agent
+        agent = brain.agent_factory.create_intent_analyzer()
+        
+        # 2. 执行Agent
+        result = await agent.execute(state["user_request"])
+        
+        # 3. 使用Brain保存结果(统一事务)
+        await brain.save_intent_analysis(
+            task_id=state["task_id"],
+            result=result,
+            roadmap_id=result.roadmap_id,
+        )
+        
+        # 4. 返回状态更新
+        return {
+            "intent_analysis": result,
+            "roadmap_id": result.roadmap_id,
+            "current_step": "intent_analysis",
+        }
+
+# ❌ 错误: Runner直接操作数据库
+async def bad_runner(state: RoadmapState) -> dict:
+    agent = IntentAnalyzerAgent()
+    result = await agent.execute(state["user_request"])
+    
+    # ❌ 不应该在Runner中直接操作数据库
+    async with async_session_maker() as db:
+        await intent_crud.create(db, result)
+        await db.commit()
+    
+    return {"result": result}
+```
+
+---
+
+## 2. 依赖注入模式
+
+### Session依赖注入
+
+**读写分离设计**:
+```python
+# backend/app/db/session.py
+
+# 只读Session (无自动commit)
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    async with async_session_maker() as session:
+        yield session
+
+# 事务Session (自动commit/rollback)
+async def get_db_transaction() -> AsyncGenerator[AsyncSession, None]:
+    async with async_session_maker.begin() as session:
+        yield session
+
+# Annotated简化注入
+from typing import Annotated
+from fastapi import Depends
+
+CurrentSession = Annotated[AsyncSession, Depends(get_db)]
+CurrentSessionTransaction = Annotated[AsyncSession, Depends(get_db_transaction)]
+```
+
+**使用示例**:
+```python
+# ✅ GET请求: 使用只读Session
+@router.get("/roadmaps")
+async def get_roadmaps(
+    db: CurrentSession,  # 只读
+    user: CurrentUser
+):
+    return await roadmap_service.get_user_roadmaps(db, user.id)
+
+# ✅ POST请求: 使用事务Session
+@router.post("/roadmaps")
+async def create_roadmap(
+    db: CurrentSessionTransaction,  # 事务
+    user: CurrentUser,
+    obj: CreateRoadmapRequest
+):
+    await roadmap_service.create(db=db, user_id=user.id, obj=obj)
+    return {"success": True}
+```
+
+### 用户依赖注入
+
+```python
+# backend/app/api/v1/deps.py
+
+async def get_current_user(
+    token: Annotated[str, Depends(oauth2_scheme)],
+    db: CurrentSession
+) -> User:
+    """获取当前用户"""
+    user = await auth_service.verify_token(db, token)
+    if not user:
+        raise HTTPException(401, "Invalid token")
+    return user
+
+# Annotated简化
+CurrentUser = Annotated[User, Depends(get_current_user)]
+
+# 使用
+@router.get("/me")
+async def get_me(user: CurrentUser):
+    return user
+```
+
+---
+
+## 3. 工厂模式应用
+
+### AgentFactory
+**位置**: `backend/app/agents/factory.py`
+
+**职责**:
+- 创建和管理Agent实例
+- 注入配置 (LLM provider, model, API key等)
+- 提供统一的Agent创建接口
+
+**示例**:
+```python
+class AgentFactory:
+    def __init__(self, settings: Settings):
+        self.settings = settings
+    
+    def create_intent_analyzer(self) -> IntentAnalyzerAgent:
+        """创建意图分析Agent"""
+        return IntentAnalyzerAgent(self.settings)
+    
+    def create_curriculum_architect(self) -> CurriculumArchitectAgent:
+        """创建课程设计Agent"""
+        return CurriculumArchitectAgent(self.settings)
+```
+
+### OrchestratorFactory
+**位置**: `backend/app/core/orchestrator/factory.py`
+
+**职责**:
+- 管理单例组件 (StateManager, Checkpointer, AgentFactory)
+- 创建WorkflowExecutor实例
+- 初始化LangGraph相关组件
+
+---
+
+## 4. 错误处理规范
+
+### 统一异常类
+**位置**: `backend/app/core/exceptions.py`
+
+```python
+class BusinessError(Exception):
+    """业务逻辑错误"""
+    def __init__(self, message: str, code: str = "BUSINESS_ERROR"):
+        self.message = message
+        self.code = code
+        super().__init__(self.message)
+
+class NotFoundError(BusinessError):
+    """资源不存在"""
+    def __init__(self, message: str):
+        super().__init__(message, "NOT_FOUND")
+
+class ValidationError(BusinessError):
+    """验证错误"""
+    def __init__(self, message: str):
+        super().__init__(message, "VALIDATION_ERROR")
+```
+
+### Service层抛出业务异常
+
+```python
+# ✅ 正确: Service层抛出业务异常
+class RoadmapService:
+    async def get_by_id(
+        self,
+        db: AsyncSession,
+        roadmap_id: str
+    ) -> RoadmapResponse:
+        roadmap = await roadmap_crud.get_by_id(db, roadmap_id)
+        
+        if not roadmap:
+            raise NotFoundError(f"路线图 {roadmap_id} 不存在")
+        
+        return RoadmapResponse.model_validate(roadmap)
+```
+
+### API层捕获并转换为HTTP响应
+
+```python
+# ✅ 正确: API层捕获业务异常
+@router.get("/roadmaps/{roadmap_id}")
+async def get_roadmap(
+    roadmap_id: str,
+    db: CurrentSession
+) -> ResponseModel:
+    try:
+        roadmap = await roadmap_service.get_by_id(db, roadmap_id)
+        return ResponseModel(success=True, data=roadmap)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except BusinessError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+```
+
+### Celery任务错误处理
+
+```python
+# ✅ 使用 @safe_task 装饰器统一处理异常
+from app.core.celery_decorators import safe_task
+
+@celery_app.task(name="my_task")
+@safe_task
+async def my_task(data: dict):
+    """异步任务(自动捕获异常并记录)"""
+    # 任务逻辑
+    result = await do_something(data)
+    return result
+```
+
+---
+
+## 5. 快速参考
+
+### 分层职责速查表
+
+| 层级 | 可以做 | 禁止做 |
+|------|--------|--------|
+| **API层** | HTTP适配、参数验证、调用Service | 业务逻辑、直接操作DB、跨层调用 |
+| **Service层** | 业务逻辑、编排CRUD、控制事务 | 写SQL、返回ORM模型、处理HTTP |
+| **CRUD层** | 封装查询、构建条件、flush | 业务验证、commit、调用Service |
+| **编排层** | Agent执行、状态管理、日志通知 | 业务逻辑、直接操作DB(用Brain) |
+
+### 常用依赖注入
+
+```python
+# Session
+db: CurrentSession                      # 只读
+db: CurrentSessionTransaction           # 事务
+
+# 用户
+user: CurrentUser                       # 当前用户
+
+# 分页
+deps: DependsPagination                 # 分页参数
+```
+
+### 异常处理流程
+
+```
+Service层 (抛出) → API层 (捕获) → HTTP响应
+BusinessError → HTTPException(400)
+NotFoundError → HTTPException(404)
+ValidationError → HTTPException(422)
+```

@@ -1,0 +1,936 @@
+---
+alwaysApply: true
+---
+# API设计规范
+
+本规范定义RESTful API设计、路由组织、参数验证、响应格式和错误处理规范。
+
+## 1. API分组规范
+
+### 目录结构
+
+参考: `backend/app/api/v1/endpoints/`
+
+```
+app/api/v1/endpoints/
+├── auth/              # 认证授权
+│   ├── auth.py        # 登录、登出、会话管理
+│   └── router.py      # 路由汇总
+├── users/             # 用户管理
+│   ├── profile.py     # 用户画像
+│   └── router.py      # 路由汇总
+├── tasks/             # 任务管理
+│   ├── generation.py  # 任务生成
+│   ├── query.py       # 任务查询
+│   ├── retry.py       # 任务重试
+│   ├── approval.py    # 人工审核
+│   ├── trace.py       # 执行日志追踪
+│   └── router.py      # 路由汇总
+├── roadmaps/          # 路线图管理
+│   ├── list.py        # 列表查询(用户路线图、回收站、精选)
+│   ├── crud.py        # CRUD操作(获取、删除、恢复)
+│   ├── metadata.py    # 元数据查询(需求分析、编辑记录、验证记录)
+│   ├── streaming.py   # 流式生成
+│   ├── cover_image.py # 封面图管理
+│   └── router.py      # 路由汇总
+├── content/           # 内容管理
+│   ├── query.py       # 内容查询(教程、资源、测验)
+│   ├── regenerate.py  # 内容重新生成
+│   ├── modification.py # 内容修改
+│   ├── concept_status.py # Concept状态
+│   ├── subgraph.py    # 子图生成
+│   └── router.py      # 路由汇总
+├── learning/          # 学习体验
+│   ├── progress.py    # 学习进度
+│   ├── assessment.py  # 技术评估
+│   ├── mentor.py      # AI导师
+│   └── router.py      # 路由汇总
+└── admin/             # 平台管理
+    ├── users.py       # 用户管理(邀请、超级管理员)
+    ├── waitlist.py    # Waitlist管理
+    ├── tavily.py      # Tavily Key管理
+    ├── monitoring.py  # Celery监控
+    └── router.py      # 路由汇总
+```
+
+### 分组原则
+
+1. **按业务领域分组**: 不按HTTP方法或技术维度
+2. **一个领域一个目录**: 包含router.py汇总路由
+3. **相关功能就近放置**: 查询、创建、修改放在同一组
+4. **职责单一明确**: 每个文件聚焦特定功能(如list.py只负责列表查询)
+5. **避免深层嵌套**: 最多2层 (endpoints/<domain>/<file>.py)
+
+### 七大业务领域
+
+本项目API按业务领域分为7个模块:
+
+| 模块 | 职责 | 关键文件 |
+|-----|------|---------|
+| **auth** | 认证授权 | auth.py (登录、登出、会话) |
+| **users** | 用户管理 | profile.py (用户画像) |
+| **tasks** | 任务管理 | generation/query/retry/approval/trace.py |
+| **roadmaps** | 路线图管理 | list/crud/metadata/streaming/cover_image.py |
+| **content** | 内容管理 | query/regenerate/modification/concept_status/subgraph.py |
+| **learning** | 学习体验 | progress/assessment/mentor.py |
+| **admin** | 平台管理 | users/waitlist/tavily/monitoring.py |
+
+---
+
+## 2. 接口归属判断规则
+
+在添加新接口时，按以下规则确定归属:
+
+### 判断流程
+
+```
+1. 是否与用户认证相关? → auth/
+   - 登录、登出、会话管理、Token管理
+
+2. 是否为用户画像管理? → users/
+   - 用户偏好、学习风格、个人资料
+
+3. 是否为任务生命周期管理? → tasks/
+   - 任务创建、查询、重试、审核、日志追踪
+
+4. 是否为路线图资源管理? → roadmaps/
+   - 路线图列表、CRUD、元数据、封面图
+
+5. 是否为学习内容管理? → content/
+   - 教程、资源、测验的查询/生成/修改
+
+6. 是否为学习进度/体验? → learning/
+   - 学习进度、技术评估、AI导师
+
+7. 是否为平台管理功能? → admin/
+   - 用户管理、Waitlist、配置管理、监控
+```
+
+### 常见错误归属
+
+| 错误归属 | 正确归属 | 原因 |
+|---------|---------|------|
+| `users/{id}/roadmaps` | `roadmaps/users/{id}` | 资源主体是roadmaps |
+| `users/{id}/tasks` | `tasks/users/{id}` | 资源主体是tasks |
+| `workflows/generation/generate` | `tasks/generate` | 任务生成属于tasks领域 |
+| `admin/trace/{id}/logs` | `tasks/{id}/logs` | 执行日志属于tasks领域 |
+| `users/waitlist` | `waitlist` 或 `admin/waitlist` | Waitlist是独立资源 |
+
+### 特殊情况处理
+
+**跨领域接口**: 当接口涉及多个领域时,按主要资源归属
+- ✅ `GET /roadmaps/{id}/content` - 归属roadmaps (主资源是roadmap)
+- ✅ `GET /tasks/{id}/logs` - 归属tasks (主资源是task)
+
+**公开接口**: 无需认证的接口优先放在资源根目录
+- ✅ `POST /waitlist` - 公开注册接口
+- ✅ `GET /roadmaps/featured` - 公开精选路线图
+
+---
+
+## 3. RESTful路由设计
+
+### URL命名规范
+
+**基本规则**:
+- ✅ 使用名词复数形式
+- ✅ 使用kebab-case (小写+连字符)
+- ✅ 资源嵌套不超过2层
+- ❌ 不在URL中使用动词
+- ❌ 不使用文件扩展名
+
+```python
+# ✅ 正确的RESTful设计
+router = APIRouter(prefix="/roadmaps", tags=["Roadmaps"])
+
+@router.get("")                        # GET /api/v1/roadmaps
+@router.post("")                       # POST /api/v1/roadmaps
+@router.get("/{roadmap_id}")           # GET /api/v1/roadmaps/{id}
+@router.put("/{roadmap_id}")           # PUT /api/v1/roadmaps/{id}
+@router.delete("/{roadmap_id}")        # DELETE /api/v1/roadmaps/{id}
+
+# 子资源
+@router.get("/{roadmap_id}/status")    # GET /api/v1/roadmaps/{id}/status
+@router.get("/{roadmap_id}/content")   # GET /api/v1/roadmaps/{id}/content
+
+# ❌ 错误: 在URL中使用动词
+@router.get("/getRoadmap")             # 错误
+@router.post("/createRoadmap")         # 错误
+@router.get("/roadmap/getStatus")      # 错误
+
+# ❌ 错误: 使用文件扩展名
+@router.get("/roadmaps.json")          # 错误
+
+# ❌ 错误: 使用camelCase
+@router.get("/roadmapList")            # 错误
+```
+
+### HTTP方法映射
+
+| HTTP方法 | 语义 | URL示例 | 幂等性 |
+|---------|------|---------|--------|
+| **GET** | 获取资源 | `GET /roadmaps` <br> `GET /roadmaps/{id}` | ✅ 是 |
+| **POST** | 创建资源 | `POST /roadmaps` | ❌ 否 |
+| **PUT** | 完整更新 | `PUT /roadmaps/{id}` | ✅ 是 |
+| **PATCH** | 部分更新 | `PATCH /roadmaps/{id}` | ❌ 否 |
+| **DELETE** | 删除资源 | `DELETE /roadmaps/{id}` | ✅ 是 |
+
+### 特殊操作处理
+
+对于不符合标准CRUD的操作:
+
+```python
+# ✅ 方案1: 使用POST + 动词(作为子资源)
+@router.post("/{roadmap_id}/approve")     # 批准
+@router.post("/{roadmap_id}/publish")     # 发布
+@router.post("/{roadmap_id}/archive")     # 归档
+
+# ✅ 方案2: 使用查询参数
+@router.get("/roadmaps", params={"action": "search"})
+
+# ✅ 方案3: 使用专门的端点
+@router.post("/roadmaps/generate")        # 生成路线图
+@router.post("/roadmaps/{id}/retry")      # 重试生成
+```
+
+### 权限验证规范
+
+根据接口的访问控制需求,选择合适的依赖注入:
+
+```python
+from app.api.v1.deps import current_active_user, current_superuser
+
+# 1. 公开接口 (无需认证)
+@router.post("/waitlist")
+async def join_waitlist(email: str):
+    """公开接口,无需认证"""
+    ...
+
+# 2. 需要认证的接口
+@router.get("/tasks/users/{user_id}")
+async def list_user_tasks(
+    user_id: str,
+    current_user: User = Depends(current_active_user)  # 必须登录
+):
+    """需要验证用户身份"""
+    # 验证用户只能访问自己的数据
+    if user_id != current_user.id:
+        raise HTTPException(403, "Forbidden")
+    ...
+
+# 3. 需要管理员权限的接口
+@router.get("/admin/users")
+async def list_all_users(
+    current_user: User = Depends(current_superuser)  # 必须是管理员
+):
+    """仅管理员可访问"""
+    ...
+
+# 4. 混合权限 (普通用户看自己,管理员看所有)
+@router.get("/tasks/{task_id}/logs")
+async def get_task_logs(
+    task_id: str,
+    current_user: User = Depends(current_active_user)
+):
+    """普通用户看自己的任务,管理员看所有任务"""
+    task = await task_service.get_by_id(task_id)
+    
+    # 验证任务所有权
+    if task.user_id != current_user.id and not current_user.is_superuser:
+        raise HTTPException(403, "Forbidden")
+    
+    return await task_service.get_logs(task_id)
+```
+
+---
+
+## 4. 统一响应格式
+
+### ResponseModel定义
+
+**位置**: `backend/app/schemas/response.py`
+
+```python
+from pydantic import BaseModel, Field
+from datetime import datetime
+from typing import Any, Generic, TypeVar
+
+T = TypeVar('T')
+
+class ResponseModel(BaseModel):
+    """统一响应模型"""
+    success: bool = Field(description="请求是否成功")
+    message: str = Field(description="响应消息")
+    data: Any | None = Field(None, description="响应数据")
+    timestamp: datetime = Field(
+        default_factory=datetime.utcnow,
+        description="响应时间戳"
+    )
+
+class ResponseModelGeneric(BaseModel, Generic[T]):
+    """泛型响应模型(带类型提示)"""
+    success: bool
+    message: str
+    data: T | None = None
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+```
+
+### 使用示例
+
+```python
+from app.schemas.response import ResponseModel
+from app.schemas.roadmap import RoadmapDetailResponse
+
+# ✅ 成功响应
+@router.get("/roadmaps/{roadmap_id}")
+async def get_roadmap(
+    roadmap_id: str,
+    db: CurrentSession
+) -> ResponseModel:
+    """获取路线图详情"""
+    roadmap = await roadmap_service.get_by_id(db, roadmap_id)
+    
+    if not roadmap:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Roadmap {roadmap_id} not found"
+        )
+    
+    return ResponseModel(
+        success=True,
+        message="Roadmap retrieved successfully",
+        data=roadmap
+    )
+
+# ✅ 创建成功响应
+@router.post("/roadmaps")
+async def create_roadmap(
+    obj: CreateRoadmapRequest,
+    db: CurrentSessionTransaction
+) -> ResponseModel:
+    roadmap = await roadmap_service.create(db, obj)
+    
+    return ResponseModel(
+        success=True,
+        message="Roadmap created successfully",
+        data={"roadmap_id": roadmap.roadmap_id}
+    )
+
+# ✅ 列表响应(带分页)
+@router.get("/roadmaps")
+async def list_roadmaps(
+    page: int = 1,
+    size: int = 20,
+    db: CurrentSession
+) -> ResponseModel:
+    roadmaps = await roadmap_service.get_list(db, page, size)
+    total = await roadmap_service.count(db)
+    
+    return ResponseModel(
+        success=True,
+        message="Roadmaps retrieved successfully",
+        data={
+            "items": roadmaps,
+            "total": total,
+            "page": page,
+            "size": size,
+            "pages": (total + size - 1) // size
+        }
+    )
+```
+
+---
+
+## 5. 参数验证规范
+
+### Query参数验证
+
+```python
+from typing import Annotated
+from fastapi import Query
+
+@router.get("/roadmaps")
+async def list_roadmaps(
+    # 分页参数
+    page: Annotated[int, Query(ge=1, description="页码")] = 1,
+    size: Annotated[int, Query(ge=1, le=100, description="每页数量")] = 20,
+    
+    # 过滤参数
+    keyword: Annotated[
+        str | None,
+        Query(max_length=50, description="搜索关键词")
+    ] = None,
+    status: Annotated[
+        str | None,
+        Query(description="状态筛选: draft/published/archived")
+    ] = None,
+    
+    # 排序参数
+    sort_by: Annotated[
+        str,
+        Query(description="排序字段: created_at/updated_at")
+    ] = "created_at",
+    order: Annotated[
+        str,
+        Query(description="排序方向: asc/desc")
+    ] = "desc",
+):
+    """路线图列表查询"""
+    return await roadmap_service.get_list(
+        page=page,
+        size=size,
+        keyword=keyword,
+        status=status,
+        sort_by=sort_by,
+        order=order,
+    )
+```
+
+### Path参数验证
+
+```python
+from fastapi import Path
+
+@router.get("/roadmaps/{roadmap_id}")
+async def get_roadmap(
+    roadmap_id: Annotated[
+        str,
+        Path(
+            description="路线图ID",
+            min_length=1,
+            max_length=64,
+            pattern=r'^[a-zA-Z0-9_-]+$'
+        )
+    ]
+):
+    """获取路线图详情"""
+    ...
+
+@router.get("/roadmaps/{roadmap_id}/content/{content_id}")
+async def get_content(
+    roadmap_id: Annotated[str, Path(description="路线图ID")],
+    content_id: Annotated[int, Path(ge=1, description="内容ID")]
+):
+    """获取内容详情"""
+    ...
+```
+
+### Body参数验证
+
+```python
+from fastapi import Body
+from pydantic import BaseModel, Field, EmailStr, HttpUrl
+
+class CreateRoadmapRequest(BaseModel):
+    """创建路线图请求"""
+    title: str = Field(
+        min_length=1,
+        max_length=200,
+        description="路线图标题"
+    )
+    description: str | None = Field(
+        None,
+        max_length=2000,
+        description="路线图描述"
+    )
+    learning_goal: str = Field(
+        min_length=1,
+        max_length=500,
+        description="学习目标"
+    )
+    available_hours_per_week: int = Field(
+        ge=1,
+        le=168,
+        description="每周可用时长"
+    )
+    email: EmailStr = Field(description="用户邮箱")
+    tags: list[str] = Field(
+        default_factory=list,
+        max_length=10,
+        description="标签列表"
+    )
+    is_public: bool = Field(
+        False,
+        description="是否公开"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "title": "学习Python Web开发",
+                "description": "从零开始学习Python Web开发",
+                "learning_goal": "掌握Flask和FastAPI",
+                "available_hours_per_week": 10,
+                "email": "user@example.com",
+                "tags": ["python", "web", "backend"],
+                "is_public": True
+            }
+        }
+
+@router.post("/roadmaps")
+async def create_roadmap(
+    obj: Annotated[CreateRoadmapRequest, Body(description="创建路线图参数")],
+    db: CurrentSessionTransaction,
+    user: CurrentUser
+):
+    """创建路线图"""
+    roadmap = await roadmap_service.create(db, user.id, obj)
+    return ResponseModel(success=True, data=roadmap)
+```
+
+### Header参数验证
+
+```python
+from fastapi import Header
+
+@router.get("/roadmaps")
+async def get_roadmaps(
+    authorization: Annotated[
+        str | None,
+        Header(description="Bearer token")
+    ] = None,
+    x_request_id: Annotated[
+        str | None,
+        Header(alias="X-Request-ID", description="请求ID")
+    ] = None
+):
+    """获取路线图列表"""
+    ...
+```
+
+---
+
+## 6. 错误处理规范
+
+### 标准HTTP状态码
+
+| 状态码 | 含义 | 使用场景 |
+|--------|------|----------|
+| **200** | OK | 请求成功 |
+| **201** | Created | 资源创建成功 |
+| **204** | No Content | 删除成功,无返回内容 |
+| **400** | Bad Request | 请求参数错误 |
+| **401** | Unauthorized | 未认证 |
+| **403** | Forbidden | 已认证但无权限 |
+| **404** | Not Found | 资源不存在 |
+| **409** | Conflict | 资源冲突 |
+| **422** | Unprocessable Entity | 请求格式正确但语义错误 |
+| **500** | Internal Server Error | 服务器内部错误 |
+
+### 错误响应格式
+
+```python
+from fastapi import HTTPException, status
+
+# ✅ 资源不存在 (404)
+@router.get("/roadmaps/{roadmap_id}")
+async def get_roadmap(roadmap_id: str, db: CurrentSession):
+    roadmap = await roadmap_crud.get_by_id(db, roadmap_id)
+    
+    if not roadmap:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Roadmap {roadmap_id} not found"
+        )
+    
+    return ResponseModel(success=True, data=roadmap)
+
+# ✅ 业务逻辑错误 (400)
+@router.post("/roadmaps")
+async def create_roadmap(obj: CreateRequest, db: CurrentSessionTransaction):
+    try:
+        roadmap = await roadmap_service.create(db, obj)
+        return ResponseModel(success=True, data=roadmap)
+    except BusinessError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+
+# ✅ 资源冲突 (409)
+@router.post("/roadmaps")
+async def create_roadmap(obj: CreateRequest, db: CurrentSessionTransaction):
+    existing = await roadmap_crud.get_by_title(db, obj.title)
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Roadmap with title '{obj.title}' already exists"
+        )
+    
+    roadmap = await roadmap_service.create(db, obj)
+    return ResponseModel(success=True, data=roadmap)
+
+# ✅ 未认证 (401)
+@router.get("/roadmaps/my")
+async def get_my_roadmaps(user: CurrentUser, db: CurrentSession):
+    # CurrentUser依赖会自动处理401错误
+    roadmaps = await roadmap_service.get_user_roadmaps(db, user.id)
+    return ResponseModel(success=True, data=roadmaps)
+
+# ✅ 权限不足 (403)
+@router.delete("/roadmaps/{roadmap_id}")
+async def delete_roadmap(
+    roadmap_id: str,
+    user: CurrentUser,
+    db: CurrentSessionTransaction
+):
+    roadmap = await roadmap_crud.get_by_id(db, roadmap_id)
+    
+    if not roadmap:
+        raise HTTPException(404, "Roadmap not found")
+    
+    if roadmap.user_id != user.id and not user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to delete this roadmap"
+        )
+    
+    await roadmap_crud.delete(db, roadmap_id)
+    return ResponseModel(success=True, message="Roadmap deleted")
+```
+
+### 全局异常处理
+
+在 `backend/app/main.py` 中注册全局异常处理器:
+
+```python
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+
+@app.exception_handler(BusinessError)
+async def business_error_handler(request: Request, exc: BusinessError):
+    """业务异常处理器"""
+    return JSONResponse(
+        status_code=400,
+        content={
+            "success": False,
+            "message": str(exc),
+            "data": None,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    )
+
+@app.exception_handler(Exception)
+async def generic_error_handler(request: Request, exc: Exception):
+    """通用异常处理器"""
+    logger.error(
+        "unhandled_exception",
+        error=str(exc),
+        path=request.url.path,
+        method=request.method
+    )
+    
+    return JSONResponse(
+        status_code=500,
+        content={
+            "success": False,
+            "message": "Internal server error",
+            "data": None,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    )
+```
+
+---
+
+## 7. API文档规范
+
+### Endpoint文档
+
+```python
+@router.post("/roadmaps")
+async def create_roadmap(
+    obj: Annotated[CreateRoadmapRequest, Body(description="创建路线图参数")],
+    db: CurrentSessionTransaction,
+    user: CurrentUser
+) -> ResponseModel:
+    """
+    创建路线图
+    
+    创建一个新的学习路线图,系统会根据用户的学习目标和时间安排生成个性化的学习路径。
+    
+    ## 请求要求
+    - 需要认证: 是
+    - 权限: 普通用户
+    
+    ## 参数说明
+    - title: 路线图标题 (必填, 1-200字符)
+    - description: 路线图描述 (可选, 最多2000字符)
+    - learning_goal: 学习目标 (必填, 1-500字符)
+    - available_hours_per_week: 每周可用时长 (必填, 1-168小时)
+    - email: 用户邮箱 (必填, 有效的邮箱格式)
+    
+    ## 返回说明
+    - 成功: 返回创建的路线图ID和基本信息
+    - 失败: 返回错误信息和错误码
+    
+    ## 错误码
+    - 400: 参数错误或业务逻辑错误
+    - 401: 未认证
+    - 409: 标题重复
+    - 500: 服务器内部错误
+    """
+    roadmap = await roadmap_service.create(db, user.id, obj)
+    return ResponseModel(
+        success=True,
+        message="Roadmap created successfully",
+        data=roadmap
+    )
+```
+
+### OpenAPI Tags
+
+```python
+from fastapi import APIRouter
+
+router = APIRouter(
+    prefix="/roadmaps",
+    tags=["Roadmaps"],  # OpenAPI分组标签
+)
+
+# 也可以在@router装饰器中指定
+@router.get(
+    "/roadmaps",
+    tags=["Roadmaps", "Public"],  # 多个标签
+    summary="获取路线图列表",
+    description="获取所有公开的路线图列表,支持分页和过滤",
+    response_description="路线图列表和分页信息"
+)
+async def list_roadmaps():
+    ...
+```
+
+---
+
+## 8. API设计最佳实践
+
+### 资源路径设计模式
+
+```python
+# ✅ 正确: 资源为主体,所属关系用路径表达
+GET /api/v1/roadmaps/users/{user_id}           # 某用户的路线图列表
+GET /api/v1/tasks/users/{user_id}              # 某用户的任务列表
+GET /api/v1/roadmaps/{roadmap_id}/content      # 某路线图的内容
+
+# ❌ 错误: 以用户为主体(违反资源优先原则)
+GET /api/v1/users/{user_id}/roadmaps           # 应该改为上面的形式
+GET /api/v1/users/{user_id}/tasks              # 应该改为上面的形式
+```
+
+### 子资源设计模式
+
+```python
+# ✅ 正确: 子资源路径清晰
+GET    /api/v1/roadmaps/{roadmap_id}/intent-analysis      # 意图分析(元数据)
+GET    /api/v1/roadmaps/{roadmap_id}/edit-records        # 编辑记录(元数据)
+POST   /api/v1/roadmaps/{roadmap_id}/cover-image/generate # 生成封面图(操作)
+GET    /api/v1/tasks/{task_id}/logs                      # 任务日志
+GET    /api/v1/content/tutorials/{tutorial_id}           # 教程内容
+
+# ❌ 错误: 路径过深
+GET /api/v1/roadmaps/{id}/metadata/intent-analysis        # 过深,去掉metadata
+GET /api/v1/roadmaps/{id}/cover/image/generate            # 过深,简化为cover-image
+```
+
+### 操作命名模式
+
+对于非标准CRUD操作,使用清晰的动词:
+
+```python
+# ✅ 正确: 使用明确的动词
+POST /api/v1/tasks/{task_id}/cancel           # 取消
+POST /api/v1/tasks/{task_id}/retry            # 重试
+POST /api/v1/tasks/{task_id}/approve          # 批准
+POST /api/v1/roadmaps/{roadmap_id}/restore    # 恢复
+POST /api/v1/content/tutorials/{id}/regenerate # 重新生成
+
+# ❌ 错误: 动词不清晰或使用名词
+POST /api/v1/tasks/{task_id}/cancellation     # 应该用cancel
+POST /api/v1/tasks/{task_id}/do-retry         # 不要用do-前缀
+POST /api/v1/roadmaps/{id}/restoration        # 应该用restore
+```
+
+### 查询参数设计
+
+```python
+# ✅ 正确: 使用查询参数过滤、排序、分页
+GET /api/v1/roadmaps/users/{user_id}?status=published&sort=created_at&order=desc&page=1&size=20
+
+# 参数命名规范
+page: int = 1                # 分页 - 页码
+size: int = 20               # 分页 - 每页数量
+status: str | None = None    # 过滤 - 状态
+keyword: str | None = None   # 过滤 - 关键词
+sort: str = "created_at"     # 排序 - 字段
+order: str = "desc"          # 排序 - 方向(asc/desc)
+
+# ❌ 错误: 使用路径参数过滤
+GET /api/v1/roadmaps/users/{user_id}/published           # 应该用查询参数
+GET /api/v1/roadmaps/users/{user_id}/page/1/size/20     # 应该用查询参数
+```
+
+### 列表响应设计
+
+```python
+# ✅ 正确: 包含分页元数据
+{
+    "success": true,
+    "message": "Roadmaps retrieved successfully",
+    "data": {
+        "items": [...],          # 实际数据
+        "total": 100,            # 总数
+        "page": 1,               # 当前页
+        "size": 20,              # 每页数量
+        "pages": 5               # 总页数
+    }
+}
+
+# ❌ 错误: 只返回数组(无分页信息)
+{
+    "success": true,
+    "data": [...]                # 缺少分页元数据
+}
+```
+
+### 批量操作设计
+
+```python
+# ✅ 正确: 使用数组请求体
+POST /api/v1/roadmaps/batch-delete
+Body: {
+    "roadmap_ids": ["id1", "id2", "id3"]
+}
+
+# ✅ 或使用查询参数(简单场景)
+DELETE /api/v1/roadmaps?ids=id1,id2,id3
+
+# ❌ 错误: 使用路径参数(难以扩展)
+DELETE /api/v1/roadmaps/id1,id2,id3            # URL过长,不推荐
+```
+
+---
+
+## 9. 快速参考
+
+### API开发检查清单
+
+- [ ] URL使用名词复数形式
+- [ ] HTTP方法语义正确
+- [ ] 使用统一的ResponseModel
+- [ ] 添加完整的类型注解
+- [ ] 参数使用Annotated注解
+- [ ] 添加参数验证约束
+- [ ] 使用合适的HTTP状态码
+- [ ] 添加中文Docstring
+- [ ] 处理业务异常
+- [ ] 区分只读和事务Session
+- [ ] 确认接口归属正确的业务领域
+- [ ] 权限验证(需要时添加current_active_user依赖)
+
+### 常用参数验证
+
+```python
+# 字符串长度
+Field(min_length=1, max_length=200)
+
+# 数字范围
+Field(ge=1, le=100)  # >= 1 and <= 100
+
+# 正则匹配
+Field(pattern=r'^[a-zA-Z0-9_-]+$')
+
+# 邮箱
+email: EmailStr
+
+# URL
+url: HttpUrl
+
+# 枚举
+status: Literal["draft", "published", "archived"]
+
+# 列表长度
+tags: list[str] = Field(max_length=10)
+```
+
+### 常见错误状态码速查
+
+```python
+# 客户端错误
+raise HTTPException(400, "Bad Request")
+raise HTTPException(401, "Unauthorized")
+raise HTTPException(403, "Forbidden")
+raise HTTPException(404, "Not Found")
+raise HTTPException(409, "Conflict")
+raise HTTPException(422, "Unprocessable Entity")
+
+# 服务器错误
+raise HTTPException(500, "Internal Server Error")
+raise HTTPException(503, "Service Unavailable")
+```
+
+### 七大业务领域路由示例
+
+```python
+# 1. auth/ - 认证授权
+POST   /api/v1/auth/logout
+POST   /api/v1/auth/logout-all-devices
+GET    /api/v1/auth/blacklist/stats
+
+# 2. users/ - 用户管理
+GET    /api/v1/users/profile
+PUT    /api/v1/users/profile
+
+# 3. tasks/ - 任务管理
+POST   /api/v1/tasks/generate
+GET    /api/v1/tasks/users/{user_id}
+GET    /api/v1/tasks/{task_id}
+POST   /api/v1/tasks/{task_id}/cancel
+POST   /api/v1/tasks/{task_id}/retry
+POST   /api/v1/tasks/{task_id}/approve
+GET    /api/v1/tasks/{task_id}/logs
+GET    /api/v1/tasks/{task_id}/summary
+GET    /api/v1/tasks/{task_id}/errors
+
+# 4. roadmaps/ - 路线图管理
+GET    /api/v1/roadmaps/users/{user_id}
+GET    /api/v1/roadmaps/users/{user_id}/trash
+GET    /api/v1/roadmaps/featured
+GET    /api/v1/roadmaps/{roadmap_id}
+DELETE /api/v1/roadmaps/{roadmap_id}
+POST   /api/v1/roadmaps/{roadmap_id}/restore
+DELETE /api/v1/roadmaps/{roadmap_id}/permanent
+GET    /api/v1/roadmaps/{roadmap_id}/status
+GET    /api/v1/roadmaps/{roadmap_id}/intent-analysis
+GET    /api/v1/roadmaps/{roadmap_id}/edit-records
+GET    /api/v1/roadmaps/{roadmap_id}/validation-records
+POST   /api/v1/roadmaps/{roadmap_id}/cover-image/generate
+GET    /api/v1/roadmaps/{roadmap_id}/streaming
+
+# 5. content/ - 内容管理
+GET    /api/v1/content/tutorials/{tutorial_id}
+GET    /api/v1/content/resources/{resource_id}
+GET    /api/v1/content/quizzes/{quiz_id}
+POST   /api/v1/content/tutorials/{tutorial_id}/regenerate
+POST   /api/v1/content/resources/{resource_id}/regenerate
+POST   /api/v1/content/quizzes/{quiz_id}/regenerate
+PUT    /api/v1/content/tutorials/{tutorial_id}
+GET    /api/v1/content/concepts/{concept_id}/status
+PUT    /api/v1/content/concepts/{concept_id}/status
+POST   /api/v1/content/tutorials/{tutorial_id}/subgraph
+
+# 6. learning/ - 学习体验
+GET    /api/v1/learning/roadmaps/{roadmap_id}/progress
+GET    /api/v1/learning/roadmaps/{roadmap_id}/assessment
+POST   /api/v1/learning/roadmaps/{roadmap_id}/assessment/generate
+POST   /api/v1/learning/mentor/chat
+
+# 7. admin/ - 平台管理
+POST   /api/v1/admin/users/invite
+POST   /api/v1/admin/users/superuser
+POST   /api/v1/waitlist (公开)
+GET    /api/v1/admin/waitlist (管理员)
+GET    /api/v1/admin/tavily/keys
+POST   /api/v1/admin/tavily/keys
+DELETE /api/v1/admin/tavily/keys/{key_id}
+GET    /api/v1/admin/monitoring/celery/tasks
+```

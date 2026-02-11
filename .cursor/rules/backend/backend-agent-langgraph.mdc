@@ -1,0 +1,583 @@
+---
+alwaysApply: true
+---
+# Agent与LangGraph开发规范
+
+本规范定义Agent开发、Prompt设计、LangGraph工作流和WorkflowBrain使用规范。
+
+## 1. Agent开发规范
+
+### Agent基类继承
+
+**所有Agent必须**:
+1. 继承 `BaseAgent` 基类
+2. 实现 `Agent[InputT, OutputT]` Protocol
+3. 定义 `agent_id` 类属性
+4. 实现 `execute()` 方法
+
+**标准模板**:
+```python
+# backend/app/agents/my_agent.py
+from app.agents.base import BaseAgent
+from app.agents.protocol import Agent
+from app.models.domain import MyInput, MyOutput
+from app.config.settings import settings
+
+class MyAgent(BaseAgent, Agent[MyInput, MyOutput]):
+    """
+    自定义Agent
+    
+    功能: 描述Agent的具体功能
+    输入: MyInput类型说明
+    输出: MyOutput类型说明
+    """
+    agent_id = "my_agent"  # 必须定义
+    
+    def __init__(self, settings: Settings):
+        """
+        初始化Agent
+        
+        Args:
+            settings: 应用配置(包含LLM配置)
+        """
+        super().__init__(
+            agent_id=self.agent_id,
+            model_provider=settings.MY_AGENT_PROVIDER,
+            model_name=settings.MY_AGENT_MODEL,
+            base_url=settings.MY_AGENT_BASE_URL,
+            api_key=settings.MY_AGENT_API_KEY,
+            temperature=0.7,
+            max_tokens=4096,
+        )
+    
+    async def execute(self, input_data: MyInput) -> MyOutput:
+        """
+        执行Agent逻辑
+        
+        Args:
+            input_data: Agent输入数据
+            
+        Returns:
+            Agent输出结果
+            
+        Raises:
+            ValueError: 输入数据验证失败
+            LLMError: LLM调用失败
+        """
+        # 1. 加载Prompt模板
+        prompt = await self.load_prompt(
+            "my_agent.j2",
+            **input_data.model_dump()
+        )
+        
+        # 2. 调用LLM (支持工具调用)
+        response = await self.call_llm(
+            prompt,
+            tools=self._get_tools()  # 可选
+        )
+        
+        # 3. 解析并验证输出
+        return MyOutput.model_validate_json(response)
+    
+    def _get_tools(self) -> list[dict] | None:
+        """
+        获取Agent可用的工具(可选)
+        
+        Returns:
+            工具定义列表(OpenAI function calling格式)
+        """
+        return None  # 如果不需要工具,返回None
+```
+
+---
+
+### Agent命名规范
+
+| Agent类型 | 文件命名 | Class命名 | agent_id |
+|---------|---------|----------|----------|
+| 核心Agent | `intent_analyzer.py` | `IntentAnalyzerAgent` | `intent_analyzer` |
+| 生成类Agent | `tutorial_generator.py` | `TutorialGeneratorAgent` | `tutorial_generator` |
+| 修改类Agent | `tutorial_modifier.py` | `TutorialModifierAgent` | `tutorial_modifier` |
+| 分析类Agent | `edit_plan_analyzer.py` | `EditPlanAnalyzerAgent` | `edit_plan_analyzer` |
+| 评估类Agent | `tech_assessment_generator.py` | `TechAssessmentGeneratorAgent` | `tech_assessment_generator` |
+
+**命名规则**:
+- 文件名: `snake_case.py`
+- 类名: `PascalCase + Agent后缀`
+- agent_id: `snake_case` (与文件名一致,不带.py)
+
+---
+
+### Agent配置管理
+
+每个Agent需要在 `backend/app/config/settings.py` 中添加配置:
+
+```python
+class Settings(BaseSettings):
+    # ... 其他配置 ...
+    
+    # My Agent配置
+    MY_AGENT_PROVIDER: str = Field("openai", description="LLM提供商")
+    MY_AGENT_MODEL: str = Field("gpt-4o", description="LLM模型名称")
+    MY_AGENT_BASE_URL: str | None = Field(None, description="自定义API端点")
+    MY_AGENT_API_KEY: str = Field(..., description="API密钥")
+```
+
+在 `.env` 文件中配置:
+```bash
+MY_AGENT_PROVIDER=openai
+MY_AGENT_MODEL=gpt-4o
+MY_AGENT_BASE_URL=
+MY_AGENT_API_KEY=sk-xxx
+```
+
+---
+
+### AgentFactory注册
+
+在 `backend/app/agents/factory.py` 中注册Agent:
+
+```python
+class AgentFactory:
+    def create_my_agent(self) -> MyAgent:
+        """创建自定义Agent实例"""
+        return MyAgent(self.settings)
+```
+
+---
+
+## 2. Prompt开发规范
+
+### Prompt模板位置
+**路径**: `backend/prompts/*.j2`
+
+**命名规则**:
+- 核心Agent: `<agent_id>.j2` (如 `intent_analyzer.j2`)
+- 修改类Agent: `<agent_id>_modify.j2` (如 `tutorial_modifier.j2`)
+
+---
+
+### Prompt标准结构 (7部分)
+
+每个Prompt模板必须包含以下7个部分:
+
+```jinja2
+{# 1. Role Definition - 角色定义 #}
+你是 {{ agent_name }}，负责 {{ role_description }}。
+
+{# 2. Context Injection - 上下文注入 #}
+## 当前任务上下文
+- 用户目标: {{ user_goal }}
+- 已完成步骤: {{ execution_history | join(", ") }}
+- 当前阶段: {{ current_step }}
+
+{# 3. Constraints & Rules - 约束和规则 #}
+## 工作规范
+{{ constraints }}
+
+## 输出要求
+1. 必须严格遵守JSON Schema格式
+2. 所有字段都是必填项
+3. 不要添加额外字段
+
+{# 4. Input Data - 输入数据 #}
+## 用户输入
+```json
+{{ input_data | tojson(indent=2) }}
+```
+
+{# 5. Output Format - 输出格式 (JSON Schema) #}
+## 输出格式
+必须严格遵循以下JSON Schema:
+```json
+{{ output_schema | tojson(indent=2) }}
+```
+
+{# 6. Tool Usage Guide - 工具使用指南 (可选) #}
+{% if tools %}
+## 可用工具
+{% for tool in tools %}
+- **{{ tool.name }}**: {{ tool.description }}
+  - 使用场景: {{ tool.usage }}
+  - 参数: {{ tool.parameters }}
+{% endfor %}
+{% endif %}
+
+{# 7. Examples - Few-shot示例 (可选但推荐) #}
+{% if examples %}
+## 参考示例
+{{ examples }}
+{% endif %}
+```
+
+---
+
+### Prompt加载示例
+
+```python
+# 在Agent的execute方法中
+async def execute(self, input_data: MyInput) -> MyOutput:
+    # 加载Prompt模板
+    prompt = await self.load_prompt(
+        "my_agent.j2",
+        agent_name="我的Agent",
+        role_description="分析和处理数据",
+        user_goal=input_data.goal,
+        execution_history=["步骤1完成", "步骤2完成"],
+        current_step="当前步骤",
+        constraints="必须遵守的约束条件",
+        input_data=input_data.model_dump(),
+        output_schema=MyOutput.model_json_schema(),
+    )
+    
+    # 调用LLM
+    response = await self.call_llm(prompt)
+    
+    # 解析输出
+    return MyOutput.model_validate_json(response)
+```
+
+---
+
+## 3. LangGraph工作流规范
+
+### 状态定义
+
+**位置**: `backend/app/core/orchestrator/base.py`
+
+```python
+from typing import TypedDict
+
+class RoadmapState(TypedDict):
+    """
+    LangGraph工作流全局状态
+    
+    所有节点共享此状态,通过返回字典更新状态
+    """
+    # ============ 输入 ============
+    user_request: dict
+    
+    # ============ 中间产出 ============
+    intent_analysis: IntentAnalysisOutput | None
+    roadmap_framework: RoadmapFramework | None
+    validation_result: ValidationOutput | None
+    edit_plan: EditPlanOutput | None
+    
+    # ============ 流程控制 ============
+    current_step: str
+    task_id: str
+    roadmap_id: str
+    retry_count: int
+    
+    # ============ 元数据 ============
+    execution_history: list[str]
+    error_message: str | None
+```
+
+**状态更新规则**:
+- 节点返回字典会**合并**到状态中
+- 只返回需要更新的字段
+- 不要返回整个状态对象
+
+```python
+# ✅ 正确: 只返回需要更新的字段
+return {
+    "intent_analysis": result,
+    "roadmap_id": result.roadmap_id,
+    "current_step": "intent_analysis",
+}
+
+# ❌ 错误: 不要返回整个状态
+return state  # 错误
+```
+
+---
+
+### Node Runner开发规范
+
+**职责划分**:
+- ✅ Runner负责: 执行Agent、返回纯结果
+- ✅ WorkflowBrain负责: 状态管理、数据库操作、日志通知
+
+**标准模板**:
+```python
+# backend/app/core/orchestrator/node_runners/my_runner.py
+from app.core.orchestrator.base import RoadmapState
+from app.core.orchestrator.workflow_brain import WorkflowBrain
+
+async def my_runner(
+    state: RoadmapState,
+    brain: WorkflowBrain
+) -> dict:
+    """
+    自定义节点执行器
+    
+    Args:
+        state: LangGraph状态
+        brain: 工作流大脑(负责状态管理和持久化)
+        
+    Returns:
+        状态更新字典
+    """
+    # 使用Brain的上下文管理器(自动处理日志、通知、错误)
+    async with brain.node_execution("my_node", state):
+        # 1. 创建Agent
+        agent = brain.agent_factory.create_my_agent()
+        
+        # 2. 执行Agent
+        result = await agent.execute(state["user_request"])
+        
+        # 3. 保存结果(使用Brain的统一事务)
+        await brain.save_my_result(
+            task_id=state["task_id"],
+            result=result,
+        )
+        
+        # 4. 返回状态更新
+        return {
+            "my_result": result,
+            "current_step": "my_node",
+        }
+```
+
+**错误示例**:
+```python
+# ❌ 错误: Runner不应该直接操作数据库
+async def bad_runner(state: RoadmapState) -> dict:
+    agent = MyAgent()
+    result = await agent.execute(state["user_request"])
+    
+    # ❌ 不应该在Runner中直接操作数据库
+    async with async_session_maker() as db:
+        await crud.create(db, result)
+        await db.commit()
+    
+    return {"result": result}
+
+# ❌ 错误: Runner不应该处理通知
+async def bad_runner2(state: RoadmapState) -> dict:
+    result = await agent.execute(state["user_request"])
+    
+    # ❌ 不应该在Runner中发送通知
+    await notification_service.publish(
+        task_id=state["task_id"],
+        message="步骤完成"
+    )
+    
+    return {"result": result}
+```
+
+---
+
+### 路由函数规范
+
+**位置**: `backend/app/core/orchestrator/routers.py`
+
+```python
+def route_after_validation(state: RoadmapState) -> str:
+    """
+    验证后的路由逻辑
+    
+    Args:
+        state: 当前状态
+        
+    Returns:
+        下一个节点名称
+    """
+    validation_result = state["validation_result"]
+    retry_count = state.get("retry_count", 0)
+    
+    # 验证通过,进入人工审核
+    if validation_result.is_valid:
+        return "human_review"
+    
+    # 验证失败但未超过重试次数,进入编辑
+    if retry_count < MAX_RETRY_COUNT:
+        return "roadmap_edit"
+    
+    # 重试次数已满,直接进入人工审核
+    return "human_review"
+```
+
+---
+
+## 4. WorkflowBrain使用规范
+
+### WorkflowBrain职责
+
+参考: `backend/app/core/orchestrator/workflow_brain.py`
+
+**WorkflowBrain统一管理**:
+- ✅ 状态管理: 维护live_step缓存 (内存+Redis)
+- ✅ 数据库操作: 统一事务管理,确保原子性
+- ✅ 日志记录: 结构化日志和执行历史
+- ✅ 通知发布: WebSocket进度推送
+- ✅ 错误处理: 统一的异常处理和状态回滚
+
+**Runner职责**:
+- ✅ 执行Agent
+- ✅ 调用Brain的保存方法
+- ✅ 返回状态更新字典
+- ❌ 不直接操作数据库
+- ❌ 不直接发送通知
+- ❌ 不直接记录日志(由Brain统一)
+
+---
+
+### 使用上下文管理器
+
+```python
+# ✅ 正确: 使用Brain的上下文管理器
+async def my_runner(state: RoadmapState, brain: WorkflowBrain) -> dict:
+    async with brain.node_execution("my_node", state):
+        # 1. 执行Agent
+        result = await agent.execute(state["input"])
+        
+        # 2. 保存结果
+        await brain.save_my_result(
+            task_id=state["task_id"],
+            result=result
+        )
+        
+        # 3. 返回状态更新
+        return {"my_result": result}
+```
+
+**上下文管理器自动处理**:
+1. 开始日志记录
+2. 发送"进行中"通知
+3. 捕获异常并记录
+4. 发送"成功/失败"通知
+5. 更新live_step缓存
+
+---
+
+### Brain保存方法
+
+WorkflowBrain提供以下保存方法:
+
+```python
+# 保存意图分析结果
+await brain.save_intent_analysis(
+    task_id: str,
+    result: IntentAnalysisOutput,
+    roadmap_id: str
+)
+
+# 保存课程设计结果
+await brain.save_curriculum_design(
+    task_id: str,
+    roadmap_id: str,
+    result: CurriculumDesignOutput
+)
+
+# 保存验证结果
+await brain.save_validation_result(
+    task_id: str,
+    roadmap_id: str,
+    result: ValidationOutput
+)
+
+# 保存编辑结果
+await brain.save_edit_result(
+    task_id: str,
+    roadmap_id: str,
+    result: EditOutput
+)
+```
+
+**特点**:
+- 使用统一的数据库Session
+- 自动flush (不commit,由事务控制)
+- 原子性保证 (同一事务)
+
+---
+
+## 5. 工作流构建规范
+
+### 工作流图构建
+
+**位置**: `backend/app/core/orchestrator/builder.py`
+
+```python
+from langgraph.graph import StateGraph, END
+
+def build_roadmap_workflow(brain: WorkflowBrain) -> StateGraph:
+    """构建路线图生成工作流"""
+    workflow = StateGraph(RoadmapState)
+    
+    # 1. 添加节点
+    workflow.add_node("intent_analysis", lambda s: intent_runner(s, brain))
+    workflow.add_node("curriculum_design", lambda s: curriculum_runner(s, brain))
+    workflow.add_node("validation", lambda s: validation_runner(s, brain))
+    workflow.add_node("roadmap_edit", lambda s: editor_runner(s, brain))
+    workflow.add_node("human_review", lambda s: review_runner(s, brain))
+    workflow.add_node("content_generation", lambda s: content_runner(s, brain))
+    
+    # 2. 设置入口
+    workflow.set_entry_point("intent_analysis")
+    
+    # 3. 添加边
+    workflow.add_edge("intent_analysis", "curriculum_design")
+    workflow.add_edge("curriculum_design", "validation")
+    workflow.add_edge("roadmap_edit", "validation")
+    
+    # 4. 添加条件路由
+    workflow.add_conditional_edges(
+        "validation",
+        route_after_validation,
+        {
+            "human_review": "human_review",
+            "roadmap_edit": "roadmap_edit",
+        }
+    )
+    
+    workflow.add_conditional_edges(
+        "human_review",
+        route_after_review,
+        {
+            "approved": "content_generation",
+            "rejected": "roadmap_edit",
+        }
+    )
+    
+    workflow.add_edge("content_generation", END)
+    
+    return workflow.compile()
+```
+
+---
+
+## 6. 快速参考
+
+### Agent开发检查清单
+
+- [ ] 继承BaseAgent和实现Agent Protocol
+- [ ] 定义agent_id类属性
+- [ ] 实现execute()方法
+- [ ] 添加完整的类型注解
+- [ ] 添加中文Docstring
+- [ ] 创建对应的Prompt模板(.j2)
+- [ ] 在Settings中添加配置
+- [ ] 在AgentFactory中注册
+- [ ] 编写单元测试
+
+### Runner开发检查清单
+
+- [ ] 接受state和brain参数
+- [ ] 使用brain.node_execution上下文管理器
+- [ ] 通过brain.agent_factory创建Agent
+- [ ] 使用brain的保存方法
+- [ ] 返回状态更新字典
+- [ ] 不直接操作数据库
+- [ ] 不直接发送通知
+
+### Prompt开发检查清单
+
+- [ ] 包含7个标准部分
+- [ ] Role Definition清晰
+- [ ] 输出格式使用JSON Schema
+- [ ] 提供Few-shot示例
+- [ ] 约束和规则明确
+- [ ] 模板变量使用Jinja2语法
+- [ ] 测试模板渲染结果

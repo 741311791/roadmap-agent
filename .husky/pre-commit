@@ -1,0 +1,37 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+echo "🔍 Running pre-commit checks..."
+
+# 检查是否有后端 schema 变更
+BACKEND_CHANGES=$(git diff --cached --name-only | grep -E 'backend/app/(schemas|api|models)/' || true)
+
+if [ -n "$BACKEND_CHANGES" ]; then
+  echo ""
+  echo "⚠️  Backend schema changes detected:"
+  echo "$BACKEND_CHANGES"
+  echo ""
+  echo "🔄 Checking frontend-backend sync status..."
+  
+  # 运行同步检查
+  cd frontend-next && npm run check:schema-sync
+  
+  if [ $? -ne 0 ]; then
+    echo ""
+    echo "❌ Frontend types are out of sync!"
+    echo ""
+    echo "Please run one of the following commands to sync:"
+    echo ""
+    echo "  1. npm run sync:backend       # Full sync"
+    echo "  2. npm run generate:types     # Types only"
+    echo ""
+    echo "Then stage the generated files and commit again."
+    echo ""
+    exit 1
+  fi
+  
+  cd ..
+fi
+
+echo "✅ Pre-commit checks passed!"
+

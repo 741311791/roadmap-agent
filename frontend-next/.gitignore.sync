@@ -1,0 +1,32 @@
+# ============================================================
+# Frontend-Backend Sync Related Files
+# ============================================================
+
+# Temporary sync report (regenerated on each sync)
+.sync-report.md
+
+# Backup files created during sync
+.openapi-cache.backup.json
+
+# Test output logs
+/tmp/generate-output.log
+/tmp/sync-check-output.log
+
+# ============================================================
+# Generated Types (KEEP THESE COMMITTED)
+# ============================================================
+# NOTE: Do NOT ignore types/generated/ - these should be committed!
+# types/generated/
+
+# ============================================================
+# Cache Files (KEEP THESE COMMITTED)
+# ============================================================
+# NOTE: Do NOT ignore .openapi-cache.json - needed for change detection!
+# .openapi-cache.json
+
+# ============================================================
+# Statistics (KEEP THESE COMMITTED)
+# ============================================================
+# NOTE: Do NOT ignore .generation-stats.json - useful for tracking!
+# types/generated/.generation-stats.json
+

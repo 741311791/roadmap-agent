@@ -1,0 +1,110 @@
+name: Schema Sync Check (PR)
+
+# 轻量级检查：仅在 PR 时验证同步状态，不自动提交
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+    paths:
+      - 'backend/app/schemas/**'
+      - 'backend/app/api/**'
+      - 'backend/app/models/**'
+      - 'frontend-next/types/generated/**'
+
+jobs:
+  check-sync:
+    name: Check Frontend-Backend Sync
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend-next/package-lock.json
+      
+      - name: Install Frontend Dependencies
+        working-directory: frontend-next
+        run: npm ci
+      
+      - name: Check if backend changes exist
+        id: backend-changes
+        run: |
+          if git diff --name-only origin/${{ github.base_ref }}..HEAD | grep -E 'backend/app/(schemas|api|models)/'; then
+            echo "has-changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "has-changes=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Verify generated types are committed
+        if: steps.backend-changes.outputs.has-changes == 'true'
+        run: |
+          if git diff --name-only origin/${{ github.base_ref }}..HEAD | grep -q 'frontend-next/types/generated/'; then
+            echo "✅ Generated types have been updated"
+          else
+            echo "❌ Backend schemas changed but frontend types were not regenerated"
+            echo ""
+            echo "Please run the following command and commit the changes:"
+            echo ""
+            echo "  make sync"
+            echo ""
+            echo "Or in the frontend directory:"
+            echo ""
+            echo "  npm run generate:types"
+            echo "  git add types/generated/"
+            echo ""
+            exit 1
+          fi
+      
+      - name: Run type check
+        working-directory: frontend-next
+        run: npm run type-check
+      
+      - name: Add PR Comment
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## ⚠️ Frontend-Backend Sync Check Failed
+              
+              Backend schemas have been modified, but frontend types were not regenerated.
+              
+              ### How to fix:
+              
+              1. Ensure backend server is running:
+                 \`\`\`bash
+                 cd backend
+                 uvicorn app.main:app --reload
+                 \`\`\`
+              
+              2. Regenerate frontend types:
+                 \`\`\`bash
+                 make sync
+                 # or
+                 cd frontend-next && npm run generate:types
+                 \`\`\`
+              
+              3. Commit the generated types:
+                 \`\`\`bash
+                 git add frontend-next/types/generated/
+                 git add frontend-next/.openapi-cache.json
+                 git commit --amend --no-edit
+                 git push --force-with-lease
+                 \`\`\`
+              
+              ### Documentation
+              - [Sync Guide](../SYNC_QUICKSTART.md)
+              - [Full Documentation](../doc/20260111_前后端Schema自动同步方案.md)
+              `
+            })
+
