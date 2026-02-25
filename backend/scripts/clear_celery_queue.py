@@ -6,6 +6,7 @@
     cd backend
     uv run python scripts/clear_celery_queue.py
 """
+import subprocess
 import sys
 from pathlib import Path
 
@@ -17,11 +18,36 @@ from app.config.settings import settings
 import redis
 
 
+def kill_celery_workers():
+    """
+    终止所有 Celery Worker 进程，解决僵尸 worker 抢占任务导致日志不显示的问题。
+    """
+    print("\n0️⃣ 终止所有 Celery Worker 进程...")
+    try:
+        result = subprocess.run(
+            ["pkill", "-f", "celery.*worker"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            print("   ✅ 已终止所有 Celery Worker 进程")
+        else:
+            # pkill 返回 1 表示没有匹配的进程
+            print("   ℹ️ 当前没有运行中的 Celery Worker")
+    except FileNotFoundError:
+        print("   ⚠️ pkill 命令不可用（非 Unix 系统）")
+    except Exception as e:
+        print(f"   ❌ 终止 Worker 失败: {e}")
+
+
 def clear_celery_queue():
     """清空 Celery 队列"""
     print("🧹 清空 Celery 队列")
     print("=" * 70)
-    
+
+    # 步骤0: 先终止所有僵尸 worker，避免多进程竞争导致任务被看不见的进程抢走
+    kill_celery_workers()
+
     # 方法1: 使用 Celery API 清空队列
     print("\n1️⃣ 使用 Celery API 清空队列...")
     try:
@@ -96,8 +122,8 @@ def clear_celery_queue():
     print("\n" + "=" * 70)
     print("✅ 清理完成")
     print("\n💡 提示:")
-    print("   - 如果 Worker 仍在运行,建议重启 Worker")
-    print("   - 如果要防止任务重新入队,考虑临时禁用 task_acks_late")
+    print("   - 已终止所有 Worker，请重新启动: ./scripts/start_worker_dev.sh 和 ./scripts/start_content_worker_dev.sh")
+    print("   - 如果要防止任务重新入队，考虑临时禁用 task_acks_late")
 
 
 if __name__ == "__main__":

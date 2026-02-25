@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Brain, Users, Sparkles, Target, BookOpen, MessageSquare, Zap, Clock, Lightbulb, RefreshCw, GraduationCap } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -15,6 +16,8 @@ import { motion } from 'framer-motion';
  * - 学习流程
  */
 export default function MethodologyPage() {
+  const t = useTranslations('methodologyPage');
+  
   return (
     <div className="bg-background">
       {/* 动态背景 */}
@@ -29,7 +32,7 @@ export default function MethodologyPage() {
             transition={{ duration: 0.6, delay: 0.1 }}
             className="text-5xl md:text-6xl font-serif font-bold text-foreground mb-6"
           >
-            The Fast Learning Method
+            {t('title')}
           </motion.h1>
           
           <motion.p
@@ -38,8 +41,7 @@ export default function MethodologyPage() {
             transition={{ duration: 0.6, delay: 0.2 }}
             className="text-xl text-muted-foreground leading-relaxed max-w-3xl"
           >
-            Master new skills in record time through AI-powered personalization, 
-            practice-first learning, and adaptive feedback loops.
+            {t('subtitle')}
           </motion.p>
         </div>
       </section>
@@ -56,40 +58,39 @@ export default function MethodologyPage() {
           >
             <div className="inline-flex items-center gap-2 px-4 py-2 bg-sage-50 border border-sage-200 rounded-full text-sage-700 text-sm font-medium mb-6">
               <Zap className="w-4 h-4" />
-              Core Philosophy
+              {t('corePhilosophy')}
             </div>
             <h2 className="text-3xl font-serif font-bold text-foreground mb-4">
-              Learn Faster by Doing, Not Just Watching
+              {t('learnByDoing')}
             </h2>
             <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-              Traditional learning is passive and slow. We flip the script with active, 
-              project-based learning that gets you building from day one.
+              {t('philosophyDesc')}
             </p>
           </motion.div>
 
           <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
             <PhilosophyCard
               icon={Target}
-              title="Identify Gaps"
-              description="AI analyzes your goals and current knowledge to pinpoint exactly what you need to learn."
+              title={t('identifyGaps')}
+              description={t('identifyGapsDesc')}
               delay={0}
             />
             <PhilosophyCard
               icon={BookOpen}
-              title="Structured Path"
-              description="Stage-Module-Concept hierarchy creates clear, achievable milestones."
+              title={t('structuredPath')}
+              description={t('structuredPathDesc')}
               delay={0.1}
             />
             <PhilosophyCard
               icon={RefreshCw}
-              title="Learn by Doing"
-              description="Every concept ties to practical exercises and real-world projects."
+              title={t('learnByDoingTitle')}
+              description={t('learnByDoingDesc')}
               delay={0.2}
             />
             <PhilosophyCard
               icon={Lightbulb}
-              title="Iterate & Improve"
-              description="Make mistakes, get feedback, correct course. Repeat until mastery."
+              title={t('iterateImprove')}
+              description={t('iterateImproveDesc')}
               delay={0.3}
             />
           </div>
@@ -107,36 +108,36 @@ export default function MethodologyPage() {
             className="text-center mb-16"
           >
             <h2 className="text-3xl font-serif font-bold text-foreground mb-4">
-              Two Powerful Learning Modes
+              {t('twoModes')}
             </h2>
             <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-              Choose the mode that fits your learning style, or switch between them as needed.
+              {t('twoModesDesc')}
             </p>
           </motion.div>
 
           <div className="grid md:grid-cols-2 gap-8">
             <LearningModeCard
-              title="Companion Mode"
-              subtitle="Learn with AI by your side"
-              description="Your AI companion automatically detects what you're studying and provides real-life analogies to demystify complex concepts. Ask anything—it explains in plain language."
+              title={t('companionMode')}
+              subtitle={t('companionSubtitle')}
+              description={t('companionDesc')}
               features={[
-                "Context-aware explanations",
-                "Real-life analogies that stick",
-                "Modify roadmap structure on request",
-                "Adjust tutorial content and quizzes"
+                t('companionFeature1'),
+                t('companionFeature2'),
+                t('companionFeature3'),
+                t('companionFeature4')
               ]}
               icon={Users}
               delay={0}
             />
             <LearningModeCard
-              title="Guided Mode"
-              subtitle="Learn through practice"
-              description="Your AI guide presents practical challenges and lets you attempt them. Make mistakes—it's part of the process. The guide patiently corrects errors and repeats until mastery."
+              title={t('guidedMode')}
+              subtitle={t('guidedSubtitle')}
+              description={t('guidedDesc')}
               features={[
-                "Practice-first approach",
-                "Immediate feedback on attempts",
-                "Patient error correction",
-                "Repeat until confident"
+                t('guidedFeature1'),
+                t('guidedFeature2'),
+                t('guidedFeature3'),
+                t('guidedFeature4')
               ]}
               icon={GraduationCap}
               delay={0.1}
@@ -156,54 +157,54 @@ export default function MethodologyPage() {
             className="text-center mb-16"
           >
             <h2 className="text-3xl font-serif font-bold text-foreground mb-4">
-              Powered by Multi-Agent AI
+              {t('multiAgent')}
             </h2>
             <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-              Six specialized AI agents collaborate to create and deliver your personalized learning experience.
+              {t('multiAgentDesc')}
             </p>
           </motion.div>
 
           <div className="grid md:grid-cols-2 gap-6">
             <AgentCard
               icon={Brain}
-              name="Intent Analyzer"
+              name={t('intentAnalyzer')}
               role="A1"
-              description="Analyzes your learning goals, extracts key technologies, and creates a difficulty profile based on your background."
+              description={t('intentAnalyzerDesc')}
               delay={0}
             />
             <AgentCard
               icon={Target}
-              name="Curriculum Architect"
+              name={t('curriculumArchitect')}
               role="A2"
-              description="Designs a structured roadmap with stages, modules, and concepts. Ensures logical progression and prerequisites."
+              description={t('curriculumArchitectDesc')}
               delay={0.1}
             />
             <AgentCard
               icon={BookOpen}
-              name="Tutorial Generator"
+              name={t('tutorialGenerator')}
               role="A4"
-              description="Creates in-depth tutorials with theory, examples, and exercises tailored to your learning preferences."
+              description={t('tutorialGeneratorDesc')}
               delay={0.2}
             />
             <AgentCard
               icon={Users}
-              name="Resource Recommender"
+              name={t('resourceRecommender')}
               role="A5"
-              description="Finds and curates the best external resources—articles, videos, courses, and tools—for each topic."
+              description={t('resourceRecommenderDesc')}
               delay={0.3}
             />
             <AgentCard
               icon={Sparkles}
-              name="Quiz Generator"
+              name={t('quizGenerator')}
               role="A6"
-              description="Creates adaptive quizzes with various question types to test understanding and reinforce learning."
+              description={t('quizGeneratorDesc')}
               delay={0.4}
             />
             <AgentCard
               icon={MessageSquare}
-              name="Modification Agents"
+              name={t('modificationAgents')}
               role="A7+"
-              description="Allow you to modify tutorials, resources, and quizzes through natural language conversation."
+              description={t('modificationAgentsDesc')}
               delay={0.5}
             />
           </div>
@@ -221,36 +222,36 @@ export default function MethodologyPage() {
             className="text-center mb-16"
           >
             <h2 className="text-3xl font-serif font-bold text-foreground mb-4">
-              Your Journey to Mastery
+              {t('yourJourney')}
             </h2>
             <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-              Four simple steps from beginner to expert
+              {t('journeyDesc')}
             </p>
           </motion.div>
 
           <div className="space-y-8">
             <ProcessStep
               number={1}
-              title="Share Your Goals"
-              description="Tell us what you want to learn, your current level, available time, and preferred learning style. Our Intent Analyzer extracts the key insights."
+              title={t('step1Title')}
+              description={t('step1Desc')}
               delay={0}
             />
             <ProcessStep
               number={2}
-              title="Receive Your Personalized Roadmap"
-              description="The Curriculum Architect creates a structured path with clear stages, modules, and concepts. Each element builds on what came before."
+              title={t('step2Title')}
+              description={t('step2Desc')}
               delay={0.1}
             />
             <ProcessStep
               number={3}
-              title="Learn, Practice, and Build"
-              description="Work through AI-generated tutorials, complete adaptive quizzes, and explore curated resources. Choose Companion or Guided mode based on your needs."
+              title={t('step3Title')}
+              description={t('step3Desc')}
               delay={0.2}
             />
             <ProcessStep
               number={4}
-              title="Adapt and Master"
-              description="Chat with AI to modify content, get explanations, or adjust difficulty. Track your progress and celebrate milestones as you achieve mastery."
+              title={t('step4Title')}
+              description={t('step4Desc')}
               delay={0.3}
             />
           </div>
@@ -269,14 +270,14 @@ export default function MethodologyPage() {
           className="max-w-4xl mx-auto text-center"
         >
           <h2 className="text-4xl font-serif font-bold text-white mb-6">
-            Ready to Experience Fast Learning?
+            {t('readyToExperience')}
           </h2>
           <p className="text-xl text-sage-100 mb-8 max-w-2xl mx-auto">
-            Start your personalized learning journey today.
+            {t('startJourney')}
           </p>
           <Link href="/new">
             <Button size="lg" className="bg-white text-sage-700 hover:bg-sage-50 font-semibold px-8">
-              Create Your Roadmap
+              {t('createRoadmap')}
             </Button>
           </Link>
         </motion.div>

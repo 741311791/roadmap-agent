@@ -26,6 +26,7 @@ from app.models.database import (
     RoadmapMetadata, ConceptMetadata,
 )
 from app.tools.tool_helpers import tool_registry
+from app.services.shared.notification_service import notification_service
 from urllib.parse import unquote
 
 logger = structlog.get_logger()
@@ -103,6 +104,8 @@ class ContentService:
         concept_id: str,
         content_type: str,
         request: ConceptRetryRequest,
+        task_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> ConceptRetryResponse:
         """
         统一的内容重试逻辑（模板方法）
@@ -120,6 +123,8 @@ class ContentService:
             concept_id: 概念ID
             content_type: 内容类型 (tutorial/resources/quiz)
             request: 重试请求
+            task_id: 关联的任务 ID（用于 WebSocket 通知，可选）
+            user_id: 用户 ID（用于从 UserProfile 读取语言偏好，可选）
             
         Returns:
             重试响应
@@ -149,7 +154,47 @@ class ContentService:
                 message=f"Concept {concept_id} not found",
             )
         
-        # ===== 步骤2: 更新状态为generating =====
+        concept_name: str = concept.get("name", concept_id)
+        
+        # 若前端未传入 preferences，从 UserProfile + framework_data 中自动构建，
+        # 确保语言等关键设置与用户在路线图生成时的偏好一致。
+        # 优先级：UserProfile.primary_language > intent_analysis.language_preferences（目前为 null）
+        if request.preferences is None:
+            lang_prefs: dict = {}
+
+            # 优先从 UserProfile 读取语言偏好（最权威、最新的用户设置）
+            if user_id:
+                from app.crud.crud_tech_assessment import get_user_profile_crud
+                user_profile_crud = get_user_profile_crud()
+                user_profile = await user_profile_crud.get_by_user_id(session, user_id)
+                if user_profile:
+                    lang_prefs = {
+                        "primary_language": user_profile.primary_language or "zh",
+                        "secondary_language": user_profile.secondary_language,
+                    }
+                    logger.debug(
+                        "language_prefs_loaded_from_user_profile",
+                        user_id=user_id,
+                        primary_language=lang_prefs["primary_language"],
+                        secondary_language=lang_prefs["secondary_language"],
+                    )
+
+            # Fallback：尝试从 intent_analysis.language_preferences 读取（目前大多为 null）
+            if not lang_prefs:
+                from app.crud.crud_intent_analysis import get_intent_analysis_crud
+                intent_crud = get_intent_analysis_crud()
+                intent_analysis = await intent_crud.get_by_roadmap_id(session, roadmap_id)
+                if intent_analysis and intent_analysis.language_preferences:
+                    lang_prefs = intent_analysis.language_preferences
+
+            request = request.model_copy(update={
+                "preferences": self._build_preferences_from_framework(
+                    roadmap_metadata.framework_data,
+                    lang_prefs or None,
+                )
+            })
+        
+        # ===== 步骤2: 更新状态为generating，发布开始通知 =====
         await self.concept_service.update_concept_status(
             session,
             roadmap_id,
@@ -158,8 +203,21 @@ class ContentService:
             "generating",
         )
         
+        if task_id:
+            await notification_service.publish_concept_start(
+                task_id=task_id,
+                concept_id=concept_id,
+                concept_name=concept_name,
+                current=1,
+                total=1,
+                content_type=content_type,
+            )
+        
+        # ===== 步骤3: 调用Agent生成内容（LLM 调用，不占用事务）=====
+        error_for_status: Exception | None = None
+        result: dict | None = None
+
         try:
-            # ===== 步骤3: 调用Agent生成内容 =====
             if content_type == "tutorial":
                 result = await self._generate_tutorial(concept, context, request)
             elif content_type == "resources":
@@ -168,13 +226,39 @@ class ContentService:
                 result = await self._generate_quiz(concept, context, request)
             else:
                 raise ValueError(f"Unknown content type: {content_type}")
-            
-            # ===== 步骤4: 保存元数据 =====
-            await self._save_content_metadata(
-                session, roadmap_id, concept_id, content_type, result
+        except Exception as e:
+            logger.error(
+                "content_retry_agent_failed",
+                roadmap_id=roadmap_id,
+                concept_id=concept_id,
+                content_type=content_type,
+                error=str(e),
+                exc_info=True,
             )
-            
-            # ===== 步骤5: 更新状态为completed =====
+            error_for_status = e
+
+        if result is not None:
+            # ===== 步骤4: 保存元数据（用 savepoint 隔离 DB 写入错误）=====
+            # 使用 begin_nested()（savepoint）：若 INSERT 失败只回滚保存点，
+            # 外层事务仍然有效，步骤5/6 的 update_concept_status 才能正常执行。
+            try:
+                async with session.begin_nested():
+                    await self._save_content_metadata(
+                        session, roadmap_id, concept_id, content_type, result
+                    )
+            except Exception as e:
+                logger.error(
+                    "content_retry_save_failed",
+                    roadmap_id=roadmap_id,
+                    concept_id=concept_id,
+                    content_type=content_type,
+                    error=str(e),
+                    exc_info=True,
+                )
+                error_for_status = e
+
+        if error_for_status is None:
+            # ===== 步骤5: 更新状态为completed，发布完成通知 =====
             await self.concept_service.update_concept_status(
                 session,
                 roadmap_id,
@@ -183,13 +267,35 @@ class ContentService:
                 "completed",
                 result,
             )
-            
             logger.info(
                 "content_retry_success",
                 roadmap_id=roadmap_id,
                 concept_id=concept_id,
                 content_type=content_type,
             )
+            
+            if task_id:
+                # 推送单项内容完成通知
+                await notification_service.publish_concept_complete(
+                    task_id=task_id,
+                    concept_id=concept_id,
+                    concept_name=concept_name,
+                    data=result,
+                    content_type=content_type,
+                )
+                
+                # 检查三项内容是否全部完成，若是则推送 all_content_complete 通知
+                concept_meta = await self.concept_crud.get_by_concept_id(session, concept_id)
+                if (concept_meta and
+                    concept_meta.tutorial_status == "completed" and
+                    concept_meta.resources_status == "completed" and
+                    concept_meta.quiz_status == "completed"):
+                    await notification_service.publish_concept_all_content_complete(
+                        task_id=task_id,
+                        concept_id=concept_id,
+                        concept_name=concept_name,
+                        data=result,
+                    )
             
             return ConceptRetryResponse(
                 success=True,
@@ -198,32 +304,31 @@ class ContentService:
                 message=f"{content_type.capitalize()} regenerated successfully",
                 data=result,
             )
-            
-        except Exception as e:
-            # ===== 步骤6: 错误处理 =====
-            logger.error(
-                "content_retry_failed",
-                roadmap_id=roadmap_id,
-                concept_id=concept_id,
-                content_type=content_type,
-                error=str(e),
-                exc_info=True,
-            )
-            
+        else:
+            # ===== 步骤6: 错误处理（外层事务仍有效），发布失败通知 =====
             await self.concept_service.update_concept_status(
                 session,
                 roadmap_id,
                 concept_id,
                 content_type,
                 "failed",
-                {"error": str(e)},
+                {"error": str(error_for_status)},
             )
+            
+            if task_id:
+                await notification_service.publish_concept_failed(
+                    task_id=task_id,
+                    concept_id=concept_id,
+                    concept_name=concept_name,
+                    error=str(error_for_status),
+                    content_type=content_type,
+                )
             
             return ConceptRetryResponse(
                 success=False,
                 concept_id=concept_id,
                 content_type=content_type,
-                message=f"Failed to regenerate {content_type}: {str(e)}",
+                message=f"Failed to regenerate {content_type}: {str(error_for_status)}",
             )
     
     # ===== 私有方法：Agent调用（策略实现）=====
@@ -253,10 +358,10 @@ class ContentService:
             user_preferences=request.preferences,
         )
         
-        # 调用Agent
-        result = await self.tutorial_agent.execute(input_data.model_dump(mode='json'))
+        # 直接传入 Pydantic 对象，execute 方法通过属性访问 input_data.concept
+        result = await self.tutorial_agent.execute(input_data)
         
-        return result
+        return result.model_dump()
     
     async def _generate_resources(
         self, 
@@ -283,10 +388,9 @@ class ContentService:
             user_preferences=request.preferences,
         )
         
-        # 调用Agent
-        result = await self.resource_agent.execute(input_data.model_dump(mode='json'))
+        result = await self.resource_agent.execute(input_data)
         
-        return result
+        return result.model_dump()
     
     async def _generate_quiz(
         self, 
@@ -313,10 +417,9 @@ class ContentService:
             user_preferences=request.preferences,
         )
         
-        # 调用Agent
-        result = await self.quiz_agent.execute(input_data.model_dump(mode='json'))
+        result = await self.quiz_agent.execute(input_data)
         
-        return result
+        return result.model_dump()
     
     # ===== 私有方法：保存元数据 =====
     
@@ -339,28 +442,42 @@ class ContentService:
             result: 生成结果
         """
         if content_type == "tutorial":
+            # TutorialMetadata 要求 title/summary/content_url/estimated_completion_time
+            # 这些字段来自 TutorialGenerationOutput.model_dump()
             await self.tutorial_crud.create(session, obj_in={
-                "roadmap_id": roadmap_id,
-                "concept_id": concept_id,
                 "tutorial_id": result.get("tutorial_id"),
-                "content": result,
-                "version": result.get("content_version", 1),
+                "concept_id": concept_id,
+                "roadmap_id": roadmap_id,
+                "title": result.get("title"),
+                "summary": result.get("summary"),
+                "content_url": result.get("content_url"),
+                "content_status": "completed",
+                "content_version": result.get("content_version", 1),
+                "is_latest": True,
+                "estimated_completion_time": result.get("estimated_completion_time", 0),
             })
         elif content_type == "resources":
+            # ResourceRecommendationMetadata 需要 id/resources/resources_count/search_queries_used
             await self.resource_crud.create(session, obj_in={
-                "roadmap_id": roadmap_id,
+                "id": result.get("id"),
                 "concept_id": concept_id,
-                "resource_id": result.get("id"),
-                "content": result,
-                "version": 1,
+                "roadmap_id": roadmap_id,
+                "resources": result.get("resources", []),
+                "resources_count": len(result.get("resources", [])),
+                "search_queries_used": result.get("search_queries_used", []),
             })
         elif content_type == "quiz":
+            # QuizMetadata 需要 quiz_id/questions/total_questions 及难度分布
+            questions = result.get("questions", [])
             await self.quiz_crud.create(session, obj_in={
-                "roadmap_id": roadmap_id,
-                "concept_id": concept_id,
                 "quiz_id": result.get("quiz_id"),
-                "content": result,
-                "version": 1,
+                "concept_id": concept_id,
+                "roadmap_id": roadmap_id,
+                "questions": questions,
+                "total_questions": result.get("total_questions", len(questions)),
+                "easy_count": sum(1 for q in questions if q.get("difficulty") == "easy"),
+                "medium_count": sum(1 for q in questions if q.get("difficulty") == "medium"),
+                "hard_count": sum(1 for q in questions if q.get("difficulty") == "hard"),
             })
         
         logger.info(
@@ -370,6 +487,39 @@ class ContentService:
             content_type=content_type,
         )
     
+    @staticmethod
+    def _build_preferences_from_framework(
+        framework_data: dict,
+        language_preferences: Optional[dict] = None,
+    ) -> LearningPreferences:
+        """
+        从路线图 framework_data 和 intent_analysis 中提取学习偏好
+
+        前端调用 regenerate 时不传 preferences，由此方法自动构建，确保生成内容
+        与原始路线图保持一致。
+
+        重要：语言偏好（primary_language、secondary_language）必须从
+        intent_analysis.language_preferences 中读取，因为 RoadmapFramework
+        模型不包含这些字段，直接从 framework_data 读取只会得到默认值 "zh"。
+
+        Args:
+            framework_data: RoadmapMetadata.framework_data 字典（RoadmapFramework 序列化）
+            language_preferences: IntentAnalysisMetadata.language_preferences 字典（可选）
+
+        Returns:
+            LearningPreferences 对象
+        """
+        lang_prefs = language_preferences or {}
+        return LearningPreferences(
+            learning_goal=framework_data.get("learning_goal", ""),
+            available_hours_per_week=framework_data.get("available_hours_per_week", 10),
+            motivation="content regeneration",
+            current_level=framework_data.get("current_level", "intermediate"),
+            career_background=framework_data.get("career_background", ""),
+            primary_language=lang_prefs.get("primary_language", "zh"),
+            secondary_language=lang_prefs.get("secondary_language"),
+        )
+
     # ===== 异步任务调度（Celery）=====
     
     async def retry_content_async(

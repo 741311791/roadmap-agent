@@ -212,11 +212,18 @@ class UserService:
         from sqlalchemy import func, outerjoin
         
         # 批量查询任务信息
+        # 排除 cover_image 类型的任务：封面图生成任务不应影响路线图的展示状态，
+        # 路线图状态仅由 creation / retry 类任务决定
         task_result = await session.execute(
             select(RoadmapTask)
-            .where(RoadmapTask.roadmap_id.in_(roadmap_ids))
+            .where(
+                RoadmapTask.roadmap_id.in_(roadmap_ids),
+                RoadmapTask.task_type != "cover_image",
+            )
+            .order_by(RoadmapTask.created_at.asc())
         )
         tasks = task_result.scalars().all()
+        # 相同 roadmap_id 可能存在多条任务（如重试），取最新的一条（列表已按 asc 排序，后写入覆盖）
         task_dict = {task.roadmap_id: task for task in tasks}
         
         # 批量查询进度（使用 GROUP BY 聚合）

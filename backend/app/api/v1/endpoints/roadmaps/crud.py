@@ -30,6 +30,8 @@ from app.schemas.roadmap import (
     RoadmapPermanentDeleteResponse,
     RoadmapStatusResponse,
     RoadmapStatusQuickResponse,
+    StaleConceptItem,
+    ActiveTaskItem,
 )
 
 router = APIRouter(prefix="/roadmaps", tags=["roadmap-crud"])
@@ -149,16 +151,21 @@ async def check_roadmap_status_quick(
     if result is None:
         raise errors.NotFoundError(msg="路线图不存在")
     
-    # 转换为Schema格式
-    zombie_concepts = [concept["concept_id"] for concept in result.get("stale_concepts", [])]
+    stale_concepts = [
+        StaleConceptItem(**item)
+        for item in result.get("stale_concepts", [])
+    ]
+    active_tasks = [
+        ActiveTaskItem(**item)
+        for item in result.get("active_tasks", [])
+    ]
     
     return response_base.success(data=RoadmapStatusQuickResponse(
         roadmap_id=roadmap_id,
-        status=result.get("status", "unknown"),
         has_active_task=result.get("has_active_task", False),
-        active_task_id=result["active_tasks"][0]["task_id"] if result.get("active_tasks") else None,
-        zombie_concepts=zombie_concepts if zombie_concepts else None,
-        zombie_count=len(zombie_concepts),
+        active_tasks=active_tasks,
+        stale_concepts=stale_concepts,
+        zombie_count=len(stale_concepts),
     ))
 
 

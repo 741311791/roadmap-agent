@@ -1,0 +1,52 @@
+{
+  "servers": [
+    {
+      "name": "filesystem",
+      "description": "File system operations (read, write, list files)",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem"],
+      "enabled": false,
+      "env": null
+    },
+    {
+      "name": "github",
+      "description": "GitHub API integration (repositories, issues, pull requests)",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "enabled": false,
+      "env": {
+        "GITHUB_TOKEN": "your_github_token_here"
+      }
+    },
+    {
+      "name": "postgres",
+      "description": "PostgreSQL database operations",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres"],
+      "enabled": false,
+      "env": {
+        "POSTGRES_CONNECTION_STRING": "postgresql://user:password@localhost:5432/dbname"
+      }
+    },
+    {
+      "name": "puppeteer",
+      "description": "Browser automation with Puppeteer",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-puppeteer"],
+      "enabled": false,
+      "env": null
+    },
+    {
+      "name": "slack",
+      "description": "Slack workspace integration",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-slack"],
+      "enabled": false,
+      "env": {
+        "SLACK_BOT_TOKEN": "xoxb-your-bot-token",
+        "SLACK_TEAM_ID": "T1234567890"
+      }
+    }
+  ]
+}
+

@@ -114,7 +114,6 @@ from app.schemas.cover_image import (
     CoverImageStatusResponse,
     CoverImageResponse,
     GenerateCoverImageRequest,
-    BatchGenerateRequest,
     BatchGetCoverImagesRequest,
     BatchCoverImageResponse,
 )
@@ -235,7 +234,6 @@ __all__ = [
     "CoverImageStatusResponse",
     "CoverImageResponse",
     "GenerateCoverImageRequest",
-    "BatchGenerateRequest",
     "BatchGetCoverImagesRequest",
     "BatchCoverImageResponse",
     # Content

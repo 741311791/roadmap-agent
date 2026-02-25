@@ -323,18 +323,25 @@ class TutorialGeneratorAgent(BaseAgent):
         
         if is_dev_scenario:
             scenario_reminder = """
-**重要提醒**：
-1. 这是开发场景，必须使用工具查询官方文档（禁止臆造）
-2. 使用 resolve-library-id + query-docs 获取最新或指定版本的官方文档
-3. 确保代码示例符合查询到的版本要求
-4. **关键**：在收集完官方文档信息后，必须生成最终的 JSON 格式教程
-5. **最终输出格式**：纯 JSON 对象，包含 markdown_content 和 metadata 字段
-6. **禁止**：不要把工具调用信息作为最终答案返回
+**场景说明**：
+这是开发场景（涉及技术栈），你可以选择性使用工具查询官方文档。
 
-**执行流程**：
-- Step 1: 调用工具查询官方文档
-- Step 2: 分析和整理收集到的信息
-- Step 3: **必须**生成完整的 JSON 格式教程内容
+**决策建议**：
+1. **优先使用你的知识库**：如果你对这个概念有充分且准确的了解，直接生成教程
+2. **按需使用工具**：只在以下情况调用工具：
+   - 知识点非常新（可能超出你的训练数据）
+   - 需要特定版本的API说明
+   - 你的知识库不确定或有限
+   - 需要官方权威的最佳实践
+
+**工具使用**（如果需要）：
+- Step 1: 调用 `resolve-library-id` 获取库ID
+- Step 2: 调用 `query-docs` 查询官方文档
+- Step 3: 基于查询结果生成教程
+
+**最终输出**：
+- 格式：纯JSON对象（以`{`开始）
+- 内容：完整的教程（markdown_content + metadata）
 """
         else:
             scenario_reminder = """
@@ -361,32 +368,26 @@ class TutorialGeneratorAgent(BaseAgent):
 
 {scenario_reminder}
 
-**【关键】最终输出格式要求**：
-⚠️ 重要：当你完成所有工具调用和信息收集后，你的最终响应必须直接输出一个有效的 JSON 对象。
+**最终输出要求**：
 
-✅ 正确的最终响应格式（必须以左花括号开始）：
+当你完成信息收集后，输出JSON格式的教程内容。
+
+✅ **正确格式**（直接复制这个结构）：
 {{
-  "markdown_content": "完整的 Markdown 教程内容",
+  "markdown_content": "# 教程标题\n\n## 概述\n内容...\n\n## 核心概念\n内容...\n\n## 实践示例\n代码...\n\n## 总结\n总结...",
   "metadata": {{
     "title": "教程标题",
-    "summary": "简短摘要",
+    "summary": "简短摘要（不超过100字）",
     "estimated_completion_time": 90
   }}
 }}
 
-❌ 错误的最终响应：
-- ❌ 不要在JSON前添加任何文字（包括"Thought:"、"Action:"、"Final Answer:"等）
-- ❌ 不要使用代码块标记（不要用```json```包裹）
-- ❌ 不要只输出思考过程而不输出JSON
-- ❌ 不要输出工具调用信息作为最终答案
+**输出检查**：
+- 第一个字符是`{{`吗？
+- 包含`markdown_content`和`metadata`字段吗？
+- JSON格式有效吗（双引号、正确转义）？
 
-📌 执行步骤：
-1. 如果需要查询文档，先调用工具收集信息
-2. 信息收集完成后，**直接输出JSON对象**（以 {{ 开始，以 }} 结束）
-3. 确保 JSON 对象包含 markdown_content 和 metadata 两个字段
-4. **最后一步：检查你的输出是否以 {{ 开始** - 如果不是，请删除前面的文字
-
-请立即开始执行任务！
+现在开始执行！
 """
         
         # 5. 调用 BaseAgent ReAct 方法（自动管理工具调用循环）
@@ -403,12 +404,27 @@ class TutorialGeneratorAgent(BaseAgent):
             {"role": "user", "content": user_message}
         ]
         
+        # 根据概念复杂度动态设置最大迭代次数
+        max_iter = 7  # 基础值
+        if concept.difficulty in ["advanced", "expert"]:
+            max_iter = 10  # 复杂概念允许更多迭代
+        if concept.prerequisites and len(concept.prerequisites) > 3:
+            max_iter = min(max_iter + 2, 12)  # 前置概念多的允许更多，但不超过12
+        
+        logger.info(
+            "tutorial_generation_max_iterations_set",
+            concept_id=concept.concept_id,
+            max_iterations=max_iter,
+            difficulty=concept.difficulty,
+            prerequisites_count=len(concept.prerequisites) if concept.prerequisites else 0,
+        )
+        
         # 使用BaseAgent的ReAct方法
         response = await self._call_llm(
             messages=messages,
             tools=tools if tools else None,
             use_react=True if tools else False,
-            max_iterations=20,  # 允许更多轮次的工具调用
+            max_iterations=max_iter,
         )
         
         # 6. 提取最终输出
@@ -475,6 +491,51 @@ class TutorialGeneratorAgent(BaseAgent):
     # 辅助方法（保留旧版本逻辑）
     # ============================================================
     
+    @staticmethod
+    def _sanitize_json_control_chars(json_str: str) -> str:
+        """
+        转义 JSON 字符串值内的裸控制字符
+
+        LLM 有时会在 markdown_content 等字段中直接输出实际的换行符（0x0A）、
+        制表符（0x09）等控制字符，而 JSON 规范要求这些字符必须以 \\n、\\t 形式转义。
+        此方法遍历字符串，仅对处于 JSON 字符串值内部（引号之间）的控制字符进行转义，
+        不影响 JSON 结构字符。
+
+        Args:
+            json_str: 可能含裸控制字符的 JSON 字符串
+
+        Returns:
+            修复后的 JSON 字符串
+        """
+        _ESCAPE_MAP = {
+            '\n': '\\n',
+            '\r': '\\r',
+            '\t': '\\t',
+            '\b': '\\b',
+            '\f': '\\f',
+        }
+        result: list[str] = []
+        in_string = False
+        escaped = False
+
+        for ch in json_str:
+            if escaped:
+                result.append(ch)
+                escaped = False
+            elif ch == '\\' and in_string:
+                result.append(ch)
+                escaped = True
+            elif ch == '"':
+                result.append(ch)
+                in_string = not in_string
+            elif in_string and ord(ch) < 0x20:
+                # 字符串值内的裸控制字符，转义为 JSON 合法形式
+                result.append(_ESCAPE_MAP.get(ch, f'\\u{ord(ch):04x}'))
+            else:
+                result.append(ch)
+
+        return ''.join(result)
+
     def _extract_json_object(self, content: str, concept_id: str) -> str | None:
         """
         从文本中提取JSON对象（使用正则表达式的健壮策略）
@@ -712,11 +773,14 @@ JSON格式示例：
                 f"Preview: {content[:200]}"
             )
         
-        # 解析 JSON
+        # 解析 JSON（含三级容错）
+        # 第一级：直接解析
+        output = None
+        first_error: json.JSONDecodeError | None = None
         try:
             output = json.loads(json_content)
         except json.JSONDecodeError as e:
-            # 详细记录JSON解析失败的信息
+            first_error = e
             logger.warning(
                 "tutorial_json_parse_failed_attempt_extraction",
                 concept_id=concept.concept_id,
@@ -725,49 +789,60 @@ JSON格式示例：
                 error_col=e.colno,
                 error_pos=e.pos,
                 json_content_length=len(json_content),
-                json_content_preview=json_content[:500],  # 记录更多内容以便诊断
-                json_content_first_100_chars=repr(json_content[:100]),  # 使用repr显示转义字符
+                json_content_preview=json_content[:500],
+                json_content_first_100_chars=repr(json_content[:100]),
             )
-            
-            # 最后的兜底策略：使用正则表达式提取JSON
+
+        # 第二级：转义 JSON 字符串值内的裸控制字符后重试
+        # 原因：LLM 有时在 markdown_content 中输出实际的 \n、\t 等控制字符，
+        # 而非 JSON 规范要求的 \\n、\\t 转义序列，导致 json.loads 失败。
+        if output is None:
+            sanitized = self._sanitize_json_control_chars(json_content)
+            if sanitized != json_content:
+                try:
+                    output = json.loads(sanitized)
+                    logger.info(
+                        "tutorial_json_parsed_after_control_char_sanitize",
+                        concept_id=concept.concept_id,
+                        message="Parsed JSON successfully after sanitizing control characters",
+                    )
+                except json.JSONDecodeError:
+                    pass  # 继续尝试第三级
+
+        # 第三级：正则提取兜底
+        if output is None:
             logger.info(
                 "tutorial_attempting_regex_extraction",
                 concept_id=concept.concept_id,
-                message="Attempting to extract JSON using regex"
+                message="Attempting to extract JSON using regex",
             )
-            
             extracted_json = self._extract_json_object(content, concept.concept_id)
-            
             if extracted_json:
                 try:
                     output = json.loads(extracted_json)
                     logger.info(
                         "tutorial_regex_extraction_success",
                         concept_id=concept.concept_id,
-                        message="Successfully extracted and parsed JSON using regex"
+                        message="Successfully extracted and parsed JSON using regex",
                     )
                 except json.JSONDecodeError as regex_error:
                     logger.error(
                         "tutorial_regex_extraction_failed",
                         concept_id=concept.concept_id,
-                        regex_error=str(regex_error)
+                        regex_error=str(regex_error),
                     )
-                    raise ValueError(
-                        f"Failed to parse JSON for concept {concept.concept_id} even after regex extraction. "
-                        f"Original error: {str(e)} at line {e.lineno}, column {e.colno}. "
-                        f"Content preview (first 500 chars): {json_content[:500]}"
-                    ) from e
-            else:
-                logger.error(
-                    "tutorial_no_json_found",
-                    concept_id=concept.concept_id,
-                    message="Could not find valid JSON object in content"
-                )
-                raise ValueError(
-                    f"Failed to parse JSON for concept {concept.concept_id}. "
-                    f"Error: {str(e)} at line {e.lineno}, column {e.colno}. "
-                    f"Content preview (first 500 chars): {json_content[:500]}"
-                ) from e
+
+        if output is None:
+            logger.error(
+                "tutorial_no_json_found",
+                concept_id=concept.concept_id,
+                message="Could not find valid JSON object in content",
+            )
+            raise ValueError(
+                f"Failed to parse JSON for concept {concept.concept_id}. "
+                f"Error: {str(first_error)} at line {first_error.lineno}, column {first_error.colno}. "
+                f"Content preview (first 500 chars): {json_content[:500]}"
+            ) from first_error
         
         # 类型检查：必须是字典
         if not isinstance(output, dict):

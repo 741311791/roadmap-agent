@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { EmptyState } from '@/components/common/empty-state';
@@ -19,6 +20,7 @@ type ViewMode = 'grid' | 'list';
  * 展示精选的学习路线图，帮助用户发现优质内容
  */
 export default function ExplorePage() {
+  const t = useTranslations('explore');
   const [isLoading, setIsLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [currentPage, setCurrentPage] = useState(1);
@@ -82,7 +84,7 @@ export default function ExplorePage() {
           href="/home"
           className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-6 transition-colors"
         >
-          <ChevronLeft className="w-4 h-4" /> Back to Home
+          <ChevronLeft className="w-4 h-4" /> {t('backToHome')}
         </Link>
 
         {/* Header */}
@@ -93,10 +95,10 @@ export default function ExplorePage() {
             </div>
             <div>
               <h1 className="text-2xl font-serif font-bold text-foreground">
-                Explore Featured Roadmaps
+                {t('title')}
               </h1>
               <p className="text-sm text-muted-foreground">
-                {featuredRoadmaps.length} {featuredRoadmaps.length === 1 ? 'roadmap' : 'roadmaps'} available
+                {featuredRoadmaps.length} {featuredRoadmaps.length === 1 ? t('roadmap') : t('roadmaps')} {t('available')}
               </p>
             </div>
           </div>
@@ -135,16 +137,16 @@ export default function ExplorePage() {
           <div className="flex items-center justify-center py-20">
             <div className="text-center">
               <div className="w-16 h-16 border-4 border-sage-200 border-t-sage-600 rounded-full animate-spin mx-auto mb-4" />
-              <p className="text-sm text-muted-foreground">Loading featured roadmaps...</p>
+              <p className="text-sm text-muted-foreground">{t('loadingFeatured')}</p>
             </div>
           </div>
         ) : featuredRoadmaps.length === 0 ? (
           <EmptyState
             icon={TrendingUp}
-            title="No featured roadmaps available"
-            description="Check back later for curated learning paths."
+            title={t('noFeaturedAvailable')}
+            description={t('checkBackLater')}
             action={{
-              label: 'Go Back',
+              label: t('goBack'),
               onClick: () => {
                 window.location.href = '/home';
               },
@@ -180,13 +182,13 @@ export default function ExplorePage() {
                           {roadmap.title}
                         </h3>
                         <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                          <span>{roadmap.totalConcepts} concepts</span>
+                          <span>{roadmap.totalConcepts} {t('concepts')}</span>
                           <span>•</span>
                           <span>{roadmap.topic}</span>
                         </div>
                       </div>
                       <div className="text-xs text-sage-600 font-medium bg-sage-50 px-3 py-1 rounded-full">
-                        View
+                        {t('view')}
                       </div>
                     </div>
                   </Link>
@@ -203,7 +205,7 @@ export default function ExplorePage() {
                   onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
                   disabled={currentPage === 1}
                 >
-                  Previous
+                  {t('previous')}
                 </Button>
                 
                 <div className="flex items-center gap-1">
@@ -229,7 +231,7 @@ export default function ExplorePage() {
                   onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
                   disabled={currentPage === totalPages}
                 >
-                  Next
+                  {t('next')}
                 </Button>
               </div>
             )}

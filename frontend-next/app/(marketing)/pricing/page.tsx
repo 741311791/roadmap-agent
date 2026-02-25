@@ -1,18 +1,23 @@
+'use client';
+
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Check } from 'lucide-react';
 
 export default function PricingPage() {
+  const t = useTranslations('pricingPage');
+  
   return (
     <div className="bg-background bg-noise">
       {/* Hero */}
       <section className="pt-32 pb-16 px-6">
         <div className="max-w-4xl mx-auto text-center">
           <h1 className="text-5xl font-serif font-bold text-foreground mb-6">
-            Simple Pricing
+            {t('title')}
           </h1>
           <p className="text-xl text-muted-foreground">
-            Start learning for free. Upgrade when you need more.
+            {t('subtitle')}
           </p>
         </div>
       </section>
@@ -21,49 +26,50 @@ export default function PricingPage() {
       <section className="py-16 px-6">
         <div className="max-w-5xl mx-auto grid md:grid-cols-3 gap-8">
           <PricingCard
-            name="Free"
-            price="$0"
-            description="Perfect for getting started"
+            name={t('free')}
+            price={t('freePrice')}
+            description={t('freeDesc')}
             features={[
-              '1 active roadmap',
-              'Basic tutorials',
-              'Community support',
-              'Limited AI modifications',
+              t('freeFeature1'),
+              t('freeFeature2'),
+              t('freeFeature3'),
+              t('freeFeature4'),
             ]}
-            buttonText="Get Started"
+            buttonText={t('getStarted')}
             buttonVariant="outline"
           />
           <PricingCard
-            name="Pro"
-            price="$19"
-            period="/month"
-            description="For serious learners"
+            name={t('pro')}
+            price={t('proPrice')}
+            period={t('perMonth')}
+            description={t('proDesc')}
             features={[
-              'Unlimited roadmaps',
-              'Full tutorial access',
-              'Priority support',
-              'Unlimited AI modifications',
-              'Export to PDF/Markdown',
-              'Progress tracking',
+              t('proFeature1'),
+              t('proFeature2'),
+              t('proFeature3'),
+              t('proFeature4'),
+              t('proFeature5'),
+              t('proFeature6'),
             ]}
-            buttonText="Start Pro Trial"
+            buttonText={t('startProTrial')}
             buttonVariant="sage"
             highlighted
+            highlightedText={t('mostPopular')}
           />
           <PricingCard
-            name="Team"
-            price="$49"
-            period="/month"
-            description="For teams and organizations"
+            name={t('team')}
+            price={t('teamPrice')}
+            period={t('perMonth')}
+            description={t('teamDesc')}
             features={[
-              'Everything in Pro',
-              'Team collaboration',
-              'Admin dashboard',
-              'Custom branding',
-              'API access',
-              'Dedicated support',
+              t('teamFeature1'),
+              t('teamFeature2'),
+              t('teamFeature3'),
+              t('teamFeature4'),
+              t('teamFeature5'),
+              t('teamFeature6'),
             ]}
-            buttonText="Contact Sales"
+            buttonText={t('contactSales')}
             buttonVariant="outline"
           />
         </div>
@@ -73,20 +79,20 @@ export default function PricingPage() {
       <section className="py-16 px-6 bg-card">
         <div className="max-w-3xl mx-auto">
           <h2 className="text-3xl font-serif font-bold text-foreground mb-12 text-center">
-            Frequently Asked Questions
+            {t('faqTitle')}
           </h2>
           <div className="space-y-6">
             <FAQItem
-              question="Can I cancel my subscription anytime?"
-              answer="Yes, you can cancel your subscription at any time. You'll continue to have access until the end of your billing period."
+              question={t('faq1Q')}
+              answer={t('faq1A')}
             />
             <FAQItem
-              question="What happens to my roadmaps if I downgrade?"
-              answer="Your roadmaps are never deleted. On the free plan, you can view all existing roadmaps but can only have one active at a time."
+              question={t('faq2Q')}
+              answer={t('faq2A')}
             />
             <FAQItem
-              question="Is there a student discount?"
-              answer="Yes! Students with a valid .edu email get 50% off Pro plans. Contact support to apply."
+              question={t('faq3Q')}
+              answer={t('faq3A')}
             />
           </div>
         </div>
@@ -104,6 +110,7 @@ function PricingCard({
   buttonText,
   buttonVariant,
   highlighted,
+  highlightedText,
 }: {
   name: string;
   price: string;
@@ -113,6 +120,7 @@ function PricingCard({
   buttonText: string;
   buttonVariant: 'sage' | 'outline';
   highlighted?: boolean;
+  highlightedText?: string;
 }) {
   return (
     <div
@@ -122,9 +130,9 @@ function PricingCard({
           : 'border-border bg-background'
       }`}
     >
-      {highlighted && (
+      {highlighted && highlightedText && (
         <span className="inline-block px-3 py-1 text-xs font-medium bg-sage-600 text-white rounded-full mb-4">
-          Most Popular
+          {highlightedText}
         </span>
       )}
       <h3 className="text-xl font-serif font-semibold text-foreground">{name}</h3>
@@ -134,8 +142,8 @@ function PricingCard({
       </div>
       <p className="text-sm text-muted-foreground mb-6">{description}</p>
       <ul className="space-y-3 mb-8">
-        {features.map((feature) => (
-          <li key={feature} className="flex items-start gap-2">
+        {features.map((feature, index) => (
+          <li key={index} className="flex items-start gap-2">
             <Check className="w-5 h-5 text-sage-600 flex-shrink-0 mt-0.5" />
             <span className="text-sm text-foreground">{feature}</span>
           </li>

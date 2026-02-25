@@ -65,6 +65,13 @@ class User(SQLAlchemyBaseUserTable[str], Base):
     # 自定义字段
     username: Mapped[str] = mapped_column(String(100), nullable=False, default="", server_default="")
     
+    # 头像配置（react-nice-avatar 的 JSON 配置）
+    avatar_config: Mapped[Optional[dict]] = mapped_column(
+        JSON,
+        nullable=True,
+        default=None,
+    )
+    
     # 临时密码过期时间（用于内测邀请）
     password_expires_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=False),

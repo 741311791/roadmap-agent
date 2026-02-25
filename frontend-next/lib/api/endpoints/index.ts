@@ -97,6 +97,7 @@ export const getTutorialVersions = contentApi.getTutorialVersions;
 // Tasks API
 import { tasksApi } from './tasks';
 export const getRoadmapActiveTask = tasksApi.getRoadmapActiveTask;
+export const getRoadmapStatus = tasksApi.getById; // 别名：获取任务状态
 
 // Roadmaps API
 import { roadmapsApi } from './roadmaps';

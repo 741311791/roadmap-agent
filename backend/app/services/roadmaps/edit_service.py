@@ -42,8 +42,8 @@ class EditService:
         Returns:
             任务ID（如果找到）
         """
-        # 查询最新的完成任务
-        task = await self.task_crud.get_by_roadmap_id(session, roadmap_id)
+        # 查询最新的关联任务
+        task = await self.task_crud.get_latest_by_roadmap_id(session, roadmap_id)
         
         if task:
             logger.info("task_id_retrieved_by_roadmap", roadmap_id=roadmap_id, task_id=task.task_id)

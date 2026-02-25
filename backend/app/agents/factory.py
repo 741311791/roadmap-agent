@@ -136,6 +136,10 @@ class AgentFactory:
         - 学习偏好
         - roadmap_id
         
+        注入 ToolRegistry 后自动启用 web_search 两阶段模式：
+        - Phase 1：ReAct 循环（LLM 按规则决定是否搜索）
+        - Phase 2：结构化提取
+        
         Returns:
             IntentAnalyzerAgent 实例
         """
@@ -147,6 +151,7 @@ class AgentFactory:
             model_name=self.settings.ANALYZER_MODEL,
             base_url=self.settings.ANALYZER_BASE_URL,
             api_key=self.settings.ANALYZER_API_KEY,
+            tool_registry=self.tool_registry,
         )
     
     def create_curriculum_architect(self) -> CurriculumArchitectProtocol:

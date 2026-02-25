@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useEffect, useMemo } from 'react';
-import { cn } from '@/lib/utils';
+import { useTranslations } from 'next-intl';
+import { cn, stripRoadmapPrefix } from '@/lib/utils';
 import type { Stage, Module, Concept } from '@/types/generated/models';
 import { CheckCircle2, Circle, ChevronRight, ChevronDown, ChevronLeft, Sparkles } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -48,6 +49,7 @@ export function KnowledgeRail({
   className,
   generationProgress 
 }: KnowledgeRailProps) {
+  const t = useTranslations('roadmapDetail');
   const [expandedModules, setExpandedModules] = React.useState<Set<string>>(new Set());
 
   // 计算包含活跃概念的模块ID列表
@@ -91,7 +93,7 @@ export function KnowledgeRail({
   if (!roadmap || !roadmap.stages) {
     return (
       <div className={cn("h-full flex items-center justify-center text-muted-foreground", className)}>
-        <span className="font-serif">Loading...</span>
+        <span className="font-serif">{t('loading')}</span>
       </div>
     );
   }
@@ -113,7 +115,7 @@ export function KnowledgeRail({
               className="h-8 px-2 -ml-2 -mt-1 text-muted-foreground hover:text-foreground hover:bg-sage-50 gap-1 transition-colors"
             >
               <ChevronLeft className="w-4 h-4" />
-              <span className="text-xs">Dashboard</span>
+              <span className="text-xs">{t('dashboard')}</span>
             </Button>
           </Link>
 
@@ -131,10 +133,10 @@ export function KnowledgeRail({
             {/* Product Name */}
             <div className="flex-1 min-w-0">
               <h1 className="text-sm font-serif font-semibold text-foreground">
-                Fast Learning
+                {t('fastLearning')}
               </h1>
               <p className="text-xs text-muted-foreground truncate">
-                Your Learning Path
+                {t('yourLearningPath')}
               </p>
             </div>
           </div>
@@ -142,13 +144,13 @@ export function KnowledgeRail({
           {/* Roadmap Title */}
           <div className="space-y-2">
             <h2 className="text-sm font-serif font-medium text-foreground leading-tight line-clamp-2">
-              {roadmap.title || 'Untitled Roadmap'}
+              {roadmap.title || t('untitledRoadmap')}
             </h2>
             
             {/* Progress Badge with Tooltip */}
             <div className="flex items-center justify-between">
               <span className="text-xs text-muted-foreground uppercase tracking-wide">
-                Progress
+                {t('progress')}
               </span>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -161,7 +163,7 @@ export function KnowledgeRail({
                   </Badge>
                 </TooltipTrigger>
                 <TooltipContent side="bottom" className="text-xs">
-                  <p>Overall completion: {Math.round(generationProgress || 0)}%</p>
+                  <p>{t('overallCompletion', { progress: Math.round(generationProgress || 0) })}</p>
                 </TooltipContent>
               </Tooltip>
             </div>
@@ -231,7 +233,7 @@ function StageItem({
           <span className="text-xs font-mono text-sage-700">{stage.order}</span>
         </div>
         {/* Stage Name */}
-        <h3 className="text-sm font-serif font-medium text-foreground">{stage.name}</h3>
+        <h3 className="text-sm font-serif font-medium text-foreground">{stripRoadmapPrefix(stage.name)}</h3>
       </div>
 
       {/* 移除 border-l，避免和全局竖线重复 */}
@@ -291,7 +293,7 @@ function ModuleItem({
             ? "text-sage-700" 
             : "text-muted-foreground group-hover:text-foreground"
         )}>
-          {module.name}
+          {stripRoadmapPrefix(module.name)}
         </span>
       </button>
 
@@ -350,7 +352,7 @@ function ConceptItem({ concept, isActive, onSelect }: ConceptItemProps) {
       )}
       
       {/* Concept Name */}
-      <span className="truncate">{concept.name}</span>
+      <span className="truncate">{stripRoadmapPrefix(concept.name)}</span>
     </button>
   );
 }

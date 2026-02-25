@@ -28,13 +28,14 @@ class CoverImageResponse(BaseModel):
     """
     封面图响应模型
     
-    用于单个路线图封面图查询。
+    用于单个路线图封面图查询及触发生成。
     """
     roadmap_id: str = Field(..., description="路线图 ID")
     cover_image_url: Optional[str] = Field(None, description="封面图 URL")
     status: str = Field(..., description="状态: not_started/pending/generating/success/failed")
     error: Optional[str] = Field(None, description="错误信息")
     retry_count: Optional[int] = Field(None, description="重试次数")
+    task_id: Optional[str] = Field(None, description="RoadmapTask 任务 ID（触发生成时返回）")
     
     model_config = ConfigDict(
         json_schema_extra={
@@ -43,7 +44,8 @@ class CoverImageResponse(BaseModel):
                 "cover_image_url": "https://cdn.example.com/cover.jpg",
                 "status": "success",
                 "error": None,
-                "retry_count": 0
+                "retry_count": 0,
+                "task_id": None
             }
         }
     )
@@ -63,23 +65,6 @@ class GenerateCoverImageRequest(BaseModel):
             "example": {
                 "roadmap_id": "roadmap-123",
                 "prompt": "Modern learning roadmap cover"
-            }
-        }
-    )
-
-
-class BatchGenerateRequest(BaseModel):
-    """
-    批量生成封面图请求模型
-    
-    用于批量触发多个路线图的封面图生成。
-    """
-    roadmap_ids: List[str] = Field(..., description="路线图 ID 列表")
-    
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "roadmap_ids": ["roadmap-123", "roadmap-456", "roadmap-789"]
             }
         }
     )

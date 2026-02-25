@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -12,8 +13,9 @@ import type { TaskStatusResponse, TaskItemResponse } from '@/lib/api/endpoints';
 import { TaskList } from '@/components/task';
 import { useAuthStore } from '@/lib/store/auth-store';
 import { cn } from '@/lib/utils';
+import { TaskStatus } from '@/types/generated/constants';
 
-type TaskStatus = 'all' | 'pending' | 'processing' | 'completed' | 'failed';
+type TaskFilterStatus = 'all' | 'pending' | 'processing' | 'completed' | 'failed';
 
 interface TaskStats {
   pending: number;
@@ -23,6 +25,7 @@ interface TaskStats {
 }
 
 export default function TasksPage() {
+  const t = useTranslations('tasks');
   const router = useRouter();
   const [tasks, setTasks] = useState<TaskItemResponse[]>([]);
   const [stats, setStats] = useState<TaskStats>({
@@ -31,7 +34,7 @@ export default function TasksPage() {
     completed: 0,
     failed: 0,
   });
-  const [activeFilter, setActiveFilter] = useState<TaskStatus>('all');
+  const [activeFilter, setActiveFilter] = useState<TaskFilterStatus>('all');
   const [isLoading, setIsLoading] = useState(true);
   const { getUserId } = useAuthStore();
 
@@ -69,7 +72,7 @@ export default function TasksPage() {
       setTasks(prevTasks => 
         prevTasks.map(task => 
           task.task_id === taskId 
-            ? { ...task, status: 'processing', current_step: 'Retrying...' }
+            ? { ...task, status: TaskStatus.PROCESSING, current_step: 'Retrying...' }
             : task
         )
       );
@@ -95,7 +98,7 @@ export default function TasksPage() {
       setTasks(prevTasks => 
         prevTasks.map(task => 
           task.task_id === taskId 
-            ? { ...task, status: 'failed', current_step: 'Failed' }
+            ? { ...task, status: TaskStatus.FAILED, current_step: 'Failed' }
             : task
         )
       );
@@ -109,7 +112,7 @@ export default function TasksPage() {
   };
 
   const handleCancel = async (taskId: string) => {
-    if (!confirm('Are you sure you want to cancel this task? The task will be stopped immediately.')) {
+    if (!confirm(t('cancelConfirm'))) {
       return;
     }
     
@@ -118,7 +121,7 @@ export default function TasksPage() {
       setTasks(prevTasks => 
         prevTasks.map(task => 
           task.task_id === taskId 
-            ? { ...task, status: 'cancelled', current_step: 'Cancelled' }
+            ? { ...task, status: TaskStatus.CANCELLED, current_step: 'Cancelled' }
             : task
         )
       );
@@ -139,13 +142,13 @@ export default function TasksPage() {
       
     } catch (error: any) {
       console.error('Failed to cancel task:', error);
-      alert('Failed to cancel task. Please try again later.');
+      alert(t('cancelFailed'));
       
       // 取消失败，恢复原状态
       setTasks(prevTasks => 
         prevTasks.map(task => 
           task.task_id === taskId 
-            ? { ...task, status: 'processing' }
+            ? { ...task, status: TaskStatus.PROCESSING }
             : task
         )
       );
@@ -158,7 +161,7 @@ export default function TasksPage() {
   };
 
   const handleDelete = async (taskId: string) => {
-    if (!confirm('Are you sure you want to delete this task? This action cannot be undone.')) {
+    if (!confirm(t('deleteConfirm'))) {
       return;
     }
 
@@ -173,7 +176,7 @@ export default function TasksPage() {
       await fetchTasks(activeFilter);
     } catch (error) {
       console.error('Failed to delete task:', error);
-      alert('Failed to delete task. Please try again later.');
+      alert(t('deleteFailed'));
     }
   };
 
@@ -189,7 +192,7 @@ export default function TasksPage() {
           href="/home"
           className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-6 transition-colors"
         >
-          <ChevronLeft className="w-4 h-4" /> Back to Home
+          <ChevronLeft className="w-4 h-4" /> {t('backToHome')}
         </Link>
 
         {/* Header */}
@@ -200,10 +203,10 @@ export default function TasksPage() {
             </div>
             <div>
               <h1 className="text-2xl font-serif font-bold text-foreground">
-                Generation Tasks
+                {t('title')}
               </h1>
               <p className="text-sm text-muted-foreground">
-                Track the status of your roadmap generation tasks
+                {t('description')}
               </p>
             </div>
           </div>
@@ -216,7 +219,7 @@ export default function TasksPage() {
             className="gap-2"
           >
             <RefreshCw className={cn('w-4 h-4', isLoading && 'animate-spin')} />
-            Refresh
+            {t('refresh')}
           </Button>
         </div>
 
@@ -227,7 +230,7 @@ export default function TasksPage() {
             onClick={() => setActiveFilter('all')}
             className="gap-2"
           >
-            All
+            {t('all')}
             <Badge variant="secondary" className="ml-1">
               {stats.pending + stats.processing + stats.completed + stats.failed}
             </Badge>
@@ -237,7 +240,7 @@ export default function TasksPage() {
             onClick={() => setActiveFilter('processing')}
             className="gap-2"
           >
-            Processing
+            {t('processing')}
             {stats.processing > 0 && (
               <Badge variant="secondary" className="ml-1">
                 {stats.processing}
@@ -249,7 +252,7 @@ export default function TasksPage() {
             onClick={() => setActiveFilter('failed')}
             className="gap-2"
           >
-            Failed
+            {t('failed')}
             {stats.failed > 0 && (
               <Badge variant="destructive" className="ml-1">
                 {stats.failed}
@@ -261,7 +264,7 @@ export default function TasksPage() {
             onClick={() => setActiveFilter('completed')}
             className="gap-2"
           >
-            Completed
+            {t('completed')}
             {stats.completed > 0 && (
               <Badge variant="secondary" className="ml-1 bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
                 {stats.completed}
@@ -273,7 +276,7 @@ export default function TasksPage() {
             onClick={() => setActiveFilter('pending')}
             className="gap-2"
           >
-            Pending
+            {t('pending')}
             {stats.pending > 0 && (
               <Badge variant="secondary" className="ml-1">
                 {stats.pending}

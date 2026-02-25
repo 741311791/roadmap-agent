@@ -111,52 +111,61 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
       )}
     >
       {/* Header */}
-      <div className="h-14 flex items-center justify-between px-4 border-b border-border/5">
-        {!isCollapsed ? (
-          <Link href="/" className="flex items-center gap-2">
-            <div className="relative w-8 h-8">
-              <Image
-                src="/logo/svg_noword.svg"
-                alt="Fast Learning"
-                fill
-                className="object-contain"
-              />
-            </div>
-            <div className="relative w-32 h-6">
-              <Image
-                src="/logo/svg_onlyword.svg"
-                alt="Fast Learning"
-                fill
-                className="object-contain object-left"
-              />
-            </div>
-          </Link>
-        ) : (
-          <Link href="/" className="mx-auto">
-            <div className="relative w-8 h-8">
-              <Image
-                src="/logo/svg_noword.svg"
-                alt="Fast Learning"
-                fill
-                className="object-contain"
-              />
-            </div>
-          </Link>
+      <div
+        className={cn(
+          'border-b border-border/5 transition-all duration-300',
+          isCollapsed ? 'h-20 flex flex-col items-center justify-center gap-2 py-2' : 'h-14 flex items-center justify-between px-4'
         )}
-        <button
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          className={cn(
-            'w-6 h-6 flex items-center justify-center hover:bg-primary/5 rounded transition-colors',
-            isCollapsed && 'absolute top-4 right-2'
-          )}
-          title={isCollapsed ? t('nav.expandTooltip') : t('nav.collapseTooltip')}
-        >
-          {isCollapsed ? (
-            <PanelLeftOpen size={16} className="text-foreground/60" />
-          ) : (
-            <PanelLeftClose size={16} className="text-foreground/60" />
-          )}
-        </button>
+      >
+        {!isCollapsed ? (
+          <>
+            <Link href="/" className="flex items-center gap-2">
+              <div className="relative w-8 h-8">
+                <Image
+                  src="/logo/svg_noword.svg"
+                  alt="Fast Learning"
+                  fill
+                  className="object-contain"
+                />
+              </div>
+              <div className="relative w-32 h-6">
+                <Image
+                  src="/logo/svg_onlyword.svg"
+                  alt="Fast Learning"
+                  fill
+                  className="object-contain object-left"
+                />
+              </div>
+            </Link>
+            <button
+              onClick={() => setIsCollapsed(!isCollapsed)}
+              className="w-6 h-6 flex items-center justify-center hover:bg-primary/5 rounded transition-colors"
+              title={t('nav.collapseTooltip')}
+            >
+              <PanelLeftClose size={16} className="text-foreground/60" />
+            </button>
+          </>
+        ) : (
+          <>
+            <Link href="/" className="flex items-center justify-center">
+              <div className="relative w-8 h-8">
+                <Image
+                  src="/logo/svg_noword.svg"
+                  alt="Fast Learning"
+                  fill
+                  className="object-contain"
+                />
+              </div>
+            </Link>
+            <button
+              onClick={() => setIsCollapsed(!isCollapsed)}
+              className="w-6 h-6 flex items-center justify-center hover:bg-primary/5 rounded transition-colors"
+              title={t('nav.expandTooltip')}
+            >
+              <PanelLeftOpen size={16} className="text-foreground/60" />
+            </button>
+          </>
+        )}
       </div>
 
       {/* Search */}
@@ -232,6 +241,13 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
             label={t('common.profile')}
             href="/profile"
             active={isActive('/profile')}
+            isCollapsed={isCollapsed}
+          />
+          <NavItem
+            icon={Trash2}
+            label={t('common.trash')}
+            href="/trash"
+            active={isActive('/trash')}
             isCollapsed={isCollapsed}
           />
 
@@ -332,35 +348,6 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
           )}
         </nav>
       </ScrollArea>
-
-      {/* Trash Button (Above User Footer) */}
-      <div className="px-4 pb-2 border-t border-border/5">
-        {!isCollapsed ? (
-          <NavItem
-            icon={Trash2}
-            label={t('common.trash')}
-            href="/trash"
-            active={isActive('/trash')}
-            isCollapsed={false}
-          />
-        ) : (
-          <div className="flex justify-center">
-            <Tooltip text={t('common.trash')}>
-              <Link
-                href="/trash"
-                className={cn(
-                  'flex items-center justify-center px-3 py-2 rounded-lg cursor-pointer transition-colors',
-                  isActive('/trash')
-                    ? 'bg-primary/5 text-foreground font-medium'
-                    : 'text-foreground/60 hover:bg-primary/5 hover:text-foreground'
-                )}
-              >
-                <Trash2 size={18} />
-              </Link>
-            </Tooltip>
-          </div>
-        )}
-      </div>
 
       {/* User Footer */}
       <div className="p-4 border-t border-border/5">

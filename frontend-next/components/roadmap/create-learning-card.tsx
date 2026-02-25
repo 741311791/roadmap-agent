@@ -8,6 +8,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { FlippingCard } from '@/components/ui/flipping-card';
 import { Plus, ChevronRight, Sparkles, Target, BookOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -20,6 +21,7 @@ interface CreateLearningCardProps {
  * 卡片正面内容
  */
 function CardFront() {
+  const t = useTranslations();
   return (
     <div className="flex flex-col h-full w-full">
       {/* 装饰背景 */}
@@ -37,25 +39,18 @@ function CardFront() {
           </div>
         </div>
 
-        {/* Featured-like Badge */}
-        <div className="absolute top-3 left-3 z-10">
-          <div className="bg-gradient-to-r from-sage-400 to-sage-500 text-white border-0 shadow-lg text-[10px] px-2 py-1 font-bold flex items-center gap-1 rounded-full">
-            <Sparkles className="w-3 h-3 fill-white" />
-            NEW
-          </div>
-        </div>
       </div>
 
       {/* 内容区域 */}
       <div className="flex flex-col flex-1 p-4">
         {/* 标题 */}
         <h3 className="font-serif font-semibold text-base text-foreground text-center mb-3 min-h-[48px] flex items-center justify-center">
-          Create New Roadmap
+          {t('createCard.createRoadmap')}
         </h3>
 
         {/* 描述 */}
         <p className="text-xs text-muted-foreground text-center mb-3">
-          Start your personalized learning journey
+          {t('createCard.startJourney')}
         </p>
 
         {/* 底部占位 */}
@@ -71,11 +66,12 @@ function CardFront() {
  * 卡片背面内容 - 显示功能介绍
  */
 function CardBack() {
+  const t = useTranslations();
   return (
     <div className="flex flex-col h-full w-full p-4">
       {/* 标题 */}
       <h3 className="font-serif font-semibold text-base text-foreground mb-3 text-center">
-        Start Learning Today
+        {t('createCard.startLearningToday')}
       </h3>
 
       {/* 功能列表 */}
@@ -86,10 +82,10 @@ function CardBack() {
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-medium text-foreground">
-              Set Your Goals
+              {t('createCard.setGoalsTitle')}
             </div>
             <div className="text-xs text-muted-foreground">
-              Tell us what you want to learn
+              {t('createCard.setGoalsDesc')}
             </div>
           </div>
         </div>
@@ -100,10 +96,10 @@ function CardBack() {
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-medium text-foreground">
-              AI-Powered Plan
+              {t('createCard.aiPoweredTitle')}
             </div>
             <div className="text-xs text-muted-foreground">
-              Get personalized curriculum
+              {t('createCard.aiPoweredDesc')}
             </div>
           </div>
         </div>
@@ -114,10 +110,10 @@ function CardBack() {
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-medium text-foreground">
-              Track Progress
+              {t('createCard.trackProgressTitle')}
             </div>
             <div className="text-xs text-muted-foreground">
-              Learn at your own pace
+              {t('createCard.trackProgressDesc')}
             </div>
           </div>
         </div>
@@ -128,7 +124,7 @@ function CardBack() {
         {/* 开始按钮 - 阻止事件冒泡 */}
         <div onClick={(e) => e.stopPropagation()}>
           <span className="flex items-center gap-1 text-xs font-medium text-sage-600 hover:text-sage-700 transition-colors cursor-pointer">
-            Get Started
+            {t('createCard.getStarted')}
             <ChevronRight className="w-3 h-3" />
           </span>
         </div>

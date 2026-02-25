@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { EmptyState } from '@/components/common/empty-state';
 import { TaskItem } from '@/lib/api/endpoints';
 import { ListTodo, RefreshCw, Eye, AlertCircle, Clock, CheckCircle2, Loader2, FileText, Trash2, XCircle } from 'lucide-react';
@@ -32,6 +33,7 @@ interface TaskListProps {
 }
 
 export function TaskList({ tasks, isLoading, onRetry, onDelete, onCancel }: TaskListProps) {
+  const t = useTranslations('taskList');
   const [selectedErrorLog, setSelectedErrorLog] = useState<{
     title: string;
     message: string;
@@ -54,67 +56,67 @@ export function TaskList({ tasks, isLoading, onRetry, onDelete, onCancel }: Task
     const config = {
       pending: { 
         variant: 'secondary' as const, 
-        label: 'Pending', 
+        label: t('pending'), 
         icon: Clock,
         className: 'border-sage-200 text-sage-700 bg-sage-50 dark:border-sage-800 dark:text-sage-300 dark:bg-sage-950'
       },
       processing: { 
         variant: 'default' as const, 
-        label: 'Processing', 
+        label: t('processing'), 
         icon: Loader2,
         className: 'border-sage-300 text-sage-700 bg-sage-100 dark:border-sage-700 dark:text-sage-300 dark:bg-sage-900 animate-pulse'
       },
       running: { 
         variant: 'default' as const, 
-        label: 'Running', 
+        label: t('running'), 
         icon: Loader2,
         className: 'border-sage-300 text-sage-700 bg-sage-100 dark:border-sage-700 dark:text-sage-300 dark:bg-sage-900 animate-pulse'
       },
       human_review_pending: { 
         variant: 'secondary' as const, 
-        label: 'Pending', 
+        label: t('humanReviewPending'), 
         icon: Clock,
         className: 'border-amber-200 text-amber-700 bg-amber-50 dark:border-amber-800 dark:text-amber-300 dark:bg-amber-950 whitespace-nowrap'
       },
       human_review_required: { 
         variant: 'secondary' as const, 
-        label: 'Pending', 
+        label: t('humanReviewRequired'), 
         icon: Clock,
         className: 'border-amber-200 text-amber-700 bg-amber-50 dark:border-amber-800 dark:text-amber-300 dark:bg-amber-950 whitespace-nowrap'
       },
       approved: { 
         variant: 'default' as const, 
-        label: 'Approved', 
+        label: t('approved'), 
         icon: CheckCircle2,
         className: 'border-emerald-200 text-emerald-700 bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300 dark:bg-emerald-950'
       },
       rejected: { 
         variant: 'secondary' as const, 
-        label: 'Rejected', 
+        label: t('rejected'), 
         icon: AlertCircle,
         className: 'border-orange-200 text-orange-700 bg-orange-50 dark:border-orange-800 dark:text-orange-300 dark:bg-orange-950'
       },
       completed: { 
         variant: 'default' as const, 
-        label: 'Completed', 
+        label: t('completed'), 
         icon: CheckCircle2,
         className: 'border-emerald-200 text-emerald-700 bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300 dark:bg-emerald-950'
       },
       partial_failure: { 
         variant: 'default' as const, 
-        label: 'Completed',
+        label: t('completed'),
         icon: CheckCircle2,
         className: 'border-emerald-200 text-emerald-700 bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300 dark:bg-emerald-950'
       },
       failed: { 
         variant: 'destructive' as const, 
-        label: 'Failed', 
+        label: t('failed'), 
         icon: AlertCircle,
         className: 'border-red-200 text-red-700 bg-red-50 dark:border-red-800 dark:text-red-300 dark:bg-red-950'
       },
       cancelled: { 
         variant: 'destructive' as const, 
-        label: 'Cancelled', 
+        label: t('cancelled'), 
         icon: XCircle,
         className: 'border-stone-200 text-stone-700 bg-stone-50 dark:border-stone-800 dark:text-stone-300 dark:bg-stone-950'
       },
@@ -128,20 +130,21 @@ export function TaskList({ tasks, isLoading, onRetry, onDelete, onCancel }: Task
       <div className="flex items-center justify-center py-20">
         <div className="text-center">
           <div className="w-16 h-16 border-4 border-sage-200 border-t-sage-600 rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-sm text-muted-foreground">Loading tasks...</p>
+          <p className="text-sm text-muted-foreground">{t('loading')}</p>
         </div>
       </div>
     );
   }
 
   if (tasks.length === 0) {
+    const tCommon = useTranslations('common');
     return (
       <EmptyState
         icon={ListTodo}
-        title="No tasks yet"
-        description="You haven't created any roadmap generation tasks."
+        title={t('noTasksYet')}
+        description={t('noTasksDesc')}
         action={{
-          label: 'Create Roadmap',
+          label: tCommon('createRoadmap'),
           onClick: () => {
             window.location.href = '/new';
           },
@@ -157,12 +160,12 @@ export function TaskList({ tasks, isLoading, onRetry, onDelete, onCancel }: Task
           <TableHeader>
             <TableRow>
               <TableHead className="w-[50px]">#</TableHead>
-              <TableHead className="w-[240px]">Task Title</TableHead>
-              <TableHead className="w-[120px]">Status</TableHead>
-              <TableHead className="w-[140px]">Current Step</TableHead>
-              <TableHead className="w-[130px]">Created</TableHead>
-              <TableHead className="w-[130px]">Completed</TableHead>
-              <TableHead className="w-[120px] text-right">Actions</TableHead>
+              <TableHead className="w-[240px]">{t('taskTitle')}</TableHead>
+              <TableHead className="w-[120px]">{t('status')}</TableHead>
+              <TableHead className="w-[140px]">{t('currentStep')}</TableHead>
+              <TableHead className="w-[130px]">{t('created')}</TableHead>
+              <TableHead className="w-[130px]">{t('completedTime')}</TableHead>
+              <TableHead className="w-[120px] text-right">{t('actions')}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -241,7 +244,7 @@ export function TaskList({ tasks, isLoading, onRetry, onDelete, onCancel }: Task
                             </Button>
                           </TooltipTrigger>
                           <TooltipContent>
-                            <p>Cancel task</p>
+                            <p>{t('cancelTask')}</p>
                           </TooltipContent>
                         </Tooltip>
                       )}
@@ -263,7 +266,7 @@ export function TaskList({ tasks, isLoading, onRetry, onDelete, onCancel }: Task
                             </Button>
                           </TooltipTrigger>
                           <TooltipContent>
-                            <p>View error logs</p>
+                            <p>{t('viewErrorLog')}</p>
                           </TooltipContent>
                         </Tooltip>
                       )}
@@ -282,7 +285,7 @@ export function TaskList({ tasks, isLoading, onRetry, onDelete, onCancel }: Task
                             </Button>
                           </TooltipTrigger>
                           <TooltipContent>
-                            <p>Retry task</p>
+                            <p>{t('retryTask')}</p>
                           </TooltipContent>
                         </Tooltip>
                       )}
@@ -302,7 +305,7 @@ export function TaskList({ tasks, isLoading, onRetry, onDelete, onCancel }: Task
                             </Link>
                           </TooltipTrigger>
                           <TooltipContent>
-                            <p>{task.status === 'partial_failure' ? 'View roadmap & retry failed concepts' : 'View roadmap'}</p>
+                            <p>{task.status === 'partial_failure' ? t('viewRoadmapRetry') : t('viewRoadmap')}</p>
                           </TooltipContent>
                         </Tooltip>
                       )}
@@ -321,7 +324,7 @@ export function TaskList({ tasks, isLoading, onRetry, onDelete, onCancel }: Task
                             </Button>
                           </TooltipTrigger>
                           <TooltipContent>
-                            <p>Delete task</p>
+                            <p>{t('deleteTask')}</p>
                           </TooltipContent>
                         </Tooltip>
                       )}

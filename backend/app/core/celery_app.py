@@ -56,7 +56,8 @@ celery_app.conf.update(
     task_reject_on_worker_lost=True,
     # 任务路由配置
     task_routes={
-        "generate_all_content": {"queue": "content_generation"},  # 内容生成任务使用专用队列
+        "generate_all_content": {"queue": "content_generation"},
+        "content.regenerate_single": {"queue": "content_generation"},  # 单 Concept 重新生成
     },
     # 队列定义
     task_queues={
@@ -66,6 +67,10 @@ celery_app.conf.update(
     # Worker 配置
     worker_prefetch_multiplier=1,
     worker_max_tasks_per_child=500,  # 每 500 个任务重启进程（加快资源清理）
+    # 连接池配置：禁用 Broker 连接池，让每次连接都直接建立新连接
+    # 这样在连接被网络层强制断开后，Celery 能立即重新建立连接，而不是从池中
+    # 取出一个已经失效的连接。设为 1 表示只保持一个连接（而非池化）
+    broker_pool_limit=1,
     # 任务超时配置（全局默认值，特定任务可覆盖）
     task_time_limit=600,  # 10 分钟硬超时
     task_soft_time_limit=540,  # 9 分钟软超时
@@ -87,7 +92,30 @@ celery_app.conf.update(
         "retry_on_timeout": True,
         "health_check_interval": 25,  # 与 backend 保持一致
         "max_connections": 50,
+        # visibility_timeout 必须大于最长任务的执行时间
+        # 内容生成任务（generate_all_content）最长可达数十分钟
+        # 设为 2 小时（7200s），确保长任务不会因超时被重新入队
+        # 同时避免 worker 崩溃后任务卡死 1 小时的默认问题
+        "visibility_timeout": 7200,
     },
+    # ============================================================
+    # Broker 连接重试配置（关键：防止空闲时 Broker 连接被网络层关闭后无法恢复）
+    # 
+    # 问题根因：Celery Worker 空闲（队列无任务）时，Broker 的 TCP 连接长时间无
+    # 实际数据交互，NAT/防火墙/路由器等网络中间层会强制关闭该 TCP 连接（通常在
+    # 数分钟到30分钟不等）。当 Worker 再次尝试与 Broker 通信时，发现套接字已
+    # 断开，触发 BrokenPipeError (Errno 32)。
+    #
+    # 以下配置确保 Broker 连接断开后能快速自动重连：
+    # ============================================================
+    broker_connection_retry=True,           # 连接断开后自动重试（默认 True，明确声明）
+    broker_connection_retry_on_startup=True, # 启动时连接失败也重试
+    broker_connection_max_retries=None,      # 无限重试（None = 永不放弃）
+    broker_connection_timeout=10,            # 单次连接超时 10 秒
+    # 心跳配置：让 Worker 定期向 Broker 发送心跳，防止空闲连接被网络设备切断
+    # 注意：Redis transport 不支持 AMQP 协议的 heartbeat，
+    # 实际依赖 health_check_interval + socket_keepalive 来维持连接
+    broker_heartbeat=None,                   # Redis transport 不使用 AMQP heartbeat
     # 结果存储配置
     result_expires=3600,  # 结果过期时间 1 小时（减少 Redis 存储压力）
     result_backend_always_retry=True,  # 结果后端操作失败时自动重试
@@ -165,13 +193,18 @@ def on_worker_process_init(**kwargs):
         # - 自动检测进程 ID 变化
         # - 清理父进程的资源引用
         # - 在子进程中创建新的连接池
+        #
+        # ⚠️ 关键修复：必须在 _worker_loop（后台事件循环）中初始化
+        # 原因：psycopg 的 AsyncConnectionPool 将 socket 注册到创建时的 event loop
+        # 如果用 asyncio.get_event_loop()（主线程 loop）初始化，而任务通过
+        # run_async_in_worker_loop 在后台 _worker_loop 中执行，
+        # socket I/O 事件无法被后台 loop 感知，导致 psycopg OperationalError: timeout
         try:
             from app.core.orchestrator_factory import OrchestratorFactory
-            import asyncio
+            from app.tasks.event_loop_manager import run_async_in_worker_loop
             
-            # ✅ 直接调用 initialize()，内部会自动处理 fork 检测
-            loop = asyncio.get_event_loop()
-            loop.run_until_complete(OrchestratorFactory.initialize())
+            # ✅ 在 _worker_loop 中初始化，确保 AsyncConnectionPool 绑定到正确的 loop
+            run_async_in_worker_loop(OrchestratorFactory.initialize())
             
             logger.info("worker_orchestrator_factory_initialized")
             

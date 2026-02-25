@@ -224,10 +224,18 @@ class WorkflowExecutor:
                     )
                     
                     # 调用协调器处理副作用
+                    # ✅ 方案 A：edit_plan_analysis/roadmap_edit 开始时传递 edit_source，避免前端分支显示竞态
+                    extra_data = None
+                    if node_name in ("edit_plan_analysis", "roadmap_edit"):
+                        edit_source = _safe_get(final_state, "edit_source")
+                        if edit_source is not None:
+                            extra_data = {"edit_source": edit_source}
+                    
                     await self.coordinator.on_node_start(
                         task_id=task_id,
                         node_name=node_name,
                         roadmap_id=_safe_get(final_state, "roadmap_id"),
+                        extra_data=extra_data,
                     )
                 
                 # ===== 节点结束事件 =====
@@ -268,18 +276,11 @@ class WorkflowExecutor:
                         # 跳过非字典类型的输出（内层 LLM/Agent 调用的返回）
                         continue
                     
-                    # 更新 final_state（用于后续节点和路由判断）
-                    # ⚠️ 注意：需要获取最新State，因为node_output可能不包含所有State字段
-                    state_snapshot = await self.graph.aget_state(config)
-                    final_state = state_snapshot.values
-                    
-                    # ✅ 关键修复：先合并 node_output 到 final_state，再传递给 coordinator
-                    # 这样 coordinator.on_node_complete() 才能获取到完整的状态（包含 roadmap_id 等字段）
-                    if isinstance(node_output, dict):
-                        final_state = {**final_state, **node_output}
-                    else:
-                        # 如果是 Pydantic 模型，转换为字典
-                        final_state = {**final_state, **node_output.model_dump()}
+                    # 将 node_output 增量合并到本地 final_state，避免查询 PostgreSQL checkpoint。
+                    # node_output 包含节点函数返回的所有状态字段，coordinator 只需要 current_step/roadmap_id 等，
+                    # 这些字段在节点返回值中均已包含。
+                    # ⚠️ 流结束后（第339行）仍会 aget_state 一次确认最终状态。
+                    final_state = {**final_state, **node_output}
                     
                     logger.info(
                         "workflow_node_completed",
@@ -352,6 +353,14 @@ class WorkflowExecutor:
                 # 如果是human_review暂停，Handler已经处理了状态更新
                 if "human_review" in next_nodes:
                     final_state["current_step"] = "human_review"
+                    # ✅ 修复前端状态不同步：
+                    # coordinator.on_node_start(human_review) 发送的是 status=processing，
+                    # interrupt 触发后没有节点的 on_chain_end 事件，前端永远收不到 pending 状态。
+                    # 必须主动推送 human_review pending 通知，告知前端工作流已暂停等待审核。
+                    await self.coordinator.on_workflow_interrupted_for_review(
+                        task_id=task_id,
+                        roadmap_id=_safe_get(final_state, "roadmap_id"),
+                    )
             else:
                 logger.info(
                     "workflow_execution_completed",
@@ -414,10 +423,12 @@ class WorkflowExecutor:
             最终的工作流状态
         """
         # LangGraph配置（包含RuntimeContext）
+        # is_resume=True 标志告知 human_review_node 跳过重复的 pending 状态写入
         config = {
             "configurable": {
                 "thread_id": task_id,
                 "runtime_context": self.runtime_context,
+                "is_resume": True,
             }
         }
         
@@ -436,6 +447,8 @@ class WorkflowExecutor:
         
         try:
             # ✅ 获取resume前的State（包含roadmap_id等关键信息）
+            # ⚠️ 性能瓶颈点②：aget_state 需查询 PostgreSQL checkpoint 表并反序列化完整 state
+            t_state1_start = time.time()
             state_before_resume = await self.graph.aget_state(config)
             final_state = state_before_resume.values if state_before_resume else {}
             node_start_times = {}
@@ -445,6 +458,15 @@ class WorkflowExecutor:
                 task_id=task_id,
                 roadmap_id=_safe_get(final_state, "roadmap_id"),
                 current_step=_safe_get(final_state, "current_step"),
+                aget_state_duration_ms=int((time.time() - t_state1_start) * 1000),
+            )
+
+            # ⚠️ 性能瓶颈点③：astream_events 内部会重新读取 checkpoint 并恢复完整图状态
+            t_stream_start = time.time()
+            logger.info(
+                "resume_astream_events_starting",
+                task_id=task_id,
+                approved=approved,
             )
 
             async for event in self.graph.astream_events(
@@ -471,10 +493,19 @@ class WorkflowExecutor:
                     )
                     
                     # 调用协调器处理副作用（更新current_step）
+                    # ✅ 方案 A：edit_plan_analysis/roadmap_edit 开始时传递 edit_source，避免前端分支显示竞态
+                    # ✅ 关键修复：resume 流程中 edit 节点必定来自 human_review 拒绝，直接使用 human_review
+                    #    原因：LangGraph Command(resume=...) 可能先 emit edit_plan_analysis 的 on_chain_start，
+                    #    再 emit human_review 的 on_chain_end，此时 final_state 仍是 checkpoint 旧值（validation_failed）
+                    extra_data = None
+                    if node_name in ("edit_plan_analysis", "roadmap_edit"):
+                        extra_data = {"edit_source": "human_review"}
+                    
                     await self.coordinator.on_node_start(
                         task_id=task_id,
                         node_name=node_name,
                         roadmap_id=_safe_get(final_state, "roadmap_id"),
+                        extra_data=extra_data,
                     )
                 
                 # ===== 节点结束事件 =====
@@ -505,18 +536,10 @@ class WorkflowExecutor:
                         # 跳过非字典类型的输出（内层 LLM/Agent 调用的返回）
                         continue
                     
-                    # 更新 final_state（用于后续节点和路由判断）
-                    # ⚠️ 注意：需要获取最新State，因为node_output可能不包含所有State字段
-                    state_snapshot = await self.graph.aget_state(config)
-                    final_state = state_snapshot.values
-                    
-                    # ✅ 关键修复：先合并 node_output 到 final_state，再传递给 coordinator
-                    # 这样 coordinator.on_node_complete() 才能获取到完整的状态（包含 edit_source 等字段）
-                    if isinstance(node_output, dict):
-                        final_state = {**final_state, **node_output}
-                    else:
-                        # 如果是 Pydantic 模型，转换为字典
-                        final_state = {**final_state, **node_output.model_dump()}
+                    # 将 node_output 合并到本地 final_state，避免每次都查询 PostgreSQL checkpoint。
+                    # node_output 是节点函数返回的状态增量，直接合并即可满足 coordinator 和 handler 的需求。
+                    # ⚠️ 注意：只在流结束后（第571行）做一次 aget_state 确认最终状态。
+                    final_state = {**final_state, **node_output}
                     
                     logger.info(
                         "workflow_resume_node_completed",
@@ -562,6 +585,50 @@ class WorkflowExecutor:
                         node_name=node_name,
                         status="success"
                     ).observe(duration_ms / 1000.0)
+            
+            t_stream_end = time.time()
+            logger.info(
+                "resume_astream_events_completed",
+                task_id=task_id,
+                stream_duration_ms=int((t_stream_end - t_stream_start) * 1000),
+                final_step=_safe_get(final_state, "current_step"),
+            )
+            
+            # ✅ 检查工作流是否被新的 interrupt 暂停（与 execute() 方法保持一致）
+            # 场景：用户拒绝后，工作流经过 edit_plan_analysis → roadmap_edit 后，
+            # 再次进入 human_review 并触发新的 interrupt，等待下一次用户审核。
+            # 此时流结束但 final_state["current_step"] 仍是最后一个完成节点（roadmap_edit），
+            # 需要检测到 interrupt 状态并修正 current_step，避免误判为 PARTIAL_FAILURE。
+            # ⚠️ 性能瓶颈点④：第二次 aget_state，用于检测是否再次 interrupt
+            t_state2_start = time.time()
+            state_snapshot_after = await self.graph.aget_state(config)
+            next_nodes_after = list(state_snapshot_after.next) if state_snapshot_after.next else []
+            logger.info(
+                "resume_aget_state_after_done",
+                task_id=task_id,
+                aget_state_duration_ms=int((time.time() - t_state2_start) * 1000),
+                next_nodes=next_nodes_after,
+            )
+            
+            if next_nodes_after:
+                logger.info(
+                    "workflow_resume_interrupted_again",
+                    task_id=task_id,
+                    next_nodes=next_nodes_after,
+                    current_step=_safe_get(final_state, "current_step"),
+                    message="工作流在 interrupt 处再次暂停",
+                )
+                
+                if "human_review" in next_nodes_after:
+                    final_state["current_step"] = "human_review"
+                    # ✅ 修复前端状态不同步：
+                    # 工作流再次 interrupt 在 human_review 时，LangGraph 不会触发 human_review 的
+                    # on_chain_end 事件，导致前端最后收到的 WebSocket 通知是 roadmap_edit 完成。
+                    # 必须主动推送 human_review pending 通知，否则前端需要刷新页面才能恢复正常状态。
+                    await self.coordinator.on_workflow_interrupted_for_review(
+                        task_id=task_id,
+                        roadmap_id=_safe_get(final_state, "roadmap_id"),
+                    )
             
             logger.info(
                 "workflow_resumed_successfully",

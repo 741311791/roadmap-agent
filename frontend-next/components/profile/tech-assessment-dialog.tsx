@@ -20,7 +20,13 @@ import type {
   CapabilityAnalysisResult,
   TechStackItemWithAnalysis 
 } from '@/types/assessment';
+import type { CustomAssessmentResponse } from '@/types/generated';
 import { useAuthStore } from '@/lib/store/auth-store';
+
+/**
+ * 评估生成状态（临时定义，直到后端类型修复）
+ */
+type AssessmentGenerationStatus = 'ready' | 'generation_started';
 
 interface TechAssessmentDialogProps {
   open: boolean;
@@ -82,13 +88,17 @@ export function TechAssessmentDialog({
           
           const customResponse = await getCustomTechAssessment();
           
-          if (customResponse.status === 'ready' && customResponse.assessment) {
+          // 注意：CustomAssessmentResponse.status 实际上是 'ready' | 'generation_started'
+          // 后端类型定义不准确（使用了 TaskStatus），这里先类型断言
+          const assessmentStatus = customResponse.status as unknown as AssessmentGenerationStatus;
+          
+          if (assessmentStatus === 'ready' && customResponse.assessment) {
             // 题库已存在，直接使用
             setAssessment(customResponse.assessment as any);
             setAnswers({});
             setResult(null);
             setIsGenerating(false);
-          } else if (customResponse.status === 'generation_started') {
+          } else if (assessmentStatus === 'generation_started') {
             // 需要生成题库
             setGenerationMessage(customResponse.message);
             setError(null);

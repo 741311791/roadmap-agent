@@ -70,7 +70,12 @@ class IntentAnalysisCRUD(BaseCRUD[IntentAnalysisMetadata, dict, dict]):
                 if intent_analysis.content_format_weights 
                 else None
             ),
-            # ✅ 修复：直接使用约束文本字典，而不是完整对象
+            # IntentAnalyzerAgent.execute() 保证此字段不为 None，序列化为 dict 存入 JSON 列
+            language_preferences=(
+                intent_analysis.language_preferences.model_dump()
+                if intent_analysis.language_preferences
+                else None
+            ),
             full_analysis_data=intent_analysis.full_analysis_data,
         )
         

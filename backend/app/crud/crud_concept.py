@@ -126,11 +126,25 @@ class ConceptCRUD(BaseCRUD[ConceptMetadata, ConceptCreate, ConceptUpdate]):
         
         framework_data = roadmap_metadata.framework_data
         
+        # 预先构建全局 concept_id → name 映射（用于生成前置概念超链接，与正常生成路径保持一致）
+        concept_name_map: dict[str, str] = {}
+        for s in framework_data.get("stages", []):
+            for m in s.get("modules", []):
+                for c in m.get("concepts", []):
+                    cid = c.get("concept_id", "")
+                    if cid:
+                        concept_name_map[cid] = c.get("name", cid)
+        
         # 遍历查找概念
         for stage_idx, stage in enumerate(framework_data.get("stages", [])):
             for module_idx, module in enumerate(stage.get("modules", [])):
                 for concept_idx, concept in enumerate(module.get("concepts", [])):
                     if concept.get("concept_id") == concept_id:
+                        # 构建前置概念列表（带名称），确保与正常生成路径的 inner_fan_out 行为一致
+                        prerequisite_concepts = [
+                            {"concept_id": cid, "name": concept_name_map.get(cid, cid)}
+                            for cid in concept.get("prerequisites", [])
+                        ]
                         # 构建上下文
                         context = {
                             "stage": stage,
@@ -141,6 +155,7 @@ class ConceptCRUD(BaseCRUD[ConceptMetadata, ConceptCreate, ConceptUpdate]):
                             "roadmap_id": roadmap_id,
                             "stage_name": stage.get("name"),
                             "module_name": module.get("name"),
+                            "prerequisite_concepts": prerequisite_concepts,
                         }
                         logger.info(
                             "concept_found_in_framework",

@@ -4,7 +4,7 @@
 
 import type { 
   RoadmapFramework, 
-  ChatMessageResponse,
+  // ChatMessageResponse, // 暂未实现，注释掉
   Module as GeneratedModule,
   Stage as GeneratedStage,
   Concept as GeneratedConcept,
@@ -12,9 +12,14 @@ import type {
 import type { ViewMode } from './ui';
 
 /**
- * 聊天消息（类型别名）
+ * 聊天消息（临时定义，待后端实现后使用生成的类型）
  */
-export type ChatMessage = ChatMessageResponse;
+export interface ChatMessage {
+  message_id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  created_at: string;
+}
 
 /**
  * 路线图历史记录项

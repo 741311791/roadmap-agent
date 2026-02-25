@@ -10,6 +10,7 @@ import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -22,6 +23,7 @@ import { motion } from 'framer-motion';
  * 登录表单组件（包含 useSearchParams）
  */
 function LoginForm() {
+  const t = useTranslations('login');
   const router = useRouter();
   const searchParams = useSearchParams();
   const { isAuthenticated, user } = useAuthStore();
@@ -47,7 +49,7 @@ function LoginForm() {
     
     // 基本验证
     if (!email || !password) {
-      setError('Please enter both email and password');
+      setError(t('pleaseFillBoth'));
       return;
     }
     
@@ -60,7 +62,7 @@ function LoginForm() {
         console.log('[Login] Login successful, redirecting to:', redirectUrl);
         router.push(redirectUrl);
       } else {
-        setError('Invalid email or password');
+        setError(t('invalidCredentials'));
       }
     } catch (err: any) {
       console.error('[Login] Login error:', err);
@@ -69,16 +71,16 @@ function LoginForm() {
       if (err.response?.status === 400) {
         const detail = err.response?.data?.detail;
         if (detail?.includes('expired')) {
-          setError('Your temporary password has expired. Please contact the administrator for a new invitation.');
+          setError(t('passwordExpired'));
         } else if (detail?.includes('LOGIN_BAD_CREDENTIALS')) {
-          setError('Invalid email or password');
+          setError(t('invalidCredentials'));
         } else {
-          setError(detail || 'Login failed');
+          setError(detail || t('loginFailed'));
         }
       } else if (err.response?.status === 422) {
-        setError('Please enter a valid email address');
+        setError(t('invalidEmail'));
       } else {
-        setError('Login failed. Please try again later.');
+        setError(t('loginFailed'));
       }
     } finally {
       setIsLoading(false);
@@ -95,7 +97,7 @@ function LoginForm() {
           className="text-center"
         >
           <Loader2 className="w-8 h-8 animate-spin text-sage-600 mx-auto mb-4" />
-          <p className="text-muted-foreground">Redirecting...</p>
+          <p className="text-muted-foreground">{t('redirecting')}</p>
         </motion.div>
       </div>
     );
@@ -114,7 +116,7 @@ function LoginForm() {
             className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
-            <span className="text-sm font-medium">Back to Home</span>
+            <span className="text-sm font-medium">{t('backToHome')}</span>
           </Link>
         </div>
       </nav>
@@ -141,10 +143,10 @@ function LoginForm() {
               </div>
             </Link>
             <h1 className="text-3xl font-serif font-bold text-foreground mb-2">
-              Welcome Back
+              {t('welcomeBack')}
             </h1>
             <p className="text-muted-foreground">
-              Sign in to continue your learning journey
+              {t('subtitle')}
             </p>
           </div>
           
@@ -166,12 +168,12 @@ function LoginForm() {
               {/* 邮箱输入 */}
               <div className="space-y-2">
                 <Label htmlFor="email" className="text-sm font-medium text-foreground">
-                  Email
+                  {t('email')}
                 </Label>
                 <Input
                   id="email"
                   type="email"
-                  placeholder="you@example.com"
+                  placeholder={t('emailPlaceholder')}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   disabled={isLoading}
@@ -185,14 +187,14 @@ function LoginForm() {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <Label htmlFor="password" className="text-sm font-medium text-foreground">
-                    Password
+                    {t('password')}
                   </Label>
                   {/* 暂时隐藏忘记密码链接 */}
                   {/* <Link 
                     href="/forgot-password" 
                     className="text-xs text-sage-600 hover:text-sage-700 transition-colors"
                   >
-                    Forgot password?
+                    {t('forgotPassword')}
                   </Link> */}
                 </div>
                 <Input
@@ -217,10 +219,10 @@ function LoginForm() {
                 {isLoading ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Signing in...
+                    {t('signingIn')}
                   </>
                 ) : (
-                  'Sign In'
+                  t('signIn')
                 )}
               </Button>
             </form>
@@ -228,12 +230,12 @@ function LoginForm() {
             {/* Beta 提示 */}
             <div className="mt-6 pt-6 border-t border-sage-100">
               <p className="text-center text-xs text-muted-foreground">
-                Fast Learning is currently in private beta.
+                {t('betaNotice')}
                 <br />
                 <Link href="/" className="text-sage-600 hover:text-sage-700 transition-colors">
-                  Join the waitlist
+                  {t('joinWaitlist')}
                 </Link>
-                {' '}to get early access.
+                {' '}{t('getEarlyAccess')}
               </p>
             </div>
           </div>
@@ -242,7 +244,7 @@ function LoginForm() {
       
       {/* 底部 */}
       <footer className="py-6 text-center text-xs text-muted-foreground">
-        © 2024 Fast Learning. All rights reserved.
+        {t('copyright')}
       </footer>
     </div>
   );

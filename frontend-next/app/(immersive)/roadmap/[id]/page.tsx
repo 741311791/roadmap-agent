@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
+import { useTranslations } from 'next-intl';
 import { 
   ResizablePanelGroup, 
   ResizablePanel, 
@@ -39,6 +40,7 @@ export default function RoadmapDetailPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const roadmapId = params.id as string;
+  const t = useTranslations('roadmapDetail');
 
   // Auth Store
   const { getUserId } = useAuthStore();
@@ -167,8 +169,10 @@ export default function RoadmapDetailPage() {
             current_level: 'intermediate', // 默认值
             career_background: profile.current_role || 'Not specified',
             motivation: 'Continue learning',
-            content_preference: (profile.learning_style || ['text', 'visual']) as any,
-            preferred_language: profile.primary_language || 'zh-CN',
+          content_preference: (profile.learning_style || ['text', 'visual']) as any,
+          preferred_language: profile.primary_language || 'zh',
+          primary_language: profile.primary_language || 'zh',
+          secondary_language: profile.secondary_language || null,
           });
         }
         
@@ -210,7 +214,7 @@ export default function RoadmapDetailPage() {
     return (
       <div className="h-screen w-full bg-background flex items-center justify-center text-muted-foreground gap-3">
         <Loader2 className="animate-spin w-5 h-5 text-sage-600" />
-        <span className="font-serif text-lg">Loading...</span>
+        <span className="font-serif text-lg">{t('loading')}</span>
       </div>
     );
   }
@@ -220,7 +224,7 @@ export default function RoadmapDetailPage() {
     return (
       <div className="h-screen w-full bg-background flex items-center justify-center text-muted-foreground gap-3">
         <AlertCircle className="w-5 h-5 text-destructive" />
-        <span className="font-serif text-lg">Failed to load roadmap.</span>
+        <span className="font-serif text-lg">{t('failedToLoad')}</span>
       </div>
     );
   }
@@ -230,7 +234,7 @@ export default function RoadmapDetailPage() {
     return (
       <div className="h-screen w-full bg-background flex items-center justify-center text-muted-foreground gap-3">
         <Loader2 className="animate-spin w-5 h-5 text-sage-600" />
-        <span className="font-serif text-lg">Loading roadmap...</span>
+        <span className="font-serif text-lg">{t('loadingRoadmap')}</span>
       </div>
     );
   }

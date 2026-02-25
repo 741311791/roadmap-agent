@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect } from 'react';
+import { useTranslations } from 'next-intl';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
@@ -48,29 +49,29 @@ interface TechStackRowItem extends TechStackItem {
 
 // Constants
 const INDUSTRIES = [
-  { value: 'technology', label: 'Technology' },
-  { value: 'finance', label: 'Finance' },
-  { value: 'healthcare', label: 'Healthcare' },
-  { value: 'education', label: 'Education' },
-  { value: 'retail', label: 'Retail' },
-  { value: 'manufacturing', label: 'Manufacturing' },
-  { value: 'consulting', label: 'Consulting' },
-  { value: 'media', label: 'Media & Entertainment' },
-  { value: 'other', label: 'Other' },
+  { value: 'technology', labelKey: 'industryTechnology' },
+  { value: 'finance', labelKey: 'industryFinance' },
+  { value: 'healthcare', labelKey: 'industryHealthcare' },
+  { value: 'education', labelKey: 'industryEducation' },
+  { value: 'retail', labelKey: 'industryRetail' },
+  { value: 'manufacturing', labelKey: 'industryManufacturing' },
+  { value: 'consulting', labelKey: 'industryConsulting' },
+  { value: 'media', labelKey: 'industryMedia' },
+  { value: 'other', labelKey: 'optionOther' },
 ];
 
 const ROLES = [
-  { value: 'student', label: 'Student' },
-  { value: 'junior_dev', label: 'Junior Developer' },
-  { value: 'mid_dev', label: 'Mid-Level Developer' },
-  { value: 'senior_dev', label: 'Senior Developer' },
-  { value: 'tech_lead', label: 'Tech Lead' },
-  { value: 'engineering_manager', label: 'Engineering Manager' },
-  { value: 'product_manager', label: 'Product Manager' },
-  { value: 'designer', label: 'Designer' },
-  { value: 'data_scientist', label: 'Data Scientist' },
-  { value: 'career_changer', label: 'Career Changer' },
-  { value: 'other', label: 'Other' },
+  { value: 'student', labelKey: 'roleStudent' },
+  { value: 'junior_dev', labelKey: 'roleJuniorDev' },
+  { value: 'mid_dev', labelKey: 'roleMidDev' },
+  { value: 'senior_dev', labelKey: 'roleSeniorDev' },
+  { value: 'tech_lead', labelKey: 'roleTechLead' },
+  { value: 'engineering_manager', labelKey: 'roleEngineeringManager' },
+  { value: 'product_manager', labelKey: 'roleProductManager' },
+  { value: 'designer', labelKey: 'roleDesigner' },
+  { value: 'data_scientist', labelKey: 'roleDataScientist' },
+  { value: 'career_changer', labelKey: 'roleCareerChanger' },
+  { value: 'other', labelKey: 'optionOther' },
 ];
 
 const TECHNOLOGIES = [
@@ -121,37 +122,38 @@ const LANGUAGES = [
 
 const LEARNING_STYLES: {
   value: LearningStyleType;
-  label: string;
+  labelKey: string;
   icon: React.ElementType;
-  description: string;
+  descriptionKey: string;
 }[] = [
   {
     value: 'visual',
-    label: 'Visual',
+    labelKey: 'visual',
     icon: Eye,
-    description: 'Video tutorials, diagrams, demos',
+    descriptionKey: 'visualDesc',
   },
   {
     value: 'text',
-    label: 'Text',
+    labelKey: 'text',
     icon: FileText,
-    description: 'Documentation, articles, books',
+    descriptionKey: 'textDesc',
   },
   {
     value: 'audio',
-    label: 'Audio',
+    labelKey: 'audio',
     icon: Headphones,
-    description: 'Podcasts, audio content',
+    descriptionKey: 'audioDesc',
   },
   {
     value: 'hands_on',
-    label: 'Hands-on',
+    labelKey: 'handsOn',
     icon: Wrench,
-    description: 'Interactive exercises, projects',
+    descriptionKey: 'handsOnDesc',
   },
 ];
 
 export default function ProfilePage() {
+  const t = useTranslations('profile');
   // Auth
   const { getUserId } = useAuthStore();
   const userId = getUserId();
@@ -314,7 +316,7 @@ export default function ProfilePage() {
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center">
           <Loader2 className="h-8 w-8 animate-spin mx-auto text-sage-600" />
-          <p className="mt-4 text-muted-foreground">Loading profile...</p>
+          <p className="mt-4 text-muted-foreground">{t('loadingProfile')}</p>
         </div>
       </div>
     );
@@ -326,11 +328,10 @@ export default function ProfilePage() {
         {/* Page Header */}
         <div className="text-center space-y-3">
           <h1 className="text-4xl md:text-5xl font-serif font-bold text-charcoal">
-            Your Profile
+            {t('title')}
           </h1>
           <p className="text-muted-foreground max-w-lg mx-auto">
-            Customize your learning experience. We use this to tailor your
-            roadmap and recommendations.
+            {t('subtitle')}
           </p>
           
           {/* Auto-save indicator - 固定位置，避免布局跳动 */}
@@ -342,18 +343,18 @@ export default function ProfilePage() {
             {saveStatus === 'saving' && (
               <>
                 <Loader2 className="w-3 h-3 animate-spin text-sage-600" />
-                <span className="text-muted-foreground">{saveMessage}</span>
+                <span className="text-muted-foreground">{t('saving')}</span>
               </>
             )}
             {saveStatus === 'saved' && (
               <>
                 <CheckCircle2 className="w-3 h-3 text-sage-600" />
-                <span className="text-sage-600">{saveMessage}</span>
+                <span className="text-sage-600">{t('saved')}</span>
               </>
             )}
             {saveStatus === 'error' && (
               <>
-                <span className="text-destructive text-xs">{saveMessage}</span>
+                <span className="text-destructive text-xs">{t('saveFailed')}</span>
               </>
             )}
           </div>
@@ -370,11 +371,10 @@ export default function ProfilePage() {
                   </div>
                   <div>
                     <h2 className="text-xl font-serif font-semibold text-charcoal">
-                      AI Personalization
+                      {t('aiPersonalization')}
                     </h2>
                     <p className="text-sm text-muted-foreground">
-                      Allow AI to analyze your progress for better
-                      recommendations.
+                      {t('aiPersonalizationDesc')}
                     </p>
                   </div>
                 </div>
@@ -392,13 +392,13 @@ export default function ProfilePage() {
             <div className="flex items-center gap-2">
               <Briefcase className="w-5 h-5 text-sage-600" />
               <h2 className="text-xl font-serif font-semibold text-charcoal">
-                Professional Background
+                {t('professionalBackground')}
               </h2>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label className="text-xs uppercase tracking-wider text-muted-foreground">
-                  Industry
+                  {t('industry')}
                 </Label>
                 <Select 
                   value={industrySelectValue} 
@@ -415,12 +415,12 @@ export default function ProfilePage() {
                   }}
                 >
                   <SelectTrigger className="bg-white">
-                    <SelectValue placeholder="Select option" />
+                    <SelectValue placeholder={t('selectOption')} />
                   </SelectTrigger>
                   <SelectContent>
                     {INDUSTRIES.map((ind) => (
                       <SelectItem key={ind.value} value={ind.value}>
-                        {ind.label}
+                        {t(ind.labelKey)}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -441,14 +441,14 @@ export default function ProfilePage() {
                         e.currentTarget.blur();
                       }
                     }}
-                    placeholder="Please specify your industry"
+                    placeholder={t('pleaseSpecifyIndustry')}
                     className="flex h-9 w-full rounded-md border border-input bg-white px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sage-500"
                   />
                 )}
               </div>
               <div className="space-y-2">
                 <Label className="text-xs uppercase tracking-wider text-muted-foreground">
-                  Current Role
+                  {t('currentRole')}
                 </Label>
                 <Select 
                   value={roleSelectValue} 
@@ -465,12 +465,12 @@ export default function ProfilePage() {
                   }}
                 >
                   <SelectTrigger className="bg-white">
-                    <SelectValue placeholder="Select option" />
+                    <SelectValue placeholder={t('selectOption')} />
                   </SelectTrigger>
                   <SelectContent>
                     {ROLES.map((role) => (
                       <SelectItem key={role.value} value={role.value}>
-                        {role.label}
+                        {t(role.labelKey)}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -491,7 +491,7 @@ export default function ProfilePage() {
                         e.currentTarget.blur();
                       }
                     }}
-                    placeholder="Please specify your role"
+                    placeholder={t('pleaseSpecifyRole')}
                     className="flex h-9 w-full rounded-md border border-input bg-white px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sage-500"
                   />
                 )}
@@ -505,7 +505,7 @@ export default function ProfilePage() {
               <div className="flex items-center gap-2">
                 <Code2 className="w-5 h-5 text-sage-600" />
                 <h2 className="text-xl font-serif font-semibold text-charcoal">
-                  Current Tech Stack
+                  {t('currentTechStack')}
                 </h2>
               </div>
               <Button
@@ -516,7 +516,7 @@ export default function ProfilePage() {
                 className="gap-1.5"
               >
                 <Plus className="w-4 h-4" />
-                Add Technology
+                {t('addTechnology')}
               </Button>
             </div>
 
@@ -540,7 +540,7 @@ export default function ProfilePage() {
             <div className="flex items-center gap-2">
               <Languages className="w-5 h-5 text-sage-600" />
               <h2 className="text-xl font-serif font-semibold text-charcoal">
-                Language Preferences
+                {t('languagePreferences')}
               </h2>
             </div>
             <Card className="border shadow-sm">
@@ -548,14 +548,14 @@ export default function ProfilePage() {
                 <div className="grid grid-cols-2 gap-6">
                   <div className="space-y-2">
                     <Label className="text-xs uppercase tracking-wider text-muted-foreground">
-                      Primary Language
+                      {t('primaryLanguage')}
                     </Label>
                     <Select
                       value={profile.primary_language}
                       onValueChange={(value) => updateProfile({ primary_language: value })}
                     >
                       <SelectTrigger className="bg-white">
-                        <SelectValue placeholder="Select option" />
+                        <SelectValue placeholder={t('selectOption')} />
                       </SelectTrigger>
                       <SelectContent>
                         {LANGUAGES.map((lang) => (
@@ -568,14 +568,14 @@ export default function ProfilePage() {
                   </div>
                   <div className="space-y-2">
                     <Label className="text-xs uppercase tracking-wider text-muted-foreground">
-                      Secondary Language
+                      {t('secondaryLanguage')}
                     </Label>
                     <Select
                       value={profile.secondary_language || ''}
                       onValueChange={(value) => updateProfile({ secondary_language: value })}
                     >
                       <SelectTrigger className="bg-white">
-                        <SelectValue placeholder="Select option" />
+                        <SelectValue placeholder={t('selectOption')} />
                       </SelectTrigger>
                       <SelectContent>
                         {LANGUAGES.map((lang) => (
@@ -596,7 +596,7 @@ export default function ProfilePage() {
             <div className="flex items-center gap-2">
               <GraduationCap className="w-5 h-5 text-sage-600" />
               <h2 className="text-xl font-serif font-semibold text-charcoal">
-                Learning Habits
+                {t('learningHabits')}
               </h2>
             </div>
 
@@ -605,10 +605,10 @@ export default function ProfilePage() {
               <CardContent className="p-6 space-y-4">
                 <div className="flex items-center justify-between">
                   <Label className="text-sm font-medium">
-                    Weekly Commitment
+                    {t('weeklyCommitment')}
                   </Label>
                   <span className="text-lg font-serif font-semibold text-charcoal">
-                    {profile.weekly_commitment_hours} hours
+                    {profile.weekly_commitment_hours} {t('hours')}
                   </span>
                 </div>
                 <Slider
@@ -620,8 +620,8 @@ export default function ProfilePage() {
                   className="w-full"
                 />
                 <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>Casual (5h)</span>
-                  <span>Intense (40h)</span>
+                  <span>{t('casual')}</span>
+                  <span>{t('intense')}</span>
                 </div>
               </CardContent>
             </Card>
@@ -630,21 +630,26 @@ export default function ProfilePage() {
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <Label className="text-sm font-medium">
-                  Preferred Learning Style (select multiple)
+                  {t('preferredLearningStyle')}
                 </Label>
                 <button
                   type="button"
                   onClick={selectAllLearningStyles}
                   className="text-sm text-sage-600 hover:text-sage-700 hover:underline"
                 >
-                  {profile.learning_style && profile.learning_style.length === LEARNING_STYLES.length ? 'Deselect All' : 'Select All'}
+                  {profile.learning_style && profile.learning_style.length === LEARNING_STYLES.length ? t('deselectAll') : t('selectAll')}
                 </button>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {LEARNING_STYLES.map((style) => (
                   <LearningStyleCard
                     key={style.value}
-                    style={style}
+                    style={{
+                      value: style.value,
+                      label: t(style.labelKey),
+                      icon: style.icon,
+                      description: t(style.descriptionKey),
+                    }}
                     isSelected={profile.learning_style?.includes(style.value) || false}
                     onSelect={() => toggleLearningStyle(style.value)}
                   />
@@ -684,6 +689,7 @@ function TechStackRow({
   onRemove: (technology: string) => void;
   onAssess: (technology: string, proficiency: string) => void;
 }) {
+  const t = useTranslations('profile');
   const [isCustomInput, setIsCustomInput] = React.useState(false);
   const [customValue, setCustomValue] = React.useState('');
   
@@ -741,7 +747,7 @@ function TechStackRow({
                       setCustomValue('');
                     }
                   }}
-                  placeholder="Enter technology name"
+                  placeholder={t('enterTechnologyName')}
                   className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                   autoFocus
                 />
@@ -774,7 +780,7 @@ function TechStackRow({
                 }}
               >
                 <SelectTrigger className="bg-white">
-                  <SelectValue placeholder="Select" />
+                  <SelectValue placeholder={t('select')} />
                 </SelectTrigger>
                 <SelectContent>
                   {displayOptions.map((tech) => {
@@ -791,18 +797,18 @@ function TechStackRow({
                         className={cn(isSelected && 'opacity-50 cursor-not-allowed')}
                       >
                         {tech.label}
-                        {isSelected && ' (selected)'}
+                        {isSelected && ` (${t('selected')})`}
                       </SelectItem>
                     );
                   })}
                   {/* 如果当前是自定义值，提供编辑选项 */}
                   {item.technology && !currentTechExists && (
                     <SelectItem value="__edit_custom__" className="text-sage-600 font-medium">
-                      ✏️ Edit Custom
+                      {t('editCustom')}
                     </SelectItem>
                   )}
                   <SelectItem value="__custom__" className="text-sage-600 font-medium">
-                    + Custom Technology
+                    {t('customTechnology')}
                   </SelectItem>
                 </SelectContent>
               </Select>
@@ -827,7 +833,7 @@ function TechStackRow({
             disabled={!item.technology || !item.proficiency}
           >
             <Sparkles className="w-3.5 h-3.5" />
-            Assess
+            {t('assess')}
           </Button>
 
           {/* Delete Button */}
@@ -854,10 +860,11 @@ function ProficiencySelector({
   value: string;
   onChange: (value: string) => void;
 }) {
+  const t = useTranslations('profile');
   const levels = [
-    { value: 'beginner', label: 'Beginner' },
-    { value: 'intermediate', label: 'Intermediate' },
-    { value: 'expert', label: 'Expert' },
+    { value: 'beginner', label: t('beginner') },
+    { value: 'intermediate', label: t('intermediate') },
+    { value: 'expert', label: t('expert') },
   ];
 
   const currentIndex = levels.findIndex((l) => l.value === value);

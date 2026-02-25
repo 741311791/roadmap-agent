@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import { cn } from '@/lib/utils';
-import type { Concept, LearningPreferences } from '@/types/generated/models';
-import type { ResourcesResponse, QuizResponse } from '@/types/generated/services';
+import { useTranslations } from 'next-intl';
+import { cn, stripRoadmapPrefix } from '@/lib/utils';
+import type { Concept, LearningPreferences, QuizQuestion } from '@/types/generated/models';
+import type { ResourcesResponse, QuizResponse } from '@/types/generated';
 import { updateConceptProgress, submitQuizAttempt } from '@/lib/api/endpoints';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import { useResources } from '@/lib/hooks/api/use-resources';
@@ -53,19 +54,19 @@ type LearningFormat = 'immersive-text' | 'learning-resources' | 'quiz' | 'slides
 
 interface LearningFormatOption {
   id: LearningFormat;
-  label: string;
+  labelKey: string;
   icon: React.ElementType;
   available: boolean;
-  description?: string;
+  descriptionKey?: string;
 }
 
 const LEARNING_FORMATS: LearningFormatOption[] = [
-  { id: 'immersive-text', label: 'Immersive Text', icon: BookOpenText, available: true, description: 'Rich reading experience' },
-  { id: 'learning-resources', label: 'Learning Resources', icon: BookOpen, available: true, description: 'Curated learning materials' },
-  { id: 'quiz', label: 'Quiz', icon: Sparkles, available: true, description: 'Test your knowledge' },
-  { id: 'slides', label: 'Slides & Narration', icon: Presentation, available: false, description: 'Visual presentation' },
-  { id: 'audio', label: 'Audio Lesson', icon: Mic, available: false, description: 'Podcast-style lesson' },
-  { id: 'mindmap', label: 'Mindmap', icon: Network, available: false, description: 'Visual knowledge graph' },
+  { id: 'immersive-text', labelKey: 'immersiveText', icon: BookOpenText, available: true, descriptionKey: 'richReading' },
+  { id: 'learning-resources', labelKey: 'learningResources', icon: BookOpen, available: true, descriptionKey: 'curatedMaterials' },
+  { id: 'quiz', labelKey: 'quiz', icon: Sparkles, available: true, descriptionKey: 'testKnowledge' },
+  { id: 'slides', labelKey: 'slidesNarration', icon: Presentation, available: false, descriptionKey: 'visualPresentation' },
+  { id: 'audio', labelKey: 'audioLesson', icon: Mic, available: false, descriptionKey: 'podcastStyle' },
+  { id: 'mindmap', labelKey: 'mindmap', icon: Network, available: false, descriptionKey: 'visualGraph' },
 ];
 
 /**
@@ -78,6 +79,8 @@ function LearningFormatTabs({
   activeFormat: LearningFormat;
   onFormatChange: (format: LearningFormat) => void;
 }) {
+  const t = useTranslations('roadmapDetail');
+  
   return (
     <div className="flex items-center justify-center gap-2 p-4 bg-gradient-to-b from-stone-50 to-transparent rounded-xl mb-6">
       {LEARNING_FORMATS.map((format) => {
@@ -98,7 +101,7 @@ function LearningFormatTabs({
                   ? "hover:bg-white/60 border-2 border-transparent hover:border-sage-200"
                   : "opacity-50 cursor-not-allowed border-2 border-transparent"
             )}
-            title={format.description}
+            title={format.descriptionKey ? t(format.descriptionKey as any) : undefined}
           >
             <div className={cn(
               "w-10 h-10 rounded-full flex items-center justify-center transition-colors",
@@ -121,7 +124,7 @@ function LearningFormatTabs({
               "text-xs font-medium transition-colors",
               isActive ? "text-sage-700" : "text-stone-600"
             )}>
-              {format.label}
+              {t(format.labelKey as any)}
             </span>
           </button>
         );
@@ -150,6 +153,7 @@ function TableOfContents({
   items: TOCItem[];
   onItemClick: (id: string) => void;
 }) {
+  const t = useTranslations('roadmapDetail');
   const [isExpanded, setIsExpanded] = useState(false);
 
   if (items.length === 0) return null;
@@ -184,7 +188,7 @@ function TableOfContents({
       )}>
         {/* Compact Header */}
         <div className="flex items-center gap-2 px-3 py-2 border-b border-sage-100 bg-sage-50/50">
-          <span className="text-xs font-medium text-sage-700">目录</span>
+          <span className="text-xs font-medium text-sage-700">{t('tableOfContents')}</span>
           <span className="text-[10px] text-sage-400 ml-auto tabular-nums">
             {items.length}
           </span>
@@ -222,6 +226,8 @@ function TableOfContents({
  * 展示概念的标题、描述和预估时间，带有优雅的渐变背景
  */
 function DynamicHeader({ concept }: { concept: Concept }) {
+  const t = useTranslations('roadmapDetail');
+  
   return (
     <div className="relative w-full h-48 md:h-56 rounded-xl overflow-hidden mb-6 border border-sage-200 shadow-sm">
       {/* Sage Gradient Background */}
@@ -247,7 +253,7 @@ function DynamicHeader({ concept }: { concept: Concept }) {
       <div className="relative z-10 h-full flex flex-col justify-end p-6 md:p-8">
         <div className="flex items-center gap-3 mb-3">
           <span className="px-3 py-1 rounded-full bg-sage-600 text-[10px] uppercase tracking-widest text-white font-medium">
-            Interactive Lesson
+            {t('interactiveLesson')}
           </span>
           {concept.estimated_hours && (
             <span className="flex items-center gap-1.5 text-xs text-sage-700">
@@ -257,7 +263,7 @@ function DynamicHeader({ concept }: { concept: Concept }) {
           )}
         </div>
         <h1 className="text-3xl md:text-4xl font-serif font-bold text-foreground tracking-tight mb-2">
-          {concept.name}
+          {stripRoadmapPrefix(concept.name)}
         </h1>
         <p className="text-muted-foreground text-sm max-w-2xl line-clamp-2 leading-relaxed">
           {concept.description}
@@ -318,6 +324,8 @@ function ResourceCard({
   resource: ResourcesResponse['resources'][0];
   index: number;
 }) {
+  const t = useTranslations('roadmapDetail');
+  
   // 根据资源类型返回对应图标
   const getResourceIcon = (type: string) => {
     switch (type) {
@@ -335,6 +343,20 @@ function ResourceCard({
         return <Code className="w-5 h-5 text-sage-600" />;
       default:
         return <FileTextIcon className="w-5 h-5 text-sage-600" />;
+    }
+  };
+  
+  // 获取资源类型标签
+  const getResourceTypeLabel = (type: string) => {
+    switch (type) {
+      case 'video':
+        return t('video');
+      case 'book':
+        return t('book');
+      case 'course':
+        return t('course');
+      default:
+        return t('article');
     }
   };
 
@@ -371,10 +393,7 @@ function ResourceCard({
         <div className="flex items-center gap-3 mt-2">
           {/* 来源信息 */}
           <span className="text-xs text-muted-foreground">
-            {(resource as any).type === 'video' ? 'Video' : 
-             (resource as any).type === 'book' ? 'Book' : 
-             (resource as any).type === 'course' ? 'Course' : 
-             'Article'}
+            {getResourceTypeLabel((resource as any).type)}
           </span>
 
           {/* 星级评分 */}
@@ -423,11 +442,13 @@ function ResourceList({
   userPreferences?: LearningPreferences;
   onRetrySuccess?: () => void;
 }) {
+  const t = useTranslations('roadmapDetail');
+  
   if (isLoading) {
     return (
       <div className="flex flex-col items-center justify-center py-20">
         <Loader2Icon className="w-8 h-8 text-sage-500 animate-spin mb-4" />
-        <p className="text-sm text-muted-foreground">Loading learning resources...</p>
+        <p className="text-sm text-muted-foreground">{t('loadingResources')}</p>
       </div>
     );
   }
@@ -438,7 +459,7 @@ function ResourceList({
         <div className="w-16 h-16 rounded-full bg-red-50 flex items-center justify-center mb-4">
           <BookOpen className="w-8 h-8 text-red-400" />
         </div>
-        <h3 className="text-lg font-medium text-stone-700 mb-2">Failed to Load Resources</h3>
+        <h3 className="text-lg font-medium text-stone-700 mb-2">{t('failedToLoadResources')}</h3>
         <p className="text-sm text-stone-500 max-w-md">{error}</p>
       </div>
     );
@@ -465,9 +486,9 @@ function ResourceList({
         <div className="w-16 h-16 rounded-full bg-stone-100 flex items-center justify-center mb-4">
           <BookOpen className="w-8 h-8 text-stone-400" />
         </div>
-        <h3 className="text-lg font-medium text-stone-700 mb-2">No Resources Available</h3>
+        <h3 className="text-lg font-medium text-stone-700 mb-2">{t('noResourcesAvailable')}</h3>
         <p className="text-sm text-stone-500 max-w-md">
-          Learning resources are being generated. Please check back later.
+          {t('resourcesGenerating')}
         </p>
       </div>
     );
@@ -477,10 +498,10 @@ function ResourceList({
     <div className="space-y-3">
       <div className="mb-6">
         <h2 className="text-xl font-serif font-bold text-foreground mb-2">
-          Curated Learning Resources
+          {t('curatedResourcesTitle')}
         </h2>
         <p className="text-sm text-muted-foreground">
-          {resources.length} handpicked resources to deepen your understanding
+          {t('resourcesCount', { count: resources.length })}
         </p>
       </div>
 
@@ -539,11 +560,27 @@ function QuizQuestionCard({
     }
   };
 
+  const t = useTranslations('roadmapDetail');
+  
   // 获取题型显示文本
   const getQuestionTypeLabel = () => {
-    if (isTrueFalse) return 'True / False';
-    if (isMultipleChoice) return 'Select All';
-    return 'Choose One';
+    if (isTrueFalse) return t('trueFalse');
+    if (isMultipleChoice) return t('selectAll');
+    return t('chooseOne');
+  };
+  
+  // 获取难度标签
+  const getDifficultyLabel = (difficulty: string) => {
+    switch (difficulty) {
+      case 'easy':
+        return t('easy');
+      case 'medium':
+        return t('medium');
+      case 'hard':
+        return t('hard');
+      default:
+        return difficulty;
+    }
   };
 
   /**
@@ -556,10 +593,10 @@ function QuizQuestionCard({
     if (correctOptions.length === 0) return '';
     
     if (correctOptions.length === 1) {
-      return `The correct answer is "${correctOptions[0]}". `;
+      return t('correctAnswer', { answer: correctOptions[0] });
     } else {
       const formattedOptions = correctOptions.map(opt => `"${opt}"`).join(', ');
-      return `The correct answers are ${formattedOptions}. `;
+      return t('correctAnswers', { answers: formattedOptions });
     }
   };
 
@@ -576,7 +613,7 @@ function QuizQuestionCard({
               "inline-flex px-2.5 py-1 rounded-md text-[10px] font-semibold border uppercase tracking-wider",
               getDifficultyStyle(question.difficulty)
             )}>
-              {question.difficulty}
+              {getDifficultyLabel(question.difficulty)}
             </span>
             <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">
               {getQuestionTypeLabel()}
@@ -663,7 +700,7 @@ function QuizQuestionCard({
                 "text-sm font-semibold mb-1.5",
                 isCorrect ? "text-sage-800" : "text-stone-700"
               )}>
-                {isCorrect ? "Excellent!" : "Keep Learning"}
+                {isCorrect ? t('excellent') : t('keepLearning')}
               </p>
               <p className="text-sm text-stone-600 leading-relaxed">
                 {getCorrectAnswerStatement()}
@@ -697,6 +734,7 @@ function QuizList({
   userPreferences?: LearningPreferences;
   onRetrySuccess?: () => void;
 }) {
+  const t = useTranslations('roadmapDetail');
   const [answers, setAnswers] = useState<Record<string, number[]>>({});
   const [submittedQuestions, setSubmittedQuestions] = useState<Set<string>>(new Set());
 
@@ -726,7 +764,7 @@ function QuizList({
   const getScore = () => {
     if (!quiz) return { correct: 0, total: 0 };
     let correct = 0;
-    quiz.questions.forEach(q => {
+    quiz.questions.forEach((q: any) => {
       if (submittedQuestions.has(q.question_id)) {
         const userAnswers = answers[q.question_id] || [];
         if (
@@ -751,7 +789,7 @@ function QuizList({
       
       // Calculate incorrect question indices
       const incorrectIndices: number[] = [];
-      quiz.questions.forEach((question, index) => {
+      quiz.questions.forEach((question: any, index: number) => {
         const userAnswers = answers[question.question_id] || [];
         const isCorrect = 
           userAnswers.length === question.correct_answer.length &&
@@ -764,8 +802,11 @@ function QuizList({
       
       try {
         await submitQuizAttempt(roadmapId, conceptId, {
-          answers: answers,
-          time_spent: 0
+          quiz_id: quiz.quiz_id,
+          total_questions: quiz.total_questions,
+          correct_answers: score.correct,
+          score_percentage: Math.round((score.correct / score.total) * 100),
+          incorrect_question_indices: incorrectIndices,
         });
         console.log('[QuizList] Quiz attempt submitted successfully');
       } catch (error) {
@@ -780,7 +821,7 @@ function QuizList({
     return (
       <div className="flex flex-col items-center justify-center py-20">
         <Loader2Icon className="w-8 h-8 text-sage-500 animate-spin mb-4" />
-        <p className="text-sm text-muted-foreground">Loading quiz...</p>
+        <p className="text-sm text-muted-foreground">{t('loadingQuiz')}</p>
       </div>
     );
   }
@@ -791,7 +832,7 @@ function QuizList({
         <div className="w-16 h-16 rounded-full bg-red-50 flex items-center justify-center mb-4">
           <Sparkles className="w-8 h-8 text-red-400" />
         </div>
-        <h3 className="text-lg font-medium text-stone-700 mb-2">Failed to Load Quiz</h3>
+        <h3 className="text-lg font-medium text-stone-700 mb-2">{t('failedToLoadQuiz')}</h3>
         <p className="text-sm text-stone-500 max-w-md">{error}</p>
       </div>
     );
@@ -818,9 +859,9 @@ function QuizList({
         <div className="w-16 h-16 rounded-full bg-stone-100 flex items-center justify-center mb-4">
           <Sparkles className="w-8 h-8 text-stone-400" />
         </div>
-        <h3 className="text-lg font-medium text-stone-700 mb-2">No Quiz Available</h3>
+        <h3 className="text-lg font-medium text-stone-700 mb-2">{t('noQuizAvailable')}</h3>
         <p className="text-sm text-stone-500 max-w-md">
-          Quiz questions are being generated. Please check back later.
+          {t('quizGenerating')}
         </p>
       </div>
     );
@@ -839,10 +880,10 @@ function QuizList({
           </div>
           <div>
             <h2 className="text-2xl font-serif font-bold text-foreground">
-              Knowledge Check
+              {t('knowledgeCheck')}
             </h2>
             <p className="text-sm text-muted-foreground">
-              {quiz.total_questions} questions to test your understanding
+              {t('questionsCount', { count: quiz.total_questions })}
             </p>
           </div>
         </div>
@@ -871,7 +912,7 @@ function QuizList({
                   <Award className="w-7 h-7 text-white" />
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground mb-0.5">Quiz Complete</p>
+                  <p className="text-sm font-medium text-muted-foreground mb-0.5">{t('quizComplete')}</p>
                   <p className="text-3xl font-serif font-bold text-sage-800">
                     {score.correct}<span className="text-lg text-muted-foreground font-normal">/{score.total}</span>
                   </p>
@@ -882,7 +923,7 @@ function QuizList({
                   {scorePercentage}%
                 </p>
                 <p className="text-xs text-muted-foreground mt-1 uppercase tracking-wider">
-                  {scorePercentage >= 80 ? 'Excellent' : scorePercentage >= 60 ? 'Good Job' : 'Keep Learning'}
+                  {scorePercentage >= 80 ? t('excellent') : scorePercentage >= 60 ? t('goodJob') : t('keepLearning')}
                 </p>
               </div>
             </div>
@@ -899,10 +940,10 @@ function QuizList({
         return (
           <div key={question.question_id}>
             <QuizQuestionCard
-              question={question}
+              question={question as any}
               index={index}
               isAnswered={isAnswered}
-              selectedAnswers={selectedAnswers}
+              selectedAnswers={selectedAnswers as any}
               onAnswerSelect={(optionIndex) => 
                 handleAnswerSelect(
                   question.question_id, 
@@ -918,7 +959,7 @@ function QuizList({
                   size="sm"
                   className="bg-sage-600 hover:bg-sage-700 text-white shadow-sm hover:shadow transition-all px-5"
                 >
-                  Submit Answer
+                  {t('submitAnswer')}
                 </Button>
               </div>
             )}
@@ -962,6 +1003,7 @@ interface LearningStageProps {
  * - 提供"标记完成"操作
  */
 export function LearningStage({ concept, className, tutorialContent, tutorialLoading, roadmapId, userPreferences, onRetrySuccess }: LearningStageProps) {
+  const t = useTranslations('roadmapDetail');
   const [activeFormat, setActiveFormat] = useState<LearningFormat>('immersive-text');
   
   // Learning progress state
@@ -989,17 +1031,18 @@ export function LearningStage({ concept, className, tutorialContent, tutorialLoa
   
   // 检测内容生成状态
   // 注意：不再使用本地重试状态，完全依赖后端状态和WebSocket更新
+  // 'pending'：初始排队状态；'generating'：正在生成中（regenerate 期间后端设置此值）
   const tutorialFailed = concept?.content_status === 'failed';
-  const tutorialGenerating = concept?.content_status === 'pending';
-  const tutorialPending = concept?.content_status === 'pending';
-  
+  const tutorialGenerating = concept?.content_status === 'pending' || concept?.content_status === 'generating';
+  const tutorialPending = concept?.content_status === 'pending' || concept?.content_status === 'generating';
+
   const resourcesFailed = concept?.resources_status === 'failed';
-  const resourcesGenerating = concept?.resources_status === 'pending';
-  const resourcesPending = concept?.resources_status === 'pending';
-  
+  const resourcesGenerating = concept?.resources_status === 'pending' || concept?.resources_status === 'generating';
+  const resourcesPending = concept?.resources_status === 'pending' || concept?.resources_status === 'generating';
+
   const quizFailed = concept?.quiz_status === 'failed';
-  const quizGenerating = concept?.quiz_status === 'pending';
-  const quizPending = concept?.quiz_status === 'pending';
+  const quizGenerating = concept?.quiz_status === 'pending' || concept?.quiz_status === 'generating';
+  const quizPending = concept?.quiz_status === 'pending' || concept?.quiz_status === 'generating';
   
   // Extract TOC from markdown content
   const tocItems = useMemo(() => {
@@ -1116,8 +1159,8 @@ export function LearningStage({ concept, className, tutorialContent, tutorialLoa
           <div className="w-16 h-16 rounded-full bg-sage-50 mx-auto flex items-center justify-center mb-4 border border-sage-100">
             <BookOpen className="w-8 h-8 text-sage-400" />
           </div>
-          <p className="font-serif text-lg text-foreground">Select a concept to begin</p>
-          <p className="text-sm mt-2 text-muted-foreground">Choose from the knowledge rail on the left</p>
+          <p className="font-serif text-lg text-foreground">{t('selectConcept')}</p>
+          <p className="text-sm mt-2 text-muted-foreground">{t('chooseFromRail')}</p>
         </div>
       </div>
     );
@@ -1233,6 +1276,25 @@ export function LearningStage({ concept, className, tutorialContent, tutorialLoa
                             {children}
                           </pre>
                         );
+                      },
+                      // 修复 AI 生成内容中的内部链接：路线图内部跳转链接缺少 /roadmap 前缀
+                      // 例如 /agent-42415a83?concept=... → /roadmap/agent-42415a83?concept=...
+                      a: ({ href, children, ...props }: any) => {
+                        const isExternal = href?.startsWith('http');
+                        let resolvedHref = href;
+                        if (href && roadmapId && href.startsWith(`/${roadmapId}`)) {
+                          resolvedHref = `/roadmap${href}`;
+                        }
+                        return (
+                          <a
+                            href={resolvedHref}
+                            target={isExternal ? '_blank' : undefined}
+                            rel={isExternal ? 'noopener noreferrer' : undefined}
+                            {...props}
+                          >
+                            {children}
+                          </a>
+                        );
                       }
                     }}
                   >
@@ -1308,9 +1370,9 @@ export function LearningStage({ concept, className, tutorialContent, tutorialLoa
               <div className="w-16 h-16 rounded-full bg-stone-100 flex items-center justify-center mb-4">
                 <Presentation className="w-8 h-8 text-stone-400" />
               </div>
-              <h3 className="text-lg font-medium text-stone-700 mb-2">Slides & Narration</h3>
+              <h3 className="text-lg font-medium text-stone-700 mb-2">{t('slidesNarration')}</h3>
               <p className="text-sm text-stone-500 max-w-md">
-                Interactive slides with voice narration will be available here. This feature is under development.
+                {t('slidesComingSoon')}
               </p>
             </div>
           )}
@@ -1320,9 +1382,9 @@ export function LearningStage({ concept, className, tutorialContent, tutorialLoa
               <div className="w-16 h-16 rounded-full bg-stone-100 flex items-center justify-center mb-4">
                 <Mic className="w-8 h-8 text-stone-400" />
               </div>
-              <h3 className="text-lg font-medium text-stone-700 mb-2">Audio Lesson</h3>
+              <h3 className="text-lg font-medium text-stone-700 mb-2">{t('audioLesson')}</h3>
               <p className="text-sm text-stone-500 max-w-md">
-                Podcast-style audio lessons will be available here. This feature is under development.
+                {t('audioComingSoon')}
               </p>
             </div>
           )}
@@ -1332,9 +1394,9 @@ export function LearningStage({ concept, className, tutorialContent, tutorialLoa
               <div className="w-16 h-16 rounded-full bg-stone-100 flex items-center justify-center mb-4">
                 <Network className="w-8 h-8 text-stone-400" />
               </div>
-              <h3 className="text-lg font-medium text-stone-700 mb-2">Mindmap</h3>
+              <h3 className="text-lg font-medium text-stone-700 mb-2">{t('mindmap')}</h3>
               <p className="text-sm text-stone-500 max-w-md">
-                Visual knowledge graphs will be available here. This feature is under development.
+                {t('mindmapComingSoon')}
               </p>
             </div>
           )}
@@ -1342,7 +1404,7 @@ export function LearningStage({ concept, className, tutorialContent, tutorialLoa
           {/* Footer Actions */}
           <div className="mt-20 pt-8 border-t border-border flex justify-between items-center">
             <div className="text-sm text-muted-foreground">
-              You&apos;ve reached the end of this lesson.
+              {t('reachedEnd')}
             </div>
             <Button 
               variant="outline" 
@@ -1362,7 +1424,7 @@ export function LearningStage({ concept, className, tutorialContent, tutorialLoa
               ) : (
                 <Sparkles className="w-4 h-4" />
               )}
-              {isConceptCompleted ? "Completed" : "Mark as Complete"}
+              {isConceptCompleted ? t('completed') : t('markComplete')}
             </Button>
           </div>
         </div>

@@ -18,7 +18,16 @@ interface AuthState {
   loginWithPassword: (email: string, password: string) => Promise<boolean>;
   logout: () => void;
   logoutAsync: () => Promise<void>;
-  refreshUser: () => void;
+  /**
+   * 从后端 API 重新拉取最新用户信息并同步到 store 和 localStorage。
+   * 替代旧版只读 localStorage 的实现，确保刷新后数据始终与后端一致。
+   */
+  refreshUser: () => Promise<void>;
+  /**
+   * 用 API 返回的最新用户数据直接更新 store 和 localStorage。
+   * 保存头像/用户名后立即调用，无需额外网络请求。
+   */
+  updateUser: (user: User) => void;
   
   // 工具方法
   getUserId: () => string | null;
@@ -101,22 +110,37 @@ export const useAuthStore = create<AuthState>()(
       },
       
       /**
-       * 刷新用户信息
-       * 
-       * 从 localStorage 重新读取用户信息
+       * 从后端 API 重新拉取最新用户信息并同步到 store 和 localStorage。
+       *
+       * 修复点：旧实现只读 localStorage 旧数据，刷新页面后头像/用户名恢复原样。
+       * 新实现调用 GET /users/me，将最新数据同时写入 localStorage 和 Zustand store。
        */
-      refreshUser: () => {
-        const user = authService.getCurrentUser();
+      refreshUser: async () => {
         const token = authService.getToken();
-        const isAuthenticated = user !== null && token !== null;
-        
-        set({ user, isAuthenticated });
-        
-        if (user) {
-          console.log('[AuthStore] User refreshed:', user.username);
-        } else {
-          console.log('[AuthStore] No user session found');
+        if (!token) {
+          set({ user: null, isAuthenticated: false });
+          return;
         }
+        const user = await authService.fetchCurrentUser();
+        if (user) {
+          authService.saveUser(user);
+          set({ user, isAuthenticated: true });
+          console.log('[AuthStore] User refreshed from API:', user.username);
+        } else {
+          console.log('[AuthStore] Failed to refresh user from API');
+        }
+      },
+
+      /**
+       * 用 API 返回的最新用户数据直接更新 store 和 localStorage。
+       *
+       * 保存头像/用户名后立即调用此方法，左下角 UserMenu 及页面标题会立即响应，
+       * 无需额外一次 GET /users/me 请求。
+       */
+      updateUser: (user: User) => {
+        authService.saveUser(user);
+        set({ user });
+        console.log('[AuthStore] User updated:', user.username);
       },
       
       /**

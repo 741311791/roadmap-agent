@@ -1,0 +1,11 @@
+# 项目级别 uv 配置（覆盖全局配置）
+# 使用官方 PyPI 源以确保包的可用性
+
+[[index]]
+url = "https://pypi.org/simple"
+default = true
+
+# 备选：阿里云镜像（国内速度更快，但可能有同步延迟）
+# [[index]]
+# url = "https://mirrors.aliyun.com/pypi/simple/"
+# default = true

@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { Sparkles, Target, Brain, Heart, Zap, Github, Twitter, Mail } from 'lucide-react';
 import { motion } from 'framer-motion';
 
@@ -13,6 +14,8 @@ import { motion } from 'framer-motion';
  * - 联系方式
  */
 export default function AboutPage() {
+  const t = useTranslations('aboutPage');
+  
   return (
     <div className="bg-background">
       {/* 动态背景 */}
@@ -27,7 +30,7 @@ export default function AboutPage() {
             transition={{ duration: 0.6, delay: 0.1 }}
             className="text-5xl md:text-6xl font-serif font-bold text-foreground mb-6"
           >
-            About Fast Learning
+            {t('title')}
           </motion.h1>
           
           <motion.p
@@ -36,8 +39,7 @@ export default function AboutPage() {
             transition={{ duration: 0.6, delay: 0.2 }}
             className="text-xl text-muted-foreground leading-relaxed max-w-3xl"
           >
-            We&apos;re building the future of education—where AI doesn&apos;t replace teachers, 
-            but amplifies learning by creating truly personalized paths to mastery.
+            {t('subtitle')}
           </motion.p>
         </div>
       </section>
@@ -53,30 +55,30 @@ export default function AboutPage() {
             className="text-center mb-16"
           >
             <h2 className="text-3xl font-serif font-bold text-foreground mb-4">
-              Our Vision
+              {t('ourVision')}
             </h2>
             <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-              A world where anyone can master any skill—quickly, effectively, and affordably.
+              {t('visionDesc')}
             </p>
           </motion.div>
 
           <div className="grid md:grid-cols-3 gap-8">
             <VisionCard
               icon={Target}
-              title="Democratize Learning"
-              description="Everyone deserves access to world-class education, regardless of background or location."
+              title={t('democratize')}
+              description={t('democratizeDesc')}
               delay={0}
             />
             <VisionCard
               icon={Brain}
-              title="Personalized Paths"
-              description="No two learners are the same. AI creates unique roadmaps tailored to individual needs."
+              title={t('personalizedPaths')}
+              description={t('personalizedPathsDesc')}
               delay={0.1}
             />
             <VisionCard
               icon={Zap}
-              title="Accelerate Mastery"
-              description="Learn faster by doing, not just watching. Practice-first methodology that works."
+              title={t('accelerateMastery')}
+              description={t('accelerateMasteryDesc')}
               delay={0.2}
             />
           </div>
@@ -93,25 +95,17 @@ export default function AboutPage() {
             transition={{ duration: 0.5 }}
           >
             <h2 className="text-3xl font-serif font-bold text-foreground mb-8">
-              Why We Built This
+              {t('whyWeBuilt')}
             </h2>
             <div className="prose prose-lg prose-stone max-w-none">
               <p className="text-muted-foreground leading-relaxed mb-6">
-                Traditional education is broken. It&apos;s one-size-fits-all, painfully slow, and 
-                disconnected from real-world application. We&apos;ve all experienced the frustration 
-                of sitting through lectures that don&apos;t match our level, or tutorials that never 
-                quite get to the point.
+                {t('story1')}
               </p>
               <p className="text-muted-foreground leading-relaxed mb-6">
-                Fast Learning was born from a simple observation: the best learning happens when 
-                you&apos;re building something real, when content adapts to your level, and when you 
-                have a mentor who understands exactly where you&apos;re struggling.
+                {t('story2')}
               </p>
               <p className="text-muted-foreground leading-relaxed">
-                With advances in generative AI, we can finally create that experience at scale. 
-                Our multi-agent system doesn&apos;t just generate content—it architects personalized 
-                learning journeys, adapts to your progress, and guides you through practical 
-                projects that cement understanding.
+                {t('story3')}
               </p>
             </div>
           </motion.div>
@@ -129,29 +123,29 @@ export default function AboutPage() {
             className="text-center mb-16"
           >
             <h2 className="text-3xl font-serif font-bold text-foreground mb-4">
-              Our Values
+              {t('ourValues')}
             </h2>
           </motion.div>
 
           <div className="grid md:grid-cols-2 gap-8">
             <ValueCard
-              title="Learning by Doing"
-              description="Theory without practice is forgettable. We believe in hands-on learning from day one, where every concept is tied to real application."
+              title={t('value1Title')}
+              description={t('value1Desc')}
               delay={0}
             />
             <ValueCard
-              title="Continuous Iteration"
-              description="The best learners aren't afraid to make mistakes. Our system encourages experimentation and provides gentle correction."
+              title={t('value2Title')}
+              description={t('value2Desc')}
               delay={0.1}
             />
             <ValueCard
-              title="Radical Personalization"
-              description="Your learning journey is unique. We adapt everything—content, pace, difficulty—to maximize your growth."
+              title={t('value3Title')}
+              description={t('value3Desc')}
               delay={0.2}
             />
             <ValueCard
-              title="Transparent AI"
-              description="We believe AI should augment human potential, not replace human connection. Our AI explains its reasoning and learns from your feedback."
+              title={t('value4Title')}
+              description={t('value4Desc')}
               delay={0.3}
             />
           </div>
@@ -168,16 +162,15 @@ export default function AboutPage() {
             transition={{ duration: 0.5 }}
           >
             <h2 className="text-3xl font-serif font-bold text-foreground mb-4">
-              Built with Love
+              {t('builtWithLove')}
             </h2>
             <p className="text-lg text-muted-foreground max-w-2xl mx-auto mb-12">
-              Fast Learning is built by a small team passionate about education and AI. 
-              We&apos;re constantly improving based on user feedback.
+              {t('teamDesc')}
             </p>
             
             <div className="flex items-center justify-center gap-2 mb-8">
               <Heart className="w-5 h-5 text-sage-600" />
-              <span className="text-muted-foreground">Made with passion for learners everywhere</span>
+              <span className="text-muted-foreground">{t('madeWithPassion')}</span>
             </div>
           </motion.div>
         </div>
@@ -193,10 +186,10 @@ export default function AboutPage() {
             transition={{ duration: 0.5 }}
           >
             <h2 className="text-3xl font-serif font-bold text-foreground mb-4">
-              Get in Touch
+              {t('getInTouch')}
             </h2>
             <p className="text-lg text-muted-foreground mb-8">
-              Have questions, feedback, or just want to say hi? We&apos;d love to hear from you.
+              {t('contactDesc')}
             </p>
             
             <div className="flex items-center justify-center gap-6">
@@ -205,7 +198,7 @@ export default function AboutPage() {
                 className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
               >
                 <Mail className="w-5 h-5" />
-                <span>Email</span>
+                <span>{t('email')}</span>
               </a>
               <a 
                 href="https://twitter.com/fastlearningai" 
@@ -214,7 +207,7 @@ export default function AboutPage() {
                 className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
               >
                 <Twitter className="w-5 h-5" />
-                <span>Twitter</span>
+                <span>{t('twitter')}</span>
               </a>
               <a 
                 href="https://github.com/fastlearning" 
@@ -223,7 +216,7 @@ export default function AboutPage() {
                 className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
               >
                 <Github className="w-5 h-5" />
-                <span>GitHub</span>
+                <span>{t('github')}</span>
               </a>
             </div>
           </motion.div>

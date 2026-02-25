@@ -188,9 +188,8 @@ async def retry_task(
         logger.info(
             "retry_task_success",
             task_id=task_id,
-            mode=result.mode,
-            resume_from=result.resume_from,
-            is_subgraph=result.is_subgraph,
+            retry_scope=result.retry_scope,
+            retry_from=result.retry_from,
         )
         
         return response_base.success(data=result)

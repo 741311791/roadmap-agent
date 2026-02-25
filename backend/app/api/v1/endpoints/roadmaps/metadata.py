@@ -172,10 +172,10 @@ async def get_all_edit_records(
         EditRecordResponse(
             id=r.id,
             task_id=r.task_id,
-            version=r.version,
-            edit_type=r.edit_type,
-            human_feedback=r.human_feedback,
-            modifications_count=len(r.modifications or []),
+            version=r.edit_round,
+            edit_type="unknown",
+            human_feedback=None,
+            modifications_count=len(r.modified_node_ids or []),
             created_at=r.created_at.isoformat(),
         )
         for r in records
@@ -357,60 +357,35 @@ async def get_edit_history_full(
         logger.info("no_edit_history_found", roadmap_id=roadmap_id)
         return response_base.success(data={
             "roadmap_id": roadmap_id,
-            "edit_history": [],
+            "versions": [],
+            "current_version": 0,
             "total": 0,
-            "message": "该路线图暂无编辑历史"
         })
     
-    # 构建完整编辑历史
-    result = []
-    for edit in edits:
-        # 基本编辑信息（使用实际存在的字段）
-        edit_data = {
-            "id": edit.id,
-            "timestamp": edit.created_at.isoformat() if edit.created_at else None,
-            "task_id": edit.task_id,
+    # 构建前端期望的 EditHistoryVersion 格式
+    # 编辑记录按时间升序排列，version 从 1 开始递增
+    versions = []
+    for idx, edit in enumerate(reversed(edits), start=1):
+        version_data = {
+            "version": idx,
+            "framework_data": edit.modified_framework_data,
+            "created_at": edit.created_at.isoformat() if edit.created_at else None,
             "edit_round": edit.edit_round,
-            "diff_summary": edit.modification_summary,
-            "modified_node_ids": edit.modified_node_ids,
-            "origin_framework": edit.origin_framework_data,
-            "modified_framework": edit.modified_framework_data,
+            "modification_summary": edit.modification_summary or "",
+            "modified_node_ids": edit.modified_node_ids or [],
         }
-        
-        # 通过 task_id 查找对应的 EditPlanRecord，获取编辑来源
-        edit_plans = await edit_plan_crud.get_by_task_id(db, edit.task_id)
-        if edit_plans:
-            # 取最新的编辑计划
-            latest_plan = edit_plans[0] if isinstance(edit_plans, list) else edit_plans
-            
-            # 判断编辑来源
-            if latest_plan.feedback_id is None:
-                edit_data["edit_source"] = "validation_failed"
-            else:
-                edit_data["edit_source"] = "human_review"
-            
-            # 添加编辑计划详情
-            edit_data["edit_plan"] = {
-                "id": latest_plan.id,
-                "feedback_summary": latest_plan.feedback_summary,
-                "scope_analysis": latest_plan.scope_analysis,
-                "intents": latest_plan.intents,
-            }
-        else:
-            # 没有编辑计划，可能是旧数据
-            edit_data["edit_source"] = "unknown"
-        
-        result.append(edit_data)
+        versions.append(version_data)
     
     logger.info(
         "edit_history_retrieved",
         roadmap_id=roadmap_id,
-        total=len(result)
+        total=len(versions)
     )
     
     return response_base.success(data={
         "roadmap_id": roadmap_id,
-        "edit_history": result,
-        "total": len(result),
+        "versions": versions,
+        "current_version": len(versions),
+        "total": len(versions),
     })
 

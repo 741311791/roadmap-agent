@@ -16,6 +16,8 @@ export interface User {
   is_active: boolean;
   is_superuser: boolean;
   is_verified: boolean;
+  /** react-nice-avatar 头像配置 JSON，null 表示使用 email 生成默认头像 */
+  avatar_config?: Record<string, unknown> | null;
   password_expires_at?: string | null;
   created_at?: string | null;
 }
@@ -143,10 +145,17 @@ class AuthService {
   }
   
   /**
-   * 保存用户信息到本地存储
+   * 保存用户信息到本地存储（公开，供 store 更新用）
+   */
+  saveUser(user: User): void {
+    localStorage.setItem(AuthService.USER_KEY, JSON.stringify(user));
+  }
+
+  /**
+   * 保存用户信息到本地存储（内部别名，保持向后兼容）
    */
   private setUser(user: User): void {
-    localStorage.setItem(AuthService.USER_KEY, JSON.stringify(user));
+    this.saveUser(user);
   }
   
   /**

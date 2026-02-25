@@ -3,18 +3,15 @@
 
 提供教程、资源、测验的重新生成功能。
 
-重构变更：
-- ✅ 从 content.py 拆分出重新生成相关接口
-- ✅ 使用CurrentSessionTransaction（写操作）
-- ✅ 使用统一响应格式（ResponseSchemaModel）
-
-注意：
-这不属于Retry功能，而是Concept编辑服务的一部分。
-- Retry：使用checkpoint恢复整个workflow
-- Regenerate：直接调用Agent重新生成单个内容
+架构：
+- 端点只负责参数校验、创建 RoadmapTask 追踪记录、派发 Celery 任务后立即返回。
+- 实际的 Agent 调用在 content_generation 队列的 Celery Worker 中执行，
+  不占用主应用进程。
+- 前端通过 WebSocket 订阅 task_id 接收生成进度和结果通知。
 """
-from typing import Annotated
-from fastapi import APIRouter, Depends
+import uuid
+
+from fastapi import APIRouter, Depends, HTTPException, status
 import structlog
 
 from app.api.v1.deps import CurrentContentService, CurrentSessionTransaction
@@ -22,26 +19,103 @@ from app.core.response_schema import ResponseSchemaModel, response_base
 from app.schemas.generation import RetryContentRequest, RetryContentResponse
 from app.models.database import User
 from app.core.auth.deps import current_active_user
+from app.crud.crud_task import get_task_crud
 
 router = APIRouter(prefix="/content", tags=["content-regenerate"])
 logger = structlog.get_logger()
+
+_CONTENT_TYPE_LABEL = {
+    "tutorial": "教程",
+    "resources": "资源推荐",
+    "quiz": "测验",
+}
+
+
+async def _dispatch_regenerate_task(
+    roadmap_id: str,
+    concept_id: str,
+    content_type: str,
+    user_id: str,
+    session,
+    content_service,
+) -> RetryContentResponse:
+    """
+    通用内容重新生成派发逻辑
+
+    1. 验证概念存在
+    2. 创建 RoadmapTask 记录（status=processing，current_step=content_generation）
+    3. 派发到 content_generation Celery 队列
+    4. 返回 task_id（前端通过 WebSocket 订阅进度）
+
+    端点本身只做 DB 写入和任务入队，不执行任何 LLM 调用。
+    """
+    # 1. 验证概念存在于路线图中
+    concept, _, _ = await content_service.concept_service.get_concept_from_roadmap(
+        session, roadmap_id, concept_id
+    )
+    if not concept:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Concept {concept_id} not found in roadmap {roadmap_id}",
+        )
+
+    # 2. 预分配 Celery task ID，在创建 RoadmapTask 时一并写入。
+    #    这样僵尸状态检测能立即看到 celery_task_id，消除"任务刚派发但
+    #    Worker 尚未启动"窗口期内被误判为僵尸的竞态条件。
+    task_id = f"regen-{uuid.uuid4().hex[:12]}"
+    celery_task_id = str(uuid.uuid4())
+
+    task_crud = get_task_crud()
+    await task_crud.create(session, obj_in={
+        "task_id": task_id,
+        "user_id": user_id,
+        "roadmap_id": roadmap_id,
+        "concept_id": concept_id,
+        "content_type": content_type,
+        "task_type": f"regenerate_{content_type}",
+        "status": "processing",
+        "current_step": "content_generation",
+        "celery_task_id": celery_task_id,
+        "user_request": {
+            "type": f"regenerate_{content_type}",
+            "roadmap_id": roadmap_id,
+            "concept_id": concept_id,
+            "content_type": content_type,
+        },
+    })
+    await session.flush()
+
+    # 3. 派发到 content_generation 队列，并指定预分配的 celery_task_id
+    from app.tasks.content_generation_tasks import regenerate_single_content_task
+    regenerate_single_content_task.apply_async(
+        args=[task_id, roadmap_id, concept_id, content_type],
+        task_id=celery_task_id,
+        queue="content_generation",
+    )
+
+    logger.info(
+        "regenerate_content_task_dispatched",
+        task_id=task_id,
+        roadmap_id=roadmap_id,
+        concept_id=concept_id,
+        content_type=content_type,
+        user_id=user_id,
+    )
+
+    label = _CONTENT_TYPE_LABEL.get(content_type, content_type)
+    return RetryContentResponse(
+        success=True,
+        concept_id=concept_id,
+        content_type=content_type,
+        message=f"{label}重新生成任务已提交，正在 content_generation Worker 中处理",
+        data={"task_id": task_id},
+    )
 
 
 @router.post(
     "/{roadmap_id}/concepts/{concept_id}/tutorial/regenerate",
     response_model=ResponseSchemaModel[RetryContentResponse],
     summary="重新生成教程",
-    description="""
-    重新生成单个Concept的教程内容。
-    
-    这是Concept编辑功能的一部分，不属于Retry（checkpoint恢复）功能。
-    直接调用TutorialGeneratorAgent重新生成，不使用LangGraph checkpoint机制。
-    
-    适用场景：
-    - 单个教程质量不满意
-    - 需要不同风格的教程
-    - 调整教程详细度
-    """,
 )
 async def regenerate_tutorial(
     roadmap_id: str,
@@ -52,53 +126,25 @@ async def regenerate_tutorial(
     current_user: User = Depends(current_active_user),
 ) -> ResponseSchemaModel[RetryContentResponse]:
     """
-    重新生成单个Concept的教程内容
-    
-    这是Concept编辑功能，不属于Retry（checkpoint恢复）功能。
-    
-    Args:
-        roadmap_id: 路线图ID
-        concept_id: 概念ID
-        request: 重新生成请求（包含用户反馈）
-        content_service: 内容服务
-        session: 数据库会话
-        current_user: 当前用户
-        
-    Returns:
-        重新生成的教程内容
+    异步重新生成单个 Concept 的教程内容
+
+    任务被派发到 content_generation Celery 队列，立即返回 task_id。
+    前端通过 WebSocket 订阅该 task_id 接收完成或失败通知。
     """
-    from app.schemas.generation import ConceptRetryRequest
-    
     logger.info(
         "regenerate_tutorial_requested",
         roadmap_id=roadmap_id,
         concept_id=concept_id,
         user_id=current_user.id,
     )
-    
-    # 转换请求格式
-    retry_request = ConceptRetryRequest(
-        user_feedback=request.user_feedback or "重试教程生成"
-    )
-    
-    # 调用ContentService
-    result = await content_service.retry_content(
-        session=session,
+    response = await _dispatch_regenerate_task(
         roadmap_id=roadmap_id,
         concept_id=concept_id,
         content_type="tutorial",
-        request=retry_request,
+        user_id=current_user.id,
+        session=session,
+        content_service=content_service,
     )
-    
-    # 转换响应格式
-    response = RetryContentResponse(
-        success=result.success,
-        concept_id=result.concept_id,
-        content_type=result.content_type,
-        message=result.message,
-        new_content=result.data if result.success else None,
-    )
-    
     return response_base.success(data=response)
 
 
@@ -106,11 +152,6 @@ async def regenerate_tutorial(
     "/{roadmap_id}/concepts/{concept_id}/resources/regenerate",
     response_model=ResponseSchemaModel[RetryContentResponse],
     summary="重新生成资源推荐",
-    description="""
-    重新生成单个Concept的资源推荐内容。
-    
-    这是Concept编辑功能的一部分，不属于Retry功能。
-    """,
 )
 async def regenerate_resources(
     roadmap_id: str,
@@ -121,39 +162,24 @@ async def regenerate_resources(
     current_user: User = Depends(current_active_user),
 ) -> ResponseSchemaModel[RetryContentResponse]:
     """
-    重新生成单个Concept的资源推荐内容
-    
-    这是Concept编辑功能，不属于Retry功能。
+    异步重新生成单个 Concept 的资源推荐内容
+
+    任务被派发到 content_generation Celery 队列，立即返回 task_id。
     """
-    from app.schemas.generation import ConceptRetryRequest
-    
     logger.info(
         "regenerate_resources_requested",
         roadmap_id=roadmap_id,
         concept_id=concept_id,
         user_id=current_user.id,
     )
-    
-    retry_request = ConceptRetryRequest(
-        user_feedback=request.user_feedback or "重试资源推荐生成"
-    )
-    
-    result = await content_service.retry_content(
-        session=session,
+    response = await _dispatch_regenerate_task(
         roadmap_id=roadmap_id,
         concept_id=concept_id,
         content_type="resources",
-        request=retry_request,
+        user_id=current_user.id,
+        session=session,
+        content_service=content_service,
     )
-    
-    response = RetryContentResponse(
-        success=result.success,
-        concept_id=result.concept_id,
-        content_type=result.content_type,
-        message=result.message,
-        new_content=result.data if result.success else None,
-    )
-    
     return response_base.success(data=response)
 
 
@@ -161,11 +187,6 @@ async def regenerate_resources(
     "/{roadmap_id}/concepts/{concept_id}/quiz/regenerate",
     response_model=ResponseSchemaModel[RetryContentResponse],
     summary="重新生成测验",
-    description="""
-    重新生成单个Concept的测验内容。
-    
-    这是Concept编辑功能的一部分，不属于Retry功能。
-    """,
 )
 async def regenerate_quiz(
     roadmap_id: str,
@@ -176,38 +197,22 @@ async def regenerate_quiz(
     current_user: User = Depends(current_active_user),
 ) -> ResponseSchemaModel[RetryContentResponse]:
     """
-    重新生成单个Concept的测验内容
-    
-    这是Concept编辑功能，不属于Retry功能。
+    异步重新生成单个 Concept 的测验内容
+
+    任务被派发到 content_generation Celery 队列，立即返回 task_id。
     """
-    from app.schemas.generation import ConceptRetryRequest
-    
     logger.info(
         "regenerate_quiz_requested",
         roadmap_id=roadmap_id,
         concept_id=concept_id,
         user_id=current_user.id,
     )
-    
-    retry_request = ConceptRetryRequest(
-        user_feedback=request.user_feedback or "重试测验生成"
-    )
-    
-    result = await content_service.retry_content(
-        session=session,
+    response = await _dispatch_regenerate_task(
         roadmap_id=roadmap_id,
         concept_id=concept_id,
         content_type="quiz",
-        request=retry_request,
+        user_id=current_user.id,
+        session=session,
+        content_service=content_service,
     )
-    
-    response = RetryContentResponse(
-        success=result.success,
-        concept_id=result.concept_id,
-        content_type=result.content_type,
-        message=result.message,
-        new_content=result.data if result.success else None,
-    )
-    
     return response_base.success(data=response)
-

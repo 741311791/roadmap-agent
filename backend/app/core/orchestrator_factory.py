@@ -125,52 +125,47 @@ class OrchestratorFactory:
         # 创建 AgentFactory 单例
         cls._agent_factory = AgentFactory(settings)
         
-        # 创建 AsyncPostgresSaver（使用连接池，Supabase 优化）
+        # 创建 AsyncPostgresSaver（使用连接池，阿里云 RDS 长链路网络优化）
         try:
-            # 使用连接池管理连接（PostgreSQL 标准配置）
-            # 
-            # 连接池参数：
-            # - min_size=2: 最小保持 2 个连接（确保基本可用性）
-            # - max_size=20: 最大 20 个连接（应对 LangGraph 工作流并发）
-            # - max_idle=300: 空闲连接最多保持 5 分钟
-            # - timeout=60: 获取连接超时 60 秒
-            # - reconnect_timeout=0: 自动重连
-            # - open=False: 避免弃用警告，显式调用 await pool.open()
+            # 连接池参数说明：
+            # - min_size=1: 最小保持 1 个连接（阿里云 RDS 建连慢，避免预热浪费）
+            # - max_size: 研发=5，生产=10（Celery Worker 数 * max_size 不超过 RDS 最大连接数）
+            # - max_idle=60: 空闲连接最多保持 60 秒即主动关闭，防止被阿里云代理层单方面关闭
+            # - max_lifetime=300: 连接最长存活 5 分钟，定期替换（防止跨越阿里云 RDS Proxy 超时）
+            # - check=AsyncConnectionPool.check_connection: 借出连接前先 ping，快速淘汰坏连接
+            #   （这是修复 "consuming input failed: Operation timed out" 的核心手段）
+            # - timeout=120: 获取连接超时 120 秒（大任务场景）
+            # - reconnect_timeout=0: 重连失败无限重试
             # 
             # 连接参数（kwargs）：
-            # - autocommit=True: 自动提交模式（LangGraph checkpoint 需要）
-            # - connect_timeout=30: 连接建立超时 30 秒
-            # - keepalives=1: 启用 TCP keepalive（防止长时间空闲连接被中间件断开）
-            # - keepalives_idle=30: 空闲 30 秒后开始发送 keepalive 探测
-            # - keepalives_interval=10: keepalive 探测间隔 10 秒
-            # - keepalives_count=5: 最多 5 次探测失败后关闭连接（总计 50 秒）
-            # - options="-c statement_timeout=120000": SQL 语句超时 120 秒（防止长查询阻塞）
+            # - autocommit=True: LangGraph checkpoint 需要自动提交模式
+            # - connect_timeout=15: 阿里云 RDS 建连超时 15 秒（实测约 5s，15s 留足余量）
+            # - keepalives=1: 启用 TCP keepalive
+            # - keepalives_idle=10: 空闲 10 秒后开始发送探测（比阿里云代理层 idle timeout 更激进）
+            # - keepalives_interval=5: 探测间隔 5 秒
+            # - keepalives_count=3: 最多 3 次探测失败后客户端主动断开（总计 10+15=25 秒内判定死连接）
+            # - options="-c statement_timeout=120000": SQL 语句超时 120 秒
             
-            # 根据环境动态调整连接池大小
-            # 研发环境（ENVIRONMENT=development）：max_size=5（降低以支持多 Worker 进程）
-            # 生产环境（ENVIRONMENT=production）：max_size=10
-            # 
-            # 说明：
-            # - Celery Worker 进程数量 * max_size 不能超过数据库最大连接数
-            # - 例如：4 个 Worker * 5 连接 = 20 个连接（安全范围）
             langgraph_max_size = 5 if settings.ENVIRONMENT == "development" else 10
             
             cls._connection_pool = AsyncConnectionPool(
                 conninfo=settings.CHECKPOINTER_DATABASE_URL,
-                min_size=2,
+                min_size=1,
                 max_size=langgraph_max_size,
-                max_idle=600,  # ✅ 延长空闲时间到 10 分钟（防止连接过早关闭）
-                timeout=120,  # ✅ 延长获取连接超时到 120 秒（大任务场景）
-                reconnect_timeout=0,  # 自动重连
-                open=False,  # 禁用构造函数自动打开（避免 DeprecationWarning）
+                max_idle=60,       # 主动在 60s 内关闭空闲连接，早于阿里云代理层超时
+                max_lifetime=300,  # 连接最长存活 5 分钟，定期轮换防止跨越代理层 TCP 状态超时
+                check=AsyncConnectionPool.check_connection,  # 借出前 ping，快速淘汰坏连接
+                timeout=120,
+                reconnect_timeout=0,
+                open=False,
                 kwargs={
-                    "autocommit": True,  # LangGraph checkpoint 需要自动提交
-                    "connect_timeout": 60,  # ✅ 延长连接建立超时到 60 秒
-                    "keepalives": 1,  # 启用 TCP keepalive
-                    "keepalives_idle": 20,  # ✅ 缩短到 20 秒后开始探测（更快检测断连）
-                    "keepalives_interval": 5,  # ✅ 缩短探测间隔到 5 秒
-                    "keepalives_count": 6,  # ✅ 增加探测次数到 6 次（总计 30 秒）
-                    "options": "-c statement_timeout=180000",  # ✅ 延长 SQL 语句超时到 180 秒（3分钟）
+                    "autocommit": True,
+                    "connect_timeout": 15,
+                    "keepalives": 1,
+                    "keepalives_idle": 10,   # 比阿里云代理层更激进的 keepalive
+                    "keepalives_interval": 5,
+                    "keepalives_count": 3,   # 25 秒内判定死连接并主动断开
+                    "options": "-c statement_timeout=120000",
                 },
             )
             
@@ -192,7 +187,7 @@ class OrchestratorFactory:
             logger.info(
                 "orchestrator_factory_initialized",
                 checkpointer_type="AsyncPostgresSaver",
-                pool_min_size=2,
+                pool_min_size=1,
                 pool_max_size=langgraph_max_size,
                 process_id=current_pid,  # ✅ 记录进程 ID
                 database_url=settings.CHECKPOINTER_DATABASE_URL.split("@")[-1].split("?")[0],  # 隐藏凭据和参数

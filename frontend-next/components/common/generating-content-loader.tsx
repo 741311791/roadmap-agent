@@ -1,6 +1,7 @@
 'use client';
 
 import { Loader2, Clock } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 
 type ContentType = 'tutorial' | 'resources' | 'quiz';
@@ -11,12 +12,6 @@ interface GeneratingContentLoaderProps {
   /** 自定义样式 */
   className?: string;
 }
-
-const CONTENT_TYPE_LABELS: Record<ContentType, { name: string; verb: string }> = {
-  tutorial: { name: 'Tutorial', verb: 'Generating' },
-  resources: { name: 'Learning Resources', verb: 'Fetching' },
-  quiz: { name: 'Quiz Questions', verb: 'Generating' },
-};
 
 /**
  * GeneratingContentLoader - 内容生成中加载指示器
@@ -37,7 +32,23 @@ export function GeneratingContentLoader({
   contentType,
   className,
 }: GeneratingContentLoaderProps) {
-  const label = CONTENT_TYPE_LABELS[contentType];
+  const t = useTranslations('roadmapDetail.generatingContent');
+
+  // 根据内容类型获取名称和动词
+  const getContentName = () => {
+    switch (contentType) {
+      case 'tutorial':
+        return t('tutorial');
+      case 'resources':
+        return t('resources');
+      case 'quiz':
+        return t('quiz');
+    }
+  };
+
+  const getVerb = () => {
+    return contentType === 'resources' ? t('fetchingVerb') : t('generatingVerb');
+  };
 
   return (
     <div
@@ -55,10 +66,10 @@ export function GeneratingContentLoader({
       {/* Message */}
       <div className="space-y-2">
         <h3 className="text-lg font-medium text-sage-800 dark:text-sage-200">
-          {label.verb} {label.name}
+          {getVerb()} {getContentName()}
         </h3>
         <p className="text-sm text-sage-600 dark:text-sage-400">
-          This may take a few moments. Please wait...
+          {t('pleaseWait')}
         </p>
       </div>
 
@@ -75,7 +86,7 @@ export function GeneratingContentLoader({
 
       {/* Hint Text */}
       <p className="text-xs text-sage-500 dark:text-sage-500 max-w-md mt-2">
-        💡 Status updates are delivered in real-time via WebSocket
+        {t('websocketHint')}
       </p>
     </div>
   );

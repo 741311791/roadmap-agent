@@ -73,7 +73,8 @@ class BaseAgent(ABC):
     async def _standard_call(
         self,
         messages: List[Dict[str, str]],
-        tools: List[Dict] | None = None
+        tools: List[Dict] | None = None,
+        tool_choice: str | Dict | None = None,
     ) -> Any:
         """
         标准 LLM 调用（不带结构化输出）
@@ -81,6 +82,10 @@ class BaseAgent(ABC):
         Args:
             messages: 对话消息列表
             tools: 工具定义（可选）
+            tool_choice: 工具选择策略（可选）
+                - "auto": LLM自主决定是否使用工具（默认）
+                - "none": 禁止使用工具
+                - {"type": "function", "function": {"name": "tool_name"}}: 强制使用特定工具
             
         Returns:
             原始 LLM 响应对象
@@ -89,16 +94,25 @@ class BaseAgent(ABC):
             "calling_llm_standard",
             agent_id=self.agent_id,
             model=self.model_name,
-            has_tools=tools is not None
+            has_tools=tools is not None,
+            tool_choice=tool_choice,
         )
         
-        response = await self._client.chat.completions.create(
-            model=self.model_name,
-            messages=messages,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            tools=tools,
-        )
+        # 构建API调用参数
+        api_params = {
+            "model": self.model_name,
+            "messages": messages,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+        }
+        
+        # 只在提供了tools时才添加tools和tool_choice
+        if tools is not None:
+            api_params["tools"] = tools
+            if tool_choice is not None:
+                api_params["tool_choice"] = tool_choice
+        
+        response = await self._client.chat.completions.create(**api_params)
         
         # 成本追踪
         if response.usage:
@@ -334,6 +348,7 @@ class BaseAgent(ABC):
             response = await self._standard_call(
                 messages=conversation,
                 tools=tools,
+                tool_choice=tool_choice,
             )
             
             message = response.choices[0].message
@@ -430,37 +445,37 @@ class BaseAgent(ABC):
                         }, ensure_ascii=False),
                     })
         
-        # 达到最大迭代次数，强制生成最终输出
+        # 达到最大迭代次数，引导生成最终输出
         logger.warning(
-            "react_max_iterations_reached_forcing_output",
+            "react_max_iterations_reached",
             agent_id=self.agent_id,
             max_iterations=max_iterations,
-            message="已达最大迭代次数，强制LLM基于已收集信息生成最终输出"
+            message="已达最大迭代次数，引导LLM生成最终输出"
         )
         
-        # 添加系统强制输出指令
+        # 使用user消息引导（而不是system消息）
         conversation.append({
-            "role": "system",
+            "role": "user",
             "content": (
-                "🚨 重要提示：你已达到最大工具调用次数限制。\n\n"
-                "现在你**必须**基于目前已收集的所有信息，立即生成最终输出。\n"
-                "不要再尝试调用任何工具，不要说'需要更多信息'。\n"
-                "请综合利用你已经获取的文档内容和你的知识，完成教程生成任务。\n\n"
-                "即使信息不够完美，也请生成一个质量尽可能高的教程。"
+                "你已经进行了多轮工具调用，收集的信息应该足够了。\n\n"
+                "现在请基于你已获取的所有信息，生成最终的输出内容。\n"
+                "不要再尝试调用工具，直接输出结果。\n\n"
+                "如果是JSON格式输出，请直接以`{`开始。"
             )
         })
         
-        # 最后一次调用LLM，强制文本输出（禁用工具）
+        # 最后一次调用LLM，明确禁止工具调用
         final_response = await self._standard_call(
             messages=conversation,
-            tools=None,  # 不再提供工具
+            tools=tools,  # 保持提供工具定义（保持API一致性）
+            tool_choice="none",  # 但明确禁止使用工具
         )
         
         logger.info(
             "react_forced_completion",
             agent_id=self.agent_id,
             total_iterations=max_iterations,
-            message="已强制生成最终输出"
+            final_message_length=len(final_response.choices[0].message.content or ""),
         )
         
         return final_response

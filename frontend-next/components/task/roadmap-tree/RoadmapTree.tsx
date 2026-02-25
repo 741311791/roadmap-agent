@@ -15,6 +15,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { useTranslations } from 'next-intl';
 import { 
   Maximize2, 
   Minimize2, 
@@ -57,11 +58,12 @@ import { roadmapsApi, type EditHistoryVersion } from '@/lib/api/endpoints/roadma
  * 显示简单的加载状态蒙版，提示用户路线图正在更新中
  */
 function EditingOverlay() {
+  const t = useTranslations('taskDetail');
   return (
     <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-40 flex items-center justify-center rounded-lg">
       <div className="text-center space-y-3">
         <Loader2 className="w-10 h-10 text-sage-600 animate-spin mx-auto" />
-        <p className="text-sm text-gray-600">Updating roadmap structure...</p>
+        <p className="text-sm text-gray-600">{t('updatingRoadmap')}</p>
       </div>
     </div>
   );
@@ -142,6 +144,8 @@ export function RoadmapTree({
   onRetrySuccess,
   className,
 }: RoadmapTreeProps) {
+  const t = useTranslations('taskDetail');
+  
   // 展开状态
   const [expansionState, setExpansionState] = useState<ExpansionState>(() =>
     getDefaultExpansionState(stages)
@@ -356,7 +360,7 @@ export function RoadmapTree({
   if (!stages || stages.length === 0) {
     return (
       <div className={cn('flex items-center justify-center h-40 text-muted-foreground', className)}>
-        No roadmap data available
+        {t('noRoadmapData')}
       </div>
     );
   }
@@ -379,7 +383,7 @@ export function RoadmapTree({
               <div className="flex items-center gap-2 text-xs">
                 <History className="w-3.5 h-3.5 text-sage-600" />
                 <span className="text-sage-700 font-medium">
-                  Viewing Version {selectedVersion}
+                  {t('viewingVersion', { version: selectedVersion })}
                 </span>
                 <span className="text-muted-foreground">
                   {historyVersions.find(v => v.version === selectedVersion)?.created_at 
@@ -393,14 +397,14 @@ export function RoadmapTree({
                 onClick={handleResetToCurrentVersion}
                 className="h-6 text-xs gap-1"
               >
-                Back to Current
+                {t('backToCurrent')}
               </Button>
             </div>
           )}
           
           {/* 标题栏 */}
           <div className="flex items-center justify-between mb-2">
-            <span className="font-medium text-muted-foreground text-xs">Overall Progress</span>
+            <span className="font-medium text-muted-foreground text-xs">{t('overallProgress')}</span>
             <span className="font-semibold text-sage-700 text-xs">{stats.progress}%</span>
           </div>
           
@@ -413,28 +417,28 @@ export function RoadmapTree({
             <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
               <span className="flex items-center gap-1">
                 <span className="w-2 h-2 rounded-full bg-sage-500" />
-                {stats.completed} Completed
+                {stats.completed} {t('completed')}
               </span>
               {stats.loading > 0 && (
                 <span className="flex items-center gap-1">
                   <span className="w-2 h-2 rounded-full bg-sage-400 animate-pulse" />
-                  {stats.loading} In Progress
+                  {stats.loading} {t('inProgress')}
                 </span>
               )}
               <span className="flex items-center gap-1">
                 <span className="w-2 h-2 rounded-full bg-gray-300" />
-                {stats.pending} Pending
+                {stats.pending} {t('pending')}
               </span>
               {stats.failed > 0 && (
                 <span className="flex items-center gap-1">
                   <span className="w-2 h-2 rounded-full bg-red-400" />
-                  {stats.failed} Failed
+                  {stats.failed} {t('failed')}
                 </span>
               )}
               {stats.partialFailure > 0 && (
                 <span className="flex items-center gap-1">
                   <span className="w-2 h-2 rounded-full bg-amber-400" />
-                  {stats.partialFailure} Partial
+                  {stats.partialFailure} {t('partial')}
                 </span>
               )}
             </div>
@@ -451,7 +455,7 @@ export function RoadmapTree({
                       className={cn("h-7 gap-1 px-2", isFilterActive && "bg-sage-100 hover:bg-sage-200")}
                     >
                       <Filter className="w-3.5 h-3.5" />
-                      <span className="text-xs">Filter</span>
+                      <span className="text-xs">{t('filterBy')}</span>
                       {isFilterActive && (
                         <span className="ml-0.5 text-[10px] font-medium bg-sage-600 text-white rounded-full w-4 h-4 flex items-center justify-center">
                           {statusFilter.size}
@@ -460,7 +464,7 @@ export function RoadmapTree({
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-48">
-                    <DropdownMenuLabel className="text-xs">Filter by Status</DropdownMenuLabel>
+                    <DropdownMenuLabel className="text-xs">{t('filterByStatus')}</DropdownMenuLabel>
                     <DropdownMenuSeparator />
                     <DropdownMenuCheckboxItem
                       checked={statusFilter.has('completed')}
@@ -469,7 +473,7 @@ export function RoadmapTree({
                     >
                       <span className="flex items-center gap-2">
                         <span className="w-2 h-2 rounded-full bg-sage-500" />
-                        Completed
+                        {t('completed')}
                       </span>
                     </DropdownMenuCheckboxItem>
                     <DropdownMenuCheckboxItem
@@ -479,7 +483,7 @@ export function RoadmapTree({
                     >
                       <span className="flex items-center gap-2">
                         <span className="w-2 h-2 rounded-full bg-sage-400 animate-pulse" />
-                        Loading
+                        {t('loading')}
                       </span>
                     </DropdownMenuCheckboxItem>
                     <DropdownMenuCheckboxItem
@@ -489,7 +493,7 @@ export function RoadmapTree({
                     >
                       <span className="flex items-center gap-2">
                         <span className="w-2 h-2 rounded-full bg-gray-300" />
-                        Pending
+                        {t('pending')}
                       </span>
                     </DropdownMenuCheckboxItem>
                     <DropdownMenuCheckboxItem
@@ -499,7 +503,7 @@ export function RoadmapTree({
                     >
                       <span className="flex items-center gap-2">
                         <span className="w-2 h-2 rounded-full bg-red-400" />
-                        Failed
+                        {t('failed')}
                       </span>
                     </DropdownMenuCheckboxItem>
                     <DropdownMenuCheckboxItem
@@ -509,7 +513,7 @@ export function RoadmapTree({
                     >
                       <span className="flex items-center gap-2">
                         <span className="w-2 h-2 rounded-full bg-amber-400" />
-                        Partial Failure
+                        {t('partialFailure')}
                       </span>
                     </DropdownMenuCheckboxItem>
                     <DropdownMenuCheckboxItem
@@ -519,7 +523,7 @@ export function RoadmapTree({
                     >
                       <span className="flex items-center gap-2">
                         <span className="w-2 h-2 rounded-full bg-cyan-400" />
-                        Modified
+                        {t('modified')}
                       </span>
                     </DropdownMenuCheckboxItem>
                   </DropdownMenuContent>
@@ -546,15 +550,15 @@ export function RoadmapTree({
                         </DropdownMenuTrigger>
                       </TooltipTrigger>
                       <TooltipContent side="left" className="text-xs">
-                        View History
+                        {t('viewHistory')}
                       </TooltipContent>
                     </Tooltip>
                     <DropdownMenuContent align="end" className="w-80 max-h-96 overflow-y-auto">
-                      <DropdownMenuLabel className="text-xs">Version History</DropdownMenuLabel>
+                      <DropdownMenuLabel className="text-xs">{t('versionHistory')}</DropdownMenuLabel>
                       <DropdownMenuSeparator />
                       {!historyVersions || historyVersions.length === 0 ? (
                         <div className="px-2 py-4 text-center text-xs text-muted-foreground">
-                          {historyLoading ? 'Loading...' : 'No edit history available'}
+                          {historyLoading ? t('loading') : t('noEditHistory')}
                         </div>
                       ) : (
                         historyVersions.map((version) => (
@@ -569,8 +573,8 @@ export function RoadmapTree({
                             <div className="flex flex-col gap-1 w-full">
                               <div className="flex items-center justify-between">
                                 <span className="font-medium text-xs">
-                                  Version {version.version}
-                                  {version.version === historyVersions.length && ' (Current)'}
+                                  {t('versionLabel', { version: version.version })}
+                                  {version.version === historyVersions.length && ` ${t('currentVersion')}`}
                                 </span>
                                 <span className="text-[10px] text-muted-foreground">
                                   {new Date(version.created_at).toLocaleDateString()}
@@ -581,7 +585,7 @@ export function RoadmapTree({
                               </p>
                               {version.modified_node_ids.length > 0 && (
                                 <span className="text-[10px] text-cyan-600">
-                                  {version.modified_node_ids.length} nodes modified
+                                  {t('nodesModified', { count: version.modified_node_ids.length })}
                                 </span>
                               )}
                             </div>
@@ -609,7 +613,7 @@ export function RoadmapTree({
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent side="left" className="text-xs">
-                    {allExpanded ? 'Collapse All' : 'Expand All'}
+                    {allExpanded ? t('collapseAll') : t('expandAll')}
                   </TooltipContent>
                 </Tooltip>
                 
@@ -626,7 +630,7 @@ export function RoadmapTree({
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent side="left" className="text-xs">
-                    Fullscreen
+                    {t('fullscreen')}
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
@@ -669,7 +673,7 @@ export function RoadmapTree({
       {/* 全屏对话框 */}
       <Dialog open={isFullscreen} onOpenChange={setIsFullscreen}>
         <DialogContent className="max-w-[95vw] max-h-[95vh] w-full h-full p-0">
-          <DialogTitle className="sr-only">Roadmap Fullscreen View</DialogTitle>
+          <DialogTitle className="sr-only">{t('fullscreen')}</DialogTitle>
           
           {/* 全屏工具栏 */}
           <div className="absolute top-4 right-4 z-50">
@@ -680,7 +684,7 @@ export function RoadmapTree({
               className="gap-2"
             >
               <Minimize2 className="w-4 h-4" />
-              Exit Fullscreen
+              {t('exitFullscreen')}
             </Button>
           </div>
           

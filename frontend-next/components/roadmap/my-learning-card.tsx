@@ -9,6 +9,7 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { FlippingCard } from '@/components/ui/flipping-card';
@@ -59,32 +60,42 @@ export interface MyLearningCardProps {
   }>;
 }
 
-// 生成步骤映射
-const STEP_LABELS: Record<string, string> = {
-  'queued': 'Queued',
-  'intent_analysis': 'Analyzing',
-  'curriculum_design': 'Designing',
-  'structure_validation': 'Validating',
-  'human_review': 'Pending Review',
-  'content_generation': 'Generating',
-  'completed': 'Completed',
-  'failed': 'Failed',
-};
+/**
+ * 获取生成步骤的国际化标签
+ */
+function getStepLabel(step: string | null, t: any): string {
+  const stepMap: Record<string, string> = {
+    'queued': t('myLearningCard.stepQueued'),
+    'intent_analysis': t('myLearningCard.stepAnalyzing'),
+    'curriculum_design': t('myLearningCard.stepDesigning'),
+    'structure_validation': t('myLearningCard.stepValidating'),
+    'human_review': t('myLearningCard.stepPendingReview'),
+    'content_generation': t('myLearningCard.stepGenerating'),
+    'completed': t('myLearningCard.stepCompleted'),
+    'failed': t('myLearningCard.stepFailed'),
+  };
+  
+  return stepMap[step || 'queued'] || t('myLearningCard.processingRoadmap');
+}
 
 /**
- * 格式化相对时间
+ * 格式化相对时间（国际化）
  */
-function formatRelativeTime(dateString: string): string {
+function formatRelativeTime(dateString: string, t: any): string {
   const date = new Date(dateString);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
   
-  if (diffDays === 0) return 'Today';
-  if (diffDays === 1) return 'Yesterday';
-  if (diffDays < 7) return `${diffDays}d ago`;
-  if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
-  return `${Math.floor(diffDays / 30)}mo ago`;
+  if (diffDays === 0) return t('myLearningCard.timeToday');
+  if (diffDays === 1) return t('myLearningCard.timeYesterday');
+  if (diffDays < 7) return t('myLearningCard.timeDaysAgo', { days: diffDays });
+  if (diffDays < 30) {
+    const weeks = Math.floor(diffDays / 7);
+    return t('myLearningCard.timeWeeksAgo', { weeks });
+  }
+  const months = Math.floor(diffDays / 30);
+  return t('myLearningCard.timeMonthsAgo', { months });
 }
 
 /**
@@ -99,6 +110,7 @@ function CardFront({
   completedConcepts,
   coverImageUrl
 }: Pick<MyLearningCardProps, 'id' | 'title' | 'topic' | 'status' | 'totalConcepts' | 'completedConcepts' | 'coverImageUrl'>) {
+  const t = useTranslations();
   const progress = totalConcepts > 0 ? (completedConcepts / totalConcepts) * 100 : 0;
   const isCompleted = status === 'completed';
   const isGenerating = status === 'generating';
@@ -107,41 +119,41 @@ function CardFront({
   return (
     <div className="flex flex-col h-full w-full">
       {/* 封面图片 */}
-      <div className="relative w-full h-40 overflow-hidden rounded-t-xl bg-sage-100">
+      <div className="relative w-full aspect-[7/4] overflow-hidden rounded-t-xl bg-sage-100">
         <CoverImage
           roadmapId={id}
           topic={topic}
           title={title}
-          className="w-full h-full object-cover"
+          className="w-full h-full"
           coverImageUrl={coverImageUrl}
         />
         
         {/* 渐变遮罩 */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
+        {/* <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" /> */}
         
         {/* Status Badge */}
         <div className="absolute top-3 left-3 z-10">
           {isCompleted && (
             <Badge className="bg-gradient-to-r from-green-500 to-green-600 text-white border-0 shadow-lg text-[10px] px-2 py-1 font-bold flex items-center gap-1">
               <CheckCircle className="w-3 h-3" />
-              COMPLETED
+              {t('myLearningCard.completed')}
             </Badge>
           )}
           {isGenerating && (
             <Badge className="bg-gradient-to-r from-blue-500 to-blue-600 text-white border-0 shadow-lg text-[10px] px-2 py-1 font-bold flex items-center gap-1">
               <Loader2 className="w-3 h-3 animate-spin" />
-              GENERATING
+              {t('myLearningCard.generating')}
             </Badge>
           )}
           {isFailed && (
             <Badge className="bg-gradient-to-r from-red-500 to-red-600 text-white border-0 shadow-lg text-[10px] px-2 py-1 font-bold flex items-center gap-1">
               <AlertCircle className="w-3 h-3" />
-              FAILED
+              {t('myLearningCard.failed')}
             </Badge>
           )}
           {!isCompleted && !isGenerating && !isFailed && (
             <Badge className="bg-gradient-to-r from-sage-500 to-sage-600 text-white border-0 shadow-lg text-[10px] px-2 py-1 font-bold">
-              IN PROGRESS
+              {t('myLearningCard.inProgress')}
             </Badge>
           )}
         </div>
@@ -159,7 +171,7 @@ function CardFront({
           <div className="space-y-2 mb-3">
             <div className="flex items-center justify-between text-xs text-muted-foreground">
               <span className="font-medium">
-                {completedConcepts}/{totalConcepts} concepts
+                {completedConcepts}/{totalConcepts} {t('myLearningCard.concepts')}
               </span>
               <span className="font-bold text-sage-600">
                 {progress.toFixed(0)}%
@@ -179,7 +191,7 @@ function CardFront({
           {totalConcepts > 0 && (
             <div className="flex items-center gap-1">
               <BookOpen className="w-3.5 h-3.5" />
-              <span>{totalConcepts} concepts</span>
+              <span>{totalConcepts} {t('myLearningCard.concepts')}</span>
             </div>
           )}
         </div>
@@ -203,6 +215,7 @@ function CardBack({
   showActions = true,
   stages = [],
 }: Pick<MyLearningCardProps, 'id' | 'title' | 'status' | 'totalConcepts' | 'lastAccessedAt' | 'currentStep' | 'onDelete' | 'showActions' | 'stages'> & { totalHours?: number }) {
+  const t = useTranslations();
   const isGenerating = status === 'generating';
   const isFailed = status === 'failed';
   const hasStages = stages && stages.length > 0;
@@ -241,7 +254,7 @@ function CardBack({
                   onClick={handleDeleteClick}
                 >
                   <Trash2 className="mr-2 h-4 w-4" />
-                  <span>Delete</span>
+                  <span>{t('myLearningCard.delete')}</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -259,10 +272,10 @@ function CardBack({
             <div className="p-3 rounded-lg bg-red-50 border border-red-200 w-full">
               <div className="flex items-center gap-2 text-red-600 mb-2">
                 <AlertCircle className="w-4 h-4" />
-                <span className="text-sm font-semibold">Generation Failed</span>
+                <span className="text-sm font-semibold">{t('myLearningCard.generationFailed')}</span>
               </div>
               <p className="text-xs text-red-600">
-                {STEP_LABELS[currentStep || 'failed'] || 'An error occurred during generation'}
+                {getStepLabel(currentStep || 'failed', t)}
               </p>
             </div>
           </div>
@@ -271,10 +284,10 @@ function CardBack({
             <div className="p-3 rounded-lg bg-blue-50 border border-blue-200 w-full">
               <div className="flex items-center gap-2 text-blue-600 mb-2">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span className="text-sm font-semibold">Generating...</span>
+                <span className="text-sm font-semibold">{t('myLearningCard.generatingText')}</span>
               </div>
               <p className="text-xs text-blue-600">
-                {STEP_LABELS[currentStep || 'queued'] || 'Processing your roadmap'}
+                {getStepLabel(currentStep || 'queued', t)}
               </p>
             </div>
           </div>
@@ -317,14 +330,14 @@ function CardBack({
             ))}
             {stages.length > 5 && (
               <div className="text-xs text-muted-foreground text-center py-1">
-                +{stages.length - 5} more stages
+                {t('myLearningCard.moreStages', { count: stages.length - 5 })}
               </div>
             )}
           </div>
         ) : (
           <div className="flex-1 flex items-center justify-center">
             <p className="text-sm text-muted-foreground text-center">
-              A comprehensive learning path to master your skills step by step.
+              {t('myLearningCard.comprehensivePath')}
             </p>
           </div>
         )}
@@ -342,7 +355,7 @@ function CardBack({
             {totalHours && totalHours > 0 && (
               <div className="flex items-center gap-1">
                 <Clock className="w-3.5 h-3.5" />
-                <span>{totalHours}h</span>
+                <span>{totalHours}{t('myLearningCard.hours')}</span>
               </div>
             )}
           </div>
@@ -350,7 +363,7 @@ function CardBack({
           {/* 继续学习按钮 - 阻止事件冒泡 */}
           <div onClick={(e) => e.stopPropagation()}>
             <span className="flex items-center gap-1 text-xs font-medium text-sage-600 hover:text-sage-700 transition-colors cursor-pointer">
-              {isGenerating || isFailed ? 'View Status' : 'Continue'}
+              {isGenerating || isFailed ? t('myLearningCard.viewStatus') : t('myLearningCard.continue')}
               <ChevronRight className="w-3 h-3" />
             </span>
           </div>

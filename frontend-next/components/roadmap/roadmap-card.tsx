@@ -8,6 +8,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
+import { useTranslations } from 'next-intl';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
@@ -22,11 +23,13 @@ import {
   MoreVertical,
   Trash2,
   Sparkles,
+  ImagePlus,
 } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Button } from '@/components/ui/button';
@@ -61,36 +64,45 @@ export interface CommunityRoadmap {
   topic: string;
 }
 
-// 生成步骤中文映射
-const STEP_LABELS: Record<string, string> = {
-  'queued': '排队中',
-  'intent_analysis': '分析学习目标',
-  'curriculum_design': '设计课程架构',
-  'structure_validation': '验证结构',
-  'human_review': '等待审核',
-  'content_generation': '生成内容',
-  'completed': '已完成',
-  'failed': '生成失败',
-};
-
-// 格式化相对时间
-function formatRelativeTime(dateString: string): string {
+// 格式化相对时间（使用国际化）
+function formatRelativeTime(dateString: string, t: any): string {
   const date = new Date(dateString);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
   
-  if (diffDays === 0) return 'Today';
-  if (diffDays === 1) return 'Yesterday';
-  if (diffDays < 7) return `${diffDays} days ago`;
-  if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
-  return `${Math.floor(diffDays / 30)} months ago`;
+  if (diffDays === 0) return t('roadmapCard.timeToday');
+  if (diffDays === 1) return t('roadmapCard.timeYesterday');
+  if (diffDays < 7) return t('roadmapCard.timeDaysAgo', { days: diffDays });
+  if (diffDays < 30) {
+    const weeks = Math.floor(diffDays / 7);
+    return t('roadmapCard.timeWeeksAgo', { weeks });
+  }
+  const months = Math.floor(diffDays / 30);
+  return t('roadmapCard.timeMonthsAgo', { months });
+}
+
+// 获取生成步骤的国际化标签
+function getStepLabel(step: string | null, t: any): string {
+  const stepMap: Record<string, string> = {
+    'queued': t('roadmapCard.stepQueued'),
+    'intent_analysis': t('roadmapCard.stepIntentAnalysis'),
+    'curriculum_design': t('roadmapCard.stepCurriculumDesign'),
+    'structure_validation': t('roadmapCard.stepStructureValidation'),
+    'human_review': t('roadmapCard.stepHumanReview'),
+    'content_generation': t('roadmapCard.stepContentGeneration'),
+    'completed': t('roadmapCard.stepCompleted'),
+    'failed': t('roadmapCard.stepFailed'),
+  };
+  
+  return stepMap[step || 'queued'] || t('roadmapCard.statusGenerating');
 }
 
 interface RoadmapCardProps {
   roadmap: MyRoadmap | CommunityRoadmap;
   type: 'my' | 'community';
   onDelete?: (roadmapId: string) => void;
+  onGenerateCover?: (roadmapId: string) => void;
   showActions?: boolean;
   coverImageUrl?: string;  // 可选的封面图 URL（用于批量获取）
 }
@@ -99,9 +111,11 @@ export function RoadmapCard({
   roadmap,
   type,
   onDelete,
+  onGenerateCover,
   showActions = true,
   coverImageUrl,
 }: RoadmapCardProps) {
+  const t = useTranslations();
   const [avatarError, setAvatarError] = useState(false);
   
   const isMyRoadmap = type === 'my';
@@ -129,6 +143,15 @@ export function RoadmapCard({
     }
   };
 
+  // 处理生成封面图点击事件
+  // DropdownMenuContent 由 Radix 渲染在 Portal 中，不在 Link DOM 树内，
+  // 无需阻止事件冒泡；保留原生行为使菜单在点击后自动关闭
+  const handleGenerateCoverClick = () => {
+    if (onGenerateCover) {
+      onGenerateCover(roadmap.id);
+    }
+  };
+
   return (
     <div className="group relative flex-shrink-0 w-full">
       {/* 操作菜单 - 只在 my 类型且显示 actions 时显示 */}
@@ -149,12 +172,25 @@ export function RoadmapCard({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              {/* 仅在路线图已完成（非生成中/失败状态）时显示封面图生成选项 */}
+              {onGenerateCover && !isGenerating && !isFailed && (
+                <>
+                  <DropdownMenuItem
+                    className="cursor-pointer"
+                    onClick={handleGenerateCoverClick}
+                  >
+                    <ImagePlus className="mr-2 h-4 w-4" />
+                    <span>{t('roadmapCard.generateCover')}</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
               <DropdownMenuItem
                 className="text-red-600 focus:text-red-600 focus:bg-red-50 cursor-pointer"
                 onClick={handleDeleteClick}
               >
                 <Trash2 className="mr-2 h-4 w-4" />
-                <span>删除</span>
+                <span>{t('roadmapCard.delete')}</span>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -202,7 +238,7 @@ export function RoadmapCard({
                     <div className="flex items-center gap-2 text-[10px] text-red-600 font-medium bg-red-50 px-2 py-1.5 rounded-lg">
                       <AlertCircle size={12} className="flex-shrink-0" />
                       <span className="truncate">
-                        {STEP_LABELS[myRoadmap.currentStep || 'failed'] || '生成失败'}
+                        {getStepLabel(myRoadmap.currentStep || 'failed', t)}
                       </span>
                     </div>
                     {/* 失败进度条 */}
@@ -217,11 +253,11 @@ export function RoadmapCard({
                       variant="outline"
                       className="text-[10px] px-2 py-0.5 border-red-300 text-red-600 bg-red-50 font-medium"
                     >
-                      Failed
+                      {t('roadmapCard.statusFailed')}
                     </Badge>
                     <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
                       <Clock size={10} />
-                      {formatRelativeTime(myRoadmap.lastAccessedAt)}
+                      {formatRelativeTime(myRoadmap.lastAccessedAt, t)}
                     </span>
                   </div>
                 </>
@@ -233,7 +269,7 @@ export function RoadmapCard({
                     <div className="flex items-center gap-2 text-[10px] text-sage-700 font-medium bg-sage-50 px-2 py-1.5 rounded-lg">
                       <Loader2 size={12} className="animate-spin flex-shrink-0" />
                       <span className="truncate">
-                        {STEP_LABELS[myRoadmap.currentStep || 'queued'] || '生成中...'}
+                        {getStepLabel(myRoadmap.currentStep || 'queued', t)}
                       </span>
                     </div>
                     {/* 无限进度条动画 */}
@@ -249,11 +285,11 @@ export function RoadmapCard({
                       variant="outline"
                       className="text-[10px] px-2 py-0.5 border-sage-300 text-sage-700 bg-sage-50 font-medium"
                     >
-                      Generating
+                      {t('roadmapCard.statusGenerating')}
                     </Badge>
                     <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
                       <Clock size={10} />
-                      {formatRelativeTime(myRoadmap.lastAccessedAt)}
+                      {formatRelativeTime(myRoadmap.lastAccessedAt, t)}
                     </span>
                   </div>
                 </>
@@ -264,7 +300,7 @@ export function RoadmapCard({
                   <div className="space-y-2 mb-3">
                     <div className="flex items-center justify-between text-[10px]">
                       <span className="text-muted-foreground font-medium">
-                        {myRoadmap.completedConcepts}/{myRoadmap.totalConcepts} concepts
+                        {myRoadmap.completedConcepts}/{myRoadmap.totalConcepts} {t('roadmapCard.concepts')}
                       </span>
                       <span className="font-bold text-sage-700 bg-sage-50 px-2 py-0.5 rounded-full">
                         {progress.toFixed(0)}%
@@ -289,11 +325,11 @@ export function RoadmapCard({
                       variant={isCompleted ? 'success' : 'sage'}
                       className="text-[10px] px-2 py-0.5 font-medium"
                     >
-                      {isCompleted ? '✓ Done' : '→ Learning'}
+                      {isCompleted ? `✓ ${t('roadmapCard.done')}` : `→ ${t('roadmapCard.learning')}`}
                     </Badge>
                     <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
                       <Clock size={10} />
-                      {formatRelativeTime(myRoadmap.lastAccessedAt)}
+                      {formatRelativeTime(myRoadmap.lastAccessedAt, t)}
                     </span>
                   </div>
                 </>

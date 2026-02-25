@@ -17,6 +17,7 @@
 
 注意：概念内容重新生成不属于Retry功能，已移到Content编辑服务
 """
+import asyncio
 import structlog
 from typing import Optional
 from datetime import datetime
@@ -25,6 +26,7 @@ from app.schemas.retry import (
     RetryRequest,
     RetryResponse,
     RetryMode,
+    RetryScope,
     MainGraphNode,
     TaskRetryStatus,
     CheckpointInfo,
@@ -243,14 +245,27 @@ class RetryService:
             if is_subgraph:
                 # 有子图在中断/失败
                 subgraph_state = state.tasks[0].state
-                failed_nodes = list(subgraph_state.next) if subgraph_state.next else []
                 
-                logger.info(
-                    "subgraph_interrupted_detected",
-                    task_id=task_id,
-                    subgraph_next=failed_nodes,
-                    failed_count=len(failed_nodes),
-                )
+                # ✅ 修复：checkpoint 保存失败时（如数据库超时），subgraph_state 可能为 None。
+                # 此时降级为主图节点处理，LangGraph 会从最后有效的 checkpoint 恢复。
+                if subgraph_state is not None:
+                    failed_nodes = list(subgraph_state.next) if subgraph_state.next else []
+                    logger.info(
+                        "subgraph_interrupted_detected",
+                        task_id=task_id,
+                        subgraph_next=failed_nodes,
+                        failed_count=len(failed_nodes),
+                    )
+                else:
+                    is_subgraph = False
+                    failed_nodes = list(state.next) if state.next else []
+                    logger.warning(
+                        "subgraph_state_is_none_fallback_to_main_graph",
+                        task_id=task_id,
+                        tasks_count=len(state.tasks),
+                        main_graph_next=failed_nodes,
+                        hint="checkpoint 可能未完整保存（如数据库超时），降级为主图恢复",
+                    )
             else:
                 # 主图节点失败
                 failed_nodes = list(state.next) if state.next else []
@@ -263,16 +278,22 @@ class RetryService:
             
             # 创建Celery任务恢复执行
             # 注意：不传checkpoint_id，LangGraph会自动从最后checkpoint恢复
+            # 使用 asyncio.to_thread 避免 .delay() 同步阻塞事件循环
             from app.tasks.workflow_resume_tasks import resume_from_checkpoint
-            celery_task = resume_from_checkpoint.delay(task_id)
+            celery_task = await asyncio.to_thread(resume_from_checkpoint.delay, task_id)
             
-            # 更新任务的celery_task_id
+            # 更新任务的celery_task_id 并将状态改为处理中
             async with get_celery_session() as session:
                 task_crud = get_task_crud()
-                await task_crud.update_task(
+                await task_crud.update_celery_id(
                     session,
                     task_id=task_id,
                     celery_task_id=celery_task.id,
+                )
+                await task_crud.update_task_status(
+                    session,
+                    task_id=task_id,
+                    status=TaskStatus.PROCESSING.value,
                 )
                 # ✅ 不需要手动 commit，get_celery_session() 自动处理
             
@@ -282,7 +303,7 @@ class RetryService:
                 step="resume_from_checkpoint",
                 status=TaskStatus.PROCESSING.value,
                 message="断点续传：正在从最后checkpoint恢复...",
-                details={
+                extra_data={
                     "mode": "resume",
                     "is_subgraph": is_subgraph,
                     "failed_nodes_count": len(failed_nodes),
@@ -294,9 +315,8 @@ class RetryService:
                 message=f"断点续传启动成功（{len(failed_nodes)}个节点将重试）",
                 task_id=task_id,
                 celery_task_id=celery_task.id,
-                mode=RetryMode.RESUME,
-                resume_from="last_checkpoint",
-                is_subgraph=is_subgraph,
+                retry_scope=RetryScope.TASK,
+                retry_from="last_checkpoint",
             )
         
         except Exception as e:
@@ -306,7 +326,7 @@ class RetryService:
                 error=str(e),
                 exc_info=True,
             )
-            raise BusinessError(f"断点续传失败: {str(e)}")
+            raise ValueError(f"断点续传失败: {str(e)}")
             
         # ⚠️ 不要在这里清理 Factory！
         # OrchestratorFactory 是全局单例，应该在应用生命周期内保持
@@ -427,19 +447,25 @@ class RetryService:
             )
             
             # 创建Celery任务，指定checkpoint_id（时间旅行）
+            # 使用 asyncio.to_thread 避免 .delay() 同步阻塞事件循环
             from app.tasks.workflow_resume_tasks import resume_from_checkpoint
-            celery_task = resume_from_checkpoint.delay(
-                task_id,
-                checkpoint_id=checkpoint_id  # ✅ 时间旅行：指定checkpoint
+            celery_task = await asyncio.to_thread(
+                resume_from_checkpoint.apply_async,
+                (task_id,),
+                {"checkpoint_id": checkpoint_id},  # ✅ 时间旅行：指定checkpoint
             )
             
             # 更新任务状态
             async with get_celery_session() as session:
                 task_crud = get_task_crud()
-                await task_crud.update_task(
+                await task_crud.update_celery_id(
                     session,
                     task_id=task_id,
                     celery_task_id=celery_task.id,
+                )
+                await task_crud.update_task_status(
+                    session,
+                    task_id=task_id,
                     status=TaskStatus.PROCESSING.value,
                     current_step=request.target_node.value,
                 )
@@ -451,7 +477,7 @@ class RetryService:
                 step=request.target_node.value,
                 status=TaskStatus.PROCESSING.value,
                 message=f"时间旅行：从{request.target_node.value}节点重新开始...",
-                details={
+                extra_data={
                     "mode": "time_travel",
                     "checkpoint_id": checkpoint_id,
                     "iterations_to_find": iteration_count,
@@ -463,9 +489,8 @@ class RetryService:
                 message=f"时间旅行成功：从{request.target_node.value}节点重新开始",
                 task_id=task_id,
                 celery_task_id=celery_task.id,
-                mode=RetryMode.TIME_TRAVEL,
-                resume_from=f"{request.target_node.value}_checkpoint_{checkpoint_id[:8]}",
-                is_subgraph=False,
+                retry_scope=RetryScope.TASK,
+                retry_from=f"{request.target_node.value}_checkpoint_{checkpoint_id[:8]}",
             )
         
         except Exception as e:
@@ -476,7 +501,7 @@ class RetryService:
                 error=str(e),
                 exc_info=True,
             )
-            raise BusinessError(f"时间旅行失败: {str(e)}")
+            raise ValueError(f"时间旅行失败: {str(e)}")
             
         # ⚠️ 不要在这里清理 Factory！
         # OrchestratorFactory 是全局单例，应该在应用生命周期内保持
@@ -549,9 +574,9 @@ class RetryService:
                 "is_subgraph": False,
             }
             
-        finally:
-            if factory:
-                await factory.cleanup()
+        # ⚠️ 不要在这里清理 Factory！
+        # OrchestratorFactory 是全局单例，应该在应用生命周期内保持。
+        # cleanup() 会重置整个进程的单例状态，影响所有后续请求。
 
 
 # 依赖注入

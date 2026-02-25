@@ -6,7 +6,7 @@
 
 export { Navigation } from './navigation';
 export { HeroSection } from './hero-section';
-export { WorkflowAnimation } from './workflow-animation';
+export { WorkflowAnimationSvg as WorkflowAnimation } from './workflow-animation-svg';
 export { FeaturesSection } from './features-section';
 export {
   IntentAnalysisCard,

@@ -7,10 +7,6 @@ import structlog
 
 from app.crud.crud_concept import ConceptCRUD, get_concept_crud
 from app.models.database import RoadmapMetadata
-from app.services.shared.notification_service import (
-    NotificationService,
-    notification_service as default_notification_service,
-)
 
 logger = structlog.get_logger()
 
@@ -20,24 +16,23 @@ class ConceptService:
     
     职责：
     - 概念查询和状态管理
-    - WebSocket通知
-    - 业务逻辑编排（协调CRUD和通知）
+    - 业务逻辑编排（协调CRUD层）
+    
+    注意：WebSocket通知由主工作流（content_generation subgraph）负责，
+    此服务仅用于 API 重试流程，无需推送通知。
     """
     
     def __init__(
         self,
         concept_crud: Optional[ConceptCRUD] = None,
-        notification_service: Optional[NotificationService] = None,
     ):
         """
         初始化概念服务
         
         Args:
             concept_crud: 概念CRUD实例（可选，默认创建新实例）
-            notification_service: 通知服务实例（可选，使用全局单例）
         """
         self.concept_crud = concept_crud or get_concept_crud()
-        self.notification = notification_service or default_notification_service
     
     async def get_concept_from_roadmap(
         self,
@@ -102,7 +97,7 @@ class ConceptService:
         Returns:
             是否成功
         """
-        # 更新数据库
+        # 1. 更新 framework_data 中的状态（RoadmapMetadata JSON 字段）
         success = await self.concept_crud.update_concept_status(
             session,
             roadmap_id,
@@ -119,41 +114,46 @@ class ConceptService:
                 concept_id=concept_id,
             )
             return False
-        
-        # 发送WebSocket通知
+
+        # 2. 同步更新 ConceptMetadata 表（API 层读取此表作为权威来源）
+        #    原始生成流程通过 ConceptContentHandler 更新此表，
+        #    但 retry_content 流程此前只更新 framework_data，导致状态不一致。
         try:
-            if status == "generating":
-                await self.notification.publish_concept_start(
-                    roadmap_id=roadmap_id,
+            content_id = None
+            if result and status == "completed":
+                if content_type == "tutorial":
+                    content_id = result.get("tutorial_id")
+                elif content_type == "resources":
+                    content_id = result.get("id")
+                elif content_type == "quiz":
+                    content_id = result.get("quiz_id")
+
+            concept_meta = await self.concept_crud.get_by_concept_id(session, concept_id)
+            if concept_meta:
+                await self.concept_crud.update_content_status(
+                    session=session,
                     concept_id=concept_id,
                     content_type=content_type,
+                    status=status,
+                    content_id=content_id,
                 )
-            elif status == "completed":
-                await self.notification.publish_concept_complete(
-                    roadmap_id=roadmap_id,
+            else:
+                logger.warning(
+                    "concept_metadata_not_found_skipping_sync",
                     concept_id=concept_id,
                     content_type=content_type,
-                    result=result,
-                )
-            elif status == "failed":
-                await self.notification.publish_concept_error(
-                    roadmap_id=roadmap_id,
-                    concept_id=concept_id,
-                    content_type=content_type,
-                    error=result.get("error") if result else "Unknown error",
+                    status=status,
                 )
         except Exception as e:
-            # WebSocket通知失败不影响业务流程
-            logger.error(
-                "concept_notification_failed",
-                roadmap_id=roadmap_id,
+            # ConceptMetadata 同步失败不阻断主流程，仅记录
+            logger.warning(
+                "concept_metadata_sync_failed",
                 concept_id=concept_id,
                 content_type=content_type,
                 status=status,
                 error=str(e),
-                exc_info=True,
             )
-        
+
         logger.info(
             "concept_status_updated",
             roadmap_id=roadmap_id,

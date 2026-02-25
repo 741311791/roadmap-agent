@@ -24,8 +24,12 @@ class GenerateRoadmapResponse(BaseModel):
 # ============================================================
 
 class RetryContentRequest(BaseModel):
-    """内容重试请求"""
-    preferences: LearningPreferences = Field(..., description="学习偏好")
+    """内容重新生成请求（来自前端的 API 层 Schema）
+
+    preferences 为可选字段：前端不传时由后端从路线图 framework_data 自动提取。
+    """
+    preferences: Optional[LearningPreferences] = Field(None, description="学习偏好（缺省时自动从路线图数据中提取）")
+    retry_reason: Optional[str] = Field(None, description="重新生成原因")
 
 
 class RetryContentResponse(BaseModel):

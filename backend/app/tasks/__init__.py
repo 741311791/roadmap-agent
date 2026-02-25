@@ -20,7 +20,6 @@ from app.tasks.workflow_resume_tasks import (
 )
 from app.tasks.cover_image_tasks import (
     generate_cover_image_task,
-    batch_generate_cover_images_task,
 )
 from app.tasks.content_utils import retry_single_content
 from app.tasks.content_generation_tasks import (
@@ -37,7 +36,6 @@ __all__ = [
     "resume_after_review",
     "resume_from_checkpoint",
     "generate_cover_image_task",
-    "batch_generate_cover_images_task",
     "retry_single_content",
     "generate_all_content_task",
     # ✅ 已删除：generate_concept_content_task, finalize_content_generation

@@ -15,8 +15,9 @@
  * 优化：使用动态导入减少初始加载体积
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import dynamic from 'next/dynamic';
+import { useTranslations } from 'next-intl';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -82,101 +83,151 @@ interface WorkflowBranch {
 // ============================================================================
 
 /**
- * 主路节点
+ * 主路节点（使用翻译key）
  * Analysis → Design → Validate → Review → Content
+ * 
+ * 注意：这些是配置数据，label需要在使用时动态翻译
  */
-const MAIN_STAGES: WorkflowNode[] = [
+const MAIN_STAGES_KEYS = [
   {
     id: 'analysis',
-    label: 'Intent Analysis',
-    shortLabel: 'Analysis',
-    description: 'Analyzing learning goals',
+    labelKey: 'intentAnalysis',
+    shortLabelKey: 'analysis',
+    descriptionKey: 'analyzingGoals',
     steps: ['init', 'queued', 'starting', 'intent_analysis'],
   },
   {
     id: 'design',
-    label: 'Curriculum Design',
-    shortLabel: 'Design',
-    description: 'Designing course structure',
-    steps: ['curriculum_design'],  // 移除不存在的 framework_generation
+    labelKey: 'curriculumDesign',
+    shortLabelKey: 'design',
+    descriptionKey: 'designingStructure',
+    steps: ['curriculum_design'],
   },
   {
     id: 'validate',
-    label: 'Structure Validation',
-    shortLabel: 'Validate',
-    description: 'Validating roadmap logic',
+    labelKey: 'structureValidation',
+    shortLabelKey: 'validate',
+    descriptionKey: 'validatingLogic',
     steps: ['structure_validation'],
   },
   {
     id: 'review',
-    label: 'Human Review',
-    shortLabel: 'Review',
-    description: 'Awaiting confirmation',
-    steps: ['human_review'],  // 移除 human_review_pending（这是任务状态，不是步骤）
+    labelKey: 'humanReview',
+    shortLabelKey: 'review',
+    descriptionKey: 'awaitingConfirmation',
+    steps: ['human_review'],
   },
   {
     id: 'content',
-    label: 'Content Generation',
-    shortLabel: 'Content',
-    description: 'Generating materials',
+    labelKey: 'contentGeneration',
+    shortLabelKey: 'content',
+    descriptionKey: 'generatingMaterials',
     steps: ['content_generation_queued', 'content_generation'],
   },
 ];
 
 /**
- * 验证分支：验证失败触发（显示在下方）
+ * 验证分支配置（使用翻译key）
  * Validate → Plan1 → Edit1 → 回到 Validate
  */
-const VALIDATION_BRANCH: WorkflowBranch = {
+const VALIDATION_BRANCH_KEYS = {
   id: 'validation_branch',
   triggerNode: 'validate',
   returnNode: 'validate',
-  editSource: 'validation_failed',
-  position: 'bottom',
+  editSource: 'validation_failed' as const,
+  position: 'bottom' as const,
   nodes: [
     {
       id: 'plan1',
-      label: 'Edit Plan Analysis',
-      shortLabel: 'Plan',
-      description: 'Analyzing issues',
-      steps: ['edit_plan_analysis'],  // ✅ 共享节点
+      labelKey: 'editPlanAnalysis',
+      shortLabelKey: 'plan',
+      descriptionKey: 'analyzingIssues',
+      steps: ['edit_plan_analysis'],
     },
     {
       id: 'edit1',
-      label: 'Roadmap Edit',
-      shortLabel: 'Edit',
-      description: 'Fixing issues',
+      labelKey: 'roadmapEdit',
+      shortLabelKey: 'edit',
+      descriptionKey: 'fixingIssues',
       steps: ['roadmap_edit'],
     },
   ],
 };
 
 /**
- * 审核分支：人工审核拒绝触发（显示在上方）
+ * 审核分支配置（使用翻译key）
  * Review → Plan2 → Edit2 → 回到 Review
  */
-const REVIEW_BRANCH: WorkflowBranch = {
+const REVIEW_BRANCH_KEYS = {
   id: 'review_branch',
   triggerNode: 'review',
   returnNode: 'review',
-  editSource: 'human_review',
-  position: 'top',
+  editSource: 'human_review' as const,
+  position: 'top' as const,
   nodes: [
     {
       id: 'plan2',
-      label: 'Edit Plan Analysis',
-      shortLabel: 'Plan',
-      description: 'Analyzing feedback',
+      labelKey: 'editPlanAnalysis',
+      shortLabelKey: 'plan',
+      descriptionKey: 'analyzingFeedback',
       steps: ['edit_plan_analysis'],
     },
     {
       id: 'edit2',
-      label: 'Roadmap Edit',
-      shortLabel: 'Edit',
-      description: 'Applying changes',
+      labelKey: 'roadmapEdit',
+      shortLabelKey: 'edit',
+      descriptionKey: 'applyingChanges',
       steps: ['roadmap_edit'],
     },
   ],
+};
+
+/**
+ * 主路节点（默认版本，用于工具函数）
+ * 这些是不需要翻译的版本，用于 getStepLocation 等工具函数
+ */
+const MAIN_STAGES: WorkflowNode[] = MAIN_STAGES_KEYS.map(stage => ({
+  id: stage.id,
+  label: stage.labelKey,
+  shortLabel: stage.shortLabelKey,
+  description: stage.descriptionKey,
+  steps: stage.steps,
+}));
+
+/**
+ * 验证分支（默认版本，用于工具函数）
+ */
+const VALIDATION_BRANCH: WorkflowBranch = {
+  id: VALIDATION_BRANCH_KEYS.id,
+  triggerNode: VALIDATION_BRANCH_KEYS.triggerNode,
+  returnNode: VALIDATION_BRANCH_KEYS.returnNode,
+  editSource: VALIDATION_BRANCH_KEYS.editSource,
+  position: VALIDATION_BRANCH_KEYS.position,
+  nodes: VALIDATION_BRANCH_KEYS.nodes.map(node => ({
+    id: node.id,
+    label: node.labelKey,
+    shortLabel: node.shortLabelKey,
+    description: node.descriptionKey,
+    steps: node.steps,
+  })),
+};
+
+/**
+ * 审核分支（默认版本，用于工具函数）
+ */
+const REVIEW_BRANCH: WorkflowBranch = {
+  id: REVIEW_BRANCH_KEYS.id,
+  triggerNode: REVIEW_BRANCH_KEYS.triggerNode,
+  returnNode: REVIEW_BRANCH_KEYS.returnNode,
+  editSource: REVIEW_BRANCH_KEYS.editSource,
+  position: REVIEW_BRANCH_KEYS.position,
+  nodes: REVIEW_BRANCH_KEYS.nodes.map(node => ({
+    id: node.id,
+    label: node.labelKey,
+    shortLabel: node.shortLabelKey,
+    description: node.descriptionKey,
+    steps: node.steps,
+  })),
 };
 
 // ============================================================================
@@ -212,16 +263,16 @@ export function getStepLocation(
   }
 
   // 检查验证分支
+  // 注意：edit_plan_analysis 和 roadmap_edit 同时存在于两个分支中，
+  // 必须通过 editSource 来区分当前属于哪个分支。
+  // editSource='human_review' → 属于审核分支，跳过验证分支检查
+  // editSource='validation_failed' 或 null → 属于验证分支
   for (let i = 0; i < VALIDATION_BRANCH.nodes.length; i++) {
     const node = VALIDATION_BRANCH.nodes[i];
     if (node.steps.includes(currentStep)) {
-      // 特殊处理 roadmap_edit：需要根据 editSource 判断
-      if (currentStep === 'roadmap_edit') {
-        if (editSource === 'validation_failed') {
-          return { stageId: node.id, isOnBranch: true, branchType: 'validation', branchNodeIndex: i };
-        }
-        // 如果是 human_review，继续检查审核分支
-        continue;
+      if (editSource === 'human_review') {
+        // 明确来自审核分支，跳出循环去检查审核分支
+        break;
       }
       return { stageId: node.id, isOnBranch: true, branchType: 'validation', branchNodeIndex: i };
     }
@@ -231,12 +282,9 @@ export function getStepLocation(
   for (let i = 0; i < REVIEW_BRANCH.nodes.length; i++) {
     const node = REVIEW_BRANCH.nodes[i];
     if (node.steps.includes(currentStep)) {
-      // 特殊处理 roadmap_edit：需要根据 editSource 判断
-      if (currentStep === 'roadmap_edit') {
-        if (editSource === 'human_review') {
-          return { stageId: node.id, isOnBranch: true, branchType: 'review', branchNodeIndex: i };
-        }
-        continue;
+      if (editSource === 'validation_failed') {
+        // 明确来自验证分支，跳出循环（不应进入审核分支）
+        break;
       }
       return { stageId: node.id, isOnBranch: true, branchType: 'review', branchNodeIndex: i };
     }
@@ -276,8 +324,18 @@ interface WorkflowTopologyProps {
   roadmapTitle?: string;
   /** 阶段数量（用于 Human Review 展示） */
   stagesCount?: number;
-  /** 执行日志（用于判断分支是否被触发过） */
+  /** 执行日志（时间轴展示用，不再用于判断分支触发状态） */
   executionLogs?: ExecutionLog[];
+  /**
+   * 验证分支是否已被触发（由父组件维护，避免依赖存在写入延迟的 DB 日志）
+   * 真实来源：WS progress 事件（实时）+ DB 日志（刷新恢复）
+   */
+  validationBranchTriggered?: boolean;
+  /**
+   * 审核分支是否已被触发（由父组件维护，避免依赖存在写入延迟的 DB 日志）
+   * 真实来源：WS progress 事件（实时）+ DB 日志（刷新恢复）
+   */
+  reviewBranchTriggered?: boolean;
   /** Human Review 完成回调 */
   onHumanReviewComplete?: () => void;
   /** 当前选中的节点ID */
@@ -299,15 +357,60 @@ export function WorkflowTopology({
   roadmapTitle,
   stagesCount = 0,
   executionLogs = [],
+  validationBranchTriggered: validationBranchTriggeredProp = false,
+  reviewBranchTriggered: reviewBranchTriggeredProp = false,
   onHumanReviewComplete,
   selectedNodeId = null,
   onNodeSelect,
 }: WorkflowTopologyProps) {
+  const t = useTranslations('taskDetail');
+  
   // Human Review 状态
   const [reviewStatus, setReviewStatus] = useState<'waiting' | 'submitting' | 'approved' | 'rejected'>('waiting');
   const [feedback, setFeedback] = useState('');
   const [showFeedback, setShowFeedback] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
+  
+  // 动态翻译主路节点（组件内使用的翻译版本）
+  const mainStagesTranslated: WorkflowNode[] = useMemo(() => MAIN_STAGES_KEYS.map(stage => ({
+    id: stage.id,
+    label: t(stage.labelKey as any),
+    shortLabel: t(stage.shortLabelKey as any),
+    description: t(stage.descriptionKey as any),
+    steps: stage.steps,
+  })), [t]);
+  
+  // 动态翻译验证分支（组件内使用的翻译版本）
+  const validationBranchTranslated: WorkflowBranch = useMemo(() => ({
+    id: VALIDATION_BRANCH_KEYS.id,
+    triggerNode: VALIDATION_BRANCH_KEYS.triggerNode,
+    returnNode: VALIDATION_BRANCH_KEYS.returnNode,
+    editSource: VALIDATION_BRANCH_KEYS.editSource,
+    position: VALIDATION_BRANCH_KEYS.position,
+    nodes: VALIDATION_BRANCH_KEYS.nodes.map(node => ({
+      id: node.id,
+      label: t(node.labelKey as any),
+      shortLabel: t(node.shortLabelKey as any),
+      description: t(node.descriptionKey as any),
+      steps: node.steps,
+    })),
+  }), [t]);
+  
+  // 动态翻译审核分支（组件内使用的翻译版本）
+  const reviewBranchTranslated: WorkflowBranch = useMemo(() => ({
+    id: REVIEW_BRANCH_KEYS.id,
+    triggerNode: REVIEW_BRANCH_KEYS.triggerNode,
+    returnNode: REVIEW_BRANCH_KEYS.returnNode,
+    editSource: REVIEW_BRANCH_KEYS.editSource,
+    position: REVIEW_BRANCH_KEYS.position,
+    nodes: REVIEW_BRANCH_KEYS.nodes.map(node => ({
+      id: node.id,
+      label: t(node.labelKey as any),
+      shortLabel: t(node.shortLabelKey as any),
+      description: t(node.descriptionKey as any),
+      steps: node.steps,
+    })),
+  }), [t]);
 
   // 获取当前步骤位置
   const stepLocation = getStepLocation(currentStep, editSource);
@@ -375,15 +478,15 @@ export function WorkflowTopology({
     prevHumanReviewActiveRef.current = isHumanReviewActive;
   }, [isHumanReviewActive, reviewStatus]); // 监听human_review状态和审核状态变化
 
-  // 检查分支是否被触发过（通过执行日志的 details.edit_source 判断）
-  // edit_source === 'validation_failed': 验证分支
-  // edit_source === 'human_review': 审核分支
-  const validationBranchTriggered = executionLogs.some(
+  // 分支触发状态
+  // 优先使用父组件传入的 prop（由 WS 事件实时设置，无 DB 日志延迟）
+  // 降级兜底：从 executionLogs 检测（适用于父组件未传入 prop 的场景）
+  const validationBranchTriggered = validationBranchTriggeredProp || executionLogs.some(
     log => 
       (log.step === 'edit_plan_analysis' || log.step === 'roadmap_edit') &&
       log.details?.edit_source === 'validation_failed'
   );
-  const reviewBranchTriggered = executionLogs.some(
+  const reviewBranchTriggered = reviewBranchTriggeredProp || executionLogs.some(
     log => 
       (log.step === 'edit_plan_analysis' || log.step === 'roadmap_edit') &&
       log.details?.edit_source === 'human_review'
@@ -533,9 +636,9 @@ export function WorkflowTopology({
       setReviewStatus('submitting');
       setReviewError(null);
       await tasksApi.approve(taskId, { approved: false, feedback });
-      // 反馈提交成功后，重置为 waiting 状态，让工作流自然过渡
-      // 不显示 'rejected' 状态的确认面板
-      setReviewStatus('waiting');
+      // 反馈提交成功后，切换到 rejected 状态显示"已提交"提示
+      // 面板会保持显示直到后端 WebSocket 推送新的 current_step（工作流重新激活）
+      setReviewStatus('rejected');
       setShowFeedback(false);
       setFeedback('');
       onHumanReviewComplete?.();
@@ -558,23 +661,23 @@ export function WorkflowTopology({
         <div className="space-y-6">
         {/* 标题栏 */}
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-serif font-semibold">Workflow Progress</h2>
+          <h2 className="text-lg font-serif font-semibold">{t('workflowProgress')}</h2>
           {isCompleted && (
             <Badge className="bg-sage-600 hover:bg-sage-700 text-white">
               <CheckCircle2 className="w-3 h-3 mr-1" />
-              Completed
+              {t('completed')}
             </Badge>
           )}
           {isFailed && (
             <Badge variant="destructive">
               <XCircle className="w-3 h-3 mr-1" />
-              Failed
+              {t('failed')}
             </Badge>
           )}
           {!isCompleted && !isFailed && (
             <Badge variant="secondary" className="animate-pulse">
               <Clock className="w-3 h-3 mr-1" />
-              In Progress
+              {t('inProgress')}
             </Badge>
           )}
         </div>
@@ -586,17 +689,17 @@ export function WorkflowTopology({
             {/* 主路节点 */}
             <div className="relative flex justify-between items-start">
               {/* 主路连接线和动画 */}
-              {MAIN_STAGES.map((stage, index) => {
-                if (index >= MAIN_STAGES.length - 1) return null;
+              {mainStagesTranslated.map((stage, index) => {
+                if (index >= mainStagesTranslated.length - 1) return null;
                 const fromStatus = getMainNodeStatus(index, stage.id);
-                const toStatus = getMainNodeStatus(index + 1, MAIN_STAGES[index + 1].id);
+                const toStatus = getMainNodeStatus(index + 1, mainStagesTranslated[index + 1].id);
                 
                 const isCompleted = fromStatus === 'completed' && toStatus === 'completed';
                 const isPendingConnector = fromStatus === 'pending' && toStatus === 'pending';
                 
                 // 计算连接线的位置（对齐节点圆心，节点高度48px，圆心在24px处）
-                const leftPercent = ((index + 0.5) * 100) / MAIN_STAGES.length;
-                const widthPercent = 100 / MAIN_STAGES.length;
+                const leftPercent = ((index + 0.5) * 100) / mainStagesTranslated.length;
+                const widthPercent = 100 / mainStagesTranslated.length;
 
                 return (
                   <div
@@ -643,7 +746,7 @@ export function WorkflowTopology({
               })}
 
               {/* 主路节点按钮 */}
-              {MAIN_STAGES.map((stage, index) => {
+              {mainStagesTranslated.map((stage, index) => {
                 const nodeStatus = getMainNodeStatus(index, stage.id);
                 const isActive = nodeStatus === 'current';
                 const isCompleteNode = nodeStatus === 'completed';
@@ -652,8 +755,10 @@ export function WorkflowTopology({
                 const isNextUp = isPending && index === getMainStageIndex(stepLocation.stageId) + 1;
 
                 // Human Review 特殊处理
+                // 当 reviewStatus 为 'rejected' 时隐藏面板，改为显示审核分支节点（计划/编辑）
+                // 这样用户提交反馈后，能立即看到分支节点以 pending 状态等待后端执行
                 const isReviewStage = stage.id === 'review';
-                const showHumanReviewPanel = isReviewStage && isHumanReviewActive && taskId;
+                const showHumanReviewPanel = isReviewStage && isHumanReviewActive && taskId && reviewStatus !== 'rejected';
 
                 // 是否有激活的分支
                 const hasBranch = stage.id === 'validate' || stage.id === 'review';
@@ -664,13 +769,13 @@ export function WorkflowTopology({
                   <div
                     key={stage.id}
                     className="relative flex flex-col items-center"
-                    style={{ width: `${100 / MAIN_STAGES.length}%` }}
+                    style={{ width: `${100 / mainStagesTranslated.length}%` }}
                   >
                     {/* 上方分支（Review 分支） - 位于节点上方，需要足够空间 */}
                     {stage.id === 'review' && !showHumanReviewPanel && (
                       <div className="absolute bottom-full left-1/2 -translate-x-1/2 w-full mb-2">
                         <BranchNodes
-                          branch={REVIEW_BRANCH}
+                          branch={reviewBranchTranslated}
                           branchType="review"
                           isActive={isReviewBranchActive}
                           getNodeStatus={(idx, id) => getBranchNodeStatus('review', idx, id)}
@@ -730,7 +835,7 @@ export function WorkflowTopology({
                     {stage.id === 'validate' && (
                       <div className="absolute top-full left-1/2 -translate-x-1/2 w-full mt-2">
                         <BranchNodes
-                          branch={VALIDATION_BRANCH}
+                          branch={validationBranchTranslated}
                           branchType="validation"
                           isActive={isValidationBranchActive}
                           getNodeStatus={(idx, id) => getBranchNodeStatus('validation', idx, id)}
@@ -769,13 +874,13 @@ export function WorkflowTopology({
         {!isCompleted && !isFailed && currentStep && !isHumanReviewActive && (
           <div className="pt-4 border-t">
             <div className="flex items-center gap-2 text-sm">
-              <span className="text-muted-foreground">Current Step:</span>
+              <span className="text-muted-foreground">{t('currentStep')}:</span>
               <Badge variant="outline" className="font-mono text-xs">
                 {currentStep}
               </Badge>
               {editSource && (
                 <Badge variant="secondary" className="text-xs">
-                  {editSource === 'validation_failed' ? 'Auto-fix' : 'User feedback'}
+                  {editSource === 'validation_failed' ? t('autoFix') : t('userFeedback')}
                 </Badge>
               )}
             </div>
@@ -937,33 +1042,46 @@ function HumanReviewInlinePanel({
   onFeedbackChange,
   onCancelFeedback,
 }: HumanReviewInlinePanelProps) {
+  const t = useTranslations('taskDetail');
+
   if (reviewStatus === 'approved') {
     return (
       <div className="p-4 bg-accent/5 border-2 border-accent/30 rounded-xl shadow-md">
         <div className="flex items-center gap-2 text-accent">
           <CheckCircle2 className="w-4 h-4" />
-          <span className="text-sm font-medium">Approved</span>
+          <span className="text-sm font-medium">{t('approvedStatus')}</span>
         </div>
         <p className="text-xs text-accent/80 mt-1">
-          Content generation will begin shortly.
+          {t('contentGenerationSoon')}
         </p>
       </div>
     );
   }
 
-  // 移除 rejected 状态的显示
-  // 用户提交反馈后，直接让工作流过渡到下一步，不显示中间确认面板
+  if (reviewStatus === 'rejected') {
+    return (
+      <div className="p-4 bg-muted/40 border-2 border-muted rounded-xl shadow-md">
+        <div className="flex items-center gap-2 text-muted-foreground">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span className="text-sm font-medium">{t('feedbackSubmitted')}</span>
+        </div>
+        <p className="text-xs text-muted-foreground/80 mt-1">
+          {t('processingFeedback')}
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="p-3 bg-accent/5 border-2 border-accent rounded-xl shadow-md space-y-2.5">
       <div className="text-center">
-        <p className="text-xs text-accent/80 font-medium">Review Required</p>
+        <p className="text-xs text-accent/80 font-medium">{t('reviewRequired')}</p>
         {roadmapTitle && (
           <p className="text-sm font-semibold text-foreground truncate" title={roadmapTitle}>
             {roadmapTitle}
           </p>
         )}
-        <p className="text-[10px] text-accent/70">{stagesCount} stages</p>
+        <p className="text-[10px] text-accent/70">{t('stagesCount', { count: stagesCount })}</p>
       </div>
 
       {reviewError && (
@@ -975,7 +1093,7 @@ function HumanReviewInlinePanel({
       {showFeedback && (
         <div className="space-y-2">
           <Textarea
-            placeholder="Describe what needs to be changed..."
+            placeholder={t('describeFeedback')}
             value={feedback}
             onChange={(e) => onFeedbackChange(e.target.value)}
             rows={2}
@@ -995,7 +1113,7 @@ function HumanReviewInlinePanel({
               disabled={reviewStatus === 'submitting'}
               className="h-7 text-xs px-2 flex-1 min-w-0"
             >
-              Cancel
+              {t('cancel')}
             </Button>
             <Button
               variant="destructive"
@@ -1009,7 +1127,7 @@ function HumanReviewInlinePanel({
               ) : (
                 <X className="w-3 h-3 mr-1" />
               )}
-              Submit
+              {t('submit')}
             </Button>
           </>
         ) : (
@@ -1022,7 +1140,7 @@ function HumanReviewInlinePanel({
               className="h-7 text-xs px-2.5 flex-1 min-w-0"
             >
               <X className="w-3 h-3 mr-1" />
-              Change
+              {t('change')}
             </Button>
             <Button
               size="sm"
@@ -1035,7 +1153,7 @@ function HumanReviewInlinePanel({
               ) : (
                 <Check className="w-3 h-3 mr-1" />
               )}
-              Approve
+              {t('approve')}
             </Button>
           </>
         )}

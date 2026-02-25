@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
@@ -30,11 +31,12 @@ import {
   Wrench,
   Languages,
 } from 'lucide-react';
-import { getUserProfile, getRoadmapStatus, type UserProfileData } from '@/lib/api/endpoints';
+import { getUserProfile, getRoadmapStatus, type UserProfileData, type TaskStatusResponse } from '@/lib/api/endpoints';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import { useRoadmapGeneration } from '@/lib/hooks/api/use-roadmap-generation';
 import { useAuthStore } from '@/lib/store/auth-store';
 import type { UserRequest } from '@/types/generated/models';
+import { TaskStatus } from '@/types/generated/constants';
 import Link from 'next/link';
 
 type Step = 'goal' | 'preferences' | 'generating';
@@ -51,10 +53,10 @@ interface FormData {
 }
 
 const contentOptions = [
-  { id: 'visual', label: 'Visual', icon: Eye, desc: 'Videos, diagrams, demonstrations' },
-  { id: 'text', label: 'Text', icon: FileText, desc: 'Documentation, articles, books' },
-  { id: 'audio', label: 'Audio', icon: Headphones, desc: 'Podcasts, audio content' },
-  { id: 'hands_on', label: 'Hands-on', icon: Wrench, desc: 'Interactive exercises, projects' },
+  { id: 'visual', icon: Eye },
+  { id: 'text', icon: FileText },
+  { id: 'audio', icon: Headphones },
+  { id: 'hands_on', icon: Wrench },
 ];
 
 const languageOptions = [
@@ -69,10 +71,19 @@ const languageOptions = [
 ];
 
 const levelOptions = [
-  { id: 'beginner', label: 'Beginner', description: 'New to this topic' },
-  { id: 'intermediate', label: 'Intermediate', description: 'Some experience' },
-  { id: 'advanced', label: 'Advanced', description: 'Looking to master' },
+  { id: 'beginner' },
+  { id: 'intermediate' },
+  { id: 'advanced' },
 ];
+
+const presetGoals = [
+  'fullstack',
+  'datascience',
+  'mobile',
+  'devops',
+  'design',
+  'security',
+] as const;
 
 // Step to progress mapping
 const stepProgress: Record<string, { progress: number; status: string }> = {
@@ -90,6 +101,7 @@ const stepProgress: Record<string, { progress: number; status: string }> = {
 export default function NewRoadmapClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const t = useTranslations();
   const [step, setStep] = useState<Step>('goal');
   
   // Auth
@@ -129,32 +141,32 @@ export default function NewRoadmapClient() {
       
       // 先获取任务状态
       getRoadmapStatus(resumeTaskId)
-        .then((status) => {
+        .then((status: TaskStatusResponse) => {
           console.log('[NewRoadmap] Task status:', status);
           
           const taskStatus = status.status;
           
           // 如果任务已完成或部分失败，跳转到路线图详情页
-          if ((taskStatus === 'completed' || taskStatus === 'partial_failure') && status.roadmap_id) {
+          if ((taskStatus === TaskStatus.COMPLETED || taskStatus === TaskStatus.PARTIAL_FAILURE) && status.roadmap_id) {
             console.log('[NewRoadmap] Task finished with status:', taskStatus, 'Navigating to roadmap:', status.roadmap_id);
             router.push(`/roadmap/${status.roadmap_id}`);
             return;
           }
           
           // 如果任务还在进行中，直接跳转到任务详情页
-          if (taskStatus === 'processing' || taskStatus === 'pending' || taskStatus === 'human_review_pending') {
+          if (taskStatus === TaskStatus.PROCESSING || taskStatus === TaskStatus.PENDING || taskStatus === TaskStatus.HUMAN_REVIEW) {
             console.log('[NewRoadmap] Task in progress, navigating to task detail:', resumeTaskId);
             router.push(`/tasks/${resumeTaskId}`);
             return;
           }
           
           // 如果任务失败，显示错误
-          if (taskStatus === 'failed') {
+          if (taskStatus === TaskStatus.FAILED) {
             console.error('[NewRoadmap] Task failed:', status.error_message);
             return;
           }
         })
-        .catch((error) => {
+        .catch((error: unknown) => {
           console.error('[NewRoadmap] Failed to get task status:', error);
         });
     }
@@ -176,7 +188,7 @@ export default function NewRoadmapClient() {
       
       try {
         setIsProfileLoading(true);
-        const profile = await getUserProfile(userId);
+        const profile = await getUserProfile();
         
         // Check if component is still mounted
         if (!abortControllerRef.current?.signal.aborted) {
@@ -196,7 +208,7 @@ export default function NewRoadmapClient() {
             setFormData((prev) => ({
               ...prev,
               availableHours: profile.weekly_commitment_hours || 10,
-              contentPreferences: profile.learning_style?.length > 0 
+              contentPreferences: (profile.learning_style && profile.learning_style.length > 0) 
                 ? profile.learning_style 
                 : prev.contentPreferences,
               primaryLanguage: profile.primary_language || 'en',
@@ -261,14 +273,17 @@ export default function NewRoadmapClient() {
         career_background: formData.careerBackground || 'Not specified',
         content_preference: formData.contentPreferences as any,
         preferred_language: formData.primaryLanguage,
+        primary_language: formData.primaryLanguage,
+        secondary_language: formData.secondaryLanguage,
         // Include profile data if available
         ...(userProfile && hasCompletedProfile ? {
           industry: userProfile.industry,
           current_role: userProfile.current_role,
-          tech_stack: userProfile.tech_stack?.map(item => ({
-            name: item.technology,
-            proficiency: (item.proficiency === 'expert' ? 'advanced' : item.proficiency) as 'beginner' | 'intermediate' | 'advanced',
-          })),
+          // tech_stack 字段类型不匹配，暂时移除
+          // tech_stack: userProfile.tech_stack?.map(item => ({
+          //   name: item.technology,
+          //   proficiency: (item.proficiency === 'expert' ? 'advanced' : item.proficiency) as 'beginner' | 'intermediate' | 'advanced',
+          // })) || null,
         } : {}),
       },
     };
@@ -304,13 +319,13 @@ export default function NewRoadmapClient() {
       <div className="text-center mb-10">
         <div className="inline-flex items-center gap-2 px-4 py-2 bg-sage-100 rounded-full text-sage-800 text-sm font-medium mb-4">
           <Sparkles className="w-4 h-4" />
-          AI-Powered Generation
+          {t('newRoadmap.aiPoweredGeneration')}
         </div>
         <h1 className="text-4xl font-serif font-bold text-foreground mb-2">
-          Create Your Learning Roadmap
+          {t('newRoadmap.title')}
         </h1>
         <p className="text-lg text-muted-foreground">
-          Tell us what you want to learn and we&apos;ll craft a personalized curriculum.
+          {t('newRoadmap.subtitle')}
         </p>
       </div>
 
@@ -324,16 +339,16 @@ export default function NewRoadmapClient() {
               </div>
               <div className="flex-1">
                 <p className="text-sm font-medium text-foreground">
-                  Complete your learning profile
+                  {t('newRoadmap.completeProfile')}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  A complete profile helps us generate more personalized learning roadmaps
+                  {t('newRoadmap.completeProfileDesc')}
                 </p>
               </div>
               <Link href="/profile">
                 <Button variant="outline" size="sm" className="gap-1.5">
                   <User className="w-4 h-4" />
-                  Complete Profile
+                  {t('newRoadmap.completeProfileBtn')}
                 </Button>
               </Link>
             </div>
@@ -367,27 +382,51 @@ export default function NewRoadmapClient() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Target className="w-5 h-5 text-sage-600" />
-              What do you want to learn?
+              {t('newRoadmap.goalTitle')}
             </CardTitle>
             <CardDescription>
-              Describe your learning goal in detail. The more specific, the better.
+              {t('newRoadmap.goalDesc')}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
             <div>
-              <label className="block text-sm font-medium mb-2">Learning Goal</label>
+              <label className="block text-sm font-medium mb-2">{t('newRoadmap.learningGoal')}</label>
               <textarea
                 value={formData.learningGoal}
                 onChange={(e) =>
                   setFormData({ ...formData, learningGoal: e.target.value })
                 }
-                placeholder="e.g., I want to become a full-stack web developer with React and Node.js"
+                placeholder={t('newRoadmap.learningGoalPlaceholder')}
                 className="w-full min-h-[120px] p-4 rounded-lg border border-input bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
               />
+              
+              {/* Preset Goals */}
+              <div className="mt-3">
+                <div className="text-xs font-medium text-muted-foreground mb-2">
+                  {t('newRoadmap.quickStart')}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {presetGoals.map((goalId) => (
+                    <button
+                      key={goalId}
+                      type="button"
+                      onClick={() => {
+                        setFormData({
+                          ...formData,
+                          learningGoal: t(`newRoadmap.presetGoals.${goalId}.content`),
+                        });
+                      }}
+                      className="px-3 py-1.5 text-xs font-medium rounded-md border border-sage-200 bg-white hover:bg-sage-50 hover:border-sage-300 transition-colors text-sage-700"
+                    >
+                      {t(`newRoadmap.presetGoals.${goalId}.label`)}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
 
             <div>
-              <label className="block text-sm font-medium mb-2">Current Level</label>
+              <label className="block text-sm font-medium mb-2">{t('newRoadmap.currentLevel')}</label>
               <div className="grid grid-cols-3 gap-3">
                 {levelOptions.map((level) => (
                   <button
@@ -404,9 +443,9 @@ export default function NewRoadmapClient() {
                         : 'border-border hover:border-sage-300'
                     }`}
                   >
-                    <div className="font-medium">{level.label}</div>
+                    <div className="font-medium">{t(`newRoadmap.${level.id}`)}</div>
                     <div className="text-xs text-muted-foreground mt-1">
-                      {level.description}
+                      {t(`newRoadmap.${level.id}Desc`)}
                     </div>
                   </button>
                 ))}
@@ -420,7 +459,7 @@ export default function NewRoadmapClient() {
                 variant="sage"
                 className="gap-2"
               >
-                Continue <ArrowRight size={16} />
+                {t('newRoadmap.continue')} <ArrowRight size={16} />
               </Button>
             </div>
           </CardContent>
@@ -432,17 +471,17 @@ export default function NewRoadmapClient() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <BookOpen className="w-5 h-5 text-sage-600" />
-              Learning Preferences
+              {t('newRoadmap.preferencesTitle')}
             </CardTitle>
             <CardDescription>
-              Help us customize your learning experience.
+              {t('newRoadmap.preferencesDesc')}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
             <div>
               <label className="block text-sm font-medium mb-2">
                 <Clock size={14} className="inline mr-1" />
-                Hours per week you can dedicate
+                {t('newRoadmap.hoursPerWeek')}
               </label>
               <div className="flex items-center gap-4">
                 <input
@@ -458,8 +497,8 @@ export default function NewRoadmapClient() {
                   }
                   className="flex-1 h-2 bg-muted rounded-lg appearance-none cursor-pointer"
                 />
-                <span className="w-16 text-center font-medium">
-                  {formData.availableHours}h/week
+                <span className="whitespace-nowrap text-center font-medium min-w-[4rem]">
+                  {formData.availableHours}{t('newRoadmap.hoursWeek')}
                 </span>
               </div>
             </div>
@@ -467,7 +506,7 @@ export default function NewRoadmapClient() {
             <div>
               <div className="flex items-center justify-between mb-2">
                 <label className="block text-sm font-medium">
-                Preferred Content Types
+                {t('newRoadmap.contentTypes')}
               </label>
                 <button
                   type="button"
@@ -480,7 +519,7 @@ export default function NewRoadmapClient() {
                   }}
                   className="text-sm text-sage-600 hover:text-sage-700 hover:underline"
                 >
-                  {formData.contentPreferences.length === contentOptions.length ? 'Deselect All' : 'Select All'}
+                  {formData.contentPreferences.length === contentOptions.length ? t('newRoadmap.deselectAll') : t('newRoadmap.selectAll')}
                 </button>
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -498,9 +537,9 @@ export default function NewRoadmapClient() {
                     >
                       <div className="flex items-center mb-1">
                         <Icon className="w-5 h-5 mr-2" />
-                        <span className="font-medium">{option.label}</span>
+                        <span className="font-medium">{t(`newRoadmap.${option.id}`)}</span>
                       </div>
-                      <div className="text-xs text-muted-foreground">{option.desc}</div>
+                      <div className="text-xs text-muted-foreground">{t(`newRoadmap.${option.id}Desc`)}</div>
                     </button>
                   );
                 })}
@@ -510,12 +549,12 @@ export default function NewRoadmapClient() {
             <div>
               <label className="block text-sm font-medium mb-3">
                 <Languages size={14} className="inline mr-1" />
-                Language Preferences
+                {t('newRoadmap.languagePreferences')}
               </label>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label className="text-xs uppercase tracking-wider text-muted-foreground">
-                    Primary Language
+                    {t('newRoadmap.primaryLanguage')}
                   </Label>
                   <Select
                     value={formData.primaryLanguage}
@@ -524,7 +563,7 @@ export default function NewRoadmapClient() {
                     }
                   >
                     <SelectTrigger className="bg-white">
-                      <SelectValue placeholder="Select language" />
+                      <SelectValue placeholder={t('newRoadmap.selectLanguage')} />
                     </SelectTrigger>
                     <SelectContent>
                       {languageOptions.map((lang) => (
@@ -537,7 +576,7 @@ export default function NewRoadmapClient() {
                 </div>
                 <div className="space-y-2">
                   <Label className="text-xs uppercase tracking-wider text-muted-foreground">
-                    Secondary Language (Optional)
+                    {t('newRoadmap.secondaryLanguage')}
                   </Label>
                   <Select
                     value={formData.secondaryLanguage || 'none'}
@@ -546,10 +585,10 @@ export default function NewRoadmapClient() {
                     }
                   >
                     <SelectTrigger className="bg-white">
-                      <SelectValue placeholder="Select language" />
+                      <SelectValue placeholder={t('newRoadmap.selectLanguage')} />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="none">None</SelectItem>
+                      <SelectItem value="none">{t('newRoadmap.none')}</SelectItem>
                       {languageOptions.map((lang) => (
                         <SelectItem key={lang.value} value={lang.value}>
                           {lang.label}
@@ -563,21 +602,21 @@ export default function NewRoadmapClient() {
 
             <div>
               <label className="block text-sm font-medium mb-2">
-                Why do you want to learn this? (optional)
+                {t('newRoadmap.motivation')}
               </label>
               <textarea
                 value={formData.motivation}
                 onChange={(e) =>
                   setFormData({ ...formData, motivation: e.target.value })
                 }
-                placeholder="e.g., Career change, side project, personal interest..."
+                placeholder={t('newRoadmap.motivationPlaceholder')}
                 className="w-full min-h-[80px] p-4 rounded-lg border border-input bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
               />
             </div>
 
             <div className="flex justify-between">
               <Button onClick={handleBack} variant="outline" className="gap-2">
-                <ArrowLeft size={16} /> Back
+                <ArrowLeft size={16} /> {t('newRoadmap.back')}
               </Button>
               <Button 
                 onClick={handleNext} 
@@ -588,11 +627,11 @@ export default function NewRoadmapClient() {
                 {isPending ? (
                   <>
                     <Loader2 size={16} className="animate-spin" />
-                    Generating...
+                    {t('newRoadmap.generating')}
                   </>
                 ) : (
                   <>
-                    Generate Roadmap <Sparkles size={16} />
+                    {t('newRoadmap.generateRoadmap')} <Sparkles size={16} />
                   </>
                 )}
               </Button>

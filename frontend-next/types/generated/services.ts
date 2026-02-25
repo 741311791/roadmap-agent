@@ -1,6 +1,9 @@
 /**
  * Generated Service Types
  * API 响应类型定义
+ * 
+ * ⚠️ 此文件已重构：重复的类型已移至自动生成的 models
+ * 请从 '@/types/generated' 直接导入这些类型
  */
 
 import type { 
@@ -14,15 +17,6 @@ import type {
 
 // Re-export TutorialWithContent to avoid duplication
 export type { TutorialWithContent };
-
-/**
- * 生成路线图响应
- */
-export interface GenerateRoadmapResponse {
-  task_id: string;
-  message: string;
-  status?: string;
-}
 
 /**
  * 路线图列表响应
@@ -49,35 +43,21 @@ export interface TutorialResponse {
 }
 
 /**
- * 资源推荐响应
+ * ⚠️ 注意：ResourcesResponse 已从 models 自动生成
+ * 请从 '@/types/generated' 直接导入
  */
-export interface ResourcesResponse {
-  resources: ResourceRecommendationOutput[];  // 直接是数组
-  resources_count: number;
-  status: 'completed' | 'generating' | 'failed';
-}
 
 /**
- * 测验响应
- */
-export interface QuizResponse {
-  quiz_id: string;
-  quiz: Quiz;
-  questions: {
-    question_id: string;
-    question_type: 'single_choice' | 'multiple_choice' | 'true_false';
-    question: string;
-    options: string[];
-    correct_answer: number[];
-    explanation: string;
-    difficulty: 'easy' | 'medium' | 'hard';
-  }[];
-  total_questions: number;
-  status: 'completed' | 'generating' | 'failed';
-}
-
-/**
- * 用户个人资料
+ * 用户个人资料（非自动生成）
+ * 
+ * ⚠️ 注意：以下类型已从 models 自动生成，请从 '@/types/generated' 导入：
+ * - QuizResponse
+ * - UserProfileRequest
+ * - UserProfileResponse
+ * - ModifyTutorialRequest
+ * - ModifyTutorialResponse
+ * - ModifyResourcesRequest
+ * - ModifyQuizRequest
  */
 export interface UserProfile {
   user_id: string;
@@ -86,55 +66,5 @@ export interface UserProfile {
   avatar_url?: string;
   created_at: string;
   updated_at: string;
-}
-
-/**
- * 用户个人资料请求
- */
-export interface UserProfileRequest {
-  name?: string;
-  avatar_url?: string;
-}
-
-/**
- * 用户个人资料响应
- */
-export interface UserProfileResponse {
-  user: UserProfile;
-}
-
-/**
- * 修改教程请求
- */
-export interface ModifyTutorialRequest {
-  concept_id: string;
-  roadmap_id: string;
-  modification: string;
-}
-
-/**
- * 修改教程响应
- */
-export interface ModifyTutorialResponse {
-  tutorial: Tutorial;
-  message: string;
-}
-
-/**
- * 修改资源推荐请求
- */
-export interface ModifyResourcesRequest {
-  concept_id: string;
-  roadmap_id: string;
-  modification: string;
-}
-
-/**
- * 修改测验请求
- */
-export interface ModifyQuizRequest {
-  concept_id: string;
-  roadmap_id: string;
-  modification: string;
 }
 

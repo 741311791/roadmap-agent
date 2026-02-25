@@ -52,6 +52,8 @@ class SingleConceptState(TypedDict):
     roadmap_id: str
     user_preferences: LearningPreferences
     task_id: str
+    # 所有 Concept 的名称映射（concept_id → name），用于生成前置知识超链接
+    concept_name_map: dict
     
     # 并发生成的输出（使用 Reducer）
     tutorial: TutorialGenerationOutput | None
@@ -65,7 +67,7 @@ class SingleConceptState(TypedDict):
     save_status: dict  # {"tutorial": "success", "resource": "failed", ...}
 
 
-def inner_fan_out(state: SingleConceptState) -> Command:
+async def inner_fan_out(state: SingleConceptState, config: RunnableConfig) -> Command:
     """
     内层 Fan-Out：为单个 Concept 创建 3 个并行任务
     
@@ -74,12 +76,17 @@ def inner_fan_out(state: SingleConceptState) -> Command:
     - generate_resource
     - generate_quiz
     
+    副作用：
+    - 发送 concept_start 通知，前端将该 Concept 加入 loading 列表
+    
     Args:
         state: 单 Concept 子图状态
+        config: 运行时配置（包含 RuntimeContext）
         
     Returns:
         Command 对象，包含 3 个 Send 任务
     """
+    ctx: RuntimeContext = config["configurable"]["runtime_context"]
     concept = state["concept"]
     task_id = state["task_id"]
     
@@ -90,11 +97,26 @@ def inner_fan_out(state: SingleConceptState) -> Command:
         concept_name=concept.name,
     )
     
-    # 构造上下文信息
+    # 发送 Concept 开始生成通知（前端将此 Concept 加入 loading 列表）
+    await ctx.notification_service.publish_concept_start(
+        task_id=task_id,
+        concept_id=concept.concept_id,
+        concept_name=concept.name,
+        current=0,
+        total=0,
+    )
+    
+    # 构造上下文信息，将前置概念名称注入以供教程生成器生成带名称的超链接
+    concept_name_map: dict = state.get("concept_name_map", {})
+    prerequisite_concepts = [
+        {"concept_id": cid, "name": concept_name_map.get(cid, cid)}
+        for cid in concept.prerequisites
+    ]
     context = {
         "roadmap_id": state["roadmap_id"],
         "stage_name": getattr(concept, "stage_name", "Unknown"),
         "module_name": getattr(concept, "module_name", "Unknown"),
+        "prerequisite_concepts": prerequisite_concepts,
     }
     
     # 为单个 Concept 创建 3 个并行任务
@@ -298,12 +320,19 @@ async def fan_in_and_save(
         },
     )
     
-    # 发送 Concept 完成通知
-    await ctx.notification_service.publish_concept_complete(
+    # 发送 Concept 全部内容完成通知（前端从 loading 列表移除此 Concept）
+    # 注意：必须使用 publish_concept_all_content_complete 而非 publish_concept_complete，
+    # 前端的 handleConceptAllContentComplete 处理器负责从 loadingConceptIds 中移除 concept_id
+    await ctx.notification_service.publish_concept_all_content_complete(
         task_id=task_id,
         concept_id=concept_id,
         concept_name=concept.name,
-        content_type="all",  # 表示整个 Concept 完成
+        data={
+            "tutorial_saved": save_result.tutorial == "success",
+            "resource_saved": save_result.resource == "success",
+            "quiz_saved": save_result.quiz == "success",
+            "metadata_saved": save_result.metadata_saved,
+        },
     )
     
     logger.info(

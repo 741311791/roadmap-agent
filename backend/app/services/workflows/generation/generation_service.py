@@ -89,13 +89,17 @@ class GenerationService:
             raise ValueError(f"任务创建失败：数据库持久化验证失败（task_id={task_id}）")
         
         # 第三步：分发Celery任务
+        # 使用 asyncio.to_thread 避免 .delay() 同步阻塞事件循环
         from app.tasks.roadmap_generation_tasks import generate_roadmap
         
-        celery_task = generate_roadmap.delay(
-            task_id=task_id,
-            user_request=user_request.preferences.learning_goal,
-            user_id=user_request.user_id,
-            learning_preferences=user_request.preferences.model_dump(mode='json'),
+        celery_task = await asyncio.to_thread(
+            generate_roadmap.apply_async,
+            kwargs={
+                "task_id": task_id,
+                "user_request": user_request.preferences.learning_goal,
+                "user_id": user_request.user_id,
+                "learning_preferences": user_request.preferences.model_dump(mode='json'),
+            },
         )
         
         # 第四步：更新celery_task_id
@@ -213,20 +217,49 @@ class GenerationService:
         
         previous_status = task.status
         
-        # 4. 终止Celery任务
+        # 4. 通知 Celery 撤销任务
+        # 策略：协作式取消（Cooperative Cancellation）
+        # - 仅使用 revoke()（不带 terminate），阻止尚未被 worker 取走的任务执行
+        # - 对于已在执行中的任务，依赖步骤5将状态写入数据库，
+        #   workflow_execution_service 在节点间的检查点感知到 cancelled 状态后主动停止
+        # 
+        # 为什么不使用 terminate=True + SIGKILL：
+        # - SIGKILL 通过 broker 广播，有延迟，不是立即执行
+        # - acks_late=True 时：SIGKILL 杀死进程后任务消息尚未 ack，
+        #   若 reject_on_worker_lost=True 则任务被重新放回队列，取消完全失效
         if task.celery_task_id:
             try:
                 from celery.result import AsyncResult
                 from app.core.celery_app import celery_app
                 
-                result = AsyncResult(task.celery_task_id, app=celery_app)
-                result.revoke(terminate=True, signal='SIGKILL')
+                celery_result = AsyncResult(task.celery_task_id, app=celery_app)
                 
-                logger.info(
-                    "celery_task_revoked",
-                    task_id=task_id,
-                    celery_task_id=task.celery_task_id,
-                )
+                # revoke() 是 Celery 的同步阻塞调用，内部需要连接 Redis broker。
+                # 问题：Redis 连接慢/超时时，即使用 run_in_executor 卸到线程，
+                # await 仍会无限期等待线程返回，导致 cancel 请求永远不返回。
+                #
+                # 正确做法：用 asyncio.wait_for 加 3 秒硬超时。
+                # - 超时后记录警告并跳过，继续执行数据库状态更新（才是真正的取消手段）
+                # - revoke 仅是辅助性 broker 通知，用于阻止尚未被 worker 取走的排队任务
+                # - 对于已在执行中的任务，协作式取消依赖数据库状态变更，不依赖 revoke
+                loop = asyncio.get_event_loop()
+                try:
+                    await asyncio.wait_for(
+                        loop.run_in_executor(None, celery_result.revoke),
+                        timeout=3.0,
+                    )
+                    logger.info(
+                        "celery_task_revoked",
+                        task_id=task_id,
+                        celery_task_id=task.celery_task_id,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "celery_task_revoke_timeout",
+                        task_id=task_id,
+                        celery_task_id=task.celery_task_id,
+                        message="revoke 超时（3s），跳过 broker 通知，依赖数据库状态取消",
+                    )
             except Exception as e:
                 logger.error(
                     "celery_task_revoke_failed",

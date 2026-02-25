@@ -13,6 +13,7 @@
 1. Human Review 后恢复（用户批准/拒绝后继续）
 2. 失败任务从 checkpoint 恢复（断点续传）
 """
+import time
 import structlog
 from typing import Optional
 
@@ -51,6 +52,7 @@ def resume_after_review(
     Returns:
         dict: 执行结果
     """
+    t_task_start = time.time()
     logger.info(
         "resume_after_review_started",
         task_id=task_id,
@@ -60,8 +62,15 @@ def resume_after_review(
     
     try:
         # ✅ 调用 Service 层
+        t_service_get = time.time()
         workflow_service = get_workflow_execution_service()
+        logger.info(
+            "resume_get_service_done",
+            task_id=task_id,
+            duration_ms=int((time.time() - t_service_get) * 1000),
+        )
         
+        t_run_async_start = time.time()
         result = run_async(
             workflow_service.resume_workflow_after_review(
                 task_id=task_id,
@@ -70,12 +79,27 @@ def resume_after_review(
                 celery_task_id=self.request.id,
             )
         )
+        logger.info(
+            "resume_run_async_done",
+            task_id=task_id,
+            duration_ms=int((time.time() - t_run_async_start) * 1000),
+        )
+        
+        # ✅ 同步最终任务状态到 DB
+        # 原因：工作流执行过程中存在竞态条件（如 roadmap_edit 的 on_node_start
+        # 可能在 human_review_node 写入 human_review_pending 之后才完成 DB 写入，
+        # 导致覆盖正确的 human_review_pending 状态）。
+        # 在 resume 完成后强制写入正确的最终状态，确保 DB 与实际工作流状态一致。
+        run_async(
+            workflow_service.update_task_final_status(task_id, result)
+        )
         
         logger.info(
             "resume_after_review_completed",
             task_id=task_id,
             success=result.get("success"),
             status=result.get("status"),
+            total_duration_ms=int((time.time() - t_task_start) * 1000),
         )
         
         return result
@@ -88,7 +112,7 @@ def resume_after_review(
             exc_info=True,
         )
         
-        # 标记任务为失败
+        # 标记任务为失败（通过协调器，同时发送 WebSocket 通知）
         workflow_service = get_workflow_execution_service()
         try:
             run_async(workflow_service.mark_task_failed(task_id, str(e), exception=e))
@@ -100,6 +124,23 @@ def resume_after_review(
                 mark_error=str(mark_error),
                 exc_info=True,
             )
+            # 兜底：协调器失败时直接通过 notification_service 发送 WebSocket 失败通知
+            from app.services.shared.notification_service import notification_service
+            try:
+                run_async(
+                    notification_service.publish_failed(
+                        task_id=task_id,
+                        error=str(e),
+                        step="resume_after_review",
+                        exception=e,
+                    )
+                )
+            except Exception as notify_error:
+                logger.error(
+                    "fallback_notification_failed",
+                    task_id=task_id,
+                    error=str(notify_error),
+                )
         
         return {
             "success": False,
@@ -156,6 +197,13 @@ def resume_from_checkpoint(
             )
         )
         
+        # ✅ 同步最终任务状态到 DB
+        # 与 resume_after_review 保持一致：恢复完成后将执行结果写入数据库，
+        # 避免任务状态停留在 "processing" 而无法被前端感知最终结果
+        run_async(
+            workflow_service.update_task_final_status(task_id, result)
+        )
+        
         logger.info(
             "resume_from_checkpoint_completed",
             task_id=task_id,
@@ -173,7 +221,7 @@ def resume_from_checkpoint(
             exc_info=True,
         )
         
-        # 标记任务为失败
+        # 标记任务为失败（通过协调器，同时发送 WebSocket 通知）
         workflow_service = get_workflow_execution_service()
         try:
             run_async(workflow_service.mark_task_failed(task_id, str(e), exception=e))
@@ -185,6 +233,23 @@ def resume_from_checkpoint(
                 mark_error=str(mark_error),
                 exc_info=True,
             )
+            # 兜底：协调器失败时直接通过 notification_service 发送 WebSocket 失败通知
+            from app.services.shared.notification_service import notification_service
+            try:
+                run_async(
+                    notification_service.publish_failed(
+                        task_id=task_id,
+                        error=str(e),
+                        step="resume_from_checkpoint",
+                        exception=e,
+                    )
+                )
+            except Exception as notify_error:
+                logger.error(
+                    "fallback_notification_failed",
+                    task_id=task_id,
+                    error=str(notify_error),
+                )
         
         return {
             "success": False,

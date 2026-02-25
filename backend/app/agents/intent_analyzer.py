@@ -3,12 +3,15 @@ Intent Analyzer Agent（需求分析师）
 """
 import re
 import uuid
+import json
+from typing import Any, Dict, List, Optional
 from app.agents.base import BaseAgent
 from app.models.domain import (
     UserRequest, 
     IntentAnalysisOutput, 
     LanguagePreferences,
 )
+from app.tools.registry import ToolRegistry
 from app.config.settings import settings
 import structlog
 
@@ -24,6 +27,10 @@ class IntentAnalyzerAgent(BaseAgent):
     - ANALYZER_MODEL: 模型名称（默认: gpt-4o-mini）
     - ANALYZER_BASE_URL: 自定义 API 端点（可选）
     - ANALYZER_API_KEY: API 密钥（必需）
+    
+    可选工具支持：
+    - 注入 ToolRegistry 后自动启用 web_search（两阶段模式）
+    - 未注入时降级为单阶段结构化输出（向后兼容）
     """
     
     def __init__(
@@ -33,6 +40,8 @@ class IntentAnalyzerAgent(BaseAgent):
         model_name: str | None = None,
         base_url: str | None = None,
         api_key: str | None = None,
+        tavily_key: Optional[str] = None,
+        tool_registry: Optional[ToolRegistry] = None,
     ):
         super().__init__(
             agent_id=agent_id,
@@ -43,10 +52,87 @@ class IntentAnalyzerAgent(BaseAgent):
             temperature=0.3,
             max_tokens=8000,  # 增加 token 限制以容纳完整的 full_analysis_data
         )
+        
+        # 预分配的 Tavily API Key
+        self._tavily_key = tavily_key
+        
+        # 注入 ToolRegistry（可选，未注入时降级为无工具模式）
+        self.tool_registry = tool_registry
+    
+    def _get_tools_definition(self) -> List[Dict[str, Any]]:
+        """
+        获取工具定义列表（仅包含 web_search）
+        
+        Returns:
+            OpenAI function calling 格式的工具 Schema 列表，
+            tool_registry 未注入时返回空列表
+        """
+        if not self.tool_registry:
+            return []
+        
+        all_schemas = self.tool_registry.get_all_schemas(format="openai")
+        
+        # 意图分析只需要 web_search，过滤掉其他工具
+        return [s for s in all_schemas if s.get("function", {}).get("name") == "web_search"]
+    
+    async def _execute_tool(
+        self,
+        tool_name: str,
+        tool_args: Dict[str, Any]
+    ) -> Any:
+        """
+        执行工具调用（委托给 ToolRegistry）
+        
+        Args:
+            tool_name: 工具名称
+            tool_args: 工具参数
+            
+        Returns:
+            格式化后的工具执行结果字符串
+        """
+        if not self.tool_registry:
+            return f"Error: 工具 '{tool_name}' 不可用，ToolRegistry 未注入"
+        
+        logger.info(
+            "intent_analyzer_tool_call",
+            tool_name=tool_name,
+            arguments=tool_args,
+        )
+        
+        result = await self.tool_registry.execute_tool(
+            name=tool_name,
+            arguments=tool_args,
+            pre_allocated_tavily_key=self._tavily_key,
+        )
+        
+        # 格式化 web_search 结果为可读文本
+        if tool_name == "web_search" and hasattr(result, "results"):
+            formatted = []
+            for idx, res in enumerate(result.results[:5], 1):
+                formatted.append(
+                    f"{idx}. {res['title']}\n"
+                    f"   URL: {res['url']}\n"
+                    f"   摘要: {res['snippet']}\n"
+                )
+            return "\n".join(formatted) if formatted else "未找到相关搜索结果"
+        
+        if isinstance(result, str):
+            return result
+        
+        return json.dumps(
+            result.model_dump() if hasattr(result, "model_dump") else result,
+            ensure_ascii=False,
+        )
     
     async def execute(self, input_data: UserRequest) -> IntentAnalysisOutput:
         """
         分析用户学习需求
+        
+        若注入了 ToolRegistry，则执行两阶段流程：
+        - Phase 1：ReAct 循环，调用 web_search 获取最新技术信息（最多 3 次迭代）
+        - Phase 2：从 Phase 1 的文本输出中结构化提取 IntentAnalysisOutput
+        
+        否则，直接使用单阶段结构化输出（向后兼容）
         
         Args:
             input_data: 用户请求
@@ -81,8 +167,21 @@ class IntentAnalyzerAgent(BaseAgent):
                 "preferred_language": language_prefs.primary_language,
             }
         
+        # 准备工具定义（决定使用哪种模式）
+        tools = self._get_tools_definition()
+        use_tools = bool(tools)
+        
+        # 构建工具简述列表（用于注入 System Prompt 模板）
+        tools_for_prompt = [
+            {
+                "name": t["function"]["name"],
+                "description": t["function"]["description"],
+            }
+            for t in tools
+        ] if use_tools else None
+        
         # 加载 System Prompt
-        logger.debug("intent_analysis_loading_prompt", template="intent_analyzer.j2")
+        logger.debug("intent_analysis_loading_prompt", template="intent_analyzer.j2", use_tools=use_tools)
         system_prompt = self._load_system_prompt(
             "intent_analyzer.j2",
             agent_name="Intent Analyzer",
@@ -95,6 +194,7 @@ class IntentAnalyzerAgent(BaseAgent):
             content_preference=prefs.content_preference,
             user_profile=user_profile,
             language_preferences=language_prefs.model_dump(),
+            tools=tools_for_prompt,
         )
         
         # 构建用户消息
@@ -146,13 +246,58 @@ class IntentAnalyzerAgent(BaseAgent):
             provider=self.model_provider,
             primary_language=language_prefs.primary_language,
             secondary_language=language_prefs.secondary_language,
+            use_tools=use_tools,
         )
         
-        # 使用 instructor 的结构化输出（自动验证和重试）
-        result = await self._call_llm(
-            messages=messages,
-            response_model=IntentAnalysisOutput
-        )
+        if use_tools:
+            # ====== Phase 1: ReAct 循环（含 web_search 工具调用）======
+            logger.info(
+                "intent_analysis_phase1_react_started",
+                user_id=user_request.user_id,
+                tools_count=len(tools),
+            )
+            
+            react_response = await self._call_llm(
+                messages=messages,
+                tools=tools,
+                use_react=True,
+                max_iterations=3,
+            )
+            
+            phase1_text = react_response.choices[0].message.content or ""
+            
+            logger.info(
+                "intent_analysis_phase1_react_completed",
+                user_id=user_request.user_id,
+                output_length=len(phase1_text),
+            )
+            
+            # ====== Phase 2: 从 Phase 1 文本中提取结构化数据 ======
+            logger.info(
+                "intent_analysis_phase2_extraction_started",
+                user_id=user_request.user_id,
+            )
+            
+            extraction_messages = [
+                {"role": "system", "content": self.EXTRACTION_SYSTEM_PROMPT},
+                {"role": "user", "content": phase1_text},
+            ]
+            
+            result = await self._call_llm(
+                messages=extraction_messages,
+                response_model=IntentAnalysisOutput,
+            )
+            
+            logger.info(
+                "intent_analysis_phase2_extraction_completed",
+                user_id=user_request.user_id,
+            )
+        else:
+            # ====== 无工具模式：单阶段结构化输出（向后兼容）======
+            result = await self._call_llm(
+                messages=messages,
+                response_model=IntentAnalysisOutput
+            )
         
         # 生成唯一的 roadmap_id（使用 Python UUID 确保唯一性）
         result.roadmap_id = self._generate_unique_roadmap_id(prefs.learning_goal)
@@ -163,14 +308,19 @@ class IntentAnalyzerAgent(BaseAgent):
             learning_goal=prefs.learning_goal[:50],
         )
         
-        # 确保 language_preferences 被正确设置（LLM 可能不返回或返回格式不对）
-        if not result.language_preferences:
-            # 使用用户输入的语言偏好
-            result.language_preferences = language_prefs
-        else:
-            # 验证并补充 LLM 返回的语言偏好
-            if not result.language_preferences.resource_ratio:
-                result.language_preferences.resource_ratio = language_prefs.get_effective_ratio()
+        # 强制以用户显式指定的语言偏好为准，禁止 LLM 覆盖
+        # 原因：primary_language / secondary_language 是用户主观设置，LLM 可能根据目标文本语言
+        # 自行推断（如目标写成英文就推断为 en），导致与用户真实设定不符
+        result.language_preferences = language_prefs
+        
+        # 修正 full_analysis_data 中的 language 指令字段，与强制语言偏好保持一致
+        if result.full_analysis_data:
+            if language_prefs.primary_language == "zh":
+                result.full_analysis_data["language"] = "请使用简体中文生成所有内容"
+            elif language_prefs.primary_language == "en":
+                result.full_analysis_data["language"] = "Please generate all content in English"
+            else:
+                result.full_analysis_data["language"] = f"Please generate all content in {language_prefs.primary_language}"
         
         # 确保 full_analysis_data 字段不为空（如果 LLM 未输出，则使用默认值）
         if not result.full_analysis_data:

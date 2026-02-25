@@ -1,0 +1,105 @@
+{
+  "timestamp": "2026-02-11T16:44:16.395129",
+  "summary": {
+    "total": 10,
+    "success": 10,
+    "failed": 0,
+    "success_rate": 100.0
+  },
+  "by_difficulty": {
+    "easy": {
+      "total": 4,
+      "success": 4
+    },
+    "medium": {
+      "total": 4,
+      "success": 4
+    },
+    "hard": {
+      "total": 2,
+      "success": 2
+    }
+  },
+  "results": [
+    {
+      "concept_id": "test-001",
+      "concept_name": "React Hooks基础",
+      "success": true,
+      "duration": 88.9526948928833,
+      "error": null,
+      "tutorial_id": "11ddd2d3-bc21-405e-a4bd-18322e4bb855"
+    },
+    {
+      "concept_id": "test-002",
+      "concept_name": "React Query数据管理",
+      "success": true,
+      "duration": 98.57787799835205,
+      "error": null,
+      "tutorial_id": "11a9fda4-065d-49b5-9369-401e91983ef3"
+    },
+    {
+      "concept_id": "test-003",
+      "concept_name": "Vue 3 Composition API",
+      "success": true,
+      "duration": 260.73206615448,
+      "error": null,
+      "tutorial_id": "ccf6d271-7236-47c3-9f51-9caa0f20291f"
+    },
+    {
+      "concept_id": "test-004",
+      "concept_name": "Python异步编程基础",
+      "success": true,
+      "duration": 82.11131310462952,
+      "error": null,
+      "tutorial_id": "724cdc61-cd38-47c9-b623-5b222eaa7c2e"
+    },
+    {
+      "concept_id": "test-005",
+      "concept_name": "FastAPI依赖注入系统",
+      "success": true,
+      "duration": 69.47302198410034,
+      "error": null,
+      "tutorial_id": "e55a0979-aa4c-4577-9a69-0772c83f5162"
+    },
+    {
+      "concept_id": "test-006",
+      "concept_name": "LangGraph状态图设计",
+      "success": true,
+      "duration": 85.23087692260742,
+      "error": null,
+      "tutorial_id": "ee2437cd-3dd4-415c-a5cf-53ad2c259230"
+    },
+    {
+      "concept_id": "test-007",
+      "concept_name": "TypeScript泛型入门",
+      "success": true,
+      "duration": 96.47804093360901,
+      "error": null,
+      "tutorial_id": "57901189-ae98-476b-8733-cfa8596de16c"
+    },
+    {
+      "concept_id": "test-008",
+      "concept_name": "Next.js 14 App Router",
+      "success": true,
+      "duration": 126.0806930065155,
+      "error": null,
+      "tutorial_id": "26bc34af-b7a6-4afb-996a-dcd88c07dc3f"
+    },
+    {
+      "concept_id": "test-009",
+      "concept_name": "Docker多阶段构建优化",
+      "success": true,
+      "duration": 82.6133861541748,
+      "error": null,
+      "tutorial_id": "0e312b93-b7b3-4e66-977a-a162abb6edc0"
+    },
+    {
+      "concept_id": "test-010",
+      "concept_name": "Git分支管理策略",
+      "success": true,
+      "duration": 102.41763401031494,
+      "error": null,
+      "tutorial_id": "d1bfd662-5788-44ec-9bc2-d6f215ae9ab2"
+    }
+  ]
+}

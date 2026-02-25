@@ -372,6 +372,16 @@ class Settings(BaseSettings):
         description="任务恢复之间的延迟（秒），避免瞬间压力"
     )
     
+    # Pending 任务重新入队配置（队列清空后孤儿任务恢复）
+    ENABLE_PENDING_TASK_RECOVERY: bool = Field(
+        True,
+        description="启用 pending 任务自动重新入队（队列清空/Worker 重启后）"
+    )
+    PENDING_TASK_RECOVERY_MAX_AGE_HOURS: int = Field(
+        2,
+        description="Pending 任务重新入队最大年龄（小时），仅处理此时间内创建的任务"
+    )
+    
     # ==================== JWT 认证配置 ====================
     JWT_SECRET_KEY: str = Field(
         "your-super-secret-jwt-key-change-in-production",

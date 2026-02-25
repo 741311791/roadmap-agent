@@ -79,15 +79,17 @@ export type { ConceptProgressResponse } from './models/ConceptProgressResponse';
 export type { ConceptProgressUpdate } from './models/ConceptProgressUpdate';
 export type { ConceptStatusResponse } from './models/ConceptStatusResponse';
 export type { LearningPreferences } from './models/LearningPreferences';
-export type { LearningNoteCreate } from './models/LearningNoteCreate';
-export type { LearningNoteResponse } from './models/LearningNoteResponse';
-export type { LearningNoteUpdate } from './models/LearningNoteUpdate';
+// ⚠️ 以下类型尚未实现，暂时注释
+// export type { LearningNoteCreate } from './models/LearningNoteCreate';
+// export type { LearningNoteResponse } from './models/LearningNoteResponse';
+// export type { LearningNoteUpdate } from './models/LearningNoteUpdate';
 
 // 聊天相关
-export type { ChatMessageResponse } from './models/ChatMessageResponse';
-export type { ChatSessionResponse } from './models/ChatSessionResponse';
-export type { ChatModificationRequest } from './models/ChatModificationRequest';
-export type { ChatStreamRequest } from './models/ChatStreamRequest';
+// ⚠️ 以下类型尚未实现，暂时注释
+// export type { ChatMessageResponse } from './models/ChatMessageResponse';
+// export type { ChatSessionResponse } from './models/ChatSessionResponse';
+// export type { ChatModificationRequest } from './models/ChatModificationRequest';
+// export type { ChatStreamRequest } from './models/ChatStreamRequest';
 
 // 认证相关
 export type { BearerResponse } from './models/BearerResponse';

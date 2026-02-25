@@ -250,44 +250,135 @@ class ResourceRecommenderAgent(BaseAgent):
         
         return tool_messages, search_queries_used
     
+    # 软 404 特征：最终重定向 URL 路径中包含这些关键词则认为是无效页面
+    _SOFT_404_URL_PATTERNS = (
+        "/404", "/not-found", "/notfound", "/error", "/page-not-found",
+        "404.html", "not_found", "missing",
+    )
+    
+    # 软 404 特征：HTML 内容中 <title> 包含这些关键词则认为是无效页面
+    _SOFT_404_TITLE_PATTERNS = (
+        "404", "not found", "page not found", "找不到", "页面不存在",
+        "没有找到", "该页面", "访问出错", "错误",
+    )
+
     async def _verify_urls(
         self, 
         resources: List[Resource]
     ) -> List[Resource]:
-        """批量验证资源URL的有效性（并发）"""
-        verified_resources = []
+        """
+        批量验证资源 URL 有效性（并发）
         
+        采用两阶段验证策略：
+        1. HEAD 请求快速检查 HTTP 状态码
+        2. 对 HEAD 返回 200 的 URL，发 GET 请求读取少量 HTML 内容，
+           检测「软 404」——即 HTTP 200 但页面实际是 404 错误页的情况
+        """
         headers = {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                          "AppleWebKit/537.36 (KHTML, like Gecko) "
-                         "Chrome/120.0.0.0 Safari/537.36"
+                         "Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         }
         
+        def _is_soft_404(final_url: str, html_snippet: str) -> bool:
+            """
+            判断是否为软 404
+            
+            Args:
+                final_url: 跟随重定向后的最终 URL
+                html_snippet: 响应体的前 4KB 内容
+                
+            Returns:
+                True 表示检测到软 404，应过滤掉
+            """
+            # 检查最终 URL 路径是否含 404 特征
+            url_lower = final_url.lower()
+            if any(pattern in url_lower for pattern in self._SOFT_404_URL_PATTERNS):
+                return True
+            
+            # 提取 <title> 标签内容
+            import re
+            title_match = re.search(
+                r"<title[^>]*>(.*?)</title>",
+                html_snippet,
+                re.IGNORECASE | re.DOTALL,
+            )
+            if title_match:
+                title = title_match.group(1).strip().lower()
+                if any(pattern in title for pattern in self._SOFT_404_TITLE_PATTERNS):
+                    return True
+            
+            return False
+        
         async def verify_single(resource: Resource) -> Optional[Resource]:
-            """验证单个URL"""
+            """
+            验证单个 URL
+            
+            先 HEAD 快速判断，再对 200 响应做 GET 软 404 检测
+            """
             try:
                 async with httpx.AsyncClient(
                     timeout=15.0,
-                    follow_redirects=True
+                    follow_redirects=True,
                 ) as client:
-                    response = await client.head(resource.url, headers=headers)
+                    # 第一阶段：HEAD 请求
+                    head_response = await client.head(resource.url, headers=headers)
                     
-                    if response.status_code == 200:
-                        resource.url = str(response.url)
+                    if head_response.status_code in [403, 412]:
+                        # 服务器拒绝 HEAD 但不代表页面不存在，保守保留
                         return resource
-                    elif response.status_code in [403, 412]:
-                        return resource  # 保留
-                    elif response.status_code == 404:
-                        return None  # 过滤掉
-                    elif response.status_code >= 500:
-                        return None  # 过滤掉
-                    else:
-                        return resource  # 保守处理，保留
+                    elif head_response.status_code == 404:
+                        logger.debug("url_hard_404", url=resource.url)
+                        return None
+                    elif head_response.status_code >= 500:
+                        logger.debug("url_server_error", url=resource.url, status=head_response.status_code)
+                        return None
+                    elif head_response.status_code != 200:
+                        # 其他非 200 状态码保守保留（如 301 未跟随等边缘情况）
+                        return resource
+                    
+                    # 第二阶段：HEAD 返回 200，发 GET 请求检测软 404
+                    # 只读取前 4KB，足够获取 <title> 和重定向目标 URL
+                    get_response = await client.get(
+                        resource.url,
+                        headers=headers,
+                        # 通过 stream 只读取少量内容，减少带宽消耗
+                    )
+                    
+                    # 更新为最终 URL（跟随重定向后）
+                    final_url = str(get_response.url)
+                    
+                    # GET 请求返回明确的 404
+                    if get_response.status_code == 404:
+                        logger.debug("url_get_404", url=resource.url, final_url=final_url)
+                        return None
+                    
+                    if get_response.status_code >= 500:
+                        logger.debug("url_get_server_error", url=resource.url, status=get_response.status_code)
+                        return None
+                    
+                    # 读取前 4KB 内容检测软 404
+                    html_snippet = get_response.text[:4096]
+                    
+                    if _is_soft_404(final_url, html_snippet):
+                        logger.debug(
+                            "url_soft_404_detected",
+                            url=resource.url,
+                            final_url=final_url,
+                        )
+                        return None
+                    
+                    # 验证通过，更新为最终重定向 URL
+                    resource.url = final_url
+                    return resource
                         
             except httpx.TimeoutException:
-                return resource  # 超时保留
-            except Exception:
-                return resource  # 验证失败保留
+                # 超时保守保留，避免因网络波动误删有效资源
+                return resource
+            except Exception as e:
+                logger.debug("url_verify_exception", url=resource.url, error=str(e))
+                return resource
         
         tasks = [verify_single(r) for r in resources]
         results = await asyncio.gather(*tasks)

@@ -17,6 +17,7 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
+import { useTranslations } from 'next-intl';
 import { ArrowLeft, AlertCircle, CheckCircle2, Loader2, Clock, Eye, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -31,6 +32,8 @@ import { cn } from '@/lib/utils';
 import { limitLogsByStep, getLogStatsByStep } from '@/lib/utils/log-grouping';
 import { useAuthStore } from '@/lib/store/auth-store';
 import { mapToDisplayStep } from '@/lib/constants/workflow-steps';
+import { TaskStatus } from '@/types/generated/constants';
+import type { TaskStatusType } from '@/types/generated/constants';
 import type { 
   RoadmapFramework, 
   LearningPreferences, 
@@ -62,12 +65,15 @@ type ExecutionLog = ExecutionLogResponse;
 
 /**
  * 任务信息类型（扩展生成的类型）
+ * 注意：status 字段使用 TaskStatusType 以支持字符串字面量
  */
-interface TaskInfo extends TaskStatusDetailResponse {
+interface TaskInfo extends Omit<TaskStatusDetailResponse, 'status'> {
   title: string;  // 额外添加的字段
+  status: TaskStatusType;  // 使用联合类型而不是枚举
 }
 
 export default function TaskDetailPage() {
+  const t = useTranslations('taskDetail');
   const params = useParams();
   const router = useRouter();
   const taskId = params?.taskId as string;
@@ -103,8 +109,13 @@ export default function TaskDetailPage() {
   // 部分失败的 Concept ID
   const [partialFailedConceptIds, setPartialFailedConceptIds] = useState<string[]>([]);
 
-  // 编辑来源（用于区分分支）
+  // 编辑来源（用于区分分支，追踪当前活跃分支）
   const [editSource, setEditSource] = useState<'validation_failed' | 'human_review' | null>(null);
+
+  // 分支触发状态（独立维护，不依赖 DB 日志，避免日志缓冲区延迟导致状态丢失）
+  // 从 WS 事件立即设置，从 DB 日志恢复（刷新场景）
+  const [validationBranchTriggered, setValidationBranchTriggered] = useState(false);
+  const [reviewBranchTriggered, setReviewBranchTriggered] = useState(false);
 
   // 加载状态
   const [isLoading, setIsLoading] = useState(true);
@@ -304,8 +315,10 @@ export default function TaskDetailPage() {
         setRoadmapFramework(framework);
         
         // 🚀 关键优化：预填充 TanStack Query 缓存
-        // 这样跳转到 /roadmap/[id] 时可以直接使用缓存数据，无需重新请求
-        queryClient.setQueryData(['roadmap', roadmapId], roadmapDetail);
+        // 必须存入 framework（而非 roadmapDetail），因为 useRoadmap 的 queryFn
+        // 返回的是提取后的 RoadmapFramework，缓存格式必须一致，
+        // 否则跳转后 roadmapData.stages 为 undefined，KnowledgeRail 会一直 loading
+        queryClient.setQueryData(['roadmap', roadmapId], framework);
         console.log('[TaskDetail] Prefilled roadmap cache for instant navigation');
         
         // 如果需要更新概念状态（刷新时使用）
@@ -357,14 +370,15 @@ export default function TaskDetailPage() {
         intentData = await loadIntentAnalysis(taskData.roadmap_id, signal).catch(() => null);
       }
       
-      // 🔧 优化：应用步骤映射
-      const displayStep = mapToDisplayStep(taskData.current_step || null);
-      // 添加title字段（从intentAnalysis或默认值获取）
-      const taskInfo: TaskInfo = {
-        ...taskData,
-        current_step: displayStep,
-        title: intentData?.learning_goal || 'Generating Roadmap...',
-      };
+        // 🔧 优化：应用步骤映射
+        const displayStep = mapToDisplayStep(taskData.current_step || null);
+        // 添加title字段（从intentAnalysis或默认值获取）
+        // 注意：这里不能使用t()因为是在回调函数中，需要在组件渲染时使用
+        const taskInfo: TaskInfo = {
+          ...taskData,
+          current_step: displayStep,
+          title: intentData?.learning_goal || 'Generating Roadmap...',
+        };
       setTaskInfo(taskInfo);
       // 更新ref中的roadmap_id
       roadmapIdRef.current = taskData.roadmap_id || null;
@@ -386,12 +400,31 @@ export default function TaskDetailPage() {
       
       setExecutionLogs(limitedLogs);
       
-      // 从执行日志中提取最新的 edit_source（用于区分工作流分支）
-      const latestEditSource = allLogs
-        .filter(log => 
-          (log.step === 'roadmap_edit' || log.step === 'edit_plan_analysis') && 
-          log.details && typeof log.details === 'object' && 'edit_source' in log.details
-        )
+      // 从执行日志中提取分支触发状态（用于刷新场景恢复 UI 状态）
+      // 注意：WS 实时场景下分支状态由 handleProgress 立即设置，不依赖此处
+      const branchLogs = allLogs.filter(log => 
+        (log.step === 'roadmap_edit' || log.step === 'edit_plan_analysis') && 
+        log.details && typeof log.details === 'object' && 'edit_source' in log.details
+      );
+      
+      const hasValidationBranch = branchLogs.some(
+        log => log.details?.edit_source === 'validation_failed'
+      );
+      const hasReviewBranch = branchLogs.some(
+        log => log.details?.edit_source === 'human_review'
+      );
+      
+      if (hasValidationBranch) {
+        setValidationBranchTriggered(true);
+        console.log('[TaskDetail] Restored validationBranchTriggered=true from DB logs');
+      }
+      if (hasReviewBranch) {
+        setReviewBranchTriggered(true);
+        console.log('[TaskDetail] Restored reviewBranchTriggered=true from DB logs');
+      }
+
+      // 提取最新的 edit_source（用于 getStepLocation，区分当前活跃分支）
+      const latestEditSource = branchLogs
         .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
         [0]?.details?.edit_source || null;
       
@@ -469,7 +502,9 @@ export default function TaskDetailPage() {
           career_background: profile.current_role || 'Not specified',
           motivation: 'Continue learning',
           content_preference: (profile.learning_style || ['text', 'visual']) as any,
-          preferred_language: profile.primary_language || 'zh-CN',
+          preferred_language: profile.primary_language || 'zh',
+          primary_language: profile.primary_language || 'zh',
+          secondary_language: profile.secondary_language || null,
         });
       } catch (error) {
         console.error('[TaskDetail] Failed to load user preferences:', error);
@@ -560,16 +595,47 @@ export default function TaskDetailPage() {
       // 所有日志都应该从数据库查询，WebSocket 只负责触发刷新
       // 这样可以确保日志的一致性和唯一性
       
-      // 更新 current_step
+      // 更新 current_step，同时处理 human_review 状态的进出转换
       // 🔧 优化：将后端步骤映射到前端显示步骤，避免中间步骤导致UI闪烁
       if (event.step) {
         const displayStep = mapToDisplayStep(event.step);
-        setTaskInfo((prev) => prev ? { ...prev, current_step: displayStep } : null);
+        setTaskInfo((prev) => {
+          if (!prev) return null;
+          const update: Partial<typeof prev> = { current_step: displayStep };
+          
+          if (event.step === 'human_review') {
+            // ✅ 进入 human_review：同步状态为 human_review_pending
+            // 确保 WorkflowTopology 能识别审核状态并显示 Review 面板
+            update.status = 'human_review_pending';
+          } else if (prev.status === 'human_review_pending') {
+            // ✅ 修复：离开 human_review（收到任何非 human_review 步骤的进度通知）
+            // 此时审核已批准，工作流已继续。但因为 on_node_start 跳过了 human_review
+            // 的状态更新，且该阶段的 WebSocket 通知可能超时（见日志 notification_publish_timeout），
+            // taskInfo.status 可能仍停留在 human_review_pending，导致 isHumanReviewActive=true，
+            // "已批准" 面板永远不消失。此处强制同步状态为 processing。
+            update.status = 'processing';
+          }
+          
+          return { ...prev, ...update };
+        });
       }
 
-      // 更新 edit_source（用于区分分支）
+      // 更新 edit_source（用于区分当前活跃分支）
       if (event.data?.edit_source) {
         setEditSource(event.data.edit_source);
+        
+        // 关键修复：roadmap_edit 完成时立即标记分支已触发
+        // 不依赖 DB 日志（存在缓冲区延迟），直接从 WS 事件设置
+        // 这样即使 getLogs 还未取到带 edit_source 的日志，UI 也能正确显示
+        if (event.step === 'roadmap_edit' && event.status === 'completed') {
+          if (event.data.edit_source === 'validation_failed') {
+            setValidationBranchTriggered(true);
+            console.log('[TaskDetail] validationBranchTriggered=true (from WS event)');
+          } else if (event.data.edit_source === 'human_review') {
+            setReviewBranchTriggered(true);
+            console.log('[TaskDetail] reviewBranchTriggered=true (from WS event)');
+          }
+        }
       }
       
       // 当节点完成时，刷新日志和路线图
@@ -589,8 +655,31 @@ export default function TaskDetailPage() {
           const limitedLogs = limitLogsByStep(allLogs, 100);
           setExecutionLogs(limitedLogs);
           
+          // 获取当前 roadmap_id
+          // 注意：intent_analysis 节点完成后才会在后端创建 roadmap，
+          // 此时 roadmapIdRef.current 仍为 null（初始加载时尚未创建）。
+          // 优化后的 WS useEffect 不再依赖 current_step，不会在节点完成时重连，
+          // 所以需要主动从 API 拉取最新任务信息来获取新创建的 roadmap_id。
+          let currentRoadmapId = roadmapIdRef.current;
+          if (!currentRoadmapId) {
+            try {
+              const latestTask = await tasksApi.getById(taskId);
+              if (latestTask.roadmap_id) {
+                currentRoadmapId = latestTask.roadmap_id;
+                roadmapIdRef.current = latestTask.roadmap_id;
+                // 同步更新 taskInfo.roadmap_id，使 WS useEffect dep 感知变化
+                setTaskInfo((prev) => prev ? { ...prev, roadmap_id: latestTask.roadmap_id } : null);
+                console.log('[TaskDetail] Fetched roadmap_id after node completion:', {
+                  step: event.step,
+                  roadmap_id: currentRoadmapId,
+                });
+              }
+            } catch (fetchErr) {
+              console.error('[TaskDetail] Failed to fetch roadmap_id after node completion:', fetchErr);
+            }
+          }
+          
           // 重新加载需求分析数据（使用最新的数据库数据）
-          const currentRoadmapId = roadmapIdRef.current;
           if (currentRoadmapId) {
             console.log('[TaskDetail] Reloading intent analysis after node completion:', {
               step: event.step,
@@ -818,7 +907,11 @@ export default function TaskDetailPage() {
     return () => {
       websocket.disconnect();
     };
-  }, [taskId, taskInfo?.status, taskInfo?.current_step, taskInfo?.roadmap_id, loadIntentAnalysis, loadRoadmapFramework]);
+  // 优化：移除 taskInfo?.current_step 依赖
+  // current_step 变化（每个节点完成）不应触发 WS 重连
+  // WS 只需在 taskId 或任务状态（active/inactive 转换）变化时重建
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskId, taskInfo?.status, taskInfo?.roadmap_id, loadIntentAnalysis, loadRoadmapFramework]);
 
   /**
    * 获取编辑记录（modified_node_ids）
@@ -840,56 +933,20 @@ export default function TaskDetailPage() {
         // 🔧 优化：应用步骤映射
         const displayStep = mapToDisplayStep(taskData.current_step || null);
         // 保留原有title
-        setTaskInfo((prev) => prev ? { 
-          ...taskData, 
-          current_step: displayStep,
-          title: prev.title 
-        } : null);
+        setTaskInfo((prev) => {
+          const title = prev?.title || t('generatingRoadmap');
+          return prev ? { 
+            ...taskData, 
+            current_step: displayStep,
+            title 
+          } : null;
+        });
       } catch (err) {
         console.error('Failed to refresh task after review:', err);
       }
     }
-  }, [taskId]);
+  }, [taskId, t]);
 
-  /**
-   * 获取任务状态配置
-   */
-  const getStatusConfig = (status: string) => {
-    const configs: Record<string, { icon: any; label: string; className: string }> = {
-      pending: {
-        icon: Clock,
-        label: 'Pending',
-        className: 'bg-amber-50 text-amber-700 border-amber-200',
-      },
-      processing: {
-        icon: Loader2,
-        label: 'Processing',
-        className: 'bg-blue-50 text-blue-700 border-blue-200',
-      },
-      human_review_pending: {
-        icon: Eye,
-        label: 'Review Required',
-        className: 'bg-purple-50 text-purple-700 border-purple-200',
-      },
-      completed: {
-        icon: CheckCircle2,
-        label: 'Completed',
-        className: 'bg-green-50 text-green-700 border-green-200',
-      },
-      partial_failure: {
-        icon: CheckCircle2,
-        label: 'Completed',
-        className: 'bg-green-50 text-green-700 border-green-200',
-      },
-      failed: {
-        icon: AlertCircle,
-        label: 'Failed',
-        className: 'bg-red-50 text-red-700 border-red-200',
-      },
-    };
-
-    return configs[status] || configs.pending;
-  };
 
   /**
    * 判断是否正在编辑路线图
@@ -1002,23 +1059,20 @@ export default function TaskDetailPage() {
           <div className="text-center space-y-4">
             <AlertCircle className="w-12 h-12 text-red-600 mx-auto" />
             <div>
-              <h2 className="text-lg font-semibold">Task Not Found</h2>
+              <h2 className="text-lg font-semibold">{t('taskNotFound')}</h2>
               <p className="text-sm text-muted-foreground mt-1">
-                {error || 'The task you are looking for does not exist.'}
+                {error || t('taskNotFoundDesc')}
               </p>
             </div>
             <Button onClick={() => router.push('/tasks')}>
               <ArrowLeft className="w-4 h-4 mr-2" />
-              Back to Tasks
+              {t('backToTasks')}
             </Button>
           </div>
         </Card>
       </div>
     );
   }
-
-  const statusConfig = getStatusConfig(taskInfo.status);
-  const StatusIcon = statusConfig.icon;
 
   return (
     <div className="min-h-screen bg-background">
@@ -1035,7 +1089,7 @@ export default function TaskDetailPage() {
                 className="gap-2 hover:bg-sage-50 dark:hover:bg-sage-900/20"
               >
                 <ArrowLeft className="w-4 h-4" />
-                Back
+                {t('back')}
               </Button>
               <div className="w-px h-5 bg-border" />
               <Button
@@ -1046,24 +1100,10 @@ export default function TaskDetailPage() {
                 className="gap-2"
               >
                 <RefreshCw className={cn('w-4 h-4', isRefreshing && 'animate-spin')} />
-                {isRefreshing ? 'Refreshing...' : 'Refresh'}
+                {isRefreshing ? t('refreshing') : t('refresh')}
               </Button>
             </div>
             
-            {/* 状态徽章 */}
-            <Badge 
-              variant="outline" 
-              className={cn(
-                'px-3 py-1 text-sm font-medium border',
-                statusConfig.className
-              )}
-            >
-              <StatusIcon className={cn(
-                'w-4 h-4 mr-2',
-                taskInfo.status === 'processing' && 'animate-spin'
-              )} />
-              {statusConfig.label}
-            </Badge>
           </div>
           
           {/* 标题区域 */}
@@ -1103,6 +1143,8 @@ export default function TaskDetailPage() {
           roadmapTitle={roadmapFramework?.title || taskInfo.title}
           stagesCount={roadmapFramework?.stages?.length || 0}
           executionLogs={executionLogs}
+          validationBranchTriggered={validationBranchTriggered}
+          reviewBranchTriggered={reviewBranchTriggered}
           onHumanReviewComplete={handleHumanReviewComplete}
           selectedNodeId={selectedNodeId}
           onNodeSelect={setSelectedNodeId}
@@ -1138,7 +1180,7 @@ export default function TaskDetailPage() {
               <div className="flex items-start gap-3">
                 <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
                 <div className="space-y-1 flex-1">
-                  <h3 className="font-medium text-red-900">Task Failed</h3>
+                  <h3 className="font-medium text-red-900">{t('taskFailed')}</h3>
                   <p className="text-sm text-red-700">{taskInfo.error_message}</p>
                 </div>
               </div>

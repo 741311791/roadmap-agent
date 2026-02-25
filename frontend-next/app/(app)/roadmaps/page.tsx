@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
@@ -20,23 +21,22 @@ import { ChevronLeft, BookOpen, Plus, LayoutGrid, List } from 'lucide-react';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import { useAuthStore } from '@/lib/store/auth-store';
 import { roadmapsApi } from '@/lib/api/endpoints';
-import { batchFetchCoverImagesFromAPI, batchGenerateCoverImages } from '@/lib/cover-image';
+import { batchFetchCoverImagesFromAPI } from '@/lib/cover-image';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 
 type ViewMode = 'grid' | 'list';
 
 export default function MyRoadmapsPage() {
+  const t = useTranslations('roadmapsList');
   const { history, setHistory } = useRoadmapStore();
-  const { getUserId, isAuthenticated } = useAuthStore();
+  const { getUserId } = useAuthStore();
   const [isLoading, setIsLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [currentPage, setCurrentPage] = useState(1);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [roadmapToDelete, setRoadmapToDelete] = useState<string | null>(null);
   const [coverImageMap, setCoverImageMap] = useState<Map<string, string | null>>(new Map());
-  
-  // 使用 ref 标记避免重复触发生成
-  const hasTriggeredCoverGenerationRef = useRef(false);
   
   const itemsPerPage = viewMode === 'grid' ? 12 : 20;
   
@@ -62,26 +62,6 @@ export default function MyRoadmapsPage() {
         if (roadmapIds.length > 0) {
           const coverImages = await batchFetchCoverImagesFromAPI(roadmapIds);
           setCoverImageMap(coverImages);
-          
-          // 自动触发缺失封面图的生成（仅首次加载，且用户已认证）
-          if (!hasTriggeredCoverGenerationRef.current && isAuthenticated) {
-            const missingCoverIds = roadmapIds.filter(id => {
-              const coverUrl = coverImages.get(id);
-              return coverUrl === null; // null 表示 pending 或 failed
-            });
-            
-            if (missingCoverIds.length > 0) {
-              console.log('[Roadmaps] Auto-triggering cover generation for:', missingCoverIds);
-              hasTriggeredCoverGenerationRef.current = true;
-              
-              try {
-                await batchGenerateCoverImages(missingCoverIds);
-                console.log('[Roadmaps] Cover generation triggered successfully');
-              } catch (error) {
-                console.error('[Roadmaps] Failed to trigger cover generation:', error);
-              }
-            }
-          }
         }
       } catch (error) {
         console.error('Failed to fetch roadmaps:', error);
@@ -91,7 +71,7 @@ export default function MyRoadmapsPage() {
     };
     
     fetchRoadmaps();
-  }, [getUserId, setHistory, isAuthenticated]);
+  }, [getUserId, setHistory]);
   
   // Map history to roadmap format (只包含已完成的路线图)
   const allRoadmaps: MyRoadmap[] = history
@@ -146,10 +126,20 @@ export default function MyRoadmapsPage() {
       }
     } catch (error) {
       console.error('Failed to delete roadmap:', error);
-      alert('删除失败，请稍后重试');
+      alert(t('deleteFailed'));
     } finally {
       setDeleteDialogOpen(false);
       setRoadmapToDelete(null);
+    }
+  };
+
+  // 触发单个路线图封面图生成
+  const handleGenerateCover = async (roadmapId: string) => {
+    try {
+      await roadmapsApi.generateCoverImage(roadmapId);
+      toast.success('Cover image generation started');
+    } catch {
+      toast.error('Failed to start cover image generation');
     }
   };
 
@@ -161,7 +151,7 @@ export default function MyRoadmapsPage() {
           href="/home"
           className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-6 transition-colors"
         >
-          <ChevronLeft className="w-4 h-4" /> Back to Home
+          <ChevronLeft className="w-4 h-4" /> {t('backToHome')}
         </Link>
 
         {/* Header */}
@@ -172,10 +162,10 @@ export default function MyRoadmapsPage() {
             </div>
             <div>
               <h1 className="text-2xl font-serif font-bold text-foreground">
-                My Learning Journeys
+                {t('title')}
               </h1>
               <p className="text-sm text-muted-foreground">
-                {allRoadmaps.length} {allRoadmaps.length === 1 ? 'roadmap' : 'roadmaps'} in total
+                {allRoadmaps.length} {allRoadmaps.length === 1 ? t('roadmap') : t('roadmaps')} {t('inTotal')}
               </p>
             </div>
           </div>
@@ -210,7 +200,7 @@ export default function MyRoadmapsPage() {
             {/* Create Button */}
             <Link href="/new">
               <Button variant="sage" className="gap-2">
-                <Plus size={16} /> New Roadmap
+                <Plus size={16} /> {t('newRoadmap')}
               </Button>
             </Link>
           </div>
@@ -221,16 +211,16 @@ export default function MyRoadmapsPage() {
           <div className="flex items-center justify-center py-20">
             <div className="text-center">
               <div className="w-16 h-16 border-4 border-sage-200 border-t-sage-600 rounded-full animate-spin mx-auto mb-4" />
-              <p className="text-sm text-muted-foreground">Loading roadmaps...</p>
+              <p className="text-sm text-muted-foreground">{t('loadingRoadmaps')}</p>
             </div>
           </div>
         ) : allRoadmaps.length === 0 ? (
           <EmptyState
             icon={BookOpen}
-            title="No roadmaps yet"
-            description="Create your first personalized learning roadmap to get started."
+            title={t('noRoadmapsYet')}
+            description={t('createFirstRoadmap')}
             action={{
-              label: 'Create Roadmap',
+              label: t('createRoadmap'),
               onClick: () => {
                 window.location.href = '/new';
               },
@@ -247,8 +237,9 @@ export default function MyRoadmapsPage() {
                       roadmap={roadmap}
                       type="my"
                       onDelete={handleDeleteClick}
+                      onGenerateCover={handleGenerateCover}
                       showActions={true}
-                      coverImageUrl={coverImageMap.get(roadmap.id) || undefined}
+                      coverImageUrl={coverImageMap.get(roadmap.id) ?? undefined}
                     />
                   </div>
                 ))}
@@ -263,7 +254,8 @@ export default function MyRoadmapsPage() {
                     key={roadmap.id}
                     roadmap={roadmap}
                     onDelete={handleDeleteClick}
-                    coverImageUrl={coverImageMap.get(roadmap.id) || undefined}
+                    onGenerateCover={handleGenerateCover}
+                    coverImageUrl={coverImageMap.get(roadmap.id) ?? undefined}
                   />
                 ))}
               </div>
@@ -278,7 +270,7 @@ export default function MyRoadmapsPage() {
                   onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
                   disabled={currentPage === 1}
                 >
-                  Previous
+                  {t('previous')}
                 </Button>
                 
                 <div className="flex items-center gap-1">
@@ -304,7 +296,7 @@ export default function MyRoadmapsPage() {
                   onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
                   disabled={currentPage === totalPages}
                 >
-                  Next
+                  {t('next')}
                 </Button>
               </div>
             )}
@@ -315,18 +307,18 @@ export default function MyRoadmapsPage() {
         <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>确认删除路线图？</AlertDialogTitle>
+              <AlertDialogTitle>{t('deleteConfirmTitle')}</AlertDialogTitle>
               <AlertDialogDescription>
-                此路线图将被移至回收站，30 天后自动永久删除。您可以在回收站中恢复它。
+                {t('deleteConfirmDescription')}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel>取消</AlertDialogCancel>
+              <AlertDialogCancel>{t('cancel')}</AlertDialogCancel>
               <AlertDialogAction
                 onClick={handleDeleteConfirm}
                 className="bg-red-600 hover:bg-red-700"
               >
-                删除
+                {t('delete')}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

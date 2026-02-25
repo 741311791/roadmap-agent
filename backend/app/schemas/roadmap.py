@@ -51,8 +51,11 @@ class RoadmapUpdate(BaseModel):
 # ===== 内容重试请求（通用基类）=====
 
 class ConceptRetryRequest(BaseModel):
-    """概念内容重试请求（通用基类）"""
-    preferences: LearningPreferences = Field(..., description="用户偏好")
+    """概念内容重试请求（通用基类）
+
+    preferences 为可选字段：缺省时由 ContentService 从路线图 framework_data 自动提取。
+    """
+    preferences: Optional[LearningPreferences] = Field(None, description="用户偏好（缺省时自动提取）")
     retry_reason: Optional[str] = Field(None, description="重试原因")
     force_regenerate: bool = Field(False, description="是否强制重新生成")
 
@@ -212,12 +215,29 @@ class RoadmapStatusResponse(BaseModel):
     task_id: Optional[str] = Field(None, description="关联任务ID")
 
 
+class StaleConceptItem(BaseModel):
+    """僵尸状态概念条目"""
+    concept_id: str = Field(..., description="概念ID")
+    concept_name: str = Field(..., description="概念名称")
+    content_type: str = Field(..., description="内容类型：tutorial/resources/quiz")
+    current_status: str = Field(..., description="当前状态：pending/generating")
+
+
+class ActiveTaskItem(BaseModel):
+    """活跃任务条目"""
+    task_id: str = Field(..., description="任务ID")
+    task_type: Optional[str] = Field(None, description="任务类型")
+    status: str = Field(..., description="任务状态")
+    current_step: Optional[str] = Field(None, description="当前步骤")
+    concept_id: Optional[str] = Field(None, description="关联概念ID")
+    content_type: Optional[str] = Field(None, description="内容类型")
+
+
 class RoadmapStatusQuickResponse(BaseModel):
     """快速检查路线图状态响应"""
     roadmap_id: str = Field(..., description="路线图ID")
-    status: str = Field(..., description="路线图状态")
     has_active_task: bool = Field(..., description="是否有活跃任务")
-    active_task_id: Optional[str] = Field(None, description="活跃任务ID")
-    zombie_concepts: Optional[list[str]] = Field(None, description="僵尸概念ID列表")
+    active_tasks: list[ActiveTaskItem] = Field(default_factory=list, description="活跃任务详情列表")
+    stale_concepts: list[StaleConceptItem] = Field(default_factory=list, description="僵尸状态概念列表")
     zombie_count: int = Field(0, description="僵尸概念数量")
 

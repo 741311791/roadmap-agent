@@ -8,6 +8,7 @@
 - ✅ 路由prefix改为 /tasks
 - ✅ 遵循企业级架构规范
 """
+import asyncio
 from typing import Annotated
 from fastapi import APIRouter, Depends
 import structlog
@@ -70,10 +71,14 @@ async def approve_roadmap(
                 raise errors.RequestError(msg=f"任务状态不正确，当前状态：{task.status}")
         
         # 分发Celery任务恢复工作流
-        celery_task = resume_after_review.delay(
-            task_id=task_id,
-            approved=request.approved,
-            feedback=request.feedback,
+        # 使用 asyncio.to_thread 避免 .delay() 同步阻塞事件循环
+        celery_task = await asyncio.to_thread(
+            resume_after_review.apply_async,
+            kwargs={
+                "task_id": task_id,
+                "approved": request.approved,
+                "feedback": request.feedback,
+            },
         )
         
         logger.info(

@@ -12,6 +12,7 @@
 - Task 层：异步任务调度、事件循环管理
 """
 import asyncio
+import time
 import structlog
 from typing import Optional
 from datetime import datetime
@@ -84,6 +85,23 @@ class WorkflowExecutionService:
                     task_id=task_id,
                     task_status=task.status,
                 )
+                
+                # ===== 协作式取消检查：任务在入队期间已被取消 =====
+                # 场景：用户在任务还在队列中等待时点击取消，cancel_task 将状态
+                # 标记为 cancelled，此时任务被 revoke（但 revoke 只阻止未开始
+                # 的任务）。若 worker 已经 dequeue 到任务但尚未开始，需在此处
+                # 拦截，避免无意义地继续执行。
+                if task.status == TaskStatus.CANCELLED.value:
+                    logger.info(
+                        "task_already_cancelled_before_start",
+                        task_id=task_id,
+                    )
+                    return {
+                        "success": False,
+                        "status": TaskStatus.CANCELLED.value,
+                        "current_step": task.current_step or WorkflowStep.QUEUED.value,
+                        "error": "Task was cancelled before execution started",
+                    }
             
             # ===== 步骤2: 更新任务状态为 processing =====
             async with get_celery_session() as session:
@@ -203,9 +221,13 @@ class WorkflowExecutionService:
                     roadmap_id=roadmap_id,
                 )
             
+            roadmap_framework = final_state.get("roadmap_framework")
+            roadmap_title = roadmap_framework.title if roadmap_framework else None
+            
             return {
                 "success": success,
                 "roadmap_id": roadmap_id,
+                "roadmap_title": roadmap_title,
                 "status": status.value,
                 "current_step": current_step,
             }
@@ -340,8 +362,17 @@ class WorkflowExecutionService:
         factory = None
         
         try:
+            t_service_start = time.time()
+            logger.info(
+                "resume_workflow_after_review_service_start",
+                task_id=task_id,
+                approved=approved,
+            )
+
             # 更新任务状态为 processing
+            # ⚠️ 性能瓶颈点①：get_celery_session 使用 NullPool，每次都需要建立新 TCP 连接
             task_crud = get_task_crud()
+            t_db_start = time.time()
             async with get_celery_session() as session:
                 await task_crud.update_task_status(
                     session=session,
@@ -349,22 +380,43 @@ class WorkflowExecutionService:
                     status=TaskStatus.PROCESSING.value,
                     current_step=WorkflowStep.STARTING.value,
                 )
-                # ✅ 不需要手动 commit，get_celery_session() 自动处理
+            logger.info(
+                "resume_db_status_update_done",
+                task_id=task_id,
+                duration_ms=int((time.time() - t_db_start) * 1000),
+            )
             
             # 发送 WebSocket 通知
+            t_ws_start = time.time()
             await notification_service.publish_progress(
                 task_id=task_id,
                 step=WorkflowStep.STARTING.value,
                 status=TaskStatus.PROCESSING.value,
                 message="Resuming workflow after review...",
             )
+            logger.info(
+                "resume_ws_notification_sent",
+                task_id=task_id,
+                duration_ms=int((time.time() - t_ws_start) * 1000),
+            )
             
             # 创建 Orchestrator Factory
+            t_factory_start = time.time()
             factory = OrchestratorFactory()
             await factory.initialize()
+            logger.info(
+                "resume_factory_initialized",
+                task_id=task_id,
+                duration_ms=int((time.time() - t_factory_start) * 1000),
+            )
             
             # 创建工作流执行器
             executor = factory.create_workflow_executor()
+            logger.info(
+                "resume_pre_executor_total",
+                task_id=task_id,
+                total_duration_ms=int((time.time() - t_service_start) * 1000),
+            )
             
             # 从 checkpoint 恢复工作流（人工审核后）
             # ✅ 添加重试机制（应对阿里云RDS网络抖动）
@@ -436,9 +488,13 @@ class WorkflowExecutionService:
                     current_step=current_step,
                 )
             
+            roadmap_framework = final_state.get("roadmap_framework")
+            roadmap_title = roadmap_framework.title if roadmap_framework else None
+            
             return {
                 "success": success,
                 "roadmap_id": roadmap_id,
+                "roadmap_title": roadmap_title,
                 "status": status.value,
                 "current_step": current_step,
             }
@@ -482,13 +538,14 @@ class WorkflowExecutionService:
         
         try:
             # 更新任务状态为 processing
+            # ⚠️ 不传 current_step，保留 DB 中已有的步骤值（如 content_generation_queued）
+            # 避免在内容生成重试场景中错误地将步骤覆盖为 "starting"
             task_crud = get_task_crud()
             async with get_celery_session() as session:
                 await task_crud.update_task_status(
                     session=session,
                     task_id=task_id,
                     status=TaskStatus.PROCESSING.value,
-                    current_step=WorkflowStep.STARTING.value,
                 )
                 # ✅ 不需要手动 commit，get_celery_session() 自动处理
             
@@ -500,10 +557,10 @@ class WorkflowExecutionService:
             )
             await notification_service.publish_progress(
                 task_id=task_id,
-                step=WorkflowStep.STARTING.value,
+                step="resume_from_checkpoint",
                 status=TaskStatus.PROCESSING.value,
                 message=message,
-                details={"mode": mode, "checkpoint_id": checkpoint_id},
+                extra_data={"mode": mode, "checkpoint_id": checkpoint_id},
             )
             
             # 创建 Orchestrator Factory
@@ -525,69 +582,55 @@ class WorkflowExecutionService:
                     checkpoint_id=checkpoint_id,
                 )
             
-            # ✅ 双 Checkpointer 架构：恢复前检查子图状态
-            child_checkpointer = factory.get_child_checkpointer()
+            # ===== 关键：检测 checkpoint 是否存在 =====
+            # 若任务在 starting 阶段失败，LangGraph 从未写入 checkpoint，
+            # 此时 ainvoke(None) 会抛出 EmptyInputError，必须走全新执行路径。
+            main_checkpoint = await executor.graph.aget_state(config)
+            has_checkpoint = main_checkpoint is not None and bool(main_checkpoint.values)
             
-            try:
-                child_state_before = await child_checkpointer.aget(config)
-                is_subgraph_before = child_state_before is not None and hasattr(child_state_before, "tasks") and bool(child_state_before.tasks)
-                
-                if is_subgraph_before:
-                    tasks = child_state_before.tasks or []
-                    completed = [t for t in tasks if isinstance(t, dict) and t.get("status") == "completed"]
-                    pending = [t for t in tasks if isinstance(t, dict) and t.get("status") != "completed"]
-                    
-                    logger.info(
-                        "resuming_with_subgraph_state",
-                        task_id=task_id,
-                        mode=mode,
-                        completed_count=len(completed),
-                        pending_count=len(pending),
-                        message="子图将自动跳过已完成的节点",
-                    )
-            except Exception as e:
-                logger.warning(
-                    "failed_to_check_subgraph_state_before_resume",
+            if not has_checkpoint:
+                logger.info(
+                    "no_checkpoint_found_falling_back_to_fresh_start",
                     task_id=task_id,
-                    error=str(e),
+                    message="任务在 starting 阶段失败，无 checkpoint，重新全量执行",
                 )
-                is_subgraph_before = False
-            
-            # 直接调用 graph.ainvoke，不传入初始状态
-            # LangGraph 会自动处理：
-            # 1. 主图从 parent_checkpointer 恢复
-            # 2. 如果进入 content_generation，子图从 child_checkpointer 恢复
-            # 3. 跳过已完成的节点，只执行失败的部分
-            final_state = await executor.graph.ainvoke(None, config=config)
-            
-            # ✅ 双 Checkpointer 架构：恢复后验证子图状态
-            try:
-                child_state_after = await child_checkpointer.aget(config)
-                is_subgraph_after = child_state_after is not None and hasattr(child_state_after, "tasks") and bool(child_state_after.tasks)
+                # 从数据库读取原始 user_request，重建 UserRequest 对象
+                async with get_celery_session() as session:
+                    task_crud = get_task_crud()
+                    task_record = await task_crud.get_by_task_id(session, task_id)
                 
-                if is_subgraph_before and not is_subgraph_after:
-                    logger.info(
-                        "subgraph_resume_successful",
-                        task_id=task_id,
-                        message="子图已成功完成所有节点",
-                    )
-                elif is_subgraph_after:
-                    tasks_after = child_state_after.tasks or []
-                    pending_after = [t for t in tasks_after if isinstance(t, dict) and t.get("status") != "completed"]
-                    
-                    if pending_after:
-                        logger.warning(
-                            "subgraph_still_has_pending_nodes",
-                            task_id=task_id,
-                            pending_count=len(pending_after),
-                            message="子图仍有未完成的节点，可能需要继续重试",
-                        )
-            except Exception as e:
-                logger.warning(
-                    "failed_to_verify_subgraph_state_after_resume",
-                    task_id=task_id,
-                    error=str(e),
+                if not task_record or not task_record.user_request:
+                    raise ValueError(f"任务 {task_id} 没有存储 user_request，无法重新执行")
+                
+                req_data = task_record.user_request
+                prefs_data = req_data.get("preferences", {})
+                user_request_obj = UserRequest(
+                    user_id=req_data.get("user_id", ""),
+                    session_id=req_data.get("session_id", task_id),
+                    preferences=LearningPreferences(**prefs_data) if prefs_data else LearningPreferences(
+                        learning_goal=req_data.get("additional_context", ""),
+                        available_hours_per_week=10,
+                        motivation="Personal interest",
+                        current_level="beginner",
+                        career_background="Not specified",
+                    ),
+                    additional_context=req_data.get("additional_context"),
                 )
+                final_state = await executor.execute(
+                    user_request=user_request_obj,
+                    task_id=task_id,
+                )
+            else:
+                # checkpoint 存在，从主图断点续传
+                # 内容生成子图已移除 checkpointer（无状态模式），
+                # 子图重试逻辑由 _get_framework_and_concepts_optimized 通过
+                # Redis → 主图 Checkpoint → DB 三级策略自动处理
+                logger.info(
+                    "resuming_from_main_graph_checkpoint",
+                    task_id=task_id,
+                    mode=mode,
+                )
+                final_state = await executor.graph.ainvoke(None, config=config)
             
             # 检查最终状态
             roadmap_id = final_state.get("roadmap_id")
@@ -612,6 +655,21 @@ class WorkflowExecutionService:
                     task_id=task_id,
                     roadmap_id=roadmap_id,
                 )
+            elif current_step in (
+                WorkflowStep.CONTENT_GENERATION_QUEUED.value,
+                WorkflowStep.CONTENT_GENERATION.value,
+            ):
+                # 内容生成已入队或进行中：主工作流已完成，独立 Celery Worker 负责后续
+                # 此时任务保持 PROCESSING 状态，由内容生成任务更新最终状态
+                status = TaskStatus.PROCESSING
+                success = True
+                logger.info(
+                    "resume_triggered_content_generation",
+                    task_id=task_id,
+                    roadmap_id=roadmap_id,
+                    current_step=current_step,
+                    message="内容生成已重新入队，等待独立 Worker 执行",
+                )
             else:
                 # 其他情况视为部分完成
                 status = TaskStatus.PARTIAL_FAILURE
@@ -622,9 +680,13 @@ class WorkflowExecutionService:
                     current_step=current_step,
                 )
             
+            roadmap_framework = final_state.get("roadmap_framework")
+            roadmap_title = roadmap_framework.title if roadmap_framework else None
+            
             return {
                 "success": success,
                 "roadmap_id": roadmap_id,
+                "roadmap_title": roadmap_title,
                 "status": status.value,
                 "current_step": current_step,
             }

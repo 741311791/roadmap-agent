@@ -62,14 +62,15 @@ class RoadmapService:
                 # 创建更新后的偏好配置
                 prefs_dict = user_request.preferences.model_dump()
                 
-                # 注入语言偏好（优先使用用户画像中的设置）
-                if user_profile.primary_language:
+                # 注入语言偏好（请求显式传入的值优先，画像仅作兜底）
+                # 注意：primary_language 字段默认值为 "zh"，仅当请求未设置 preferred_language
+                # 且 primary_language 仍为默认值时，才从画像补充；secondary_language 为 None 时才补充。
+                # 与 industry/current_role 保持一致：请求有值则不覆盖。
+                if not prefs_dict.get("preferred_language") and user_profile.primary_language:
                     prefs_dict["primary_language"] = user_profile.primary_language
-                    # 向后兼容：同时设置 preferred_language
-                    if not prefs_dict.get("preferred_language"):
-                        prefs_dict["preferred_language"] = user_profile.primary_language
+                    prefs_dict["preferred_language"] = user_profile.primary_language
                 
-                if user_profile.secondary_language:
+                if prefs_dict.get("secondary_language") is None and user_profile.secondary_language:
                     prefs_dict["secondary_language"] = user_profile.secondary_language
                 
                 # 注入其他用户画像信息（如果请求中没有提供）

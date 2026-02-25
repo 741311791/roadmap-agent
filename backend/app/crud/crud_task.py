@@ -389,6 +389,54 @@ class TaskCRUD(BaseCRUD[RoadmapTask, TaskCreate, TaskUpdate]):
         
         return interrupted_tasks
     
+    async def find_orphaned_pending_creation_tasks(
+        self,
+        session: AsyncSession,
+        max_age_hours: int = 2,
+    ) -> List[RoadmapTask]:
+        """
+        查找孤儿 pending 创建任务
+        
+        孤儿 pending 任务定义：
+        - 状态为 "pending"（从未开始执行）
+        - 当前步骤为 "init"（队列消息丢失后的典型状态）
+        - 任务类型为 "creation"（仅重新入队创建任务）
+        - 创建时间在 max_age_hours 小时以内（避免重新处理历史脏数据）
+        
+        Args:
+            session: 数据库会话
+            max_age_hours: 最大年龄（小时），仅处理此时间内创建的任务
+            
+        Returns:
+            孤儿 pending 任务列表
+        """
+        from datetime import timedelta
+        
+        # 计算截止时间（北京时间）：仅处理最近 max_age_hours 小时内创建的任务
+        cutoff_time = beijing_now() - timedelta(hours=max_age_hours)
+        
+        result = await session.execute(
+            select(RoadmapTask)
+            .where(
+                RoadmapTask.status == "pending",
+                RoadmapTask.current_step == "init",
+                RoadmapTask.task_type == "creation",
+                RoadmapTask.created_at >= cutoff_time,
+            )
+            .order_by(RoadmapTask.created_at.asc())
+        )
+        
+        orphaned_tasks = list(result.scalars().all())
+        
+        logger.info(
+            "find_orphaned_pending_creation_tasks_completed",
+            max_age_hours=max_age_hours,
+            cutoff_time=cutoff_time.isoformat(),
+            count=len(orphaned_tasks),
+        )
+        
+        return orphaned_tasks
+    
     async def update_celery_id(
         self,
         session: AsyncSession,

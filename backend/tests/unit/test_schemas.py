@@ -93,26 +93,35 @@ class TestRoadmapSchemas:
         """测试RoadmapStatusQuickResponse序列化"""
         data = RoadmapStatusQuickResponse(
             roadmap_id="test-roadmap-001",
-            status="completed",
             has_active_task=False,
             zombie_count=0,
         )
-        
+
         assert data.roadmap_id == "test-roadmap-001"
         assert data.has_active_task is False
         assert data.zombie_count == 0
-        
+        assert data.stale_concepts == []
+        assert data.active_tasks == []
+
         # 测试包含僵尸概念的情况
+        from app.schemas.roadmap import StaleConceptItem, ActiveTaskItem
         data_with_zombies = RoadmapStatusQuickResponse(
             roadmap_id="test-roadmap-002",
-            status="processing",
-            has_active_task=True,
-            active_task_id="task-456",
-            zombie_concepts=["concept-1", "concept-2"],
-            zombie_count=2,
+            has_active_task=False,
+            active_tasks=[],
+            stale_concepts=[
+                StaleConceptItem(
+                    concept_id="concept-1",
+                    concept_name="Test Concept",
+                    content_type="tutorial",
+                    current_status="generating",
+                ),
+            ],
+            zombie_count=1,
         )
-        assert data_with_zombies.zombie_count == 2
-        assert len(data_with_zombies.zombie_concepts) == 2
+        assert data_with_zombies.zombie_count == 1
+        assert len(data_with_zombies.stale_concepts) == 1
+        assert data_with_zombies.stale_concepts[0].content_type == "tutorial"
 
 
 class TestAuthSchemas:

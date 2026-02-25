@@ -568,12 +568,10 @@ class NotificationService:
     
     async def _publish(self, task_id: str, event: dict):
         """
-        发布事件到 Redis 频道（使用msgspec序列化）
+        发布事件到 Redis 频道（fire-and-forget 模式）
         
-        如果 Redis 连接失败或超时，会记录错误但不会抛出异常，
-        确保工作流不会因为通知失败而中断。
-        
-        在异常处理上下文中调用时，能够优雅处理事件循环冲突。
+        使用 asyncio.create_task 将 publish 放入后台，不阻塞调用方。
+        如果 Redis 连接失败或超时，仅记录错误，不影响主工作流。
         
         性能提升：使用msgspec替代json.dumps，序列化性能提升5-10倍
         
@@ -581,48 +579,69 @@ class NotificationService:
             task_id: 任务 ID
             event: 事件数据
         """
+        # 序列化在调用方完成，避免后台任务中出现序列化错误难以追踪
+        try:
+            message = fast_dumps(event)
+        except Exception as e:
+            logger.error(
+                "notification_serialize_failed",
+                task_id=task_id,
+                event_type=event.get("type"),
+                error=str(e),
+            )
+            return
+        
+        # 使用 fire-and-forget，不阻塞调用方协程
+        asyncio.create_task(
+            self._do_publish(task_id, event.get("type"), message),
+            name=f"notify_{task_id}_{event.get('type')}",
+        )
+    
+    async def _do_publish(self, task_id: str, event_type: str | None, message: str):
+        """
+        实际执行 Redis publish 的后台协程（1秒超时）
+        
+        Args:
+            task_id: 任务 ID
+            event_type: 事件类型（日志用）
+            message: 已序列化的消息
+        """
         try:
             await self._ensure_connected()
             channel = self._get_channel(task_id)
             
-            # ✅ 使用msgspec进行高性能序列化
-            message = fast_dumps(event)
-            
-            # 添加超时保护：5秒超时
-            # 注意：在异常处理上下文中，asyncio.wait_for 可能触发事件循环冲突
-            # 因此需要捕获 RuntimeError
+            # 进度通知不关键，1秒超时足够，失败直接跳过
             await asyncio.wait_for(
                 redis_client._client.publish(channel, message),
-                timeout=5.0
+                timeout=1.0,
             )
             
             logger.debug(
                 "notification_published",
                 task_id=task_id,
-                event_type=event.get("type"),
+                event_type=event_type,
                 channel=channel,
             )
             
         except asyncio.TimeoutError:
-            logger.error(
+            logger.warning(
                 "notification_publish_timeout",
                 task_id=task_id,
-                event_type=event.get("type"),
-                timeout_seconds=5,
+                event_type=event_type,
+                timeout_seconds=1,
             )
         except RuntimeError as e:
-            # 事件循环冲突（如 "Future attached to a different loop"）
-            logger.error(
+            logger.warning(
                 "notification_publish_failed",
                 task_id=task_id,
-                event_type=event.get("type"),
+                event_type=event_type,
                 error=f"Event loop conflict: {str(e)}",
             )
         except Exception as e:
-            logger.error(
+            logger.warning(
                 "notification_publish_failed",
                 task_id=task_id,
-                event_type=event.get("type"),
+                event_type=event_type,
                 error=str(e),
             )
     
@@ -631,57 +650,97 @@ class NotificationService:
         task_id: str,
         event: dict,
         max_retries: int = 3,
-        retry_delay: float = 1.0,
+        retry_delay: float = 0.5,
     ):
         """
-        发布事件到 Redis 频道（带重试机制）
+        发布关键事件到 Redis 频道（后台带重试）
         
-        用于关键通知（如human_review_required、failed），
-        确保用户不会错过重要事件。
+        用于关键通知（如 human_review_required、failed），放到后台任务中执行，
+        不阻塞主工作流。每次重试超时缩短为 2秒，重试间隔缩短为 0.5秒。
         
         Args:
             task_id: 任务 ID
             event: 事件数据
             max_retries: 最大重试次数（默认3次）
-            retry_delay: 重试延迟（秒，默认1秒）
+            retry_delay: 重试延迟（秒，默认0.5秒）
+        """
+        try:
+            message = fast_dumps(event)
+        except Exception as e:
+            logger.error(
+                "notification_serialize_failed",
+                task_id=task_id,
+                event_type=event.get("type"),
+                error=str(e),
+            )
+            return
+        
+        # 关键通知也放到后台，避免阻塞主工作流
+        asyncio.create_task(
+            self._do_publish_with_retry(
+                task_id=task_id,
+                event_type=event.get("type"),
+                message=message,
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+            ),
+            name=f"notify_retry_{task_id}_{event.get('type')}",
+        )
+    
+    async def _do_publish_with_retry(
+        self,
+        task_id: str,
+        event_type: str | None,
+        message: str,
+        max_retries: int,
+        retry_delay: float,
+    ):
+        """
+        实际执行带重试的 publish 后台协程（每次2秒超时）
+        
+        Args:
+            task_id: 任务 ID
+            event_type: 事件类型（日志用）
+            message: 已序列化的消息
+            max_retries: 最大重试次数
+            retry_delay: 重试间隔（秒）
         """
         for attempt in range(max_retries):
             try:
                 await self._ensure_connected()
                 channel = self._get_channel(task_id)
-                message = fast_dumps(event)
                 
+                # 关键通知单次超时 2秒（原5秒），重试间隔 0.5秒（原1秒）
+                # 最坏情况：3次 × (2秒 + 0.5秒) = 7.5秒，且不阻塞主流程
                 await asyncio.wait_for(
                     redis_client._client.publish(channel, message),
-                    timeout=5.0
+                    timeout=2.0,
                 )
                 
                 logger.debug(
                     "notification_published_with_retry",
                     task_id=task_id,
-                    event_type=event.get("type"),
+                    event_type=event_type,
                     attempt=attempt + 1,
                 )
                 return  # 成功，退出
                 
             except (asyncio.TimeoutError, RuntimeError, Exception) as e:
                 if attempt < max_retries - 1:
-                    # 还有重试机会
                     logger.warning(
                         "notification_retry",
                         task_id=task_id,
-                        event_type=event.get("type"),
+                        event_type=event_type,
                         attempt=attempt + 1,
                         max_retries=max_retries,
                         error=str(e),
                     )
                     await asyncio.sleep(retry_delay)
                 else:
-                    # 最后一次也失败了
                     logger.error(
                         "notification_failed_after_retries",
                         task_id=task_id,
-                        event_type=event.get("type"),
+                        event_type=event_type,
                         max_retries=max_retries,
                         error=str(e),
                     )

@@ -84,6 +84,9 @@ def outer_fan_out(state: ContentGenState) -> Command:
         concept_count=len(concepts),
     )
     
+    # 构建 concept_id → 名称映射，供教程生成器在"前置知识回顾"中生成带名称的超链接
+    concept_name_map: dict[str, str] = {c.concept_id: c.name for c in concepts}
+    
     sends = []
     for concept in concepts:
         # 为每个 Concept 创建子图实例
@@ -92,6 +95,7 @@ def outer_fan_out(state: ContentGenState) -> Command:
             "roadmap_id": roadmap_id,
             "user_preferences": user_preferences,
             "task_id": task_id,
+            "concept_name_map": concept_name_map,
             "tutorial": None,
             "resource": None,
             "quiz": None,

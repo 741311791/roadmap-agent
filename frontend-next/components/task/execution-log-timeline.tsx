@@ -17,6 +17,7 @@
 
 import { useState, useMemo, memo, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { useTranslations } from 'next-intl';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -49,47 +50,65 @@ interface ExecutionLogTimelineProps {
 }
 
 /**
- * Step 配置映射
+ * Step 配置映射（翻译key）
  * 
  * 同步后端 WorkflowStep 枚举定义：
  * @see backend/app/models/constants.py
  */
-const STEP_CONFIG: Record<string, { label: string; color: string; bgColor: string }> = {
+const STEP_CONFIG_KEYS: Record<string, { labelKey: string; color: string; bgColor: string }> = {
   // 初始化阶段
-  init: { label: 'Initialize', color: 'text-gray-700', bgColor: 'bg-gray-50' },
-  queued: { label: 'Queued', color: 'text-gray-700', bgColor: 'bg-gray-50' },
-  starting: { label: 'Starting', color: 'text-gray-700', bgColor: 'bg-gray-50' },
+  init: { labelKey: 'initialize', color: 'text-gray-700', bgColor: 'bg-gray-50' },
+  queued: { labelKey: 'queued', color: 'text-gray-700', bgColor: 'bg-gray-50' },
+  starting: { labelKey: 'starting', color: 'text-gray-700', bgColor: 'bg-gray-50' },
   
   // 主路节点
-  intent_analysis: { label: 'Intent Analysis', color: 'text-sage-700', bgColor: 'bg-sage-50' },
-  curriculum_design: { label: 'Curriculum Design', color: 'text-sage-700', bgColor: 'bg-sage-50' },
-  structure_validation: { label: 'Structure Validation', color: 'text-sage-700', bgColor: 'bg-sage-50' },
-  human_review: { label: 'Human Review', color: 'text-amber-700', bgColor: 'bg-amber-50' },
+  intent_analysis: { labelKey: 'intentAnalysis', color: 'text-sage-700', bgColor: 'bg-sage-50' },
+  curriculum_design: { labelKey: 'curriculumDesign', color: 'text-sage-700', bgColor: 'bg-sage-50' },
+  structure_validation: { labelKey: 'structureValidation', color: 'text-sage-700', bgColor: 'bg-sage-50' },
+  human_review: { labelKey: 'humanReview', color: 'text-amber-700', bgColor: 'bg-amber-50' },
   
-  // ✅ 共享的编辑节点（validation失败或review拒绝都使用，由edit_source区分）
-  edit_plan_analysis: { label: 'Edit Plan Analysis', color: 'text-blue-700', bgColor: 'bg-blue-50' },
-  roadmap_edit: { label: 'Roadmap Edit', color: 'text-purple-700', bgColor: 'bg-purple-50' },
+  // ✅ 共享的编辑节点
+  edit_plan_analysis: { labelKey: 'editPlanAnalysis', color: 'text-blue-700', bgColor: 'bg-blue-50' },
+  roadmap_edit: { labelKey: 'roadmapEdit', color: 'text-purple-700', bgColor: 'bg-purple-50' },
   
   // 内容生成阶段
-  content_generation_queued: { label: 'Content Generation Queued', color: 'text-sage-700', bgColor: 'bg-sage-50' },
-  content_generation: { label: 'Content Generation', color: 'text-sage-700', bgColor: 'bg-sage-50' },
+  content_generation_queued: { labelKey: 'contentGenerationQueued', color: 'text-sage-700', bgColor: 'bg-sage-50' },
+  content_generation: { labelKey: 'contentGeneration', color: 'text-sage-700', bgColor: 'bg-sage-50' },
   
   // 完成阶段
-  completed: { label: 'Completed', color: 'text-sage-700', bgColor: 'bg-sage-50' },
+  completed: { labelKey: 'completed', color: 'text-sage-700', bgColor: 'bg-sage-50' },
 };
 
 /**
- * 获取 Level 配置
+ * Step 配置（默认版本，使用 labelKey 作为 label）
+ * 用于组件外部访问
  */
-function getLevelConfig(level: string) {
-  const configs: Record<string, { icon: React.ElementType; color: string; label: string }> = {
-    error: { icon: AlertCircle, color: 'text-red-600', label: 'Error' },
-    warning: { icon: AlertTriangle, color: 'text-amber-600', label: 'Warning' },
-    success: { icon: CheckCircle2, color: 'text-sage-600', label: 'Success' },
-    info: { icon: Info, color: 'text-gray-600', label: 'Info' },
-    debug: { icon: Info, color: 'text-gray-500', label: 'Debug' },
+const STEP_CONFIG: Record<string, { label: string; color: string; bgColor: string }> = Object.entries(STEP_CONFIG_KEYS).reduce((acc, [key, value]) => {
+  acc[key] = {
+    label: value.labelKey,
+    color: value.color,
+    bgColor: value.bgColor,
   };
-  return configs[level] || configs.info;
+  return acc;
+}, {} as Record<string, { label: string; color: string; bgColor: string }>);
+
+/**
+ * 获取 Level 配置（需要传入翻译函数）
+ */
+function getLevelConfig(level: string, t: any) {
+  const configs: Record<string, { icon: React.ElementType; color: string; labelKey: string }> = {
+    error: { icon: AlertCircle, color: 'text-red-600', labelKey: 'error' },
+    warning: { icon: AlertTriangle, color: 'text-amber-600', labelKey: 'warning' },
+    success: { icon: CheckCircle2, color: 'text-sage-600', labelKey: 'success' },
+    info: { icon: Info, color: 'text-gray-600', labelKey: 'info' },
+    debug: { icon: Info, color: 'text-gray-500', labelKey: 'debug' },
+  };
+  const config = configs[level] || configs.info;
+  return {
+    icon: config.icon,
+    color: config.color,
+    label: t(config.labelKey),
+  };
 }
 
 /**
@@ -111,10 +130,11 @@ function formatTime(timestamp: string): string {
  */
 interface LogItemProps {
   log: ExecutionLog;
+  t: any;
 }
 
-const LogItem = memo(function LogItem({ log }: LogItemProps) {
-  const levelConfig = getLevelConfig(log.level);
+const LogItem = memo(function LogItem({ log, t }: LogItemProps) {
+  const levelConfig = getLevelConfig(log.level, t);
   const Icon = levelConfig.icon;
   
   // 统一使用纯文本日志格式
@@ -164,14 +184,11 @@ interface StepGroupProps {
   logs: ExecutionLog[];
   isExpanded: boolean;
   onToggle: () => void;
+  config: { label: string; color: string; bgColor: string };
+  t: any;
 }
 
-const StepGroup = memo(function StepGroup({ step, logs, isExpanded, onToggle }: StepGroupProps) {
-  const config = STEP_CONFIG[step] || { 
-    label: step || 'Unknown', 
-    color: 'text-gray-700',
-    bgColor: 'bg-gray-50'
-  };
+const StepGroup = memo(function StepGroup({ step, logs, isExpanded, onToggle, config, t }: StepGroupProps) {
   
   // 统计不同级别的日志数量
   const stats = useMemo(() => {
@@ -218,12 +235,12 @@ const StepGroup = memo(function StepGroup({ step, logs, isExpanded, onToggle }: 
         <div className="flex items-center gap-2">
           {stats.error > 0 && (
             <Badge variant="outline" className="text-xs text-red-600 border-red-200">
-              {stats.error} errors
+              {t('errorsCount', { count: stats.error })}
             </Badge>
           )}
           {stats.warning > 0 && (
             <Badge variant="outline" className="text-xs text-amber-600 border-amber-200">
-              {stats.warning} warnings
+              {t('warningsCount', { count: stats.warning })}
             </Badge>
           )}
         </div>
@@ -231,7 +248,7 @@ const StepGroup = memo(function StepGroup({ step, logs, isExpanded, onToggle }: 
       
       {/* 日志列表 - 使用虚拟列表优化渲染性能 */}
       {isExpanded && (
-        <VirtualLogList logs={logs} />
+        <VirtualLogList logs={logs} t={t} />
       )}
     </div>
   );
@@ -243,9 +260,10 @@ const StepGroup = memo(function StepGroup({ step, logs, isExpanded, onToggle }: 
  */
 interface VirtualLogListProps {
   logs: ExecutionLog[];
+  t: any;
 }
 
-const VirtualLogList = memo(function VirtualLogList({ logs }: VirtualLogListProps) {
+const VirtualLogList = memo(function VirtualLogList({ logs, t }: VirtualLogListProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   
   const virtualizer = useVirtualizer({
@@ -280,7 +298,7 @@ const VirtualLogList = memo(function VirtualLogList({ logs }: VirtualLogListProp
               transform: `translateY(${virtualItem.start}px)`,
             }}
           >
-            <LogItem log={logs[virtualItem.index]} />
+            <LogItem log={logs[virtualItem.index]} t={t} />
           </div>
         ))}
       </div>
@@ -292,6 +310,21 @@ const VirtualLogList = memo(function VirtualLogList({ logs }: VirtualLogListProp
  * 主组件
  */
 export function ExecutionLogTimeline({ logs, className }: ExecutionLogTimelineProps) {
+  const t = useTranslations('taskDetail');
+  
+  // 动态获取Step配置（使用翻译）
+  const stepConfigTranslated = useMemo(() => {
+    const config: Record<string, { label: string; color: string; bgColor: string }> = {};
+    Object.entries(STEP_CONFIG_KEYS).forEach(([key, value]) => {
+      config[key] = {
+        label: t(value.labelKey as any),
+        color: value.color,
+        bgColor: value.bgColor,
+      };
+    });
+    return config;
+  }, [t]);
+  
   // Level 过滤状态
   const [selectedLevels, setSelectedLevels] = useState<Set<string>>(
     new Set(['info', 'success', 'warning', 'error'])
@@ -398,7 +431,7 @@ export function ExecutionLogTimeline({ logs, className }: ExecutionLogTimelinePr
           <div className="text-center space-y-2">
             <Info className="w-12 h-12 text-muted-foreground mx-auto" />
             <p className="text-sm text-muted-foreground">
-              No execution logs available.
+              {t('noExecutionLogs')}
             </p>
           </div>
         </CardContent>
@@ -412,10 +445,10 @@ export function ExecutionLogTimeline({ logs, className }: ExecutionLogTimelinePr
         <div className="flex items-center justify-between">
           <div className="space-y-1">
             <CardTitle className="text-lg font-serif font-semibold">
-              Execution Logs
+              {t('executionLogs')}
             </CardTitle>
             <p className="text-xs text-muted-foreground">
-              Grouped by workflow step · {logs.length} total logs
+              {t('groupedByStep', { count: logs.length })}
             </p>
           </div>
           
@@ -426,7 +459,7 @@ export function ExecutionLogTimeline({ logs, className }: ExecutionLogTimelinePr
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="sm" className="h-8">
                   <Filter className="w-3.5 h-3.5 mr-2" />
-                  Filter
+                  {t('filterBy')}
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48">
@@ -435,28 +468,28 @@ export function ExecutionLogTimeline({ logs, className }: ExecutionLogTimelinePr
                   onCheckedChange={() => toggleLevel('error')}
                 >
                   <AlertCircle className="w-3.5 h-3.5 mr-2 text-red-600" />
-                  Errors
+                  {t('errors')}
                 </DropdownMenuCheckboxItem>
                 <DropdownMenuCheckboxItem
                   checked={selectedLevels.has('warning')}
                   onCheckedChange={() => toggleLevel('warning')}
                 >
                   <AlertTriangle className="w-3.5 h-3.5 mr-2 text-amber-600" />
-                  Warnings
+                  {t('warnings')}
                 </DropdownMenuCheckboxItem>
                 <DropdownMenuCheckboxItem
                   checked={selectedLevels.has('success')}
                   onCheckedChange={() => toggleLevel('success')}
                 >
                   <CheckCircle2 className="w-3.5 h-3.5 mr-2 text-sage-600" />
-                  Success
+                  {t('success')}
                 </DropdownMenuCheckboxItem>
                 <DropdownMenuCheckboxItem
                   checked={selectedLevels.has('info')}
                   onCheckedChange={() => toggleLevel('info')}
                 >
                   <Info className="w-3.5 h-3.5 mr-2 text-gray-600" />
-                  Info
+                  {t('info')}
                 </DropdownMenuCheckboxItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -469,7 +502,7 @@ export function ExecutionLogTimeline({ logs, className }: ExecutionLogTimelinePr
                 className="h-8 text-xs"
                 onClick={expandAll}
               >
-                Expand All
+                {t('expandAll')}
               </Button>
               <Button
                 variant="ghost"
@@ -477,7 +510,7 @@ export function ExecutionLogTimeline({ logs, className }: ExecutionLogTimelinePr
                 className="h-8 text-xs"
                 onClick={collapseAll}
               >
-                Collapse All
+                {t('collapseAll')}
               </Button>
             </div>
           </div>
@@ -494,6 +527,12 @@ export function ExecutionLogTimeline({ logs, className }: ExecutionLogTimelinePr
               logs={groupedLogs[step]}
               isExpanded={expandedSteps.has(step)}
               onToggle={() => toggleStep(step)}
+              config={stepConfigTranslated[step] || { 
+                label: step || 'Unknown', 
+                color: 'text-gray-700',
+                bgColor: 'bg-gray-50'
+              }}
+              t={t}
             />
           ))}
         </div>

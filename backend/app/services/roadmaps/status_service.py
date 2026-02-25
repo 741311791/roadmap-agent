@@ -2,6 +2,7 @@
 路线图状态查询服务
 """
 from typing import Optional, List
+from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import structlog
@@ -19,6 +20,10 @@ CONTENT_GENERATION_STEPS = {
     "resource_recommendation",
     "quiz_generation",
 }
+
+# Celery PENDING 状态的超时阈值（分钟）
+# Celery 对"未知任务 ID"也返回 PENDING，超过此时间的 PENDING 任务视为僵尸
+CELERY_PENDING_ZOMBIE_THRESHOLD_MINUTES = 15
 
 
 class StatusService:
@@ -228,26 +233,59 @@ class StatusService:
     def _check_active_tasks(self, active_tasks: List[RoadmapTask]) -> bool:
         """
         检查任务是否真正活跃（包含Celery状态检查）
-        
+
+        对内容生成阶段的任务，额外校验 Celery 任务状态以识别僵尸任务：
+        - Celery 状态为 PENDING/STARTED/RETRY → 任务仍活跃
+        - Celery 状态为 FAILURE/SUCCESS/REVOKED → 任务已死亡，视为僵尸
+        - 无 celery_task_id → 记录警告，视为僵尸（不阻塞僵尸检测）
+
+        非内容生成阶段的任务（如 human_review_pending）直接视为活跃。
+
         Args:
-            active_tasks: 活跃任务列表
-            
+            active_tasks: 数据库中状态为 processing/human_review_pending 的任务列表
+
         Returns:
-            是否有真正活跃的任务
+            True 表示存在真正活跃的任务，False 表示全部为僵尸
         """
         for task in active_tasks:
             is_content_generation = task.current_step in CONTENT_GENERATION_STEPS
-            
+
+            # 非内容生成阶段（如人工审核）直接视为活跃
             if not is_content_generation:
                 return True
-            
+
             if task.celery_task_id:
                 try:
                     from app.core.celery_app import celery_app
                     celery_result = celery_app.AsyncResult(task.celery_task_id)
-                    if celery_result.state in ["PENDING", "STARTED", "RETRY"]:
+
+                    if celery_result.state in ["STARTED", "RETRY"]:
                         return True
+
+                    if celery_result.state == "PENDING":
+                        # Celery 对"未知/已过期的任务 ID"也返回 PENDING，
+                        # 因此需要结合 updated_at 判断是否为真正在排队的任务。
+                        # 超过阈值时间未更新的 PENDING 任务视为僵尸。
+                        threshold = timedelta(minutes=CELERY_PENDING_ZOMBIE_THRESHOLD_MINUTES)
+                        if task.updated_at and (datetime.utcnow() - task.updated_at) < threshold:
+                            return True
+                        logger.info(
+                            "celery_task_pending_expired",
+                            task_id=task.task_id,
+                            celery_task_id=task.celery_task_id,
+                            updated_at=task.updated_at,
+                        )
+                        # PENDING 超过阈值 → 视为僵尸，继续检查其他任务
+
+                    # FAILURE / SUCCESS / REVOKED 或过期 PENDING → 继续检查其他任务
+                    logger.info(
+                        "celery_task_not_active",
+                        task_id=task.task_id,
+                        celery_task_id=task.celery_task_id,
+                        celery_state=celery_result.state,
+                    )
                 except Exception as e:
+                    # Celery 无法访问时保守地视为活跃，避免误杀正常任务
                     logger.warning(
                         "failed_to_check_celery_task_status",
                         task_id=task.task_id,
@@ -256,8 +294,14 @@ class StatusService:
                     )
                     return True
             else:
-                return True
-        
+                # 内容生成阶段任务缺少 celery_task_id，说明 Celery 任务未能正常分发
+                logger.warning(
+                    "content_generation_task_missing_celery_id",
+                    task_id=task.task_id,
+                    current_step=task.current_step,
+                )
+                # 视为僵尸，继续检查其他任务
+
         return False
     
     def _find_stale_concepts(self, framework_data: dict) -> List[dict]:
@@ -286,8 +330,12 @@ class StatusService:
                     
                     for content_type, status_key in checks:
                         status = concept.get(status_key)
-                        
-                        if status in ["pending", "generating"]:
+
+                        # 检测僵尸/失效状态：
+                        # - "pending"/"generating"：任务卡死未完成（传统僵尸）
+                        # - "failed"：后端已标记失败但前端状态可能是陈旧的 "generating"，
+                        #   需要通过此接口将正确状态同步给前端
+                        if status in ["pending", "generating", "failed"]:
                             stale_concepts.append({
                                 "concept_id": concept_id,
                                 "concept_name": concept_name,

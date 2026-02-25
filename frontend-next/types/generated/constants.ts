@@ -78,8 +78,13 @@ export enum ContentStatus {
 
 /**
  * ContentStatus 类型 (Union Type)
+ *
+ * - "pending"：排队等待生成
+ * - "generating"：正在生成中（regenerate 期间后端设置此值）
+ * - "completed"：生成完成
+ * - "failed"：生成失败
  */
-export type ContentStatusType = "pending" | "completed" | "failed";
+export type ContentStatusType = "pending" | "generating" | "completed" | "failed";
 
 /**
  * ContentStatus 类型守卫
@@ -87,6 +92,7 @@ export type ContentStatusType = "pending" | "completed" | "failed";
 export function isContentStatus(value: any): value is ContentStatusType {
   return [
     "pending",
+    "generating",
     "completed",
     "failed",
   ].includes(value);
@@ -97,6 +103,7 @@ export function isContentStatus(value: any): value is ContentStatusType {
  */
 export const ContentStatusLabels: Record<ContentStatusType, string> = {
   "pending": "待生成",
+  "generating": "生成中",
   "completed": "已完成",
   "failed": "失败",
 };
@@ -123,8 +130,6 @@ export enum WorkflowStep {
   EDIT_PLAN_ANALYSIS = "edit_plan_analysis",
   /** 路线图修正（共享，由edit_source区分） */
   ROADMAP_EDIT = "roadmap_edit",
-  /** 人工审核 */
-  HUMAN_REVIEW = "human_review",
   /** 内容生成已入队 */
   CONTENT_GENERATION_QUEUED = "content_generation_queued",
   /** 内容生成（包含教程、资源、测验） */
@@ -162,9 +167,6 @@ export function isWorkflowStep(value: any): value is WorkflowStepType {
     "roadmap_edit",
     "content_generation_queued",
     "content_generation",
-    "resource_recommendation",
-    "quiz_generation",
-    "finalizing",
     "completed",
     "failed",
   ].includes(value);
@@ -185,9 +187,6 @@ export const WorkflowStepLabels: Record<WorkflowStepType, string> = {
   "roadmap_edit": "路线图修正",
   "content_generation_queued": "内容生成已入队",
   "content_generation": "内容生成（包含教程、资源、测验）",
-  "resource_recommendation": "资源推荐（已废弃，由content_generation统一处理）",
-  "quiz_generation": "测验生成（已废弃，由content_generation统一处理）",
-  "finalizing": "收尾中",
   "completed": "已完成",
   "failed": "失败",
 };

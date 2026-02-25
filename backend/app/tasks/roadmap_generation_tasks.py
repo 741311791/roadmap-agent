@@ -38,7 +38,13 @@ logger = structlog.get_logger()
     name="roadmap_generation.generate_roadmap",
     bind=True,
     acks_late=True,
-    reject_on_worker_lost=True,
+    # ⚠️ 去掉 reject_on_worker_lost=True：
+    # 原来的问题：revoke(terminate=True, signal='SIGKILL') 杀死进程后，
+    # 由于 acks_late=True 任务未被 ack，reject_on_worker_lost 会将任务
+    # 重新放回队列导致取消失效、任务重新执行。
+    # 改为 False：进程意外死亡时任务消息被丢弃（不重新执行），
+    # 正常业务崩溃由 mark_task_failed 兜底。
+    reject_on_worker_lost=False,
     time_limit=1800,  # 30 分钟硬超时
     soft_time_limit=1680,  # 28 分钟软超时
 )
@@ -71,7 +77,6 @@ def generate_roadmap(
     )
     
     try:
-        # ✅ 调用 Service 层，而不是重新实现业务逻辑
         workflow_service = get_workflow_execution_service()
         
         result = run_async(
@@ -161,9 +166,13 @@ def on_roadmap_generated(sender, result, **kwargs):
     task_args = kwargs.get("args", [])
     task_id = task_args[0] if task_args else None
     
+    # 使用路线图标题作为封面图生成提示词
+    roadmap_title = result.get("roadmap_title")
+    
     logger.info(
         "auto_trigger_cover_image_generation",
         roadmap_id=roadmap_id,
+        roadmap_title=roadmap_title,
         task_id=task_id,
         trigger_source="celery_signal",
     )
@@ -174,7 +183,7 @@ def on_roadmap_generated(sender, result, **kwargs):
         
         celery_task = generate_cover_image_task.delay(
             roadmap_id=roadmap_id,
-            prompt=None,  # 使用默认提示词（CoverImageService 会从路线图标题生成）
+            prompt=roadmap_title,
         )
         
         logger.info(

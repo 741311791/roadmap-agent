@@ -10,6 +10,7 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import { useState, useEffect } from 'react';
+import { useTranslations } from 'next-intl';
 import { Badge } from '@/components/ui/badge';
 import { FlippingCard } from '@/components/ui/flipping-card';
 import { getCoverImage, fetchCoverImageFromAPI } from '@/lib/cover-image';
@@ -55,48 +56,56 @@ interface FeaturedRoadmapCardProps {
   coverImageUrl?: string;  // 可选的封面图 URL（用于批量获取）
 }
 
-// 难度级别配置
-const DIFFICULTY_CONFIG = {
-  beginner: {
-    label: 'Beginner',
-    color: 'text-green-600 bg-green-50 border-green-200',
-  },
-  intermediate: {
-    label: 'Intermediate',
-    color: 'text-amber-600 bg-amber-50 border-amber-200',
-  },
-  advanced: {
-    label: 'Advanced',
-    color: 'text-red-600 bg-red-50 border-red-200',
-  },
+// 难度级别配置（仅颜色）
+const DIFFICULTY_COLORS = {
+  beginner: 'text-green-600 bg-green-50 border-green-200',
+  intermediate: 'text-amber-600 bg-amber-50 border-amber-200',
+  advanced: 'text-red-600 bg-red-50 border-red-200',
 };
 
 /**
- * 格式化相对时间
+ * 获取难度标签（国际化）
  */
-function formatRelativeTime(dateString?: string): string {
-  if (!dateString) return 'Recently';
+function getDifficultyLabel(difficulty: 'beginner' | 'intermediate' | 'advanced', t: any): string {
+  const labels = {
+    beginner: t('featuredCard.beginner'),
+    intermediate: t('featuredCard.intermediate'),
+    advanced: t('featuredCard.advanced'),
+  };
+  return labels[difficulty];
+}
+
+/**
+ * 格式化相对时间（国际化）
+ */
+function formatRelativeTime(dateString: string | undefined, t: any): string {
+  if (!dateString) return t('featuredCard.timeRecently');
   
   const date = new Date(dateString);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
   
-  if (diffDays === 0) return 'Today';
-  if (diffDays === 1) return 'Yesterday';
-  if (diffDays < 7) return `${diffDays}d ago`;
-  if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
-  return `${Math.floor(diffDays / 30)}mo ago`;
+  if (diffDays === 0) return t('featuredCard.timeToday');
+  if (diffDays === 1) return t('featuredCard.timeYesterday');
+  if (diffDays < 7) return t('featuredCard.timeDaysAgo', { days: diffDays });
+  if (diffDays < 30) {
+    const weeks = Math.floor(diffDays / 7);
+    return t('featuredCard.timeWeeksAgo', { weeks });
+  }
+  const months = Math.floor(diffDays / 30);
+  return t('featuredCard.timeMonthsAgo', { months });
 }
 
 /**
  * 卡片正面内容
  */
 function CardFront({ roadmap, coverImageUrl }: { roadmap: FeaturedRoadmap; coverImageUrl?: string }) {
+  const t = useTranslations();
   const [imageUrl, setImageUrl] = useState(getCoverImage(roadmap.topic, 400, 300));
   const [imageLoading, setImageLoading] = useState(true);
   const difficulty = roadmap.difficulty || 'intermediate';
-  const difficultyConfig = DIFFICULTY_CONFIG[difficulty];
+  const difficultyColor = DIFFICULTY_COLORS[difficulty];
   
   // 检测是否为 R2.dev 图片
   const isR2Image = imageUrl.includes('r2.dev');
@@ -123,7 +132,7 @@ function CardFront({ roadmap, coverImageUrl }: { roadmap: FeaturedRoadmap; cover
   return (
     <div className="flex flex-col h-full w-full">
       {/* 封面图片 */}
-      <div className="relative w-full h-40 overflow-hidden rounded-t-xl bg-sage-100">
+      <div className="relative w-full aspect-[7/4] overflow-hidden rounded-t-xl bg-sage-100">
         {/* 加载骨架屏 */}
         {imageLoading && (
           <div className="absolute inset-0 bg-gradient-to-br from-sage-200 to-sage-100 animate-pulse" />
@@ -156,16 +165,13 @@ function CardFront({ roadmap, coverImageUrl }: { roadmap: FeaturedRoadmap; cover
           />
         )}
         
-        {/* 渐变遮罩 */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
-        
         {/* Featured Badge */}
         <div className="absolute top-3 left-3 z-10">
           <Badge 
             className="bg-gradient-to-r from-amber-400 to-amber-500 text-white border-0 shadow-lg text-[10px] px-2 py-1 font-bold flex items-center gap-1"
           >
             <Star className="w-3 h-3 fill-white" />
-            FEATURED
+            {t('featuredCard.featured')}
           </Badge>
         </div>
       </div>
@@ -178,12 +184,12 @@ function CardFront({ roadmap, coverImageUrl }: { roadmap: FeaturedRoadmap; cover
         </h3>
 
         {/* 标签和难度 */}
-        <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+        {/* <div className="flex items-center gap-1.5 mb-3 flex-wrap">
           <Badge
             variant="outline"
-            className={cn('text-[9px] px-2 py-0.5 font-bold', difficultyConfig.color)}
+            className={cn('text-[9px] px-2 py-0.5 font-bold', difficultyColor)}
           >
-            {difficultyConfig.label}
+            {getDifficultyLabel(difficulty, t)}
           </Badge>
           
           {roadmap.tags && roadmap.tags.slice(0, 2).map((tag) => (
@@ -195,20 +201,20 @@ function CardFront({ roadmap, coverImageUrl }: { roadmap: FeaturedRoadmap; cover
               {tag}
             </Badge>
           ))}
-        </div>
+        </div> */}
 
         {/* 元信息 */}
         <div className="flex items-center gap-3 text-xs text-muted-foreground mt-auto">
           {roadmap.totalConcepts && roadmap.totalConcepts > 0 && (
             <div className="flex items-center gap-1">
               <BookOpen className="w-3.5 h-3.5" />
-              <span>{roadmap.totalConcepts} concepts</span>
+              <span>{roadmap.totalConcepts} {t('featuredCard.concepts')}</span>
             </div>
           )}
           {roadmap.totalHours && roadmap.totalHours > 0 && (
             <div className="flex items-center gap-1">
               <Clock className="w-3.5 h-3.5" />
-              <span>{roadmap.totalHours}h</span>
+              <span>{roadmap.totalHours}{t('featuredCard.hours')}</span>
             </div>
           )}
         </div>
@@ -221,6 +227,7 @@ function CardFront({ roadmap, coverImageUrl }: { roadmap: FeaturedRoadmap; cover
  * 卡片背面内容 - 显示路线图的各个 Stage 信息
  */
 function CardBack({ roadmap }: { roadmap: FeaturedRoadmap }) {
+  const t = useTranslations();
   const stages = roadmap.stages || [];
   const hasStages = stages.length > 0;
 
@@ -272,7 +279,7 @@ function CardBack({ roadmap }: { roadmap: FeaturedRoadmap }) {
             ))}
             {stages.length > 5 && (
               <div className="text-xs text-muted-foreground text-center py-1">
-                +{stages.length - 5} more stages
+                {t('featuredCard.moreStages', { count: stages.length - 5 })}
               </div>
             )}
           </div>
@@ -280,8 +287,8 @@ function CardBack({ roadmap }: { roadmap: FeaturedRoadmap }) {
           <div className="flex-1 flex items-center justify-center">
             <p className="text-sm text-muted-foreground text-center">
               {roadmap.tags && roadmap.tags.length > 0 
-                ? `Explore ${roadmap.tags.join(', ')} concepts and build your skills step by step.`
-                : `A comprehensive learning path to master ${roadmap.topic}.`
+                ? t('featuredCard.exploreTopics', { topics: roadmap.tags.join(', ') })
+                : t('featuredCard.comprehensivePath', { topic: roadmap.topic })
               }
             </p>
           </div>
@@ -300,7 +307,7 @@ function CardBack({ roadmap }: { roadmap: FeaturedRoadmap }) {
             {roadmap.totalHours && roadmap.totalHours > 0 && (
               <div className="flex items-center gap-1">
                 <Clock className="w-3.5 h-3.5" />
-                <span>{roadmap.totalHours}h</span>
+                <span>{roadmap.totalHours}{t('featuredCard.hours')}</span>
               </div>
             )}
           </div>
@@ -311,7 +318,7 @@ function CardBack({ roadmap }: { roadmap: FeaturedRoadmap }) {
             className="flex items-center gap-1 text-xs font-medium text-sage-600 hover:text-sage-700 transition-colors"
             onClick={(e) => e.stopPropagation()}
           >
-            View
+            {t('featuredCard.view')}
             <ChevronRight className="w-3 h-3" />
           </Link>
         </div>

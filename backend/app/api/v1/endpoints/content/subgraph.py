@@ -13,6 +13,7 @@
 - Service 层：业务逻辑实现
 - 遵循分层架构设计规范
 """
+import asyncio
 import structlog
 from fastapi import APIRouter, HTTPException, status
 
@@ -61,11 +62,15 @@ async def generate_single_concept_content(
     
     try:
         # ✅ 分发 Celery 任务（异步执行）
-        celery_task = generate_single_concept_content_task.delay(
-            roadmap_id=request.roadmap_id,
-            concept_id=request.concept_id,
-            user_id=user.id,
-            force_regenerate=request.force_regenerate,
+        # 使用 asyncio.to_thread 避免 .delay() 同步阻塞事件循环
+        celery_task = await asyncio.to_thread(
+            generate_single_concept_content_task.apply_async,
+            kwargs={
+                "roadmap_id": request.roadmap_id,
+                "concept_id": request.concept_id,
+                "user_id": user.id,
+                "force_regenerate": request.force_regenerate,
+            },
         )
         
         logger.info(

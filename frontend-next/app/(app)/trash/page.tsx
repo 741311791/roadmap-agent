@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
+import { useTranslations, useFormatter } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -36,16 +37,6 @@ function calculateDaysRemaining(deletedAt: string): number {
   return Math.max(0, diffDays);
 }
 
-// 格式化删除时间
-function formatDeletedTime(dateString: string): string {
-  const date = new Date(dateString);
-  return date.toLocaleDateString('zh-CN', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  });
-}
-
 interface TrashItemProps {
   roadmap: RoadmapHistoryItem;
   onRestore: () => void;
@@ -53,6 +44,8 @@ interface TrashItemProps {
 }
 
 function TrashItem({ roadmap, onRestore, onPermanentDelete }: TrashItemProps) {
+  const t = useTranslations('trash');
+  const format = useFormatter();
   const [imageError, setImageError] = useState(false);
   const imageUrl = getCoverImage(roadmap.topic || roadmap.title);
   const gradient = getGradientFallback(roadmap.title);
@@ -62,7 +55,11 @@ function TrashItem({ roadmap, onRestore, onPermanentDelete }: TrashItemProps) {
     ? calculateDaysRemaining(roadmap.deleted_at) 
     : 30;
   const deletedTime = roadmap.deleted_at 
-    ? formatDeletedTime(roadmap.deleted_at) 
+    ? format.dateTime(new Date(roadmap.deleted_at), {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      })
     : 'Unknown';
 
   return (
@@ -95,7 +92,7 @@ function TrashItem({ roadmap, onRestore, onPermanentDelete }: TrashItemProps) {
         
         <div className="flex items-center gap-3 text-sm">
           <span className="text-muted-foreground text-xs">
-            删除于 {deletedTime}
+            {t('deletedAt')} {deletedTime}
           </span>
           <span className="text-xs text-muted-foreground/50">•</span>
           <Badge 
@@ -106,7 +103,7 @@ function TrashItem({ roadmap, onRestore, onPermanentDelete }: TrashItemProps) {
                 : 'border-amber-300 text-amber-600 bg-amber-50'
             }`}
           >
-            {daysRemaining} 天后永久删除
+            {t('daysRemaining', { days: daysRemaining })}
           </Badge>
         </div>
       </div>
@@ -120,7 +117,7 @@ function TrashItem({ roadmap, onRestore, onPermanentDelete }: TrashItemProps) {
           onClick={onRestore}
         >
           <RotateCcw className="h-4 w-4" />
-          恢复
+          {t('restore')}
         </Button>
         <Button
           variant="outline"
@@ -129,7 +126,7 @@ function TrashItem({ roadmap, onRestore, onPermanentDelete }: TrashItemProps) {
           onClick={onPermanentDelete}
         >
           <Trash2 className="h-4 w-4" />
-          永久删除
+          {t('permanentDelete')}
         </Button>
       </div>
     </div>
@@ -137,6 +134,7 @@ function TrashItem({ roadmap, onRestore, onPermanentDelete }: TrashItemProps) {
 }
 
 export default function TrashPage() {
+  const t = useTranslations('trash');
   const { getUserId } = useAuthStore();
   const [isLoading, setIsLoading] = useState(true);
   const [deletedRoadmaps, setDeletedRoadmaps] = useState<RoadmapHistoryItem[]>([]);
@@ -186,7 +184,7 @@ export default function TrashPage() {
       }
     } catch (error) {
       console.error('Failed to restore roadmap:', error);
-      alert('恢复失败，请稍后重试');
+      alert(t('restoreFailed'));
     }
   };
   
@@ -214,7 +212,7 @@ export default function TrashPage() {
       }
     } catch (error) {
       console.error('Failed to permanently delete roadmap:', error);
-      alert('删除失败，请稍后重试');
+      alert(t('deleteFailed'));
     } finally {
       setPermanentDeleteDialogOpen(false);
       setRoadmapToDelete(null);
@@ -229,7 +227,7 @@ export default function TrashPage() {
           href="/home"
           className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-6 transition-colors"
         >
-          <ChevronLeft className="w-4 h-4" /> Back to Home
+          <ChevronLeft className="w-4 h-4" /> {t('backToHome')}
         </Link>
 
         {/* Header */}
@@ -239,10 +237,10 @@ export default function TrashPage() {
           </div>
           <div>
             <h1 className="text-2xl font-serif font-bold text-foreground">
-              Trash
+              {t('title')}
             </h1>
             <p className="text-sm text-muted-foreground">
-              {deletedRoadmaps.length} {deletedRoadmaps.length === 1 ? 'item' : 'items'} in trash
+              {deletedRoadmaps.length} {deletedRoadmaps.length === 1 ? t('item') : t('items')} {t('itemsInTrash')}
             </p>
           </div>
         </div>
@@ -253,10 +251,10 @@ export default function TrashPage() {
             <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
             <div className="flex-1 text-sm">
               <p className="font-medium text-amber-900 mb-1">
-                Items in trash will be permanently deleted after 30 days
+                {t('warningTitle')}
               </p>
               <p className="text-amber-700">
-                You can restore them before they are permanently deleted.
+                {t('warningDescription')}
               </p>
             </div>
           </div>
@@ -267,14 +265,14 @@ export default function TrashPage() {
           <div className="flex items-center justify-center py-20">
             <div className="text-center">
               <div className="w-16 h-16 border-4 border-sage-200 border-t-sage-600 rounded-full animate-spin mx-auto mb-4" />
-              <p className="text-sm text-muted-foreground">Loading...</p>
+              <p className="text-sm text-muted-foreground">{t('loading')}</p>
             </div>
           </div>
         ) : deletedRoadmaps.length === 0 ? (
           <EmptyState
             icon={Trash2}
-            title="Trash is empty"
-            description="Deleted roadmaps will appear here. They will be permanently deleted after 30 days."
+            title={t('emptyTitle')}
+            description={t('emptyDescription')}
           />
         ) : (
           <>
@@ -299,7 +297,7 @@ export default function TrashPage() {
                   onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
                   disabled={currentPage === 1}
                 >
-                  Previous
+                  {t('previous')}
                 </Button>
                 
                 <div className="flex items-center gap-1">
@@ -324,7 +322,7 @@ export default function TrashPage() {
                   onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
                   disabled={currentPage === totalPages}
                 >
-                  Next
+                  {t('next')}
                 </Button>
               </div>
             )}
@@ -337,19 +335,17 @@ export default function TrashPage() {
             <AlertDialogHeader>
               <AlertDialogTitle className="flex items-center gap-2 text-red-600">
                 <AlertTriangle className="h-5 w-5" />
-                永久删除路线图？
+                {t('deleteDialogTitle')}
               </AlertDialogTitle>
-              <AlertDialogDescription>
-                此操作<span className="font-bold text-red-600">不可撤销</span>。路线图及其所有相关数据（包括教程、资源、测验）将被永久删除。
-              </AlertDialogDescription>
+              <AlertDialogDescription dangerouslySetInnerHTML={{ __html: t('deleteDialogDescription') }} />
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel>取消</AlertDialogCancel>
+              <AlertDialogCancel>{t('cancel')}</AlertDialogCancel>
               <AlertDialogAction
                 onClick={handlePermanentDeleteConfirm}
                 className="bg-red-600 hover:bg-red-700"
               >
-                永久删除
+                {t('permanentDelete')}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

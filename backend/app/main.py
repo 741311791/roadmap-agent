@@ -102,6 +102,28 @@ async def lifespan(app: FastAPI):
             error_type=type(e).__name__,
         )
     
+    # Pending 任务重新入队（队列清空/Worker 重启后孤儿任务恢复）
+    try:
+        from app.services.workflows.generation.pending_task_recovery_service import (
+            recover_orphaned_pending_tasks_on_startup,
+        )
+        pending_result = await recover_orphaned_pending_tasks_on_startup()
+        if pending_result.total_found > 0:
+            logger.info(
+                "pending_task_recovery_on_startup_completed",
+                total_found=pending_result.total_found,
+                re_enqueued=pending_result.re_enqueued,
+                skipped=pending_result.skipped,
+                failed=pending_result.failed,
+            )
+    except Exception as e:
+        # 恢复失败不应阻止服务启动
+        logger.error(
+            "pending_task_recovery_on_startup_error",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+    
     # 初始化技术栈测验数据（先检查，如果已全部生成则跳过Celery任务）
     try:
         from app.services.learning.assessment_initializer import initialize_tech_assessments

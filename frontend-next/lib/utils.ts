@@ -87,3 +87,17 @@ export function truncate(str: string, length: number): string {
   return str.substring(0, length) + '...';
 }
 
+/**
+ * 移除路线图名称中 AI 生成的冗余前缀
+ * 例如：Stage 1: 数据处理 → 数据处理
+ *       Module: NumPy 与 Pandas → NumPy 与 Pandas
+ *       Concept: 数组操作 → 数组操作
+ */
+export function stripRoadmapPrefix(name: string): string {
+  return name
+    .replace(/^Stage\s+\d+\s*:\s*/i, '')
+    .replace(/^Module\s*:\s*/i, '')
+    .replace(/^Concept\s*:\s*/i, '')
+    .trim();
+}
+

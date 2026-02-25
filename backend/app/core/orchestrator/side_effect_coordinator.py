@@ -84,6 +84,7 @@ class SideEffectCoordinator:
         task_id: str,
         node_name: str,
         roadmap_id: Optional[str] = None,
+        extra_data: Optional[dict] = None,
     ) -> None:
         """
         节点开始时的副作用处理
@@ -97,6 +98,7 @@ class SideEffectCoordinator:
             task_id: 任务ID
             node_name: 节点名称
             roadmap_id: 路线图ID（可选）
+            extra_data: 额外数据（可选，如 edit_source，用于共享节点区分分支）
         """
         logger.info(
             "coordinator_node_start",
@@ -106,21 +108,28 @@ class SideEffectCoordinator:
         )
         
         # 1. 更新 Task 状态
-        await self._update_task_status(
-            task_id=task_id,
-            status="processing",
-            current_step=node_name,
-            roadmap_id=roadmap_id,
-        )
+        # ⚠️ human_review 节点有自己的状态管理（在节点函数内部直接设置 human_review_pending）
+        # 不能在这里设置 processing，否则会与节点内部的状态更新产生竞态条件，导致覆盖 human_review_pending
+        # 由于 LangGraph astream_events 的事件机制，on_chain_start 可能在节点执行完毕后才被消费，
+        # 届时 processing 会覆盖节点内部已设置的 human_review_pending
+        if node_name != "human_review":
+            await self._update_task_status(
+                task_id=task_id,
+                status="processing",
+                current_step=node_name,
+                roadmap_id=roadmap_id,
+            )
         
         # 2. 更新 live_step 缓存（Redis）
         await self._update_live_step(task_id, node_name)
         
         # 3. 发送 WebSocket 通知
+        # ✅ 方案 A：对 edit_plan_analysis/roadmap_edit 传递 edit_source，避免前端分支显示竞态
         await self._send_progress_notification(
             task_id=task_id,
             step=node_name,
             status="processing",
+            extra_data=extra_data,
         )
     
     async def on_node_complete(
@@ -286,6 +295,39 @@ class SideEffectCoordinator:
             node_name=node_name,
             error=error,
             duration_ms=duration_ms,
+        )
+    
+    async def on_workflow_interrupted_for_review(
+        self,
+        task_id: str,
+        roadmap_id: Optional[str] = None,
+    ) -> None:
+        """
+        工作流再次暂停在 human_review interrupt 时的副作用处理
+        
+        场景：用户拒绝审核后，工作流经过 edit_plan_analysis → roadmap_edit，
+        再次到达 human_review interrupt 点暂停等待下次审核。
+        此时 LangGraph 不会触发 human_review 的 on_chain_end 事件，
+        导致前端最后收到的是 roadmap_edit 完成通知，状态显示错误。
+        
+        修复：主动发送 human_review pending 通知，同步前端状态。
+        
+        Args:
+            task_id: 任务ID
+            roadmap_id: 路线图ID（可选）
+        """
+        logger.info(
+            "coordinator_interrupted_for_review",
+            task_id=task_id,
+            roadmap_id=roadmap_id,
+            message="工作流再次暂停在 human_review，主动推送状态通知给前端",
+        )
+        
+        # 发送 human_review human_review_pending 通知，告知前端工作流已暂停等待用户审核
+        await self._send_progress_notification(
+            task_id=task_id,
+            step="human_review",
+            status="human_review_pending",
         )
     
     async def on_workflow_complete(

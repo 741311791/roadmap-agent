@@ -5,6 +5,7 @@
 - 使用interrupt()暂停工作流，等待人工审核
 - 返回审核结果
 """
+import asyncio
 import structlog
 from datetime import datetime
 from langchain_core.runnables import RunnableConfig
@@ -148,40 +149,46 @@ async def human_review_node(
     task_id = state["task_id"]
     roadmap_id = state.get("roadmap_id")
     
+    # is_resume=True 代表这是 resume_after_human_review 触发的恢复执行。
+    # 在恢复场景中节点函数会被重新执行，但 interrupt() 会立刻返回 resume value，
+    # 此时写 human_review_pending 完全无意义（下一个节点立即接管），跳过以节省 ~500ms。
+    is_resume = config.get("configurable", {}).get("is_resume", False)
+    
     logger.info(
         "human_review_node_start",
         task_id=task_id,
         roadmap_id=roadmap_id,
+        is_resume=is_resume,
     )
     
-    # ✅ 每次进入 human_review 节点时，更新任务状态为 human_review_pending
-    # 这确保状态在每次循环回到 human_review 时都是正确的
-    from app.db.celery_session import get_celery_session
-    from app.crud.crud_task import get_task_crud
-    
-    try:
-        async with get_celery_session() as session:
-            task_crud = get_task_crud()
-            await task_crud.update_task_status(
-                session=session,
+    if not is_resume:
+        # 首次进入节点时写入 pending 状态，让前端/DB 感知工作流已暂停等待审核
+        from app.db.celery_session import get_celery_session
+        from app.crud.crud_task import get_task_crud
+        
+        try:
+            async with get_celery_session() as session:
+                task_crud = get_task_crud()
+                await task_crud.update_task_status(
+                    session=session,
+                    task_id=task_id,
+                    status="human_review_pending",
+                    current_step="human_review",
+                    roadmap_id=roadmap_id,
+                )
+            logger.info(
+                "human_review_status_updated",
                 task_id=task_id,
-                status="human_review_pending",
-                current_step="human_review",
                 roadmap_id=roadmap_id,
+                status="human_review_pending",
             )
-        logger.info(
-            "human_review_status_updated",
-            task_id=task_id,
-            roadmap_id=roadmap_id,
-            status="human_review_pending",
-        )
-    except Exception as e:
-        logger.error(
-            "human_review_status_update_failed",
-            task_id=task_id,
-            error=str(e),
-            exc_info=True,
-        )
+        except Exception as e:
+            logger.error(
+                "human_review_status_update_failed",
+                task_id=task_id,
+                error=str(e),
+                exc_info=True,
+            )
     
     # 使用interrupt()暂停工作流，等待人工审核
     # resume_value将由WorkflowExecutor.resume_after_human_review()提供
@@ -224,10 +231,14 @@ async def human_review_node(
             )
             
             # ✅ 步骤2：触发内容生成任务
-            celery_result = generate_all_content_task.delay(
-                roadmap_id=roadmap_id,
-                task_id=task_id,
-                user_id=user_id,
+            # 使用 asyncio.to_thread 避免 .delay() 同步阻塞事件循环
+            celery_result = await asyncio.to_thread(
+                generate_all_content_task.apply_async,
+                kwargs={
+                    "roadmap_id": roadmap_id,
+                    "task_id": task_id,
+                    "user_id": user_id,
+                },
             )
             
             # 保存 Celery 任务 ID 到数据库

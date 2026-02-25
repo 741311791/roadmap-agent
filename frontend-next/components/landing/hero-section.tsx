@@ -13,7 +13,7 @@
 import React from 'react';
 import { useTranslations } from 'next-intl';
 import { motion } from 'motion/react';
-import { WorkflowAnimation } from './workflow-animation';
+import { WorkflowAnimationSvg } from './workflow-animation-svg';
 import { WaitlistForm } from '@/components/ui/waitlist-form';
 import { joinWaitlist } from '@/lib/api/endpoints';
 
@@ -103,9 +103,9 @@ export function HeroSection() {
           initial={{ opacity: 0, x: 50 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 1, delay: 0.4 }}
-          className="relative lg:h-[600px] flex items-center justify-center lg:justify-end"
+          className="relative flex items-center justify-center lg:justify-end overflow-visible"
         >
-          <WorkflowAnimation />
+          <WorkflowAnimationSvg />
         </motion.div>
       </div>
     </section>
