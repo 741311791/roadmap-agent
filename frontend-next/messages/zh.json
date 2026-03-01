@@ -570,7 +570,27 @@
     "roleProductManager": "产品经理",
     "roleDesigner": "设计师",
     "roleDataScientist": "数据科学家",
-    "roleCareerChanger": "转行者"
+    "roleCareerChanger": "转行者",
+    "assessment": {
+      "title": "{technology} - {proficiency} 评估",
+      "progress": "进度：{answered} / {total} 题",
+      "completed": "已完成",
+      "inProgress": "进行中",
+      "levelBeginner": "初学",
+      "levelIntermediate": "中级",
+      "levelExpert": "专家",
+      "levelGeneral": "通用",
+      "typeMultiple": "多选",
+      "typeSingle": "单选",
+      "submit": "提交评估",
+      "evaluating": "评估中...",
+      "answerAllRequired": "请回答所有题目后再提交",
+      "viewLastAnalysis": "查看上次分析",
+      "available": "可用",
+      "generatingTitle": "正在生成评估题目",
+      "generatingDesc": "正在为 {technology} {proficiency} 级别创建自定义题库，这可能需要 1-2 分钟...",
+      "generatingClose": "您可以关闭此对话框稍后再回来。"
+    }
   },
   "roadmapsList": {
     "title": "我的学习旅程",

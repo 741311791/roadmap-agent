@@ -570,7 +570,27 @@
     "roleProductManager": "Product Manager",
     "roleDesigner": "Designer",
     "roleDataScientist": "Data Scientist",
-    "roleCareerChanger": "Career Changer"
+    "roleCareerChanger": "Career Changer",
+    "assessment": {
+      "title": "{technology} - {proficiency} Assessment",
+      "progress": "Progress: {answered} / {total} questions",
+      "completed": "Completed",
+      "inProgress": "In Progress",
+      "levelBeginner": "BEGINNER",
+      "levelIntermediate": "INTERMEDIATE",
+      "levelExpert": "EXPERT",
+      "levelGeneral": "GENERAL",
+      "typeMultiple": "Select All",
+      "typeSingle": "Choose One",
+      "submit": "Submit Assessment",
+      "evaluating": "Evaluating...",
+      "answerAllRequired": "Please answer all questions before submitting",
+      "viewLastAnalysis": "View Last Analysis",
+      "available": "Available",
+      "generatingTitle": "Generating Assessment Questions",
+      "generatingDesc": "Creating custom {technology} assessment for {proficiency} level. This may take 1-2 minutes...",
+      "generatingClose": "You can close this dialog and come back later."
+    }
   },
   "roadmapsList": {
     "title": "My Learning Journeys",

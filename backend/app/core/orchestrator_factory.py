@@ -181,8 +181,19 @@ class OrchestratorFactory:
             # 使用连接池创建 AsyncPostgresSaver
             cls._checkpointer = AsyncPostgresSaver(cls._connection_pool)
             
-            # 设置 checkpointer 表
-            await cls._checkpointer.setup()
+            # 初始化 checkpointer 表结构
+            # UniqueViolation 表示迁移记录已存在（重新部署场景），属于正常幂等行为，直接跳过
+            try:
+                await cls._checkpointer.setup()
+            except Exception as setup_err:
+                from psycopg.errors import UniqueViolation
+                if isinstance(setup_err, UniqueViolation):
+                    logger.info(
+                        "checkpointer_setup_skipped",
+                        reason="checkpoint_migrations 已存在，跳过重复迁移",
+                    )
+                else:
+                    raise
             
             logger.info(
                 "orchestrator_factory_initialized",

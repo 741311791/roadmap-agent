@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useTranslations } from 'next-intl';
 import {
   Dialog,
   DialogContent,
@@ -8,7 +9,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Loader2, History, Sparkles } from 'lucide-react';
+import { Loader2, History } from 'lucide-react';
 import { getTechAssessment, evaluateTechAssessment, getUserProfile, getCustomTechAssessment } from '@/lib/api/endpoints';
 import { AssessmentQuestions } from './assessment-questions';
 import { AssessmentResult } from './assessment-result';
@@ -43,6 +44,7 @@ export function TechAssessmentDialog({
 }: TechAssessmentDialogProps) {
   const { getUserId } = useAuthStore();
   const userId = getUserId();
+  const t = useTranslations('profile.assessment');
 
   const [assessment, setAssessment] = useState<TechAssessment | null>(null);
   const [answers, setAnswers] = useState<Record<number, string>>({});
@@ -223,13 +225,13 @@ export function TechAssessmentDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={handleClose}>
-        <DialogContent className="w-[95vw] max-w-4xl max-h-[90vh] overflow-y-auto p-4 sm:p-6">
+        <DialogContent className="w-[95vw] max-w-4xl max-h-[90vh] overflow-x-hidden overflow-y-auto p-4 sm:p-6">
           <DialogHeader>
-            <DialogTitle className="text-xl sm:text-2xl font-serif break-words">
-              {technology} - {proficiency} Assessment
+            <DialogTitle className="text-base sm:text-xl font-serif break-words pr-8 leading-snug">
+              {t('title', { technology, proficiency })}
             </DialogTitle>
             
-            {/* View historical report button - 放在标题下方，避免与关闭按钮冲突 */}
+            {/* 查看历史报告按钮 - 放在标题下方，避免与关闭按钮冲突 */}
             {historicalAnalysis && !result && !analysisResult && (
               <div className="mt-3">
                 <Button
@@ -240,9 +242,9 @@ export function TechAssessmentDialog({
                   className="gap-2 border-sage-300 text-sage-700 hover:bg-sage-50 hover:border-sage-400 font-medium shadow-sm"
                 >
                   <History className="w-4 h-4" />
-                  View Last Analysis
+                  {t('viewLastAnalysis')}
                   <span className="ml-1 px-1.5 py-0.5 rounded-md bg-sage-100 text-xs text-sage-700">
-                    Available
+                    {t('available')}
                   </span>
                 </Button>
               </div>
@@ -258,13 +260,13 @@ export function TechAssessmentDialog({
               <Loader2 className="w-12 h-12 animate-spin text-sage-600 mx-auto" />
               <div className="space-y-2">
                 <p className="text-lg font-medium text-charcoal">
-                  Generating Assessment Questions
+                  {t('generatingTitle')}
                 </p>
                 <p className="text-sm text-muted-foreground max-w-md mx-auto">
-                  {generationMessage || `Creating custom ${technology} assessment for ${proficiency} level. This may take 1-2 minutes...`}
+                  {generationMessage || t('generatingDesc', { technology, proficiency })}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  You can close this dialog and come back later.
+                  {t('generatingClose')}
                 </p>
               </div>
             </div>

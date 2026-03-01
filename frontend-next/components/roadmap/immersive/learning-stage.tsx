@@ -20,6 +20,8 @@ import {
   Mic,
   Network,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   Lock,
   ExternalLink,
   Video,
@@ -224,34 +226,47 @@ function TableOfContents({
 /**
  * DynamicHeader - 动态视觉头部组件
  * 展示概念的标题、描述和预估时间，带有优雅的渐变背景
+ *
+ * 布局策略：
+ * - 所有内容共用同一个卡片容器，背景渐变天然覆盖展开区域
+ * - 头部固定高度 h-48/h-56，内容贴底排列
+ * - 展开区域是容器内的第二个 block，通过 max-height 动画向下延伸
+ * - 折叠时副标题渐变淡出，右下角显示"更多"浮动按钮
  */
 function DynamicHeader({ concept }: { concept: Concept }) {
   const t = useTranslations('roadmapDetail');
-  
+  const [isExpanded, setIsExpanded] = useState(false);
+
   return (
-    <div className="relative w-full h-48 md:h-56 rounded-xl overflow-hidden mb-6 border border-sage-200 shadow-sm">
-      {/* Sage Gradient Background */}
-      <div 
+    <div className="relative w-full rounded-xl overflow-hidden mb-6 border border-sage-200 shadow-sm">
+      {/* 背景渐变：absolute inset-0 覆盖整个卡片（含展开区域） */}
+      <div
         className="absolute inset-0"
         style={{
           background: 'linear-gradient(135deg, hsl(140 25% 88%) 0%, hsl(140 20% 92%) 40%, hsl(40 20% 96%) 100%)'
         }}
       />
       <div className="absolute inset-0 bg-noise opacity-[0.03]" />
-      
-      {/* Subtle Decorative Shapes */}
-      <div 
+
+      {/* 装饰光晕 */}
+      <div
         className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-48 rounded-full blur-3xl opacity-40"
         style={{ backgroundColor: 'hsl(140 25% 80%)' }}
       />
-      <div 
+      <div
         className="absolute top-1/4 right-1/4 w-32 h-32 rounded-full blur-2xl opacity-30"
         style={{ backgroundColor: 'hsl(40 30% 88%)' }}
       />
-      
-      {/* Content */}
-      <div className="relative z-10 h-full flex flex-col justify-end p-6 md:p-8">
-        <div className="flex items-center gap-3 mb-3">
+
+      {/* 内容区：折叠时固定高度，展开时自动撑高 */}
+      <div
+        className={cn(
+          'relative z-10 flex flex-col justify-end p-5 md:p-6',
+          isExpanded ? 'min-h-48 md:min-h-56' : 'h-48 md:h-56'
+        )}
+      >
+        {/* 标签行 */}
+        <div className="flex items-center gap-3 mb-2">
           <span className="px-3 py-1 rounded-full bg-sage-600 text-[10px] uppercase tracking-widest text-white font-medium">
             {t('interactiveLesson')}
           </span>
@@ -262,13 +277,59 @@ function DynamicHeader({ concept }: { concept: Concept }) {
             </span>
           )}
         </div>
-        <h1 className="text-3xl md:text-4xl font-serif font-bold text-foreground tracking-tight mb-2">
+
+        {/* 主标题：最多 2 行 */}
+        <h1 className="text-2xl md:text-3xl font-serif font-bold text-foreground tracking-tight mb-2 line-clamp-2">
           {stripRoadmapPrefix(concept.name)}
         </h1>
-        <p className="text-muted-foreground text-sm max-w-2xl line-clamp-2 leading-relaxed">
-          {concept.description}
-        </p>
+
+        {/* 副标题：折叠时渐变淡出 + 右侧留位给"更多"按钮，展开时完整显示 */}
+        {isExpanded ? (
+          <div>
+            <p className="text-muted-foreground text-sm leading-relaxed">
+              {concept.description}
+            </p>
+            <button
+              onClick={() => setIsExpanded(false)}
+              className="flex items-center gap-1 text-xs text-sage-600 hover:text-sage-700 font-medium mt-3 transition-colors"
+            >
+              <ChevronUp className="w-3 h-3" />
+              收起
+            </button>
+          </div>
+        ) : (
+          <div
+            className="overflow-hidden pr-16"
+            style={{
+              height: '2.5rem',
+              WebkitMaskImage: 'linear-gradient(to bottom, black 30%, transparent 100%)',
+              maskImage: 'linear-gradient(to bottom, black 30%, transparent 100%)',
+            }}
+          >
+            <p className="text-muted-foreground text-sm leading-relaxed">
+              {concept.description}
+            </p>
+          </div>
+        )}
       </div>
+
+      {/* "更多"浮动按钮：右下角，折叠时显示 */}
+      {!isExpanded && (
+        <button
+          onClick={() => setIsExpanded(true)}
+          className={cn(
+            'absolute bottom-4 right-4 z-20 flex items-center gap-1',
+            'text-[11px] text-sage-700 font-medium',
+            'bg-white/50 backdrop-blur-sm px-2.5 py-1 rounded-full',
+            'border border-sage-300/60 hover:bg-white/70 hover:border-sage-400/60',
+            'transition-all duration-200 shadow-sm',
+          )}
+          aria-label="展开完整描述"
+        >
+          更多
+          <ChevronDown className="w-3 h-3" />
+        </button>
+      )}
     </div>
   );
 }
