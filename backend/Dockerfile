@@ -40,7 +40,7 @@ COPY ./scripts/railway_entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 # 使用 entrypoint 脚本，根据 SERVICE_TYPE 环境变量决定启动哪个服务
-# SERVICE_TYPE 可选值：api, celery_logs, celery_content
+# SERVICE_TYPE 可选值：api, celery_worker, celery_content_worker, celery_beat, flower
 ENTRYPOINT ["/app/entrypoint.sh"]
 
 
