@@ -2,10 +2,11 @@
 
 /**
  * Features 区域组件
- * 
+ *
  * 特点：
- * - 左侧自动轮播的特性列表（类似 feature-1 设计）
+ * - 左侧自动轮播的 5 个特性列表，每个特性与工作流节点 1:1 对应
  * - 激活项显示完整描述，非激活项只显示标题
+ * - 顶部工作流演示指示器与轮播状态联动
  * - 右侧展示对应的交互卡片
  * - 支持自动轮播和手动切换
  */
@@ -13,18 +14,21 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslations } from 'next-intl';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Target, 
-  BookOpen, 
-  RefreshCw, 
-  Lightbulb
+import {
+  Target,
+  Layers,
+  ShieldCheck,
+  UserCheck,
+  BookOpen,
 } from 'lucide-react';
 import {
   IntentAnalysisCard,
   RoadmapCard,
-  QuizCard,
-  ResourceCard,
+  ValidationCard,
+  HumanReviewCard,
+  ContentGenerationCard,
 } from './feature-cards';
+import { WorkflowDemoLanding } from './workflow-demo';
 
 interface Feature {
   id: string;
@@ -34,33 +38,10 @@ interface Feature {
   card: React.ComponentType;
 }
 
-const featuresList: Omit<Feature, 'titleKey' | 'descriptionKey'>[] = [
-  {
-    id: 'identify-gaps',
-    icon: Target,
-    card: IntentAnalysisCard,
-  },
-  {
-    id: 'structured-path',
-    icon: BookOpen,
-    card: RoadmapCard,
-  },
-  {
-    id: 'learn-by-doing',
-    icon: RefreshCw,
-    card: QuizCard,
-  },
-  {
-    id: 'iterate-improve',
-    icon: Lightbulb,
-    card: ResourceCard,
-  },
-];
-
 export function FeaturesSection() {
   const t = useTranslations('features');
   const tHero = useTranslations('hero');
-  
+
   const features: Feature[] = [
     {
       id: 'identify-gaps',
@@ -71,24 +52,31 @@ export function FeaturesSection() {
     },
     {
       id: 'structured-path',
-      icon: BookOpen,
+      icon: Layers,
       titleKey: 'structuredPathTitle',
       descriptionKey: 'structuredPathDesc',
       card: RoadmapCard,
     },
     {
-      id: 'learn-by-doing',
-      icon: RefreshCw,
-      titleKey: 'learnByDoingTitle',
-      descriptionKey: 'learnByDoingDesc',
-      card: QuizCard,
+      id: 'structure-validate',
+      icon: ShieldCheck,
+      titleKey: 'structureValidateTitle',
+      descriptionKey: 'structureValidateDesc',
+      card: ValidationCard,
     },
     {
-      id: 'iterate-improve',
-      icon: Lightbulb,
-      titleKey: 'iterateImproveTitle',
-      descriptionKey: 'iterateImproveDesc',
-      card: ResourceCard,
+      id: 'human-review',
+      icon: UserCheck,
+      titleKey: 'humanReviewTitle',
+      descriptionKey: 'humanReviewDesc',
+      card: HumanReviewCard,
+    },
+    {
+      id: 'content-generation',
+      icon: BookOpen,
+      titleKey: 'contentGenerationTitle',
+      descriptionKey: 'contentGenerationDesc',
+      card: ContentGenerationCard,
     },
   ];
   
@@ -105,7 +93,7 @@ export function FeaturesSection() {
         const nextIndex = (currentIndex + 1) % features.length;
         return features[nextIndex].id;
       });
-    }, 5000); // 每5秒切换
+    }, 2000); // 每2秒切换
 
     return () => clearInterval(interval);
   }, [isPaused]);
@@ -136,14 +124,32 @@ export function FeaturesSection() {
           </motion.div>
         </div>
 
+        {/* 工作流演示 + 内容区域：整块悬停均暂停轮播 */}
+        <div
+          onMouseEnter={() => setIsPaused(true)}
+          onMouseLeave={() => setIsPaused(false)}
+        >
+          {/* 工作流进度演示指示器 */}
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.5, delay: 0.1 }}
+            className="mb-12 bg-muted/40 border border-border rounded-2xl overflow-hidden"
+          >
+            <WorkflowDemoLanding
+              activeFeatureId={activeFeature}
+              onNodeSelect={(featureId) => {
+                setActiveFeature(featureId);
+                setIsPaused(true);
+              }}
+            />
+          </motion.div>
+
         {/* 内容区域 */}
         <div className="grid lg:grid-cols-2 gap-16 items-start">
-          {/* 左侧：特性列表 - 带自动轮播 */}
-          <div 
-            className="relative space-y-0"
-            onMouseEnter={() => setIsPaused(true)}
-            onMouseLeave={() => setIsPaused(false)}
-          >
+          {/* 左侧：特性列表 */}
+          <div className="relative space-y-0">
             {/* 垂直指示线 */}
             <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-border" />
 
@@ -252,6 +258,7 @@ export function FeaturesSection() {
             </AnimatePresence>
           </div>
         </div>
+        </div>{/* 结束：整块悬停暂停容器 */}
       </div>
     </section>
   );
