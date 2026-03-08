@@ -1113,6 +1113,9 @@
     "motivationPlaceholder": "e.g., Career change, side project, personal interest...",
     "back": "Back",
     "generating": "Generating...",
-    "generateRoadmap": "Generate Roadmap"
+    "generateRoadmap": "Generate Roadmap",
+    "turboMode": "Turbo Mode",
+    "turboModeOn": "ON",
+    "turboModeDesc": "Skip structure validation — faster generation, straight to review"
   }
 }

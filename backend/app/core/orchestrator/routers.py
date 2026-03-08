@@ -26,6 +26,41 @@ class WorkflowRouter:
         """
         self.config = config
     
+    def route_after_curriculum(self, state: RoadmapState) -> str:
+        """
+        课程设计后的路由逻辑
+        
+        路由规则：
+        1. 极速模式（turbo_mode=True）→ 跳过结构验证，直接进入人工审核（或结束）
+        2. 普通模式（turbo_mode=False）→ 进入结构验证
+        
+        Returns:
+            下一个节点名称：
+            - "structure_validation": 结构验证
+            - "human_review": 人工审核
+            - "end": 结束
+        """
+        user_request = state.get("user_request")
+        turbo_mode = getattr(user_request, "turbo_mode", True) if user_request else True
+        
+        if turbo_mode:
+            logger.info(
+                "turbo_mode_skip_validation",
+                task_id=state["task_id"],
+                message="极速模式：跳过结构验证，直接进入人工审核",
+            )
+            if not self.config.skip_human_review:
+                return "human_review"
+            else:
+                return "end"
+        
+        logger.info(
+            "normal_mode_enter_validation",
+            task_id=state["task_id"],
+            message="普通模式：进入结构验证",
+        )
+        return "structure_validation"
+    
     def route_after_validation(self, state: RoadmapState) -> str:
         """
         验证后的路由逻辑

@@ -36,5 +36,9 @@ export type TaskStatusDetailResponse = {
      * 错误信息
      */
     error_message?: (string | null);
+    /**
+     * 是否为极速模式（跳过结构验证）
+     */
+    turbo_mode?: (boolean | null);
 };
 

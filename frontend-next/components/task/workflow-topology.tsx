@@ -342,6 +342,8 @@ interface WorkflowTopologyProps {
   selectedNodeId?: string | null;
   /** 节点选择回调 */
   onNodeSelect?: (nodeId: string | null) => void;
+  /** 是否为极速模式（跳过结构验证节点） */
+  turboMode?: boolean;
 }
 
 // ============================================================================
@@ -362,6 +364,7 @@ export function WorkflowTopology({
   onHumanReviewComplete,
   selectedNodeId = null,
   onNodeSelect,
+  turboMode = true,
 }: WorkflowTopologyProps) {
   const t = useTranslations('taskDetail');
   
@@ -372,13 +375,16 @@ export function WorkflowTopology({
   const [reviewError, setReviewError] = useState<string | null>(null);
   
   // 动态翻译主路节点（组件内使用的翻译版本）
-  const mainStagesTranslated: WorkflowNode[] = useMemo(() => MAIN_STAGES_KEYS.map(stage => ({
-    id: stage.id,
-    label: t(stage.labelKey as any),
-    shortLabel: t(stage.shortLabelKey as any),
-    description: t(stage.descriptionKey as any),
-    steps: stage.steps,
-  })), [t]);
+  // 极速模式下过滤掉 validate（structure_validation）节点，避免产生疑问
+  const mainStagesTranslated: WorkflowNode[] = useMemo(() => MAIN_STAGES_KEYS
+    .filter(stage => !(turboMode && stage.id === 'validate'))
+    .map(stage => ({
+      id: stage.id,
+      label: t(stage.labelKey as any),
+      shortLabel: t(stage.shortLabelKey as any),
+      description: t(stage.descriptionKey as any),
+      steps: stage.steps,
+    })), [t, turboMode]);
   
   // 动态翻译验证分支（组件内使用的翻译版本）
   const validationBranchTranslated: WorkflowBranch = useMemo(() => ({

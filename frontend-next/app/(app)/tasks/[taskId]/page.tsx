@@ -1148,6 +1148,7 @@ export default function TaskDetailPage() {
           onHumanReviewComplete={handleHumanReviewComplete}
           selectedNodeId={selectedNodeId}
           onNodeSelect={setSelectedNodeId}
+          turboMode={taskInfo.turbo_mode ?? true}
         />
 
         {/* 2. Core Display Area（需求分析 + 路线图） */}
