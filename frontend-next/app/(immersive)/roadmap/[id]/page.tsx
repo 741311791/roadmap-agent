@@ -16,13 +16,18 @@ import { useRoadmap } from '@/lib/hooks/api/use-roadmap';
 import { useTutorial } from '@/lib/hooks/api/use-tutorial';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import { useAuthStore } from '@/lib/store/auth-store';
+import { MentorSidebar } from '@/components/chat/mentor-sidebar';
+import {
+  MentorRuntimeProvider,
+  type MentorAgentMode,
+} from '@/lib/runtime/mentor-runtime-provider';
 import { 
   getRoadmapActiveTask,
   getUserProfile,
   getRoadmapProgress
 } from '@/lib/api/endpoints';
 import type { RoadmapFramework, Concept, Stage, Module, LearningPreferences } from '@/types/generated/models';
-import { Loader2, AlertCircle, ArrowLeft, Menu } from 'lucide-react';
+import { Loader2, AlertCircle, Menu, Bot } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
@@ -79,6 +84,8 @@ export default function RoadmapDetailPage() {
 
   // UI State - 抽屉状态
   const [isKnowledgeRailOpen, setIsKnowledgeRailOpen] = useState(false);
+  const [isMentorChatOpen, setIsMentorChatOpen] = useState(false);
+  const [mentorAgentMode, setMentorAgentMode] = useState<MentorAgentMode>('companion');
 
   // 1. Sync Roadmap Data to Store
   useEffect(() => {
@@ -311,7 +318,7 @@ export default function RoadmapDetailPage() {
           />
 
           {/* CENTER: Learning Stage */}
-          <ResizablePanel defaultSize={55} className="min-w-[320px]">
+          <ResizablePanel defaultSize={isMentorChatOpen ? 50 : 80} className="min-w-[320px]">
             <LearningStage
               concept={getActiveConcept()}
               tutorialContent={tutorialData?.full_content}
@@ -332,17 +339,46 @@ export default function RoadmapDetailPage() {
             />
           </ResizablePanel>
 
-          <ResizableHandle 
-            withHandle 
-            className={cn(
-              "w-px bg-border hidden md:block",
-              "hover:bg-sage-300 transition-colors duration-200",
-              "data-[resize-handle-active]:bg-sage-400"
-            )} 
-          />
+          {isMentorChatOpen && (
+            <>
+              <ResizableHandle 
+                withHandle 
+                className={cn(
+                  "w-px bg-border hidden md:block",
+                  "hover:bg-sage-300 transition-colors duration-200",
+                  "data-[resize-handle-active]:bg-sage-400"
+                )} 
+              />
+              <ResizablePanel defaultSize={30} minSize={25} maxSize={45}>
+                <MentorRuntimeProvider
+                  roadmapId={roadmapId}
+                  conceptId={selectedConceptId}
+                  agentMode={mentorAgentMode}
+                >
+                  <MentorSidebar
+                    roadmapId={roadmapId}
+                    conceptId={selectedConceptId}
+                    agentMode={mentorAgentMode}
+                    onAgentModeChange={setMentorAgentMode}
+                    onClose={() => setIsMentorChatOpen(false)}
+                  />
+                </MentorRuntimeProvider>
+              </ResizablePanel>
+            </>
+          )}
 
         </ResizablePanelGroup>
       </div>
+
+      {!isMentorChatOpen && (
+        <Button
+          className="fixed right-4 bottom-6 shadow-lg z-50"
+          onClick={() => setIsMentorChatOpen(true)}
+        >
+          <Bot className="w-4 h-4 mr-2" />
+          AI 助手
+        </Button>
+      )}
     </div>
   );
 }

@@ -227,6 +227,14 @@ class Settings(BaseSettings):
     QUIZ_MODEL: str = Field("gpt-4o-mini", description="模型名称")
     QUIZ_BASE_URL: str | None = None
     QUIZ_API_KEY: str = Field("your_openai_api_key_here", description="API 密钥")
+
+    # A7: Mentor Agent (伴学/导学双模式)
+    MENTOR_PROVIDER: str = Field("openai", description="Mentor 模型提供商")
+    MENTOR_MODEL: str = Field("gpt-4o-mini", description="Mentor 模型名称")
+    MENTOR_BASE_URL: str | None = Field(None, description="Mentor 自定义 API 端点")
+    MENTOR_API_KEY: str = Field("your_openai_api_key_here", description="Mentor API 密钥")
+    MENTOR_TEMPERATURE: float = Field(0.3, description="Mentor 模型温度")
+    MENTOR_MAX_CONTEXT_MESSAGES: int = Field(12, description="Mentor 上下文最大消息数")
     
     # ==================== Modifier Agents 配置（内容修改）====================
     # 测验修改师（Quiz Modifier）

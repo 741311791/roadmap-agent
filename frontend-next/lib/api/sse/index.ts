@@ -3,3 +3,4 @@
  */
 
 export * from './chat-sse';
+export * from './mentor-sse-adapter';
