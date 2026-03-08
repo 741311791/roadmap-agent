@@ -372,7 +372,7 @@ export function NodeDetailPanel({
                   <div>
                     <p className="text-sm font-medium text-foreground tracking-[-0.006em]">No Data Available</p>
                     <p className="text-xs text-muted-foreground mt-1 tracking-[-0.006em]">
-                      This step hasn't been executed yet.
+                      This step hasn&apos;t been executed yet.
                     </p>
                   </div>
                 </div>

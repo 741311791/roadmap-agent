@@ -84,7 +84,7 @@ export function ReviewStatusCard({ logType, details }: ReviewStatusCardProps) {
           {details.user_feedback && (
             <div className="mt-2 p-2 bg-white rounded border text-xs">
               <div className="text-muted-foreground mb-1">Your feedback:</div>
-              <p className="text-foreground italic">"{details.user_feedback}"</p>
+              <p className="text-foreground italic">&ldquo;{details.user_feedback}&rdquo;</p>
             </div>
           )}
         </CardContent>
@@ -109,7 +109,7 @@ export function ReviewStatusCard({ logType, details }: ReviewStatusCardProps) {
           {details.user_feedback && (
             <div className="p-2 bg-white rounded border text-xs">
               <div className="text-muted-foreground mb-1">Your feedback:</div>
-              <p className="text-foreground italic">"{details.user_feedback}"</p>
+              <p className="text-foreground italic">&ldquo;{details.user_feedback}&rdquo;</p>
             </div>
           )}
           <p className="text-xs text-muted-foreground">

@@ -35,8 +35,8 @@ export function parseContentGenerationStatus(
   
   // 2. 遍历路线图框架，为每个 concept 初始化状态
   for (const stage of roadmapFramework.stages) {
-    for (const module of stage.modules) {
-      for (const concept of module.concepts) {
+    for (const mod of stage.modules) {
+      for (const concept of mod.concepts) {
         conceptStatusMap.set(concept.concept_id, {
           concept_id: concept.concept_id,
           concept_name: concept.name,
@@ -131,14 +131,14 @@ function buildHierarchicalStatus(
     let stageCompletedConcepts = 0;
     let stageFailedConcepts = 0;
     
-    for (const module of stage.modules) {
+    for (const mod of stage.modules) {
       const concepts: ConceptGenerationStatus[] = [];
       
       let moduleTotalConcepts = 0;
       let moduleCompletedConcepts = 0;
       let moduleFailedConcepts = 0;
       
-      for (const concept of module.concepts) {
+      for (const concept of mod.concepts) {
         const conceptStatus = conceptStatusMap.get(concept.concept_id);
         if (!conceptStatus) continue;
         
@@ -158,8 +158,8 @@ function buildHierarchicalStatus(
       }
       
       modules.push({
-        module_id: module.module_id,
-        module_name: module.name,
+        module_id: mod.module_id,
+        module_name: mod.name,
         concepts,
         total_concepts: moduleTotalConcepts,
         completed_concepts: moduleCompletedConcepts,

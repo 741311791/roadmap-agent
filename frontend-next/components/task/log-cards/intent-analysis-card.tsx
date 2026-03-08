@@ -44,7 +44,7 @@ export function IntentAnalysisCard({ outputSummary }: IntentAnalysisCardProps) {
       <CardHeader className="pb-3">
         <CardTitle className="text-sm flex items-center gap-2">
           <Lightbulb className="w-4 h-4 text-sage-600" />
-          AI's Understanding
+          AI&apos;s Understanding
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4 text-sm">

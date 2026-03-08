@@ -58,9 +58,9 @@ export function KnowledgeRail({
     
     const moduleIds = new Set<string>();
     for (const stage of roadmap.stages) {
-      for (const module of stage.modules) {
-        if (module.concepts.some(c => c.concept_id === activeConceptId)) {
-          moduleIds.add(module.module_id);
+      for (const mod of stage.modules) {
+        if (mod.concepts.some(c => c.concept_id === activeConceptId)) {
+          moduleIds.add(mod.module_id);
         }
       }
     }
