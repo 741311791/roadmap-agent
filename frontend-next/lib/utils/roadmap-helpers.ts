@@ -39,9 +39,9 @@ export function findConceptById(
   
   for (const stage of roadmap.stages) {
     if (!stage.modules) continue;
-    for (const module of stage.modules) {
-      if (!module.concepts) continue;
-      const concept = module.concepts.find(c => c.concept_id === conceptId);
+    for (const mod of stage.modules) {
+      if (!mod.concepts) continue;
+      const concept = mod.concepts.find(c => c.concept_id === conceptId);
       if (concept) return concept;
     }
   }
@@ -62,9 +62,9 @@ export function getAllConceptIds(roadmap: RoadmapFramework | null): string[] {
   
   for (const stage of roadmap.stages) {
     if (!stage.modules) continue;
-    for (const module of stage.modules) {
-      if (!module.concepts) continue;
-      conceptIds.push(...module.concepts.map(c => c.concept_id));
+    for (const mod of stage.modules) {
+      if (!mod.concepts) continue;
+      conceptIds.push(...mod.concepts.map(c => c.concept_id));
     }
   }
   

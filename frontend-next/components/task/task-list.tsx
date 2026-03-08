@@ -34,6 +34,7 @@ interface TaskListProps {
 
 export function TaskList({ tasks, isLoading, onRetry, onDelete, onCancel }: TaskListProps) {
   const t = useTranslations('taskList');
+  const tCommon = useTranslations('common');
   const [selectedErrorLog, setSelectedErrorLog] = useState<{
     title: string;
     message: string;
@@ -137,7 +138,6 @@ export function TaskList({ tasks, isLoading, onRetry, onDelete, onCancel }: Task
   }
 
   if (tasks.length === 0) {
-    const tCommon = useTranslations('common');
     return (
       <EmptyState
         icon={ListTodo}

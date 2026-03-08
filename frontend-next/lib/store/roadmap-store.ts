@@ -199,8 +199,8 @@ const storeImplementation = (set: any, get: any): RoadmapStore => ({
 
             // 查找并更新概念
             for (const stage of updatedRoadmap.stages) {
-              for (const module of stage.modules) {
-                const concept = module.concepts.find(
+              for (const mod of stage.modules) {
+                const concept = mod.concepts.find(
                   (c) => c.concept_id === conceptId
                 );
                 if (concept) {
