@@ -14,5 +14,9 @@ export type UserRequest = {
      * 额外补充信息
      */
     additional_context?: (string | null);
+    /**
+     * 极速模式：跳过结构验证节点，Curriculum Design 后直接进入 Human Review
+     */
+    turbo_mode?: boolean;
 };
 

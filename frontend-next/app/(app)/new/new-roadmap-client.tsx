@@ -30,7 +30,9 @@ import {
   Headphones,
   Wrench,
   Languages,
+  Zap,
 } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
 import { getUserProfile, getRoadmapStatus, type UserProfileData, type TaskStatusResponse } from '@/lib/api/endpoints';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import { useRoadmapGeneration } from '@/lib/hooks/api/use-roadmap-generation';
@@ -50,6 +52,7 @@ interface FormData {
   contentPreferences: string[];
   primaryLanguage: string;
   secondaryLanguage: string | null;
+  turboMode: boolean;
 }
 
 const contentOptions = [
@@ -121,6 +124,7 @@ export default function NewRoadmapClient() {
     contentPreferences: ['visual', 'text'],
     primaryLanguage: 'en',
     secondaryLanguage: null,
+    turboMode: true,
   });
 
   // Use new Hooks
@@ -265,6 +269,7 @@ export default function NewRoadmapClient() {
     const request: UserRequest = {
       user_id: userId,
       session_id: sessionId,
+      turbo_mode: formData.turboMode,
       preferences: {
         learning_goal: formData.learningGoal,
         available_hours_per_week: formData.availableHours,
@@ -611,6 +616,36 @@ export default function NewRoadmapClient() {
                 }
                 placeholder={t('newRoadmap.motivationPlaceholder')}
                 className="w-full min-h-[80px] p-4 rounded-lg border border-input bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </div>
+
+            {/* Turbo Mode 开关 */}
+            <div className={`flex items-center justify-between p-4 rounded-lg border transition-colors ${
+              formData.turboMode ? 'border-sage-300 bg-sage-50' : 'border-border bg-muted/30'
+            }`}>
+              <div className="flex items-start gap-3">
+                <div className={`mt-0.5 p-1.5 rounded-md ${formData.turboMode ? 'bg-sage-100 text-sage-600' : 'bg-muted text-muted-foreground'}`}>
+                  <Zap className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="text-sm font-medium flex items-center gap-1.5">
+                    {t('newRoadmap.turboMode')}
+                    {formData.turboMode && (
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-sage-100 text-sage-700">
+                        {t('newRoadmap.turboModeOn')}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {t('newRoadmap.turboModeDesc')}
+                  </p>
+                </div>
+              </div>
+              <Switch
+                checked={formData.turboMode}
+                onCheckedChange={(checked) =>
+                  setFormData({ ...formData, turboMode: checked })
+                }
               />
             </div>
 

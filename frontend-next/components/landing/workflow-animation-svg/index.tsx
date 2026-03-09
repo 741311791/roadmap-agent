@@ -123,15 +123,67 @@ export function WorkflowAnimationSvg() {
         <div className="absolute bottom-1/3 right-1/3 w-64 h-64 bg-primary/5 rounded-full blur-[100px] mix-blend-multiply animate-pulse-slow delay-1000" />
       </div>
 
+      {/* ═══════════════════════════════════════════════════════════════
+          移动端：纯 DOM 垂直布局（避免 SVG foreignObject 在 WebKit 中的渲染偏差）
+      ═══════════════════════════════════════════════════════════════ */}
+      <div className="lg:hidden flex flex-col gap-4 max-w-sm mx-auto">
+        <InputCard step={step} t={t} />
+
+        <AnimatePresence>
+          {step >= 3 && (
+            <motion.div
+              className="flex flex-col gap-3 pl-4 border-l-2 border-sage/30 ml-4"
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.5 }}
+            >
+              {treeData.map((branch) => {
+                const Icon = branch.icon;
+                return (
+                  <motion.div
+                    key={branch.id}
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -10 }}
+                    transition={{ delay: branch.delay, duration: 0.4 }}
+                    className="flex flex-col gap-2"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-7 h-7 rounded-full bg-sage/10 flex items-center justify-center text-sage shrink-0">
+                        <Icon className="w-3.5 h-3.5" />
+                      </div>
+                      <span className="text-sm font-medium text-gray-800">{branch.label}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 pl-9">
+                      {branch.children.map((child) => (
+                        <motion.span
+                          key={child.id}
+                          initial={{ opacity: 0, scale: 0.8 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          transition={{ delay: child.delay, duration: 0.3 }}
+                          className="text-xs bg-sage/10 text-sage-700 px-2.5 py-1 rounded-full font-medium"
+                        >
+                          {child.label}
+                        </motion.span>
+                      ))}
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
       {/*
-        SVG 主画布
-        - w-full h-auto：自动根据父容器宽度等比例缩放
+        桌面端：SVG 主画布
         - viewBox：定义虚拟坐标空间，浏览器原生处理缩放（GPU 加速）
         - overflow-visible：允许庆祝粒子溢出画布边界
       */}
       <svg
         viewBox="0 50 770 680"
-        className="relative w-full h-auto"
+        className="relative w-full h-auto hidden lg:block"
         style={{ overflow: 'visible' }}
       >
         {/* ═══════════════════════════════════════════════════════════════

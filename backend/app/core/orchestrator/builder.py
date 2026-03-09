@@ -153,16 +153,27 @@ class WorkflowBuilder:
         """
         定义工作流边（流程控制）
         
-        简化后的流程（所有核心节点始终执行）：
-        intent_analysis → curriculum_design → structure_validation 
-        → [验证循环] → human_review（可选） → content_generation → END
+        简化后的流程：
+        - 极速模式：intent_analysis → curriculum_design → human_review（可选）→ END
+        - 普通模式：intent_analysis → curriculum_design → structure_validation 
+          → [验证循环] → human_review（可选） → END
         """
         # 设置入口点
         workflow.set_entry_point("intent_analysis")
         
-        # 固定边：Intent → Curriculum → Validation
+        # 固定边：Intent → Curriculum
         workflow.add_edge("intent_analysis", "curriculum_design")
-        workflow.add_edge("curriculum_design", "structure_validation")
+        
+        # 课程设计后的条件路由：极速模式直接进入 human_review，普通模式进入 structure_validation
+        workflow.add_conditional_edges(
+            "curriculum_design",
+            self.router.route_after_curriculum,
+            {
+                "structure_validation": "structure_validation",
+                "human_review": "human_review" if not self.config.skip_human_review else END,
+                "end": END,
+            },
+        )
         
         # 结构验证后的条件路由
         workflow.add_conditional_edges(

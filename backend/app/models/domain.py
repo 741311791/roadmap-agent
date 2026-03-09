@@ -103,6 +103,7 @@ class UserRequest(BaseModel):
     session_id: str
     preferences: LearningPreferences
     additional_context: Optional[str] = Field(None, description="额外补充信息")
+    turbo_mode: bool = Field(True, description="极速模式：跳过结构验证节点，Curriculum Design 后直接进入 Human Review")
 
 
 # ============================================================

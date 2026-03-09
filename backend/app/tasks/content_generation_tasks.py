@@ -308,11 +308,21 @@ def generate_all_content_task(
                 task_id=task_id,
                 roadmap_id=roadmap_id,
             )
-            return {
+            empty_result = {
                 "status": "completed",
                 "total_concepts": 0,
+                "successful_count": 0,
+                "failed_count": 0,
                 "message": "无内容需要生成",
             }
+            run_async_in_worker_loop(
+                _handle_content_generation_completion(
+                    task_id=task_id,
+                    roadmap_id=roadmap_id,
+                    result=empty_result,
+                )
+            )
+            return empty_result
         
         # 1.5 更新任务步骤为 content_generation（从 content_generation_queued 切换）
         run_async_in_worker_loop(
@@ -342,6 +352,15 @@ def generate_all_content_task(
             status=result.get("status"),
             successful_count=result.get("successful_count"),
             failed_count=result.get("failed_count"),
+        )
+        
+        # 更新 DB 任务最终状态和推送 WebSocket 通知
+        run_async_in_worker_loop(
+            _handle_content_generation_completion(
+                task_id=task_id,
+                roadmap_id=roadmap_id,
+                result=result,
+            )
         )
         
         return result
@@ -375,6 +394,103 @@ def generate_all_content_task(
 # ============================================================
 # 辅助函数
 # ============================================================
+
+async def _handle_content_generation_completion(
+    task_id: str,
+    roadmap_id: str,
+    result: Dict[str, Any],
+) -> None:
+    """
+    内容生成任务正常完成时的状态同步
+    
+    根据子图执行结果决定最终状态：
+    - completed：全部 Concept 成功
+    - partial_failure：部分 Concept 失败
+    - failed：全部 Concept 失败
+    
+    Args:
+        task_id: 任务 ID
+        roadmap_id: 路线图 ID
+        result: 子图返回的执行结果
+    """
+    from datetime import datetime
+    
+    status_str = result.get("status", "completed")
+    successful_count = result.get("successful_count", 0)
+    failed_count = result.get("failed_count", 0)
+    total_concepts = result.get("total_concepts", 0)
+    
+    # 映射到 TaskStatus
+    if failed_count == 0:
+        final_status = "completed"
+        final_step = WorkflowStep.COMPLETED
+    elif successful_count == 0:
+        final_status = "failed"
+        final_step = WorkflowStep.CONTENT_GENERATION
+    else:
+        final_status = "partial_failure"
+        final_step = WorkflowStep.CONTENT_GENERATION
+    
+    try:
+        async with get_celery_session() as session:
+            task_crud = get_task_crud()
+            await task_crud.update_task_status(
+                session=session,
+                task_id=task_id,
+                status=final_status,
+                current_step=final_step,
+            )
+            # 标记完成时间
+            from sqlalchemy import text
+            await session.execute(
+                text("UPDATE roadmap_tasks SET completed_at = :now WHERE task_id = :task_id"),
+                {"now": datetime.utcnow(), "task_id": task_id},
+            )
+        logger.info(
+            "content_generation_completion_status_updated",
+            task_id=task_id,
+            roadmap_id=roadmap_id,
+            final_status=final_status,
+            successful_count=successful_count,
+            failed_count=failed_count,
+            total_concepts=total_concepts,
+        )
+    except Exception as db_err:
+        logger.warning(
+            "content_generation_completion_db_update_failed",
+            task_id=task_id,
+            error=str(db_err),
+        )
+    
+    # 推送 WebSocket 通知，让前端感知内容生成已完成
+    try:
+        if final_status == "completed":
+            await notification_service.publish_progress(
+                task_id=task_id,
+                step=WorkflowStep.COMPLETED,
+                status="completed",
+                message=f"内容生成完成: {successful_count}/{total_concepts} 个概念",
+            )
+        elif final_status == "partial_failure":
+            await notification_service.publish_progress(
+                task_id=task_id,
+                step=WorkflowStep.CONTENT_GENERATION,
+                status="partial_failure",
+                message=f"内容生成部分完成: {successful_count}/{total_concepts} 成功, {failed_count} 失败",
+            )
+        else:
+            await notification_service.publish_failed(
+                task_id=task_id,
+                error=f"内容生成全部失败: {failed_count}/{total_concepts} 个概念",
+                step=WorkflowStep.CONTENT_GENERATION,
+            )
+    except Exception as ws_err:
+        logger.warning(
+            "content_generation_completion_websocket_failed",
+            task_id=task_id,
+            error=str(ws_err),
+        )
+
 
 async def _handle_content_generation_failure(
     task_id: str,

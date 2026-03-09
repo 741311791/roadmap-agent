@@ -179,6 +179,10 @@ class RoadmapService:
                     error=str(e),
                 )
         
+        # 从 user_request JSON 中提取 turbo_mode（默认 True，与 UserRequest 模型默认值保持一致）
+        user_request_data = task.user_request or {}
+        turbo_mode = user_request_data.get("turbo_mode", True) if isinstance(user_request_data, dict) else True
+        
         return TaskStatusDetailResponse(
             task_id=task.task_id,
             status=task.status,
@@ -187,6 +191,7 @@ class RoadmapService:
             created_at=task.created_at.isoformat() if task.created_at else None,
             updated_at=task.updated_at.isoformat() if task.updated_at else None,
             error_message=task.error_message,
+            turbo_mode=turbo_mode,
         )
     
     async def _get_realtime_step_from_checkpointer(self, task_id: str) -> str | None:

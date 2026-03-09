@@ -1113,6 +1113,9 @@
     "motivationPlaceholder": "例如：职业转型、副业项目、个人兴趣...",
     "back": "返回",
     "generating": "生成中...",
-    "generateRoadmap": "生成路线图"
+    "generateRoadmap": "生成路线图",
+    "turboMode": "极速模式",
+    "turboModeOn": "开启",
+    "turboModeDesc": "跳过结构验证，加速生成，直接进入审核环节"
   }
 }
