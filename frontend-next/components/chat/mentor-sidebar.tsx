@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Bot, PanelRightClose, Send } from 'lucide-react';
 
 import { AgentModeSwitcher } from '@/components/chat/agent-mode-switcher';
+import { MentorMarkdownMessage } from '@/components/chat/mentor-markdown-message';
 import { ToolCallCard } from '@/components/chat/tool-call-card';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -93,10 +94,17 @@ export function MentorSidebar({
                 className={
                   message.role === 'user'
                     ? 'inline-block max-w-[90%] rounded-lg bg-primary px-3 py-2 text-xs text-primary-foreground'
-                    : 'inline-block max-w-[95%] rounded-lg bg-muted px-3 py-2 text-xs text-foreground'
+                    : 'inline-block max-w-[95%] rounded-lg bg-muted px-3 py-2 text-foreground'
                 }
               >
-                {message.text || (message.role === 'assistant' && isStreaming ? '思考中...' : '')}
+                {message.role === 'assistant' ? (
+                  <MentorMarkdownMessage
+                    content={message.text || (isStreaming ? '思考中...' : '')}
+                    className="text-xs"
+                  />
+                ) : (
+                  message.text
+                )}
               </div>
 
               {message.toolCalls.length > 0 && (
