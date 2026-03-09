@@ -2,6 +2,7 @@
 
 import { Loader2, Wrench } from 'lucide-react';
 
+import { MentorToolResultRenderer } from '@/lib/tools/mentor-toolkit';
 import { cn } from '@/lib/utils';
 import type { MentorToolCallState } from '@/lib/runtime/mentor-runtime-provider';
 
@@ -42,9 +43,13 @@ export function ToolCallCard({ toolCall }: ToolCallCardProps) {
       )}
 
       {hasResult && (
-        <p className="text-muted-foreground break-all">
-          结果：{JSON.stringify(toolCall.result)}
-        </p>
+        <div className="space-y-1">
+          <p className="text-muted-foreground">结果：</p>
+          <MentorToolResultRenderer
+            toolName={toolCall.toolName}
+            result={toolCall.result}
+          />
+        </div>
       )}
     </div>
   );

@@ -13,6 +13,7 @@ from langchain_litellm import ChatLiteLLM
 from langgraph.prebuilt import create_react_agent
 
 from app.config.settings import Settings
+from app.tools.mcp_loader import load_context7_tools
 from app.utils.prompt_loader import PromptLoader
 
 logger = structlog.get_logger(__name__)
@@ -161,22 +162,22 @@ class MentorAgent:
         merged_args = dict(tool_args)
 
         if tool_name in {"get_roadmap_metadata", "get_concept_tutorial", "mark_content_complete"}:
-            merged_args.setdefault("roadmap_id", roadmap_id)
+            merged_args["roadmap_id"] = roadmap_id
 
         if tool_name in {"get_user_profile", "mark_content_complete"}:
-            merged_args.setdefault("user_id", user_id)
+            merged_args["user_id"] = user_id
 
         if tool_name in {"get_concept_tutorial", "mark_content_complete"} and concept_id:
             merged_args.setdefault("concept_id", concept_id)
 
         return merged_args
 
-    def _build_langchain_tools(
+    async def _build_langchain_tools(
         self,
         user_id: str,
         roadmap_id: str,
         concept_id: str | None,
-    ) -> list[StructuredTool]:
+    ) -> list[Any]:
         """
         构建 LangChain 工具列表。
 
@@ -186,7 +187,7 @@ class MentorAgent:
             concept_id: 当前概念 ID。
 
         Returns:
-            list[StructuredTool]: 可供 ReAct 调用的工具列表。
+            list[Any]: 可供 ReAct 调用的工具列表。
 
         Raises:
             RuntimeError: 当工具加载失败时抛出。
@@ -204,7 +205,7 @@ class MentorAgent:
             MarkContentCompleteTool(),
         ]
 
-        langchain_tools: list[StructuredTool] = []
+        langchain_tools: list[Any] = []
 
         for base_tool in base_tools:
             async def _tool_coroutine(
@@ -245,6 +246,22 @@ class MentorAgent:
                 args_schema=base_tool.args_schema,
             )
             langchain_tools.append(tool)
+
+        # 为什么这样做：MCP 可能在某些环境不可用，失败时降级到内置工具可保证主链路稳定。
+        try:
+            mcp_tools = await load_context7_tools()
+            if mcp_tools:
+                langchain_tools.extend(mcp_tools)
+                logger.info(
+                    "mentor_mcp_tools_loaded",
+                    tools_count=len(mcp_tools),
+                    tools=[tool.name for tool in mcp_tools],
+                )
+        except Exception as exc:  # pragma: no cover - 兜底保护
+            logger.warning(
+                "mentor_mcp_tools_load_failed",
+                error=str(exc),
+            )
 
         return langchain_tools
 
@@ -314,6 +331,47 @@ class MentorAgent:
         except Exception:  # pragma: no cover - 兜底转换
             return str(value)
 
+    def _try_parse_json_text(self, value: Any) -> Any:
+        """
+        尝试将字符串解析为 JSON 对象。
+
+        Args:
+            value: 待解析值。
+
+        Returns:
+            Any: 解析成功返回对象，否则返回原值。
+        """
+        if not isinstance(value, str):
+            return value
+        text = value.strip()
+        if not text:
+            return value
+        if not ((text.startswith("{") and text.endswith("}")) or (text.startswith("[") and text.endswith("]"))):
+            return value
+        try:
+            import json
+            return json.loads(text)
+        except Exception:
+            return value
+
+    def _normalize_tool_result(self, raw_output: Any) -> Any:
+        """
+        规范化工具输出，避免将 ToolMessage 包装结构直接暴露给前端。
+
+        Args:
+            raw_output: LangGraph 工具事件输出。
+
+        Returns:
+            Any: 规范化后的工具结果。
+        """
+        jsonable_output = self._to_jsonable(raw_output)
+        if isinstance(jsonable_output, dict):
+            if jsonable_output.get("type") == "tool" and "content" in jsonable_output:
+                return self._try_parse_json_text(jsonable_output.get("content"))
+            if "content" in jsonable_output and len(jsonable_output.keys()) == 1:
+                return self._try_parse_json_text(jsonable_output.get("content"))
+        return jsonable_output
+
     async def stream_chat(
         self,
         messages: list[dict[str, str]],
@@ -351,7 +409,7 @@ class MentorAgent:
             current_concept=current_concept,
             user_background=user_background,
         )
-        tools = self._build_langchain_tools(
+        tools = await self._build_langchain_tools(
             user_id=user_id,
             roadmap_id=roadmap_id,
             concept_id=concept_id,
@@ -404,6 +462,6 @@ class MentorAgent:
                     "tool_call_id": event.get("run_id", ""),
                     "tool_name": event.get("name", ""),
                     "success": True,
-                    "result": self._to_jsonable(event.get("data", {}).get("output", {})),
+                    "result": self._normalize_tool_result(event.get("data", {}).get("output", {})),
                 }
 

@@ -39,6 +39,7 @@ export interface MentorToolCallEndEvent {
 export interface MentorDoneEvent {
   type: 'done';
   message_id?: string;
+  session_id?: string;
 }
 
 export interface MentorErrorEvent {
@@ -57,6 +58,7 @@ interface StreamMentorChatParams {
   roadmapId: string;
   messages: MentorBackendMessage[];
   agentMode: MentorAgentMode;
+  sessionId?: string | null;
   conceptId?: string | null;
   abortSignal?: AbortSignal;
 }
@@ -76,7 +78,7 @@ interface StreamMentorChatParams {
 export async function* streamMentorChat(
   params: StreamMentorChatParams
 ): AsyncGenerator<MentorSSEEvent> {
-  const { roadmapId, messages, agentMode, conceptId, abortSignal } = params;
+  const { roadmapId, messages, agentMode, sessionId, conceptId, abortSignal } = params;
 
   const token = authService.getToken();
   if (!token) {
@@ -104,6 +106,7 @@ export async function* streamMentorChat(
     body: JSON.stringify({
       messages,
       agent_mode: agentMode,
+      session_id: sessionId ?? null,
       concept_id: conceptId ?? null,
     }),
     signal: abortSignal,

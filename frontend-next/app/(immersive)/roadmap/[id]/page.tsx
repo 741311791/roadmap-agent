@@ -215,6 +215,7 @@ export default function RoadmapDetailPage() {
 
   // Helper: Calculate overall progress
   const overallProgress = calculateRoadmapProgress(currentRoadmap);
+  const activeConcept = getActiveConcept();
 
   // Loading State
   if (roadmapLoading) {
@@ -320,7 +321,7 @@ export default function RoadmapDetailPage() {
           {/* CENTER: Learning Stage */}
           <ResizablePanel defaultSize={isMentorChatOpen ? 50 : 80} className="min-w-[320px]">
             <LearningStage
-              concept={getActiveConcept()}
+              concept={activeConcept}
               tutorialContent={tutorialData?.full_content}
               tutorialLoading={tutorialLoading}
               roadmapId={roadmapId}
@@ -353,11 +354,12 @@ export default function RoadmapDetailPage() {
                 <MentorRuntimeProvider
                   roadmapId={roadmapId}
                   conceptId={selectedConceptId}
+                  conceptName={activeConcept?.name ?? null}
                   agentMode={mentorAgentMode}
                 >
                   <MentorSidebar
-                    roadmapId={roadmapId}
                     conceptId={selectedConceptId}
+                    conceptName={activeConcept?.name ?? null}
                     agentMode={mentorAgentMode}
                     onAgentModeChange={setMentorAgentMode}
                     onClose={() => setIsMentorChatOpen(false)}

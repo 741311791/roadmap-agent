@@ -3,7 +3,7 @@
 
 用于获取指定概念的教程内容。
 """
-from typing import Optional, List, Dict, Any
+from typing import Optional
 from pydantic import BaseModel, Field
 import structlog
 
@@ -68,7 +68,8 @@ class GetConceptTutorialTool(BaseTool[GetConceptTutorialInput, GetConceptTutoria
                 tutorial_crud = get_tutorial_crud()
                 
                 # 获取最新版本的教程
-                tutorial = await tutorial_crud.get_latest_tutorial(
+                tutorial = await tutorial_crud.get_latest_by_concept(
+                    session=session,
                     roadmap_id=input_data.roadmap_id,
                     concept_id=input_data.concept_id,
                 )

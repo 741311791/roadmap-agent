@@ -14,8 +14,8 @@ import {
 } from '@/lib/runtime/mentor-runtime-provider';
 
 interface MentorSidebarProps {
-  roadmapId: string;
   conceptId: string | null;
+  conceptName?: string | null;
   agentMode: MentorAgentMode;
   onAgentModeChange: (mode: MentorAgentMode) => void;
   onClose: () => void;
@@ -25,20 +25,20 @@ interface MentorSidebarProps {
  * Mentor 聊天侧边栏。
  */
 export function MentorSidebar({
-  roadmapId,
   conceptId,
+  conceptName = null,
   agentMode,
   onAgentModeChange,
   onClose,
 }: MentorSidebarProps) {
-  const { messages, isStreaming, error, sendMessage } = useMentorRuntime();
+  const { messages, isStreaming, isHistoryLoading, error, sendMessage } = useMentorRuntime();
   const [input, setInput] = useState('');
   const endRef = useRef<HTMLDivElement | null>(null);
 
   const contextTitle = useMemo(() => {
     if (!conceptId) return '当前范围：整体路线图';
-    return `当前概念：${conceptId}`;
-  }, [conceptId]);
+    return `当前概念：${conceptName || conceptId}`;
+  }, [conceptId, conceptName]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -73,6 +73,11 @@ export function MentorSidebar({
 
       <ScrollArea className="flex-1 p-3">
         <div className="space-y-3">
+          {isHistoryLoading && (
+            <div className="rounded-lg border border-dashed p-4 text-xs text-muted-foreground">
+              正在恢复历史对话...
+            </div>
+          )}
           {messages.length === 0 && (
             <div className="rounded-lg border border-dashed p-4 text-xs text-muted-foreground">
               已连接 Mentor，对当前路线图可直接提问或要求引导式练习。

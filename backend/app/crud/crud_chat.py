@@ -56,6 +56,7 @@ class ChatSessionCRUD(BaseCRUD[ChatSession, ChatSessionCreate, ChatSessionUpdate
         session: AsyncSession,
         user_id: str,
         roadmap_id: str,
+        agent_mode: Optional[str] = None,
         limit: int = 50,
         offset: int = 0
     ) -> List[ChatSession]:
@@ -66,24 +67,54 @@ class ChatSessionCRUD(BaseCRUD[ChatSession, ChatSessionCreate, ChatSessionUpdate
             session: 数据库会话
             user_id: 用户ID
             roadmap_id: 路线图ID
+            agent_mode: 会话模式（可选）
             limit: 返回数量限制
             offset: 分页偏移
             
         Returns:
             会话列表（按更新时间倒序）
         """
+        stmt = select(ChatSession).where(
+            ChatSession.user_id == user_id,
+            ChatSession.roadmap_id == roadmap_id,
+        )
+        if agent_mode:
+            stmt = stmt.where(ChatSession.agent_mode == agent_mode)
+        stmt = stmt.order_by(desc(ChatSession.updated_at)).limit(limit).offset(offset)
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_latest_session(
+        self,
+        session: AsyncSession,
+        user_id: str,
+        roadmap_id: str,
+        agent_mode: str,
+    ) -> Optional[ChatSession]:
+        """
+        获取用户在指定路线图和模式下最近更新的会话。
+
+        Args:
+            session: 数据库会话
+            user_id: 用户ID
+            roadmap_id: 路线图ID
+            agent_mode: 会话模式
+
+        Returns:
+            最新会话或 None
+        """
         stmt = (
             select(ChatSession)
             .where(
                 ChatSession.user_id == user_id,
-                ChatSession.roadmap_id == roadmap_id
+                ChatSession.roadmap_id == roadmap_id,
+                ChatSession.agent_mode == agent_mode,
             )
             .order_by(desc(ChatSession.updated_at))
-            .limit(limit)
-            .offset(offset)
+            .limit(1)
         )
         result = await session.execute(stmt)
-        return list(result.scalars().all())
+        return result.scalar_one_or_none()
     
     async def update_metadata(
         self,

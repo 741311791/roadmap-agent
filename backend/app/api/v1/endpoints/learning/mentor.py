@@ -6,11 +6,17 @@ from __future__ import annotations
 import json
 from typing import AsyncGenerator
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
 
 from app.api.v1.deps import CurrentActiveUser, CurrentSession
-from app.schemas.mentor import MentorChatRequest
+from app.core.response_schema import ResponseSchemaModel, response_base
+from app.schemas.mentor import (
+    MentorAgentMode,
+    MentorChatRequest,
+    MentorHistoryMessageResponse,
+    MentorSessionSummaryResponse,
+)
 from app.services.learning.mentor_service import MentorService, get_mentor_service
 
 router = APIRouter(prefix="/learning", tags=["mentor"])
@@ -84,6 +90,7 @@ async def mentor_chat(
                 messages=body.messages,
                 agent_mode=body.agent_mode,
                 concept_id=body.concept_id,
+                session_id=body.session_id,
             ):
                 event_name = str(event.get("type", "message"))
                 yield _format_sse_event(event_name=event_name, payload=event)
@@ -104,4 +111,54 @@ async def mentor_chat(
             "Access-Control-Allow-Origin": "*",
         },
     )
+
+
+@router.get(
+    "/roadmaps/{roadmap_id}/mentor/sessions",
+    response_model=ResponseSchemaModel[list[MentorSessionSummaryResponse]],
+)
+async def list_mentor_sessions(
+    roadmap_id: str,
+    user: CurrentActiveUser,
+    db: CurrentSession,
+    agent_mode: MentorAgentMode | None = Query(default=None, description="可选模式过滤"),
+    limit: int = Query(default=20, ge=1, le=100, description="返回数量"),
+) -> ResponseSchemaModel[list[MentorSessionSummaryResponse]]:
+    """
+    获取当前用户在指定路线图下的 Mentor 会话列表。
+    """
+    mentor_service: MentorService = get_mentor_service()
+    sessions = await mentor_service.list_sessions(
+        db=db,
+        user_id=user.id,
+        roadmap_id=roadmap_id,
+        agent_mode=agent_mode,
+        limit=limit,
+    )
+    return response_base.success(data=sessions)
+
+
+@router.get(
+    "/roadmaps/{roadmap_id}/mentor/sessions/{session_id}/messages",
+    response_model=ResponseSchemaModel[list[MentorHistoryMessageResponse]],
+)
+async def get_mentor_session_messages(
+    roadmap_id: str,
+    session_id: str,
+    user: CurrentActiveUser,
+    db: CurrentSession,
+    limit: int = Query(default=200, ge=1, le=500, description="返回数量"),
+) -> ResponseSchemaModel[list[MentorHistoryMessageResponse]]:
+    """
+    获取 Mentor 会话历史消息。
+    """
+    mentor_service: MentorService = get_mentor_service()
+    history_messages = await mentor_service.get_session_messages(
+        db=db,
+        user_id=user.id,
+        roadmap_id=roadmap_id,
+        session_id=session_id,
+        limit=limit,
+    )
+    return response_base.success(data=history_messages)
 
