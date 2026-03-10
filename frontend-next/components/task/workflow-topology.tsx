@@ -344,6 +344,8 @@ interface WorkflowTopologyProps {
   onNodeSelect?: (nodeId: string | null) => void;
   /** 是否为极速模式（跳过结构验证节点） */
   turboMode?: boolean;
+  /** 路线图总 Concept 节点数（用于内容生成阶段时间估算） */
+  totalConcepts?: number;
 }
 
 // ============================================================================
@@ -365,6 +367,7 @@ export function WorkflowTopology({
   selectedNodeId = null,
   onNodeSelect,
   turboMode = true,
+  totalConcepts = 0,
 }: WorkflowTopologyProps) {
   const t = useTranslations('taskDetail');
   
@@ -500,21 +503,29 @@ export function WorkflowTopology({
 
   /**
    * 获取主路节点状态
+   * 
+   * 注意：必须使用 mainStagesTranslated（渲染用的数组）而非 MAIN_STAGES（全量数组）来计算索引。
+   * 原因：turboMode 会过滤掉 validate 节点，导致两个数组的索引不一致：
+   *   MAIN_STAGES:         [analysis(0), design(1), validate(2), review(3), content(4)]
+   *   mainStagesTranslated: [analysis(0), design(1), review(2), content(3)]  ← validate 被移除
+   * 若用 MAIN_STAGES 的 review 索引(3)与 mainStagesTranslated 的 nodeIndex(2) 比较，
+   * review 会被错判为 'completed'，content 被错判为 'current'。
    */
   const getMainNodeStatus = (nodeIndex: number, nodeId: string): NodeStatus => {
     if (isCompleted) return 'completed';
     if (isFailed && stepLocation.stageId === nodeId && !stepLocation.isOnBranch) return 'failed';
-    
-    const currentMainIndex = getMainStageIndex(
-      stepLocation.isOnBranch 
-        ? (stepLocation.branchType === 'validation' ? 'validate' : 'review')
-        : stepLocation.stageId
-    );
+
+    const anchorId = stepLocation.isOnBranch
+      ? (stepLocation.branchType === 'validation' ? 'validate' : 'review')
+      : stepLocation.stageId;
+
+    // ✅ 用 mainStagesTranslated 计算索引，确保 turboMode 下索引一致
+    const currentMainIndex = mainStagesTranslated.findIndex(s => s.id === anchorId);
 
     // 如果当前在分支上
     if (stepLocation.isOnBranch) {
-      const triggerIndex = getMainStageIndex(
-        stepLocation.branchType === 'validation' ? 'validate' : 'review'
+      const triggerIndex = mainStagesTranslated.findIndex(
+        s => s.id === (stepLocation.branchType === 'validation' ? 'validate' : 'review')
       );
       if (nodeIndex < triggerIndex) return 'completed';
       if (nodeIndex === triggerIndex) return 'current'; // 分支的触发节点显示为 current
@@ -758,7 +769,8 @@ export function WorkflowTopology({
                 const isCompleteNode = nodeStatus === 'completed';
                 const isFailedNode = nodeStatus === 'failed';
                 const isPending = nodeStatus === 'pending';
-                const isNextUp = isPending && index === getMainStageIndex(stepLocation.stageId) + 1;
+                // ✅ 同样用 mainStagesTranslated 计算，避免 turboMode 索引偏移
+                const isNextUp = isPending && index === mainStagesTranslated.findIndex(s => s.id === stepLocation.stageId) + 1;
 
                 // Human Review 特殊处理
                 // 当 reviewStatus 为 'rejected' 时隐藏面板，改为显示审核分支节点（计划/编辑）
@@ -834,6 +846,12 @@ export function WorkflowTopology({
                         >
                           {stage.description}
                         </p>
+                        {/* 内容生成阶段：节点数和预估时长提示 */}
+                        {stage.id === 'content' && isActive && totalConcepts > 0 && (
+                          <p className="text-[10px] hidden sm:block text-amber-600 font-medium leading-tight mt-0.5">
+                            {totalConcepts} nodes · ~{Math.ceil(totalConcepts / 5) * 2} min
+                          </p>
+                        )}
                       </div>
                     </div>
 
