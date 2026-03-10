@@ -13,6 +13,7 @@ from langchain_litellm import ChatLiteLLM
 from langgraph.prebuilt import create_react_agent
 
 from app.config.settings import Settings
+from app.schemas.mentor import MentorModelName
 from app.tools.mcp_loader import load_context7_tools
 from app.utils.prompt_loader import PromptLoader
 
@@ -54,14 +55,13 @@ class MentorAgent:
 
         self.settings = settings
         self.prompt_loader = PromptLoader()
-        self.llm = self._create_llm()
 
-    def _create_llm(self) -> ChatLiteLLM:
+    def _create_llm(self, model_name_override: MentorModelName | None = None) -> ChatLiteLLM:
         """
         创建流式 Chat 模型实例。
 
         Args:
-            无。
+            model_name_override: 请求级别模型名称覆盖（可选）。
 
         Returns:
             ChatLiteLLM: 可流式输出的模型实例。
@@ -70,11 +70,12 @@ class MentorAgent:
             RuntimeError: 当模型配置不可用时抛出。
         """
 
-        # 为什么这样做：Mentor 专用密钥在部分环境未注入时，回退到已验证可用的 ANALYZER 配置可保证 MVP 链路可用。
+        # 为什么这样做：仅在未显式选择模型时回退到 ANALYZER，避免覆盖前端传入的模型选择。
         mentor_api_key = (self.settings.MENTOR_API_KEY or "").strip()
         use_fallback_config = mentor_api_key in {"", "your_openai_api_key_here"}
+        should_use_fallback = use_fallback_config and model_name_override is None
 
-        if use_fallback_config:
+        if should_use_fallback:
             model_provider = self.settings.ANALYZER_PROVIDER
             model_name = self.settings.ANALYZER_MODEL
             api_key = self.settings.ANALYZER_API_KEY
@@ -85,7 +86,7 @@ class MentorAgent:
             )
         else:
             model_provider = self.settings.MENTOR_PROVIDER
-            model_name = self.settings.MENTOR_MODEL
+            model_name = model_name_override or self.settings.MENTOR_MODEL
             api_key = mentor_api_key
             api_base = self.settings.MENTOR_BASE_URL
 
@@ -376,6 +377,7 @@ class MentorAgent:
         self,
         messages: list[dict[str, str]],
         agent_mode: str,
+        model_name: MentorModelName,
         user_id: str,
         roadmap_id: str,
         concept_id: str | None,
@@ -389,6 +391,7 @@ class MentorAgent:
         Args:
             messages: 历史对话消息列表。
             agent_mode: Agent 模式（companion/tutoring）。
+            model_name: 模型名称（qwen 系列）。
             user_id: 当前用户 ID。
             roadmap_id: 当前路线图 ID。
             concept_id: 当前概念 ID。
@@ -415,8 +418,9 @@ class MentorAgent:
             concept_id=concept_id,
         )
 
+        llm = self._create_llm(model_name_override=model_name)
         graph = create_react_agent(
-            model=self.llm,
+            model=llm,
             tools=tools,
             prompt=system_prompt,
         )

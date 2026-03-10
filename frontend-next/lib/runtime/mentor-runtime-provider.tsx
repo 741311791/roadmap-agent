@@ -13,10 +13,13 @@ import React, {
 import {
   streamMentorChat,
   type MentorAgentMode,
+  type MentorModelName,
   type MentorSSEEvent,
 } from '@/lib/api/sse/mentor-sse-adapter';
 import {
   threadHistoryAdapter,
+  type MentorHistoryMessage,
+  type MentorSessionSummary,
   type MentorThreadCachePayload,
 } from '@/lib/runtime/thread-history-adapter';
 
@@ -38,11 +41,13 @@ export interface MentorMessageState {
 
 interface MentorRuntimeContextValue {
   messages: MentorMessageState[];
+  sessionSummaries: MentorSessionSummary[];
   isStreaming: boolean;
   isHistoryLoading: boolean;
   error: string | null;
   activeSessionId: string | null;
   sendMessage: (content: string) => Promise<void>;
+  switchSession: (sessionId: string) => Promise<void>;
   clearMessages: () => void;
   stopStreaming: () => void;
 }
@@ -52,6 +57,7 @@ interface MentorRuntimeProviderProps {
   conceptId: string | null;
   conceptName?: string | null;
   agentMode: MentorAgentMode;
+  modelName: MentorModelName;
   children: React.ReactNode;
 }
 
@@ -67,9 +73,11 @@ export function MentorRuntimeProvider({
   conceptId,
   conceptName = null,
   agentMode,
+  modelName,
   children,
 }: MentorRuntimeProviderProps) {
   const [messages, setMessages] = useState<MentorMessageState[]>([]);
+  const [sessionSummaries, setSessionSummaries] = useState<MentorSessionSummary[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [isHistoryBootstrapped, setIsHistoryBootstrapped] = useState(false);
@@ -79,6 +87,7 @@ export function MentorRuntimeProvider({
   const messagesRef = useRef<MentorMessageState[]>([]);
   const activeSessionIdRef = useRef<string | null>(null);
   const previousAgentModeRef = useRef<MentorAgentMode>(agentMode);
+  const previousModelNameRef = useRef<MentorModelName>(modelName);
   const hasConceptInitializedRef = useRef(false);
   const roadmapIdRef = useRef(roadmapId);
   const previousConceptIdRef = useRef<string | null>(conceptId);
@@ -113,9 +122,107 @@ export function MentorRuntimeProvider({
     setMessages([]);
     setError(null);
     setActiveSessionId(null);
-    threadHistoryAdapter.clearStoredSessionId(roadmapId, agentMode);
-    threadHistoryAdapter.clearCachedThread(roadmapId, agentMode);
-  }, [agentMode, roadmapId]);
+    threadHistoryAdapter.clearStoredSessionId(roadmapId, agentMode, modelName);
+    threadHistoryAdapter.clearCachedThread(roadmapId, agentMode, modelName);
+  }, [agentMode, modelName, roadmapId]);
+
+  const mapHistoryMessagesToRuntime = useCallback(
+    (historyMessages: MentorHistoryMessage[]): MentorMessageState[] => {
+      return historyMessages
+        .filter(
+          (historyMessage) =>
+            historyMessage.role === 'user' || historyMessage.role === 'assistant'
+        )
+        .map((historyMessage) => {
+          const metadata = historyMessage.message_metadata as
+            | { tool_calls?: Array<Record<string, unknown>> }
+            | null
+            | undefined;
+          const rawToolCalls = Array.isArray(metadata?.tool_calls)
+            ? metadata.tool_calls
+            : [];
+
+          const toolCalls: MentorToolCallState[] = rawToolCalls.map((toolCall) => ({
+            toolCallId: String(toolCall['tool_call_id'] ?? ''),
+            toolName: String(toolCall['tool_name'] ?? 'unknown_tool'),
+            args:
+              toolCall['args'] && typeof toolCall['args'] === 'object'
+                ? (toolCall['args'] as Record<string, unknown>)
+                : undefined,
+            loading: Boolean(toolCall['loading']),
+            success:
+              typeof toolCall['success'] === 'boolean'
+                ? (toolCall['success'] as boolean)
+                : undefined,
+            result: toolCall['result'],
+          }));
+
+          return {
+            id: historyMessage.message_id,
+            role: historyMessage.role as 'user' | 'assistant',
+            text: historyMessage.content,
+            toolCalls,
+          };
+        });
+    },
+    []
+  );
+
+  const refreshSessionSummaries = useCallback(async () => {
+    const sessions = await threadHistoryAdapter.listSessions(
+      roadmapId,
+      agentMode,
+      modelName,
+      20
+    );
+    setSessionSummaries(sessions);
+    return sessions;
+  }, [agentMode, modelName, roadmapId]);
+
+  const switchSession = useCallback(
+    async (sessionId: string) => {
+      if (!sessionId || isStreaming) return;
+
+      setIsHistoryLoading(true);
+      setError(null);
+
+      try {
+        const historyMessages = await threadHistoryAdapter.getSessionMessages(
+          roadmapId,
+          sessionId,
+          200
+        );
+        const restoredMessages = mapHistoryMessagesToRuntime(historyMessages);
+
+        setMessages(restoredMessages);
+        setActiveSessionId(sessionId);
+        threadHistoryAdapter.setStoredSessionId(
+          roadmapId,
+          agentMode,
+          modelName,
+          sessionId
+        );
+        threadHistoryAdapter.setCachedThread(roadmapId, agentMode, modelName, {
+          sessionId,
+          messages: restoredMessages,
+        });
+      } catch (switchError) {
+        setError(
+          switchError instanceof Error ? switchError.message : '切换历史会话失败'
+        );
+      } finally {
+        setIsHistoryLoading(false);
+        setIsHistoryBootstrapped(true);
+      }
+    },
+    [
+      agentMode,
+      isStreaming,
+      mapHistoryMessagesToRuntime,
+      modelName,
+      roadmapId,
+    ]
+  );
 
   const updateAssistantMessage = useCallback(
     (
@@ -207,6 +314,7 @@ export function MentorRuntimeProvider({
           roadmapId,
           conceptId,
           agentMode,
+          modelName,
           sessionId: activeSessionIdRef.current,
           messages: [
             {
@@ -223,7 +331,12 @@ export function MentorRuntimeProvider({
           if (event.type === 'done') {
             if (event.session_id) {
               setActiveSessionId(event.session_id);
-              threadHistoryAdapter.setStoredSessionId(roadmapId, agentMode, event.session_id);
+              threadHistoryAdapter.setStoredSessionId(
+                roadmapId,
+                agentMode,
+                modelName,
+                event.session_id
+              );
             }
             break;
           }
@@ -241,9 +354,18 @@ export function MentorRuntimeProvider({
       } finally {
         abortControllerRef.current = null;
         setIsStreaming(false);
+        void refreshSessionSummaries().catch(() => undefined);
       }
     },
-    [agentMode, applySseEvent, conceptId, isStreaming, roadmapId]
+    [
+      agentMode,
+      applySseEvent,
+      conceptId,
+      isStreaming,
+      modelName,
+      refreshSessionSummaries,
+      roadmapId,
+    ]
   );
 
   const sendMessage = useCallback(
@@ -263,14 +385,42 @@ export function MentorRuntimeProvider({
     skipHistoryBootstrapRef.current = true;
     stopStreaming();
     setMessages([]);
+    setSessionSummaries([]);
     setError(null);
     setActiveSessionId(null);
-    threadHistoryAdapter.clearStoredSessionId(roadmapIdRef.current, agentMode);
-    threadHistoryAdapter.clearCachedThread(roadmapIdRef.current, agentMode);
-  }, [agentMode, stopStreaming]);
+    threadHistoryAdapter.clearStoredSessionId(
+      roadmapIdRef.current,
+      agentMode,
+      modelName
+    );
+    threadHistoryAdapter.clearCachedThread(
+      roadmapIdRef.current,
+      agentMode,
+      modelName
+    );
+  }, [agentMode, modelName, stopStreaming]);
 
   useEffect(() => {
-    const cachedThread = threadHistoryAdapter.getCachedThread(roadmapId, agentMode);
+    if (previousModelNameRef.current === modelName) {
+      return;
+    }
+
+    previousModelNameRef.current = modelName;
+    // 为什么这样做：切换模型后需要重新加载该模型对应的独立会话历史。
+    skipHistoryBootstrapRef.current = false;
+    stopStreaming();
+    setMessages([]);
+    setError(null);
+    setActiveSessionId(null);
+    setIsHistoryBootstrapped(false);
+  }, [modelName, stopStreaming]);
+
+  useEffect(() => {
+    const cachedThread = threadHistoryAdapter.getCachedThread(
+      roadmapId,
+      agentMode,
+      modelName
+    );
     if (!cachedThread) return;
     if (cachedThread.sessionId) {
       setActiveSessionId(cachedThread.sessionId);
@@ -278,7 +428,7 @@ export function MentorRuntimeProvider({
     if (cachedThread.messages.length > 0) {
       setMessages(cachedThread.messages);
     }
-  }, [roadmapId, agentMode]);
+  }, [roadmapId, agentMode, modelName]);
 
   useEffect(() => {
     let cancelled = false;
@@ -294,12 +444,18 @@ export function MentorRuntimeProvider({
       setError(null);
 
       try {
-        let sessionId = threadHistoryAdapter.getStoredSessionId(roadmapId, agentMode);
+        const sessions = await refreshSessionSummaries();
+        if (cancelled) return;
 
-        if (!sessionId) {
-          const sessions = await threadHistoryAdapter.listSessions(roadmapId, agentMode, 1);
-          sessionId = sessions[0]?.session_id ?? null;
-        }
+        const storedSessionId = threadHistoryAdapter.getStoredSessionId(
+          roadmapId,
+          agentMode,
+          modelName
+        );
+        const availableSessionIds = new Set(sessions.map((session) => session.session_id));
+        const sessionId = storedSessionId && availableSessionIds.has(storedSessionId)
+          ? storedSessionId
+          : (sessions[0]?.session_id ?? null);
 
         if (!sessionId) {
           if (!cancelled) {
@@ -313,47 +469,17 @@ export function MentorRuntimeProvider({
         if (cancelled) return;
 
         setActiveSessionId(sessionId);
-        threadHistoryAdapter.setStoredSessionId(roadmapId, agentMode, sessionId);
+        threadHistoryAdapter.setStoredSessionId(
+          roadmapId,
+          agentMode,
+          modelName,
+          sessionId
+        );
 
-        const restoredMessages: MentorMessageState[] = historyMessages
-          .filter(
-            (historyMessage) =>
-              historyMessage.role === 'user' || historyMessage.role === 'assistant'
-          )
-          .map((historyMessage) => {
-            const metadata = historyMessage.message_metadata as
-              | { tool_calls?: Array<Record<string, unknown>> }
-              | null
-              | undefined;
-            const rawToolCalls = Array.isArray(metadata?.tool_calls)
-              ? metadata.tool_calls
-              : [];
-
-            const toolCalls: MentorToolCallState[] = rawToolCalls.map((toolCall) => ({
-              toolCallId: String(toolCall['tool_call_id'] ?? ''),
-              toolName: String(toolCall['tool_name'] ?? 'unknown_tool'),
-              args:
-                toolCall['args'] && typeof toolCall['args'] === 'object'
-                  ? (toolCall['args'] as Record<string, unknown>)
-                  : undefined,
-              loading: Boolean(toolCall['loading']),
-              success:
-                typeof toolCall['success'] === 'boolean'
-                  ? (toolCall['success'] as boolean)
-                  : undefined,
-              result: toolCall['result'],
-            }));
-
-            return {
-              id: historyMessage.message_id,
-              role: historyMessage.role as 'user' | 'assistant',
-              text: historyMessage.content,
-              toolCalls,
-            };
-          });
+        const restoredMessages = mapHistoryMessagesToRuntime(historyMessages);
 
         setMessages(restoredMessages);
-        threadHistoryAdapter.setCachedThread(roadmapId, agentMode, {
+        threadHistoryAdapter.setCachedThread(roadmapId, agentMode, modelName, {
           sessionId,
           messages: restoredMessages,
         });
@@ -378,7 +504,13 @@ export function MentorRuntimeProvider({
     return () => {
       cancelled = true;
     };
-  }, [roadmapId, agentMode]);
+  }, [
+    agentMode,
+    mapHistoryMessagesToRuntime,
+    modelName,
+    refreshSessionSummaries,
+    roadmapId,
+  ]);
 
   useEffect(() => {
     if (!isHistoryBootstrapped) return;
@@ -386,8 +518,15 @@ export function MentorRuntimeProvider({
       sessionId: activeSessionId,
       messages,
     };
-    threadHistoryAdapter.setCachedThread(roadmapId, agentMode, payload);
-  }, [activeSessionId, agentMode, isHistoryBootstrapped, messages, roadmapId]);
+    threadHistoryAdapter.setCachedThread(roadmapId, agentMode, modelName, payload);
+  }, [
+    activeSessionId,
+    agentMode,
+    isHistoryBootstrapped,
+    messages,
+    modelName,
+    roadmapId,
+  ]);
 
   useEffect(() => {
     if (!hasConceptInitializedRef.current) {
@@ -423,11 +562,13 @@ export function MentorRuntimeProvider({
   const value = useMemo<MentorRuntimeContextValue>(
     () => ({
       messages,
+      sessionSummaries,
       isStreaming,
       isHistoryLoading,
       error,
       activeSessionId,
       sendMessage,
+      switchSession,
       clearMessages,
       stopStreaming,
     }),
@@ -438,8 +579,10 @@ export function MentorRuntimeProvider({
       isHistoryLoading,
       isStreaming,
       messages,
+      sessionSummaries,
       sendMessage,
       stopStreaming,
+      switchSession,
     ]
   );
 
@@ -461,5 +604,8 @@ export function useMentorRuntime(): MentorRuntimeContextValue {
   return context;
 }
 
-export type { MentorAgentMode } from '@/lib/api/sse/mentor-sse-adapter';
+export type {
+  MentorAgentMode,
+  MentorModelName,
+} from '@/lib/api/sse/mentor-sse-adapter';
 

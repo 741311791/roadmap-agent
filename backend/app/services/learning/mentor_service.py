@@ -18,6 +18,7 @@ from app.models.database import beijing_now
 from app.schemas.mentor import (
     MentorAgentMode,
     MentorHistoryMessageResponse,
+    MentorModelName,
     MentorMessageInput,
     MentorSessionSummaryResponse,
 )
@@ -156,6 +157,7 @@ class MentorService:
         roadmap_id: str,
         concept_id: str | None,
         agent_mode: MentorAgentMode,
+        model_name: MentorModelName,
         session_id: str | None,
     ) -> str:
         """
@@ -166,6 +168,7 @@ class MentorService:
             roadmap_id: 路线图 ID。
             concept_id: 概念 ID。
             agent_mode: 会话模式。
+            model_name: 模型名称。
             session_id: 客户端传入的会话 ID。
 
         Returns:
@@ -184,6 +187,8 @@ class MentorService:
                     raise PermissionError("无权限访问该会话")
                 if chat_session.agent_mode != agent_mode:
                     raise PermissionError("会话模式不匹配")
+                if chat_session.model_name != model_name:
+                    raise PermissionError("会话模型不匹配")
 
                 if concept_id and chat_session.concept_id != concept_id:
                     chat_session.concept_id = concept_id
@@ -198,6 +203,7 @@ class MentorService:
                     "roadmap_id": roadmap_id,
                     "concept_id": concept_id,
                     "agent_mode": agent_mode,
+                    "model_name": model_name,
                 },
             )
             return chat_session.session_id
@@ -288,6 +294,7 @@ class MentorService:
         user_id: str,
         roadmap_id: str,
         agent_mode: MentorAgentMode | None = None,
+        model_name: MentorModelName | None = None,
         limit: int = 20,
     ) -> list[MentorSessionSummaryResponse]:
         """
@@ -298,6 +305,7 @@ class MentorService:
             user_id: 用户 ID。
             roadmap_id: 路线图 ID。
             agent_mode: 会话模式过滤。
+            model_name: 模型名称过滤。
             limit: 返回数量上限。
 
         Returns:
@@ -309,6 +317,7 @@ class MentorService:
             user_id=user_id,
             roadmap_id=roadmap_id,
             agent_mode=agent_mode,
+            model_name=model_name,
             limit=max(limit, 1),
             offset=0,
         )
@@ -318,6 +327,7 @@ class MentorService:
                 roadmap_id=item.roadmap_id,
                 concept_id=item.concept_id,
                 agent_mode=item.agent_mode,  # type: ignore[arg-type]
+                model_name=item.model_name,  # type: ignore[arg-type]
                 title=item.title,
                 message_count=item.message_count,
                 last_message_preview=item.last_message_preview,
@@ -378,6 +388,7 @@ class MentorService:
         roadmap_id: str,
         messages: list[MentorMessageInput],
         agent_mode: MentorAgentMode,
+        model_name: MentorModelName,
         concept_id: str | None,
         session_id: str | None,
     ) -> AsyncGenerator[dict[str, Any], None]:
@@ -390,6 +401,7 @@ class MentorService:
             roadmap_id: 路线图 ID。
             messages: 请求消息列表。
             agent_mode: Agent 模式。
+            model_name: 模型名称。
             concept_id: 当前概念 ID。
             session_id: 会话 ID（可选）。
 
@@ -408,6 +420,7 @@ class MentorService:
                 roadmap_id=roadmap_id,
                 concept_id=concept_id,
                 agent_mode=agent_mode,
+                model_name=model_name,
                 session_id=session_id,
             )
             user_text = self._extract_latest_user_message(messages)
@@ -418,6 +431,7 @@ class MentorService:
                 content=user_text,
                 message_metadata={
                     "agent_mode": agent_mode,
+                    "model_name": model_name,
                     "concept_id": concept_id,
                 },
             )
@@ -430,6 +444,7 @@ class MentorService:
             async for event in self.mentor_agent.stream_chat(
                 messages=history_messages,
                 agent_mode=agent_mode,
+                model_name=model_name,
                 user_id=user_id,
                 roadmap_id=roadmap_id,
                 concept_id=concept_id,
@@ -477,6 +492,7 @@ class MentorService:
                 content=assistant_text or "（无文本输出）",
                 message_metadata={
                     "agent_mode": agent_mode,
+                    "model_name": model_name,
                     "concept_id": concept_id,
                     "tool_calls": list(tool_call_state.values()),
                 },
@@ -501,7 +517,7 @@ class MentorService:
             )
             yield {
                 "type": "error",
-                "message": "无权限访问该路线图",
+                "message": str(exc),
             }
         except ValueError as exc:
             logger.warning(

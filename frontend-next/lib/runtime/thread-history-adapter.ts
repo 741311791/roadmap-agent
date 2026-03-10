@@ -2,7 +2,10 @@
 
 import { API_PREFIX } from '@/lib/constants';
 import { authService } from '@/lib/services/auth-service';
-import type { MentorAgentMode } from '@/lib/api/sse/mentor-sse-adapter';
+import type {
+  MentorAgentMode,
+  MentorModelName,
+} from '@/lib/api/sse/mentor-sse-adapter';
 
 const MENTOR_SESSION_STORAGE_KEY = 'mentor_active_session';
 const MENTOR_THREAD_CACHE_KEY = 'mentor_thread_cache';
@@ -12,6 +15,7 @@ export interface MentorSessionSummary {
   roadmap_id: string;
   concept_id: string | null;
   agent_mode: MentorAgentMode;
+  model_name: MentorModelName;
   title: string | null;
   message_count: number;
   last_message_preview: string | null;
@@ -57,8 +61,12 @@ interface WrappedApiResponse<T> {
   data: T;
 }
 
-function buildStorageKey(roadmapId: string, agentMode: MentorAgentMode): string {
-  return `${roadmapId}:${agentMode}`;
+function buildStorageKey(
+  roadmapId: string,
+  agentMode: MentorAgentMode,
+  modelName: MentorModelName
+): string {
+  return `${roadmapId}:${agentMode}:${modelName}`;
 }
 
 function readStorage(): MentorSessionStorage {
@@ -184,26 +192,39 @@ export class ThreadHistoryAdapter {
   /**
    * 读取当前路线图+模式对应的活跃会话 ID。
    */
-  getStoredSessionId(roadmapId: string, agentMode: MentorAgentMode): string | null {
+  getStoredSessionId(
+    roadmapId: string,
+    agentMode: MentorAgentMode,
+    modelName: MentorModelName
+  ): string | null {
     const storage = readStorage();
-    return storage[buildStorageKey(roadmapId, agentMode)] ?? null;
+    return storage[buildStorageKey(roadmapId, agentMode, modelName)] ?? null;
   }
 
   /**
    * 保存当前路线图+模式的活跃会话 ID。
    */
-  setStoredSessionId(roadmapId: string, agentMode: MentorAgentMode, sessionId: string): void {
+  setStoredSessionId(
+    roadmapId: string,
+    agentMode: MentorAgentMode,
+    modelName: MentorModelName,
+    sessionId: string
+  ): void {
     const storage = readStorage();
-    storage[buildStorageKey(roadmapId, agentMode)] = sessionId;
+    storage[buildStorageKey(roadmapId, agentMode, modelName)] = sessionId;
     writeStorage(storage);
   }
 
   /**
    * 清除当前路线图+模式的活跃会话 ID。
    */
-  clearStoredSessionId(roadmapId: string, agentMode: MentorAgentMode): void {
+  clearStoredSessionId(
+    roadmapId: string,
+    agentMode: MentorAgentMode,
+    modelName: MentorModelName
+  ): void {
     const storage = readStorage();
-    delete storage[buildStorageKey(roadmapId, agentMode)];
+    delete storage[buildStorageKey(roadmapId, agentMode, modelName)];
     writeStorage(storage);
   }
 
@@ -212,10 +233,13 @@ export class ThreadHistoryAdapter {
    */
   getCachedThread(
     roadmapId: string,
-    agentMode: MentorAgentMode
+    agentMode: MentorAgentMode,
+    modelName: MentorModelName
   ): MentorThreadCachePayload | null {
     const storage = readThreadCacheStorage();
-    return this.normalizeCachedPayload(storage[buildStorageKey(roadmapId, agentMode)]);
+    return this.normalizeCachedPayload(
+      storage[buildStorageKey(roadmapId, agentMode, modelName)]
+    );
   }
 
   /**
@@ -224,19 +248,24 @@ export class ThreadHistoryAdapter {
   setCachedThread(
     roadmapId: string,
     agentMode: MentorAgentMode,
+    modelName: MentorModelName,
     payload: MentorThreadCachePayload
   ): void {
     const storage = readThreadCacheStorage();
-    storage[buildStorageKey(roadmapId, agentMode)] = payload;
+    storage[buildStorageKey(roadmapId, agentMode, modelName)] = payload;
     writeThreadCacheStorage(storage);
   }
 
   /**
    * 清除本地线程缓存。
    */
-  clearCachedThread(roadmapId: string, agentMode: MentorAgentMode): void {
+  clearCachedThread(
+    roadmapId: string,
+    agentMode: MentorAgentMode,
+    modelName: MentorModelName
+  ): void {
     const storage = readThreadCacheStorage();
-    delete storage[buildStorageKey(roadmapId, agentMode)];
+    delete storage[buildStorageKey(roadmapId, agentMode, modelName)];
     writeThreadCacheStorage(storage);
   }
 
@@ -246,10 +275,12 @@ export class ThreadHistoryAdapter {
   async listSessions(
     roadmapId: string,
     agentMode: MentorAgentMode,
+    modelName: MentorModelName,
     limit = 20
   ): Promise<MentorSessionSummary[]> {
     const query = new URLSearchParams({
       agent_mode: agentMode,
+      model_name: modelName,
       limit: String(limit),
     }).toString();
     return await this.requestJson<MentorSessionSummary[]>(

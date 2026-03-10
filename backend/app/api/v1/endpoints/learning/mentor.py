@@ -15,6 +15,7 @@ from app.schemas.mentor import (
     MentorAgentMode,
     MentorChatRequest,
     MentorHistoryMessageResponse,
+    MentorModelName,
     MentorSessionSummaryResponse,
 )
 from app.services.learning.mentor_service import MentorService, get_mentor_service
@@ -89,6 +90,7 @@ async def mentor_chat(
                 roadmap_id=roadmap_id,
                 messages=body.messages,
                 agent_mode=body.agent_mode,
+                model_name=body.model_name,
                 concept_id=body.concept_id,
                 session_id=body.session_id,
             ):
@@ -122,6 +124,7 @@ async def list_mentor_sessions(
     user: CurrentActiveUser,
     db: CurrentSession,
     agent_mode: MentorAgentMode | None = Query(default=None, description="可选模式过滤"),
+    model_name: MentorModelName | None = Query(default=None, description="可选模型过滤"),
     limit: int = Query(default=20, ge=1, le=100, description="返回数量"),
 ) -> ResponseSchemaModel[list[MentorSessionSummaryResponse]]:
     """
@@ -133,6 +136,7 @@ async def list_mentor_sessions(
         user_id=user.id,
         roadmap_id=roadmap_id,
         agent_mode=agent_mode,
+        model_name=model_name,
         limit=limit,
     )
     return response_base.success(data=sessions)

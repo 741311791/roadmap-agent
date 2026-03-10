@@ -57,6 +57,7 @@ class ChatSessionCRUD(BaseCRUD[ChatSession, ChatSessionCreate, ChatSessionUpdate
         user_id: str,
         roadmap_id: str,
         agent_mode: Optional[str] = None,
+        model_name: Optional[str] = None,
         limit: int = 50,
         offset: int = 0
     ) -> List[ChatSession]:
@@ -68,6 +69,7 @@ class ChatSessionCRUD(BaseCRUD[ChatSession, ChatSessionCreate, ChatSessionUpdate
             user_id: 用户ID
             roadmap_id: 路线图ID
             agent_mode: 会话模式（可选）
+            model_name: 模型名称（可选）
             limit: 返回数量限制
             offset: 分页偏移
             
@@ -80,6 +82,8 @@ class ChatSessionCRUD(BaseCRUD[ChatSession, ChatSessionCreate, ChatSessionUpdate
         )
         if agent_mode:
             stmt = stmt.where(ChatSession.agent_mode == agent_mode)
+        if model_name:
+            stmt = stmt.where(ChatSession.model_name == model_name)
         stmt = stmt.order_by(desc(ChatSession.updated_at)).limit(limit).offset(offset)
         result = await session.execute(stmt)
         return list(result.scalars().all())
@@ -90,6 +94,7 @@ class ChatSessionCRUD(BaseCRUD[ChatSession, ChatSessionCreate, ChatSessionUpdate
         user_id: str,
         roadmap_id: str,
         agent_mode: str,
+        model_name: str | None = None,
     ) -> Optional[ChatSession]:
         """
         获取用户在指定路线图和模式下最近更新的会话。
@@ -99,17 +104,22 @@ class ChatSessionCRUD(BaseCRUD[ChatSession, ChatSessionCreate, ChatSessionUpdate
             user_id: 用户ID
             roadmap_id: 路线图ID
             agent_mode: 会话模式
+            model_name: 模型名称（可选）
 
         Returns:
             最新会话或 None
         """
+        conditions = [
+            ChatSession.user_id == user_id,
+            ChatSession.roadmap_id == roadmap_id,
+            ChatSession.agent_mode == agent_mode,
+        ]
+        if model_name:
+            conditions.append(ChatSession.model_name == model_name)
+
         stmt = (
             select(ChatSession)
-            .where(
-                ChatSession.user_id == user_id,
-                ChatSession.roadmap_id == roadmap_id,
-                ChatSession.agent_mode == agent_mode,
-            )
+            .where(*conditions)
             .order_by(desc(ChatSession.updated_at))
             .limit(1)
         )

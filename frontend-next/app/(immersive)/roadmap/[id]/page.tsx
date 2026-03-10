@@ -20,6 +20,7 @@ import { MentorSidebar } from '@/components/chat/mentor-sidebar';
 import {
   MentorRuntimeProvider,
   type MentorAgentMode,
+  type MentorModelName,
 } from '@/lib/runtime/mentor-runtime-provider';
 import { 
   getRoadmapActiveTask,
@@ -86,6 +87,7 @@ export default function RoadmapDetailPage() {
   const [isKnowledgeRailOpen, setIsKnowledgeRailOpen] = useState(false);
   const [isMentorChatOpen, setIsMentorChatOpen] = useState(false);
   const [mentorAgentMode, setMentorAgentMode] = useState<MentorAgentMode>('companion');
+  const [mentorModelName, setMentorModelName] = useState<MentorModelName>('qwen-plus'); // pragma: allowlist secret
 
   // 1. Sync Roadmap Data to Store
   useEffect(() => {
@@ -356,12 +358,15 @@ export default function RoadmapDetailPage() {
                   conceptId={selectedConceptId}
                   conceptName={activeConcept?.name ?? null}
                   agentMode={mentorAgentMode}
+                  modelName={mentorModelName}
                 >
                   <MentorSidebar
                     conceptId={selectedConceptId}
                     conceptName={activeConcept?.name ?? null}
                     agentMode={mentorAgentMode}
+                    modelName={mentorModelName}
                     onAgentModeChange={setMentorAgentMode}
+                    onModelNameChange={setMentorModelName}
                     onClose={() => setIsMentorChatOpen(false)}
                   />
                 </MentorRuntimeProvider>

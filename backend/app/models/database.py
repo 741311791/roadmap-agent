@@ -981,6 +981,11 @@ class ChatSession(SQLModel, table=True):
         index=True,
         description="会话模式：companion 或 tutoring"
     )
+    model_name: str = Field(
+        default="qwen-plus",  # pragma: allowlist secret
+        index=True,
+        description="会话模型：qwen 系列"
+    )
     
     # 会话元数据
     title: Optional[str] = Field(

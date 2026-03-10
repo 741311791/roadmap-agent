@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 MentorAgentMode = Literal["companion", "tutoring"]
 MentorMessageRole = Literal["user", "assistant"]
 MentorHistoryMessageRole = Literal["user", "assistant", "system"]
+MentorModelName = Literal["qwen-plus", "qwen-max"]  # pragma: allowlist secret
 
 
 class MentorMessageInput(BaseModel):
@@ -38,6 +39,7 @@ class MentorChatRequest(BaseModel):
     Args:
         messages: 新消息列表（兼容旧版，后端仅消费最后一条 user 消息）。
         agent_mode: Agent 模式（companion/tutoring）。
+        model_name: 模型名称（qwen 系列）。
         concept_id: 当前概念 ID（可选）。
         session_id: 会话 ID（可选，不传则自动创建）。
 
@@ -50,6 +52,7 @@ class MentorChatRequest(BaseModel):
 
     messages: list[MentorMessageInput] = Field(default_factory=list, description="新消息列表")
     agent_mode: MentorAgentMode = Field(..., description="Agent 模式")
+    model_name: MentorModelName = Field(default="qwen-plus", description="模型名称")  # pragma: allowlist secret
     concept_id: str | None = Field(default=None, description="当前概念 ID")
     session_id: str | None = Field(default=None, description="会话 ID")
 
@@ -63,6 +66,7 @@ class MentorSessionSummaryResponse(BaseModel):
         roadmap_id: 路线图 ID。
         concept_id: 当前概念 ID。
         agent_mode: 会话模式。
+        model_name: 模型名称。
         title: 会话标题。
         message_count: 消息数量。
         last_message_preview: 最后一条消息预览。
@@ -73,6 +77,7 @@ class MentorSessionSummaryResponse(BaseModel):
     roadmap_id: str = Field(..., description="路线图 ID")
     concept_id: str | None = Field(default=None, description="当前概念 ID")
     agent_mode: MentorAgentMode = Field(..., description="会话模式")
+    model_name: MentorModelName = Field(default="qwen-plus", description="模型名称")  # pragma: allowlist secret
     title: str | None = Field(default=None, description="会话标题")
     message_count: int = Field(default=0, description="消息数量")
     last_message_preview: str | None = Field(default=None, description="最后一条消息预览")

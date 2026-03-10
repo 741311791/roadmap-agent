@@ -6,6 +6,7 @@ import {
   Bot,
   CircleUserRound,
   Compass,
+  History,
   PanelRightClose,
   Plus,
   Send,
@@ -17,10 +18,18 @@ import { MentorMarkdownMessage } from '@/components/chat/mentor-markdown-message
 import { ToolCallCard } from '@/components/chat/tool-call-card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import {
   useMentorRuntime,
   type MentorAgentMode,
+  type MentorModelName,
 } from '@/lib/runtime/mentor-runtime-provider';
 import { cn } from '@/lib/utils';
 
@@ -28,7 +37,9 @@ interface MentorSidebarProps {
   conceptId: string | null;
   conceptName?: string | null;
   agentMode: MentorAgentMode;
+  modelName: MentorModelName;
   onAgentModeChange: (mode: MentorAgentMode) => void;
+  onModelNameChange: (modelName: MentorModelName) => void;
   onClose: () => void;
 }
 
@@ -56,15 +67,19 @@ export function MentorSidebar({
   conceptId,
   conceptName = null,
   agentMode,
+  modelName,
   onAgentModeChange,
+  onModelNameChange,
   onClose,
 }: MentorSidebarProps) {
   const {
     messages,
+    sessionSummaries,
     isStreaming,
     isHistoryLoading,
     error,
     sendMessage,
+    switchSession,
     clearMessages,
     activeSessionId,
   } = useMentorRuntime();
@@ -83,6 +98,17 @@ export function MentorSidebar({
     () => (agentMode === 'companion' ? '陪你拆解问题并给可执行建议' : '用引导式提问帮助你真正掌握'),
     [agentMode]
   );
+
+  const formatSessionTime = (updatedAt: string) => {
+    const date = new Date(updatedAt);
+    if (Number.isNaN(date.getTime())) {
+      return '';
+    }
+    return `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(
+      2,
+      '0'
+    )}:${String(date.getMinutes()).padStart(2, '0')}`;
+  };
 
   useEffect(() => {
     endRef.current?.scrollIntoView({
@@ -164,6 +190,19 @@ export function MentorSidebar({
             onModeChange={onAgentModeChange}
             disabled={isStreaming}
           />
+          <Select
+            value={modelName}
+            onValueChange={(value) => onModelNameChange(value as MentorModelName)}
+            disabled={isStreaming}
+          >
+            <SelectTrigger className="h-8 text-xs">
+              <SelectValue placeholder="选择模型" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="qwen-plus">qwen-plus</SelectItem> {/* pragma: allowlist secret */}
+              <SelectItem value="qwen-max">qwen-max</SelectItem>
+            </SelectContent>
+          </Select>
           <div className="flex items-center justify-between gap-2">
             <Badge variant="outline" className="max-w-[80%] gap-1 truncate rounded-md text-[11px]">
               <Compass className="h-3 w-3" />
@@ -206,6 +245,39 @@ export function MentorSidebar({
                   >
                     {prompt}
                   </Button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {sessionSummaries.length > 0 && (
+            <div className="space-y-2 rounded-xl border p-3">
+              <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                <History className="h-3.5 w-3.5" />
+                <span>历史会话</span>
+              </div>
+              <div className="space-y-1">
+                {sessionSummaries.slice(0, 8).map((session) => (
+                  <button
+                    key={session.session_id}
+                    type="button"
+                    disabled={isStreaming}
+                    className={cn(
+                      'w-full rounded-lg border px-2 py-1.5 text-left transition-colors',
+                      activeSessionId === session.session_id
+                        ? 'border-primary/40 bg-primary/10'
+                        : 'hover:bg-muted'
+                    )}
+                    onClick={() => void switchSession(session.session_id)}
+                  >
+                    <div className="line-clamp-1 text-xs text-foreground">
+                      {session.last_message_preview || '空会话'}
+                    </div>
+                    <div className="mt-0.5 flex items-center justify-between text-[10px] text-muted-foreground">
+                      <span>{formatSessionTime(session.updated_at)}</span>
+                      <span>{session.message_count} 条</span>
+                    </div>
+                  </button>
                 ))}
               </div>
             </div>

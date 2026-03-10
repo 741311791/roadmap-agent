@@ -9,6 +9,7 @@ import { API_PREFIX } from '@/lib/constants';
 import { authService } from '@/lib/services/auth-service';
 
 export type MentorAgentMode = 'companion' | 'tutoring';
+export type MentorModelName = 'qwen-plus' | 'qwen-max'; // pragma: allowlist secret
 
 export interface MentorBackendMessage {
   role: 'user' | 'assistant';
@@ -58,6 +59,7 @@ interface StreamMentorChatParams {
   roadmapId: string;
   messages: MentorBackendMessage[];
   agentMode: MentorAgentMode;
+  modelName: MentorModelName;
   sessionId?: string | null;
   conceptId?: string | null;
   abortSignal?: AbortSignal;
@@ -78,7 +80,7 @@ interface StreamMentorChatParams {
 export async function* streamMentorChat(
   params: StreamMentorChatParams
 ): AsyncGenerator<MentorSSEEvent> {
-  const { roadmapId, messages, agentMode, sessionId, conceptId, abortSignal } = params;
+  const { roadmapId, messages, agentMode, modelName, sessionId, conceptId, abortSignal } = params;
 
   const token = authService.getToken();
   if (!token) {
@@ -106,6 +108,7 @@ export async function* streamMentorChat(
     body: JSON.stringify({
       messages,
       agent_mode: agentMode,
+      model_name: modelName,
       session_id: sessionId ?? null,
       concept_id: conceptId ?? null,
     }),
