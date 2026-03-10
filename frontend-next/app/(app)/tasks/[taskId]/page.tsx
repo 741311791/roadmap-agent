@@ -1142,6 +1142,7 @@ export default function TaskDetailPage() {
           roadmapId={taskInfo.roadmap_id || null}
           roadmapTitle={roadmapFramework?.title || taskInfo.title}
           stagesCount={roadmapFramework?.stages?.length || 0}
+          totalConcepts={roadmapFramework?.stages?.reduce((acc, s) => acc + s.modules.reduce((ma, m) => ma + m.concepts.length, 0), 0) ?? 0}
           executionLogs={executionLogs}
           validationBranchTriggered={validationBranchTriggered}
           reviewBranchTriggered={reviewBranchTriggered}

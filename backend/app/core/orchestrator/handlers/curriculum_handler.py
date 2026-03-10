@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .base import NodeOutputHandler
 from app.crud.crud_roadmap import get_roadmap_crud
-from app.crud.crud_task import get_task_crud
 from app.schemas.handler_io import CurriculumDesignHandlerInput
 
 logger = structlog.get_logger()
@@ -20,7 +19,7 @@ class CurriculumDesignHandler(NodeOutputHandler[CurriculumDesignHandlerInput]):
     
     职责：
     1. 保存RoadmapFramework到数据库
-    2. 更新task状态
+    注意：不更新 task 的 current_step/status，由 SideEffectCoordinator 统一管理
     """
     
     input_model_class = CurriculumDesignHandlerInput
@@ -62,18 +61,14 @@ class CurriculumDesignHandler(NodeOutputHandler[CurriculumDesignHandlerInput]):
             framework,
         )
         
-        # 更新task状态
-        task_crud = get_task_crud()
-        await task_crud.update_task_status(
-            session=session,
-            task_id=task_id,
-            status="processing",
-            current_step="curriculum_design",
-        )
-        
         logger.info(
             "curriculum_handler_saved",
             task_id=task_id,
             roadmap_id=roadmap_id,
         )
+        # 注意：不在此处更新 task 的 current_step / status。
+        # 原因：human_review 节点会在 interrupt() 前先写入 human_review_pending 状态（早于本 Handler 执行）。
+        # 若此处再写 curriculum_design，会覆盖已正确设置的 human_review_pending，
+        # 导致 WS 通知携带错误步骤，前端显示错乱。
+        # current_step 的持久化由 SideEffectCoordinator 统一管理。
 
