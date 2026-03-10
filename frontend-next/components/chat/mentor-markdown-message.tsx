@@ -25,14 +25,32 @@ export function MentorMarkdownMessage({
     <div
       className={cn(
         'prose prose-sm max-w-none dark:prose-invert',
-        'prose-p:my-1 prose-pre:my-2 prose-ul:my-1 prose-ol:my-1',
-        'prose-li:my-0 prose-code:text-[12px] prose-pre:text-[12px]',
+        'prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1',
+        'prose-li:my-0 prose-pre:my-2 prose-code:text-[12px] prose-pre:text-[12px]',
+        'prose-pre:rounded-xl prose-pre:border prose-pre:bg-background/80',
+        'prose-code:before:content-none prose-code:after:content-none',
+        'prose-a:text-primary prose-a:no-underline hover:prose-a:underline',
         className
       )}
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
+          code({ children, className: codeClassName, ...props }) {
+            const isBlock = Boolean(codeClassName?.includes('language-'));
+            if (isBlock) {
+              return (
+                <code className={cn('block overflow-x-auto', codeClassName)} {...props}>
+                  {children}
+                </code>
+              );
+            }
+            return (
+              <code className="rounded bg-background/80 px-1 py-0.5 text-[12px]" {...props}>
+                {children}
+              </code>
+            );
+          },
           a({ children, href, ...props }) {
             const isExternal = href?.startsWith('http');
             return (
