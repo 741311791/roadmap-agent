@@ -969,6 +969,34 @@
     "nodesModified": "{count} nodes modified",
     "fullscreen": "Fullscreen",
     "exitFullscreen": "Exit Fullscreen",
+    "userRequest": {
+      "learningGoal": "Learning Goal",
+      "profileMotivation": "Profile & Motivation",
+      "weeklyInput": "Weekly Input",
+      "startLevel": "Start Level",
+      "mode": "Mode",
+      "turboActive": "Turbo Active",
+      "preferences": "Preferences",
+      "context": "Context",
+      "hrs": "hrs",
+      "noGoalSet": "No specific goal set",
+      "noProfileProvided": "No detailed profile provided",
+      "unknown": "Unknown"
+    },
+    "preference": {
+      "visual": "Visual/Video",
+      "text": "Documentation/Reading",
+      "hands_on": "Hands-on/Projects",
+      "audio": "Audio/Listening"
+    },
+    "language": {
+      "primaryZh": "Chinese (Primary)",
+      "secondaryEn": "English (Secondary)",
+      "preferredZh": "Chinese Preferred",
+      "primaryEn": "English (Primary)",
+      "secondaryZh": "Chinese (Secondary)",
+      "preferredEn": "English Preferred"
+    },
     "nodeDetail": {
       "typeStart": "Start",
       "typeStage": "Stage",
