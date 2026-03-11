@@ -49,6 +49,7 @@ import type {
   RoadmapTreeProps,
   TreeNodeData,
   ExpansionState,
+  NodeAnchorPosition,
 } from './types';
 import { roadmapsApi, type EditHistoryVersion } from '@/lib/api/endpoints/roadmaps';
 
@@ -78,7 +79,7 @@ interface TreeViewContentProps {
   totalWidth: number;
   totalHeight: number;
   selectedNode: TreeNodeData | null;
-  onNodeClick: (node: TreeNodeData) => void;
+  onNodeClick: (node: TreeNodeData, anchorPosition?: NodeAnchorPosition) => void;
   onToggleExpand: (nodeId: string) => void;
   isEditing?: boolean;
   taskId?: string;
@@ -132,6 +133,7 @@ export function RoadmapTree({
   stages,
   showStartNode = false,
   isEditing = false,
+  taskStatus,
   taskId,
   roadmapId,
   showHistoryButton = false,
@@ -139,6 +141,7 @@ export function RoadmapTree({
   loadingConceptIds = [],
   failedConceptIds = [],
   partialFailedConceptIds = [],
+  failedContentTypesMap = {},
   onNodeClick,
   userPreferences,
   onRetrySuccess,
@@ -152,8 +155,9 @@ export function RoadmapTree({
   );
   
   // 选中的节点（用于显示详情）
-  const [selectedNode, setSelectedNode] = useState<TreeNodeData | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [isPopoverOpen, setIsPopoverOpen] = useState(false);
+  const [popoverAnchor, setPopoverAnchor] = useState<NodeAnchorPosition | undefined>(undefined);
   
   // 全屏模式
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -236,6 +240,12 @@ export function RoadmapTree({
     partialFailedConceptIds,
     showStartNode,
   });
+
+  // 通过 ID 从最新 nodes 中获取选中节点，避免弹层使用旧快照导致状态不更新
+  const selectedNode = useMemo(
+    () => nodes.find((node) => node.id === selectedNodeId) ?? null,
+    [nodes, selectedNodeId],
+  );
   
   // 应用状态筛选
   const filteredNodes = useMemo(() => {
@@ -343,8 +353,9 @@ export function RoadmapTree({
   }, [stages, allExpanded]);
   
   // 节点点击处理
-  const handleNodeClick = useCallback((node: TreeNodeData) => {
-    setSelectedNode(node);
+  const handleNodeClick = useCallback((node: TreeNodeData, anchorPosition?: NodeAnchorPosition) => {
+    setSelectedNodeId(node.id);
+    setPopoverAnchor(anchorPosition);
     setIsPopoverOpen(true);
     onNodeClick?.(node);
   }, [onNodeClick]);
@@ -352,8 +363,9 @@ export function RoadmapTree({
   // 关闭详情弹出层
   const handleClosePopover = useCallback(() => {
     setIsPopoverOpen(false);
+    setPopoverAnchor(undefined);
     // 延迟清除选中状态，让动画完成
-    setTimeout(() => setSelectedNode(null), 200);
+    setTimeout(() => setSelectedNodeId(null), 200);
   }, []);
   
   // 空状态
@@ -660,12 +672,10 @@ export function RoadmapTree({
           node={selectedNode}
           isOpen={isPopoverOpen}
           onClose={handleClosePopover}
-          anchorPosition={selectedNode?.position ? {
-            x: selectedNode.position.x,
-            y: selectedNode.position.y,
-          } : undefined}
+          anchorPosition={popoverAnchor}
           roadmapId={roadmapId}
-          userPreferences={userPreferences}
+          failedContentTypesMap={failedContentTypesMap}
+          taskStatus={taskStatus}
           onRetrySuccess={onRetrySuccess}
         />
       </div>
@@ -710,12 +720,10 @@ export function RoadmapTree({
             node={selectedNode}
             isOpen={isPopoverOpen}
             onClose={handleClosePopover}
-            anchorPosition={selectedNode?.position ? {
-              x: selectedNode.position.x + 32, // 补偿 padding
-              y: selectedNode.position.y + 32,
-            } : undefined}
+            anchorPosition={popoverAnchor}
             roadmapId={roadmapId}
-            userPreferences={userPreferences}
+            failedContentTypesMap={failedContentTypesMap}
+            taskStatus={taskStatus}
             onRetrySuccess={onRetrySuccess}
           />
         </DialogContent>

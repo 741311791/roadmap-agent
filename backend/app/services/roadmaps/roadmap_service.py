@@ -192,6 +192,7 @@ class RoadmapService:
             updated_at=task.updated_at.isoformat() if task.updated_at else None,
             error_message=task.error_message,
             turbo_mode=turbo_mode,
+            user_request=task.user_request if isinstance(task.user_request, dict) else None,
         )
     
     async def _get_realtime_step_from_checkpointer(self, task_id: str) -> str | None:

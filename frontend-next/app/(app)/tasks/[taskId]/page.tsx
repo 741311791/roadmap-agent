@@ -18,7 +18,7 @@ import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
-import { ArrowLeft, AlertCircle, CheckCircle2, Loader2, Clock, Eye, RefreshCw } from 'lucide-react';
+import { ArrowLeft, AlertCircle, CheckCircle2, Loader2, Clock, Eye, Target, UserRound, SlidersHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
@@ -28,7 +28,6 @@ import { tasksApi, roadmapsApi, usersApi } from '@/lib/api/endpoints';
 import { WorkflowTopology } from '@/components/task/workflow-topology';
 import { CoreDisplayArea } from '@/components/task/core-display-area';
 import { ExecutionLogTimeline } from '@/components/task/execution-log-timeline';
-import { cn } from '@/lib/utils';
 import { limitLogsByStep, getLogStatsByStep } from '@/lib/utils/log-grouping';
 import { useAuthStore } from '@/lib/store/auth-store';
 import { mapToDisplayStep } from '@/lib/constants/workflow-steps';
@@ -38,7 +37,9 @@ import type {
   RoadmapFramework, 
   LearningPreferences, 
   ExecutionLogResponse,
-  TaskStatusDetailResponse 
+  TaskStatusDetailResponse,
+  IntentAnalysisResponse,
+  UserRequest,
 } from '@/types/generated/models';
 
 /**
@@ -70,7 +71,36 @@ type ExecutionLog = ExecutionLogResponse;
 interface TaskInfo extends Omit<TaskStatusDetailResponse, 'status'> {
   title: string;  // 额外添加的字段
   status: TaskStatusType;  // 使用联合类型而不是枚举
+  user_request?: UserRequest | null;
 }
+
+// 辅助函数：格式化文本（去除下划线、首字母大写）
+const formatText = (text?: string | null) => {
+  if (!text || ['Not specified', 'not specified', 'null', 'undefined'].includes(text)) return null;
+  return text
+    .split(/[_: ]+/)
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+};
+
+// 辅助函数：格式化语言标签
+const formatLanguage = (tag: string) => {
+  if (tag.includes('primary:zh') || tag === 'zh') return '中文 (主)';
+  if (tag.includes('secondary:en') || tag === 'en') return 'English (辅)';
+  if (tag.includes('preferred:zh')) return '中文偏好';
+  return formatText(tag.replace('primary:', '').replace('secondary:', '').replace('preferred:', ''));
+};
+
+// 辅助函数：格式化偏好标签
+const formatPreference = (tag: string) => {
+  const map: Record<string, string> = {
+    'visual': '视觉/视频',
+    'text': '文档/阅读',
+    'hands_on': '实操/项目',
+    'audio': '音频/听力',
+  };
+  return map[tag] || formatText(tag);
+};
 
 export default function TaskDetailPage() {
   const t = useTranslations('taskDetail');
@@ -108,6 +138,8 @@ export default function TaskDetailPage() {
 
   // 部分失败的 Concept ID
   const [partialFailedConceptIds, setPartialFailedConceptIds] = useState<string[]>([]);
+  // 失败内容类型映射（用于详情卡片精确展示 tutorial/resources/quiz 哪一项失败）
+  const [failedContentTypesMap, setFailedContentTypesMap] = useState<Record<string, Array<'tutorial' | 'resources' | 'quiz'>>>({});
 
   // 编辑来源（用于区分分支，追踪当前活跃分支）
   const [editSource, setEditSource] = useState<'validation_failed' | 'human_review' | null>(null);
@@ -119,7 +151,7 @@ export default function TaskDetailPage() {
 
   // 加载状态
   const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // 节点选中状态（用于侧边面板）
@@ -183,7 +215,7 @@ export default function TaskDetailPage() {
    */
   const loadIntentAnalysis = useCallback(async (roadmapId: string, signal?: AbortSignal) => {
     try {
-      const intentData = await roadmapsApi.getIntentAnalysis(roadmapId);
+      const intentData: IntentAnalysisResponse = await roadmapsApi.getIntentAnalysis(roadmapId);
       
       console.log('[TaskDetail] Intent analysis loaded successfully:', {
         roadmap_id: roadmapId,
@@ -203,7 +235,7 @@ export default function TaskDetailPage() {
         // 数据未就绪，不设置状态
         return null;
       }
-      
+
       // 从 time_constraint 解析时间信息
       const { weeks, hoursPerWeek } = parseTimeConstraint(intentData.time_constraint || '');
       
@@ -355,14 +387,48 @@ export default function TaskDetailPage() {
       }
       setError(null);
 
-      // ========================================
-      // 优化：并行化所有独立请求，减少总加载时间
-      // ========================================
-      const [taskData, agentLogsData, workflowLogsData] = await Promise.all([
-        tasksApi.getById(taskId),
-        tasksApi.getLogs(taskId, undefined, 'agent', 200, 0, signal),   // level, category, limit, offset, signal
-        tasksApi.getLogs(taskId, undefined, 'workflow', 200, 0, signal), // level, category, limit, offset, signal
+      /**
+       * 带重试的任务详情获取
+       *
+       * 说明：
+       * - 刷新页面瞬间后端可能刚好在 reload，短时间返回 404/5xx；
+       * - 这里做轻量重试，避免误判为“任务不存在”。
+       */
+      const fetchTaskWithRetry = async () => {
+        let lastError: any = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            return await tasksApi.getById(taskId);
+          } catch (err: any) {
+            if (signal?.aborted) throw err;
+            lastError = err;
+            const statusCode = err?.response?.status;
+            const canRetry = attempt < 2 && (statusCode === 404 || statusCode >= 500 || !statusCode);
+            if (!canRetry) {
+              throw err;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+          }
+        }
+        throw lastError;
+      };
+
+      // 任务详情是关键请求，先确保成功拿到
+      const taskData = await fetchTaskWithRetry();
+
+      // 日志是非关键请求，失败不应让页面进入“任务不存在”
+      const [agentLogsResult, workflowLogsResult] = await Promise.allSettled([
+        tasksApi.getLogs(taskId, undefined, 'agent', 200, 0, signal),
+        tasksApi.getLogs(taskId, undefined, 'workflow', 200, 0, signal),
       ]);
+      const agentLogsData = agentLogsResult.status === 'fulfilled' ? agentLogsResult.value : { logs: [] };
+      const workflowLogsData = workflowLogsResult.status === 'fulfilled' ? workflowLogsResult.value : { logs: [] };
+      if (agentLogsResult.status === 'rejected') {
+        console.warn('[TaskDetail] Failed to load agent logs:', agentLogsResult.reason);
+      }
+      if (workflowLogsResult.status === 'rejected') {
+        console.warn('[TaskDetail] Failed to load workflow logs:', workflowLogsResult.reason);
+      }
       
       // 获取 taskData 后再加载 intentAnalysis（需要 roadmap_id）
       let intentData = null;
@@ -525,13 +591,6 @@ export default function TaskDetailPage() {
       loadTaskData(false);
     }
   }, [taskId, loadTaskData]);
-
-  /**
-   * 手动刷新任务数据
-   */
-  const handleRefresh = useCallback(() => {
-    loadTaskData(false);
-  }, [loadTaskData]);
 
   /**
    * 取消任务 - 功能已移除
@@ -811,6 +870,65 @@ export default function TaskDetailPage() {
     const handleConceptFailed = async (event: any) => {
       console.log('[TaskDetail] Concept failed:', event);
       setLoadingConceptIds(prev => prev.filter(id => id !== event.concept_id));
+
+      // 记录失败的具体内容类型（tutorial/resources/quiz）
+      const failedContentType = event.content_type as 'tutorial' | 'resources' | 'quiz' | undefined;
+      if (failedContentType) {
+        setFailedContentTypesMap(prev => {
+          const existing = prev[event.concept_id] || [];
+          if (existing.includes(failedContentType)) {
+            return prev;
+          }
+          return {
+            ...prev,
+            [event.concept_id]: [...existing, failedContentType],
+          };
+        });
+      }
+
+      // 立即将对应 concept 的内容状态更新为 failed，避免弹层仍显示 pending
+      setRoadmapFramework(prevRoadmap => {
+        if (!prevRoadmap || !failedContentType) return prevRoadmap;
+
+        let conceptFound = false;
+        const updatedStages = prevRoadmap.stages.map(stage => {
+          const updatedModules = stage.modules.map(module => {
+            const updatedConcepts = module.concepts.map(concept => {
+              if (concept.concept_id !== event.concept_id) {
+                return concept;
+              }
+
+              conceptFound = true;
+              if (failedContentType === 'tutorial') {
+                return { ...concept, content_status: 'failed' as const };
+              }
+              if (failedContentType === 'resources') {
+                return { ...concept, resources_status: 'failed' as const };
+              }
+              return { ...concept, quiz_status: 'failed' as const };
+            });
+
+            if (updatedConcepts.some((c, i) => c !== module.concepts[i])) {
+              return { ...module, concepts: updatedConcepts };
+            }
+            return module;
+          });
+
+          if (updatedModules.some((m, i) => m !== stage.modules[i])) {
+            return { ...stage, modules: updatedModules };
+          }
+          return stage;
+        });
+
+        if (!conceptFound) {
+          return prevRoadmap;
+        }
+
+        return {
+          ...prevRoadmap,
+          stages: updatedStages,
+        };
+      });
       
       // 检查是否是部分失败
       const isPartialFailure = event.partial_failure === true || 
@@ -955,6 +1073,27 @@ export default function TaskDetailPage() {
     return taskInfo?.current_step === 'roadmap_edit';
   }, [taskInfo?.current_step]);
 
+  const requestPreferences = taskInfo?.user_request?.preferences;
+  const requestPreferenceTags = useMemo(() => {
+    if (!requestPreferences) {
+      return [];
+    }
+    const tags: string[] = [];
+    if (requestPreferences.content_preference?.length) {
+      tags.push(...requestPreferences.content_preference);
+    }
+    if (requestPreferences.primary_language) {
+      tags.push(`primary:${requestPreferences.primary_language}`);
+    }
+    if (requestPreferences.secondary_language) {
+      tags.push(`secondary:${requestPreferences.secondary_language}`);
+    }
+    if (requestPreferences.preferred_language) {
+      tags.push(`preferred:${requestPreferences.preferred_language}`);
+    }
+    return tags;
+  }, [requestPreferences]);
+
   // ========================================
   // 优化：分区域骨架屏加载，提供更好的加载体验
   // ========================================
@@ -984,6 +1123,18 @@ export default function TaskDetailPage() {
 
         {/* Main Content Skeleton */}
         <div className="max-w-7xl mx-auto px-6 py-8 space-y-6">
+          {/* Workflow Progress Skeleton */}
+          <Card className="p-6 border-sage-200/80 bg-gradient-to-r from-sage-50/60 to-white dark:from-sage-900/20 dark:to-gray-900">
+            <div className="space-y-4">
+              <Skeleton className="h-6 w-64" />
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <Skeleton className="h-24 rounded-lg" />
+                <Skeleton className="h-24 rounded-lg" />
+                <Skeleton className="h-24 rounded-lg" />
+              </div>
+            </div>
+          </Card>
+
           {/* Workflow Progress Skeleton */}
           <Card className="p-6">
             <div className="space-y-4">
@@ -1080,7 +1231,7 @@ export default function TaskDetailPage() {
       <header className="border-b bg-white/80 dark:bg-gray-900/80 backdrop-blur-md sticky top-0 z-50 shadow-sm">
         <div className="max-w-7xl mx-auto px-6 py-5">
           {/* 顶部操作栏 */}
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center mb-4">
             <div className="flex items-center gap-3">
               <Button
                 variant="outline"
@@ -1090,17 +1241,6 @@ export default function TaskDetailPage() {
               >
                 <ArrowLeft className="w-4 h-4" />
                 {t('back')}
-              </Button>
-              <div className="w-px h-5 bg-border" />
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleRefresh}
-                disabled={isRefreshing || isLoading}
-                className="gap-2"
-              >
-                <RefreshCw className={cn('w-4 h-4', isRefreshing && 'animate-spin')} />
-                {isRefreshing ? t('refreshing') : t('refresh')}
               </Button>
             </div>
             
@@ -1133,6 +1273,170 @@ export default function TaskDetailPage() {
 
       {/* Main Content - 三段式布局 */}
       <div className="max-w-7xl mx-auto px-6 py-8 space-y-6 bg-[#F8F5F0]">
+        {/* 0. Original Request Info（原始请求信息） - Redesigned v2 */}
+        <div className="relative overflow-hidden rounded-xl border border-border/50 bg-white/50 dark:bg-gray-900/40 backdrop-blur-sm shadow-sm transition-all hover:shadow-md hover:border-border/80 group">
+          {/* 装饰背景 */}
+          <div className="absolute top-0 right-0 -mt-16 -mr-16 w-64 h-64 bg-sage-100/30 dark:bg-sage-900/10 rounded-full blur-3xl opacity-0 group-hover:opacity-100 transition-opacity duration-700" />
+          
+          <div className="relative p-6 space-y-6">
+            {/* Header: 学习目标 */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                <Target className="w-4 h-4 text-sage-600 dark:text-sage-400" />
+                <span>Learning Goal</span>
+              </div>
+              <h2 className="text-xl md:text-2xl font-serif font-medium text-foreground leading-relaxed text-balance">
+                “{requestPreferences?.learning_goal || taskInfo.title || '未设定具体目标'}”
+              </h2>
+            </div>
+
+            <div className="h-px w-full bg-gradient-to-r from-transparent via-border to-transparent opacity-50" />
+
+            {/* Content Grid - 左右分栏优化 */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12">
+              
+              {/* Left Column: Profile & Stats (占比更大) */}
+              <div className="lg:col-span-7 space-y-8">
+                
+                {/* User Persona & Motivation */}
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                    <UserRound className="w-3.5 h-3.5" />
+                    <span>Profile & Motivation</span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {/* 职业与行业 */}
+                    {[
+                      requestPreferences?.current_role,
+                      requestPreferences?.career_background,
+                      requestPreferences?.industry
+                    ].map(formatText).filter(Boolean).map((tag, i) => (
+                      <Badge 
+                        key={`role-${i}`} 
+                        variant="secondary" 
+                        className="px-3 py-1 bg-sage-50/80 hover:bg-sage-100 text-sage-900 border-sage-200 dark:bg-sage-900/30 dark:text-sage-100 dark:border-sage-800 transition-colors"
+                      >
+                        {tag}
+                      </Badge>
+                    ))}
+                    
+                    {/* 动机 (作为特殊的 Badge) */}
+                    {requestPreferences?.motivation && (
+                      <Badge 
+                        variant="outline" 
+                        className="px-3 py-1 border-amber-200 bg-amber-50/50 text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-300 gap-1.5"
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                        {requestPreferences.motivation}
+                      </Badge>
+                    )}
+
+                    {![requestPreferences?.current_role, requestPreferences?.career_background, requestPreferences?.industry, requestPreferences?.motivation].some(Boolean) && (
+                      <span className="text-sm text-muted-foreground italic">未提供详细画像</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Stats Grid (Moved here for better balance) */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                  {/* Weekly Hours */}
+                  <div className="p-3.5 rounded-xl bg-white/60 dark:bg-gray-900/60 border border-border/40 shadow-sm flex flex-col justify-between min-h-[80px]">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[10px] uppercase text-muted-foreground font-medium tracking-wider">Weekly Input</span>
+                      <Clock className="w-3.5 h-3.5 text-sage-500" />
+                    </div>
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-2xl font-semibold tracking-tight tabular-nums text-foreground">
+                        {requestPreferences?.available_hours_per_week || '-'}
+                      </span>
+                      <span className="text-xs text-muted-foreground font-medium">hrs</span>
+                    </div>
+                  </div>
+
+                  {/* Current Level */}
+                  <div className="p-3.5 rounded-xl bg-white/60 dark:bg-gray-900/60 border border-border/40 shadow-sm flex flex-col justify-between min-h-[80px]">
+                     <div className="flex items-center justify-between mb-2">
+                      <span className="text-[10px] uppercase text-muted-foreground font-medium tracking-wider">Start Level</span>
+                      <div className="flex gap-0.5">
+                        {[1, 2, 3].map(i => (
+                          <div 
+                            key={i} 
+                            className={`w-1 h-2 rounded-[1px] ${
+                              (requestPreferences?.current_level === 'advanced' && i <= 3) ||
+                              (requestPreferences?.current_level === 'intermediate' && i <= 2) ||
+                              (requestPreferences?.current_level === 'beginner' && i <= 1)
+                                ? 'bg-sage-500' 
+                                : 'bg-muted/50'
+                            }`}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    <div className="text-sm font-medium text-foreground">
+                      {formatText(requestPreferences?.current_level) || 'Beginner'}
+                    </div>
+                  </div>
+
+                  {/* Turbo Mode (If active) */}
+                  {taskInfo.turbo_mode && (
+                    <div className="p-3.5 rounded-xl bg-gradient-to-br from-blue-50/50 to-indigo-50/50 dark:from-blue-900/20 dark:to-indigo-900/20 border border-blue-100 dark:border-blue-900/50 shadow-sm flex flex-col justify-between min-h-[80px]">
+                      <div className="flex items-center justify-between mb-2">
+                         <span className="text-[10px] uppercase text-blue-600/70 dark:text-blue-400/70 font-medium tracking-wider">Mode</span>
+                         <span className="relative flex h-2 w-2">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
+                        </span>
+                      </div>
+                      <div className="text-sm font-medium text-blue-700 dark:text-blue-300">
+                        Turbo Active
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Right Column: Preferences & Context */}
+              <div className="lg:col-span-5 space-y-6 lg:border-l lg:border-border/40 lg:pl-8">
+                
+                {/* Learning Preferences */}
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                    <SlidersHorizontal className="w-3.5 h-3.5" />
+                    <span>Preferences</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {/* Content Formats */}
+                    {(requestPreferences?.content_preference || []).map((item) => (
+                      <Badge key={item} variant="outline" className="px-2.5 py-1 text-xs font-normal border-dashed text-muted-foreground bg-transparent hover:bg-muted/50">
+                        {formatPreference(item)}
+                      </Badge>
+                    ))}
+                    {/* Languages */}
+                    {[
+                      requestPreferences?.primary_language ? `primary:${requestPreferences.primary_language}` : null,
+                      requestPreferences?.secondary_language ? `secondary:${requestPreferences.secondary_language}` : null
+                    ].filter(Boolean).map((tag) => (
+                      <Badge key={tag} variant="outline" className="px-2.5 py-1 text-xs font-normal border-amber-200/50 bg-amber-50/30 text-amber-700 dark:border-amber-900/50 dark:bg-amber-900/10 dark:text-amber-400">
+                        {formatLanguage(tag!)}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Additional Context */}
+                {taskInfo.user_request?.additional_context && (
+                  <div className="space-y-3 pt-2">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Context</p>
+                    <p className="text-sm text-muted-foreground/90 leading-relaxed bg-muted/30 p-3.5 rounded-xl border border-border/50 text-justify">
+                      {taskInfo.user_request.additional_context}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* 1. Workflow Progress（拓扑图版） */}
         <WorkflowTopology
           currentStep={taskInfo.current_step || null}
@@ -1165,6 +1469,7 @@ export default function TaskDetailPage() {
           loadingConceptIds={loadingConceptIds}
           failedConceptIds={failedConceptIds}
           partialFailedConceptIds={partialFailedConceptIds}
+          failedContentTypesMap={failedContentTypesMap}
           userPreferences={userPreferences}
           onRetrySuccess={handleRetrySuccess}
           maxHeight={500}

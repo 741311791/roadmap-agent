@@ -29,6 +29,8 @@ export interface TaskStatusResponse {
   roadmap_id?: string;
   created_at: string;
   updated_at: string;
+  turbo_mode?: boolean;
+  user_request?: UserRequest | null;
 }
 
 /**

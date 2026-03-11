@@ -2,7 +2,7 @@
 任务相关Schemas
 """
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 
 class TaskStatusDetailResponse(BaseModel):
@@ -15,6 +15,7 @@ class TaskStatusDetailResponse(BaseModel):
     updated_at: Optional[str] = Field(None, description="更新时间（ISO格式）")
     error_message: Optional[str] = Field(None, description="错误信息")
     turbo_mode: Optional[bool] = Field(None, description="是否为极速模式（跳过结构验证）")
+    user_request: Optional[Dict[str, Any]] = Field(None, description="任务发起时的原始 user_request")
     
     model_config = ConfigDict(
         json_schema_extra={
