@@ -180,8 +180,17 @@ async def generate_tutorial_wrapper(
         return {"tutorial": result["tutorials"][0]}
     elif "errors" in result:
         return {"errors": result["errors"]}
-    
-    return {}
+
+    # 不允许静默返回空结果，否则后续会被误判为“未参与计算”
+    concept = state["concept"]
+    return {
+        "errors": [{
+            "type": "tutorial",
+            "concept_id": concept.concept_id,
+            "concept_name": concept.name,
+            "error": "tutorial_wrapper_empty_result",
+        }]
+    }
 
 
 async def generate_resource_wrapper(
@@ -207,8 +216,17 @@ async def generate_resource_wrapper(
         return {"resource": result["resources"][0]}
     elif "errors" in result:
         return {"errors": result["errors"]}
-    
-    return {}
+
+    # 不允许静默返回空结果，否则会导致 resources_status 残留 pending
+    concept = state["concept"]
+    return {
+        "errors": [{
+            "type": "resource",
+            "concept_id": concept.concept_id,
+            "concept_name": concept.name,
+            "error": "resource_wrapper_empty_result",
+        }]
+    }
 
 
 async def generate_quiz_wrapper(
@@ -234,8 +252,17 @@ async def generate_quiz_wrapper(
         return {"quiz": result["quizzes"][0]}
     elif "errors" in result:
         return {"errors": result["errors"]}
-    
-    return {}
+
+    # 不允许静默返回空结果，否则后续状态会出现“任务完成但 quiz 仍 pending”
+    concept = state["concept"]
+    return {
+        "errors": [{
+            "type": "quiz",
+            "concept_id": concept.concept_id,
+            "concept_name": concept.name,
+            "error": "quiz_wrapper_empty_result",
+        }]
+    }
 
 
 async def fan_in_and_save(

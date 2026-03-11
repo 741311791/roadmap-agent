@@ -135,6 +135,12 @@ export interface RoadmapTreeProps {
   
   /** 部分失败的 Concept ID 列表 */
   partialFailedConceptIds?: string[];
+
+  /** 失败内容类型映射（concept_id -> 失败的内容类型列表） */
+  failedContentTypesMap?: Record<string, Array<'tutorial' | 'resources' | 'quiz'>>;
+
+  /** 任务状态（用于完成态下的 pending 兜底重跑） */
+  taskStatus?: string;
   
   /** 节点点击回调 */
   onNodeClick?: (node: TreeNodeData) => void;
@@ -155,8 +161,18 @@ export interface RoadmapTreeProps {
 export interface TreeNodeProps {
   node: TreeNodeData;
   onToggleExpand?: (nodeId: string) => void;
-  onClick?: (node: TreeNodeData) => void;
+  onClick?: (node: TreeNodeData, anchorPosition?: NodeAnchorPosition) => void;
   isSelected?: boolean;
+}
+
+/**
+ * 弹出层锚点位置（基于 viewport 坐标）
+ */
+export interface NodeAnchorPosition {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 /**
@@ -166,11 +182,13 @@ export interface NodeDetailPopoverProps {
   node: TreeNodeData | null;
   isOpen: boolean;
   onClose: () => void;
-  anchorPosition?: { x: number; y: number };
+  anchorPosition?: NodeAnchorPosition;
   /** 路线图 ID（用于重试功能） */
   roadmapId?: string | null;
-  /** 用户学习偏好（用于重试功能） */
-  userPreferences?: any;
+  /** 失败内容类型映射（concept_id -> 失败的内容类型列表） */
+  failedContentTypesMap?: Record<string, Array<'tutorial' | 'resources' | 'quiz'>>;
+  /** 任务状态（用于完成态下的 pending 兜底重跑） */
+  taskStatus?: string;
   /** 重试成功回调 */
   onRetrySuccess?: () => void;
 }
@@ -277,24 +295,35 @@ export function getConceptNodeStatus(
     return 'partial_failure';
   }
   
-  // 🆕 优先使用 overall_status（来自 concept_metadata 表，更准确）
-  // 注意：只有 loadingConceptIds 中的概念才显示为 loading 状态
-  // overall_status = 'pending' 表示"等待处理"，不是"正在加载"
-  if ((concept as any).overall_status) {
-    switch ((concept as any).overall_status) {
+  // 🆕 优先使用 overall_status（来自 concept_metadata 表）
+  // 但为保证前端“实时事件驱动”的更新，当 overall_status= pending 且本地已收到
+  // content/resources/quiz 的完成或失败信号时，应回退到细粒度字段推断，避免节点卡在 pending。
+  const overallStatus = (concept as any).overall_status;
+  if (overallStatus && overallStatus !== 'pending') {
+    switch (overallStatus) {
       case 'completed':
         return 'completed';
       case 'failed':
         return 'failed';
       case 'partial_failed':
         return 'partial_failure';
-      case 'pending':
-        // pending 表示等待处理，不是正在加载
-        // loading 状态只由 loadingConceptIds 控制（上面已检查）
-        return 'pending';
       default:
-        // 继续使用旧逻辑
+        // 未知状态，回退到细粒度字段推断
         break;
+    }
+  }
+  if (overallStatus === 'pending') {
+    const hasRealtimeSignal =
+      concept.content_status === 'completed' ||
+      concept.content_status === 'failed' ||
+      concept.resources_status === 'completed' ||
+      concept.resources_status === 'failed' ||
+      concept.quiz_status === 'completed' ||
+      concept.quiz_status === 'failed';
+
+    if (!hasRealtimeSignal) {
+      // 仍未收到任何实时结果，保持 pending
+      return 'pending';
     }
   }
   

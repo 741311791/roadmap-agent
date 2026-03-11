@@ -70,15 +70,16 @@ export const GradientTracing: React.FC<GradientTracingProps> = ({
         />
         <defs>
           <motion.linearGradient
+            initial={{ x1: 0, x2: 0 }}
             animate={animate ? {
               x1: [0, width * 2],
               x2: [0, width],
-            } : undefined}
-            transition={{
+            } : { x1: 0, x2: 0 }}
+            transition={animate ? {
               duration: animationDuration,
               repeat: Infinity,
               ease: "linear",
-            }}
+            } : { duration: 0 }}
             id={gradientId}
             gradientUnits="userSpaceOnUse"
           >

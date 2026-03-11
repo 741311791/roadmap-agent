@@ -67,19 +67,17 @@ class ConceptContentHandler:
             保存状态（强类型 Pydantic Model）
         """
         # 初始化保存状态
-        tutorial_status = "skipped"
+        # 设计约束：当前内容生成链路固定生成三项（tutorial/resources/quiz），
+        # 因此某一项缺失不是“跳过”，而是流程异常，应标记为 failed，避免最终残留 pending。
+        tutorial_status = "failed"
         tutorial_output_dict = None
-        resource_status = "skipped"
+        resource_status = "failed"
         resource_output_dict = None
-        quiz_status = "skipped"
+        quiz_status = "failed"
         quiz_output_dict = None
         
         saved_count = 0
-        total_count = sum([
-            tutorial is not None,
-            resource is not None,
-            quiz is not None,
-        ])
+        total_count = 3
         
         logger.info(
             "concept_content_handler_saving",
@@ -116,6 +114,12 @@ class ConceptContentHandler:
                     exc_info=True,
                 )
                 tutorial_status = "failed"
+        else:
+            logger.error(
+                "tutorial_output_missing",
+                concept_id=concept_id,
+                roadmap_id=roadmap_id,
+            )
         
         # 保存 Resource
         if resource:
@@ -144,6 +148,12 @@ class ConceptContentHandler:
                     exc_info=True,
                 )
                 resource_status = "failed"
+        else:
+            logger.error(
+                "resource_output_missing",
+                concept_id=concept_id,
+                roadmap_id=roadmap_id,
+            )
         
         # 保存 Quiz
         if quiz:
@@ -172,6 +182,12 @@ class ConceptContentHandler:
                     exc_info=True,
                 )
                 quiz_status = "failed"
+        else:
+            logger.error(
+                "quiz_output_missing",
+                concept_id=concept_id,
+                roadmap_id=roadmap_id,
+            )
         
         # 标记是否所有元数据都已保存
         metadata_saved = (saved_count == total_count and total_count > 0)
@@ -192,33 +208,30 @@ class ConceptContentHandler:
                 # ⚠️ 立即 flush 确保后续查询能看到这条记录
                 await session.flush()
             
-            # 更新各内容项的状态
-            if tutorial:
-                await concept_crud.update_content_status(
-                    session=session,
-                    concept_id=concept_id,
-                    content_type="tutorial",
-                    status="completed" if tutorial_status == "success" else "failed",
-                    content_id=tutorial.tutorial_id if tutorial_status == "success" else None,
-                )
+            # 更新各内容项的状态（无论是否拿到输出，都必须落库，避免残留 pending）
+            await concept_crud.update_content_status(
+                session=session,
+                concept_id=concept_id,
+                content_type="tutorial",
+                status="completed" if tutorial_status == "success" else "failed",
+                content_id=tutorial.tutorial_id if tutorial_status == "success" and tutorial else None,
+            )
             
-            if resource:
-                await concept_crud.update_content_status(
-                    session=session,
-                    concept_id=concept_id,
-                    content_type="resources",
-                    status="completed" if resource_status == "success" else "failed",
-                    content_id=resource.id if resource_status == "success" else None,
-                )
+            await concept_crud.update_content_status(
+                session=session,
+                concept_id=concept_id,
+                content_type="resources",
+                status="completed" if resource_status == "success" else "failed",
+                content_id=resource.id if resource_status == "success" and resource else None,
+            )
             
-            if quiz:
-                await concept_crud.update_content_status(
-                    session=session,
-                    concept_id=concept_id,
-                    content_type="quiz",
-                    status="completed" if quiz_status == "success" else "failed",
-                    content_id=quiz.quiz_id if quiz_status == "success" else None,
-                )
+            await concept_crud.update_content_status(
+                session=session,
+                concept_id=concept_id,
+                content_type="quiz",
+                status="completed" if quiz_status == "success" else "failed",
+                content_id=quiz.quiz_id if quiz_status == "success" and quiz else None,
+            )
             
             logger.info(
                 "concept_metadata_status_updated",

@@ -112,6 +112,9 @@ class ContentHandler(NodeOutputHandler[ContentHandlerInput]):
         resource_refs: dict,
         quiz_refs: dict,
         failed_concepts: list,
+        failed_tutorial_concepts: list[str] | None = None,
+        failed_resource_concepts: list[str] | None = None,
+        failed_quiz_concepts: list[str] | None = None,
     ) -> dict:
         """
         更新framework中所有Concept的内容引用字段
@@ -126,6 +129,10 @@ class ContentHandler(NodeOutputHandler[ContentHandlerInput]):
         Returns:
             更新后的framework字典
         """
+        failed_tutorial_set = set(failed_tutorial_concepts or [])
+        failed_resource_set = set(failed_resource_concepts or [])
+        failed_quiz_set = set(failed_quiz_concepts or [])
+
         for stage in framework_data.get("stages", []):
             for module in stage.get("modules", []):
                 for concept in module.get("concepts", []):
@@ -141,7 +148,7 @@ class ContentHandler(NodeOutputHandler[ContentHandlerInput]):
                         concept["tutorial_id"] = tutorial_output.get("tutorial_id")
                         concept["content_ref"] = tutorial_output.get("content_url")
                         concept["content_summary"] = tutorial_output.get("summary")
-                    elif concept_id in failed_concepts:
+                    elif concept_id in failed_concepts or concept_id in failed_tutorial_set:
                         if "content_status" not in concept or concept["content_status"] == "pending":
                             concept["content_status"] = "failed"
                     
@@ -151,7 +158,7 @@ class ContentHandler(NodeOutputHandler[ContentHandlerInput]):
                         concept["resources_status"] = "completed"
                         concept["resources_id"] = resource_output.get("id")
                         concept["resources_count"] = len(resource_output.get("resources", []))
-                    elif concept_id in failed_concepts:
+                    elif concept_id in failed_concepts or concept_id in failed_resource_set:
                         if "resources_status" not in concept or concept["resources_status"] == "pending":
                             concept["resources_status"] = "failed"
                     
@@ -161,7 +168,7 @@ class ContentHandler(NodeOutputHandler[ContentHandlerInput]):
                         concept["quiz_status"] = "completed"
                         concept["quiz_id"] = quiz_output.get("quiz_id")
                         concept["quiz_questions_count"] = quiz_output.get("total_questions")
-                    elif concept_id in failed_concepts:
+                    elif concept_id in failed_concepts or concept_id in failed_quiz_set:
                         if "quiz_status" not in concept or concept["quiz_status"] == "pending":
                             concept["quiz_status"] = "failed"
         
@@ -205,6 +212,9 @@ class ContentHandler(NodeOutputHandler[ContentHandlerInput]):
         resource_refs = {}
         quiz_refs = {}
         failed_concepts = []
+        failed_tutorial_concepts = []
+        failed_resource_concepts = []
+        failed_quiz_concepts = []
         
         for result in concept_results:
             save_status = result.get("save_status", {})
@@ -216,12 +226,18 @@ class ContentHandler(NodeOutputHandler[ContentHandlerInput]):
             # 构建引用字典
             if save_status.get("tutorial") == "success":
                 tutorial_refs[concept_id] = save_status.get("tutorial_output")
+            elif save_status.get("tutorial") == "failed":
+                failed_tutorial_concepts.append(concept_id)
             
             if save_status.get("resource") == "success":
                 resource_refs[concept_id] = save_status.get("resource_output")
+            elif save_status.get("resource") == "failed":
+                failed_resource_concepts.append(concept_id)
             
             if save_status.get("quiz") == "success":
                 quiz_refs[concept_id] = save_status.get("quiz_output")
+            elif save_status.get("quiz") == "failed":
+                failed_quiz_concepts.append(concept_id)
             
             # 记录失败的 Concept
             if not save_status.get("metadata_saved", False):
@@ -243,6 +259,9 @@ class ContentHandler(NodeOutputHandler[ContentHandlerInput]):
             resource_refs=resource_refs,
             quiz_refs=quiz_refs,
             failed_concepts=failed_concepts,
+            failed_tutorial_concepts=failed_tutorial_concepts,
+            failed_resource_concepts=failed_resource_concepts,
+            failed_quiz_concepts=failed_quiz_concepts,
         )
         
         from app.models.domain import RoadmapFramework

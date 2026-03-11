@@ -84,6 +84,8 @@ interface CoreDisplayAreaProps {
   failedConceptIds?: string[];
   /** 部分失败的 Concept ID 列表 */
   partialFailedConceptIds?: string[];
+  /** 失败内容类型映射（concept_id -> 失败的内容类型列表） */
+  failedContentTypesMap?: Record<string, Array<'tutorial' | 'resources' | 'quiz'>>;
   /** 用户学习偏好（用于重试功能） */
   userPreferences?: any;
   /** 重试成功回调 */
@@ -475,6 +477,7 @@ export function CoreDisplayArea({
   loadingConceptIds = [],
   failedConceptIds = [],
   partialFailedConceptIds = [],
+  failedContentTypesMap = {},
   userPreferences,
   onRetrySuccess,
   maxHeight = 500,
@@ -591,6 +594,7 @@ export function CoreDisplayArea({
                  stages={roadmapFramework.stages}
                  showStartNode={showIntentCard && !isIntentCollapsed} // 只在显示需求分析卡片时显示起始节点
                  isEditing={isEditing}
+                 taskStatus={status}
                  taskId={taskId}
                  roadmapId={roadmapId}  // 传递 roadmapId
                  showHistoryButton={true}  // 启用历史版本按钮
@@ -598,6 +602,7 @@ export function CoreDisplayArea({
                  loadingConceptIds={loadingConceptIds}
                  failedConceptIds={failedConceptIds}
                  partialFailedConceptIds={partialFailedConceptIds}
+                 failedContentTypesMap={failedContentTypesMap}
                  userPreferences={userPreferences}
                  onRetrySuccess={onRetrySuccess}
                />

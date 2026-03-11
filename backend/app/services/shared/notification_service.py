@@ -429,7 +429,9 @@ class NotificationService:
         if data:
             event["data"] = data
         
-        await self._publish(task_id, event)
+        # 对于单内容重试场景，concept_complete 是前端状态更新的关键信号，
+        # 使用带重试的发布路径，降低瞬时网络抖动导致的事件丢失概率。
+        await self._publish_with_retry(task_id, event)
     
     async def publish_concept_failed(
         self,
@@ -460,7 +462,8 @@ class NotificationService:
             "message": f"内容生成失败: {concept_name}",
         }
         
-        await self._publish(task_id, event)
+        # 失败事件同样属于关键通知，使用重试发布确保前端可感知。
+        await self._publish_with_retry(task_id, event)
     
     async def publish_concept_all_content_complete(
         self,

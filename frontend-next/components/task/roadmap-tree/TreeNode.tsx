@@ -143,7 +143,13 @@ export const TreeNode = memo(function TreeNode({
   
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    onClick?.(node);
+    const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+    onClick?.(node, {
+      x: rect.left,
+      y: rect.top,
+      width: rect.width,
+      height: rect.height,
+    });
   };
   
   const handleToggle = (e: React.MouseEvent) => {
