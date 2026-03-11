@@ -969,6 +969,34 @@
     "nodesModified": "{count} 个节点已修改",
     "fullscreen": "全屏",
     "exitFullscreen": "退出全屏",
+    "userRequest": {
+      "learningGoal": "学习目标",
+      "profileMotivation": "画像与动机",
+      "weeklyInput": "每周投入",
+      "startLevel": "起始水平",
+      "mode": "模式",
+      "turboActive": "极速模式已开启",
+      "preferences": "偏好设置",
+      "context": "附加说明",
+      "hrs": "小时",
+      "noGoalSet": "未设定具体目标",
+      "noProfileProvided": "未提供详细画像",
+      "unknown": "未知"
+    },
+    "preference": {
+      "visual": "视觉/视频",
+      "text": "文档/阅读",
+      "hands_on": "实操/项目",
+      "audio": "音频/听力"
+    },
+    "language": {
+      "primaryZh": "中文 (主)",
+      "secondaryEn": "English (辅)",
+      "preferredZh": "中文偏好",
+      "primaryEn": "English (主)",
+      "secondaryZh": "中文 (辅)",
+      "preferredEn": "英文偏好"
+    },
     "nodeDetail": {
       "typeStart": "开始",
       "typeStage": "阶段",

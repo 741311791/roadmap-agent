@@ -17,7 +17,7 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
-import { useTranslations } from 'next-intl';
+import { useTranslations, useLocale } from 'next-intl';
 import { ArrowLeft, AlertCircle, CheckCircle2, Loader2, Clock, Eye, Target, UserRound, SlidersHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -83,27 +83,31 @@ const formatText = (text?: string | null) => {
     .join(' ');
 };
 
-// 辅助函数：格式化语言标签
-const formatLanguage = (tag: string) => {
-  if (tag.includes('primary:zh') || tag === 'zh') return '中文 (主)';
-  if (tag.includes('secondary:en') || tag === 'en') return 'English (辅)';
-  if (tag.includes('preferred:zh')) return '中文偏好';
-  return formatText(tag.replace('primary:', '').replace('secondary:', '').replace('preferred:', ''));
-};
+/**
+ * 格式化语言标签（支持 i18n）
+ */
+function formatLanguage(tag: string, t: (key: string) => string): string {
+  if (tag.includes('primary:zh') || tag === 'zh') return t('language.primaryZh');
+  if (tag.includes('secondary:en') || tag === 'en') return t('language.secondaryEn');
+  if (tag.includes('preferred:zh')) return t('language.preferredZh');
+  if (tag.includes('primary:en')) return t('language.primaryEn');
+  if (tag.includes('secondary:zh')) return t('language.secondaryZh');
+  if (tag.includes('preferred:en')) return t('language.preferredEn');
+  return formatText(tag.replace('primary:', '').replace('secondary:', '').replace('preferred:', '')) ?? tag;
+}
 
-// 辅助函数：格式化偏好标签
-const formatPreference = (tag: string) => {
-  const map: Record<string, string> = {
-    'visual': '视觉/视频',
-    'text': '文档/阅读',
-    'hands_on': '实操/项目',
-    'audio': '音频/听力',
-  };
-  return map[tag] || formatText(tag);
-};
+/**
+ * 格式化偏好标签（支持 i18n）
+ */
+function formatPreference(tag: string, t: (key: string) => string): string {
+  const prefKeys = ['visual', 'text', 'hands_on', 'audio'] as const;
+  if (prefKeys.includes(tag as any)) return t(`preference.${tag}`);
+  return formatText(tag) ?? tag;
+}
 
 export default function TaskDetailPage() {
   const t = useTranslations('taskDetail');
+  const locale = useLocale();
   const params = useParams();
   const router = useRouter();
   const taskId = params?.taskId as string;
@@ -1257,14 +1261,14 @@ export default function TaskDetailPage() {
               <Clock className="w-4 h-4" />
               <time>
                 {taskInfo.created_at 
-                  ? new Date(taskInfo.created_at).toLocaleDateString('en-US', {
+                  ? new Date(taskInfo.created_at).toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-US', {
                       year: 'numeric',
                       month: 'short',
                       day: 'numeric',
                       hour: '2-digit',
                       minute: '2-digit'
                     })
-                  : 'Unknown'}
+                  : t('userRequest.unknown')}
               </time>
             </div>
           </div>
@@ -1283,10 +1287,10 @@ export default function TaskDetailPage() {
             <div className="space-y-3">
               <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
                 <Target className="w-4 h-4 text-sage-600 dark:text-sage-400" />
-                <span>Learning Goal</span>
+                <span>{t('userRequest.learningGoal')}</span>
               </div>
               <h2 className="text-xl md:text-2xl font-serif font-medium text-foreground leading-relaxed text-balance">
-                “{requestPreferences?.learning_goal || taskInfo.title || '未设定具体目标'}”
+                “{requestPreferences?.learning_goal || taskInfo.title || t('userRequest.noGoalSet')}”
               </h2>
             </div>
 
@@ -1302,7 +1306,7 @@ export default function TaskDetailPage() {
                 <div className="space-y-4">
                   <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
                     <UserRound className="w-3.5 h-3.5" />
-                    <span>Profile & Motivation</span>
+                    <span>{t('userRequest.profileMotivation')}</span>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     {/* 职业与行业 */}
@@ -1332,7 +1336,7 @@ export default function TaskDetailPage() {
                     )}
 
                     {![requestPreferences?.current_role, requestPreferences?.career_background, requestPreferences?.industry, requestPreferences?.motivation].some(Boolean) && (
-                      <span className="text-sm text-muted-foreground italic">未提供详细画像</span>
+                      <span className="text-sm text-muted-foreground italic">{t('userRequest.noProfileProvided')}</span>
                     )}
                   </div>
                 </div>
@@ -1342,21 +1346,21 @@ export default function TaskDetailPage() {
                   {/* Weekly Hours */}
                   <div className="p-3.5 rounded-xl bg-white/60 dark:bg-gray-900/60 border border-border/40 shadow-sm flex flex-col justify-between min-h-[80px]">
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-[10px] uppercase text-muted-foreground font-medium tracking-wider">Weekly Input</span>
+                      <span className="text-[10px] uppercase text-muted-foreground font-medium tracking-wider">{t('userRequest.weeklyInput')}</span>
                       <Clock className="w-3.5 h-3.5 text-sage-500" />
                     </div>
                     <div className="flex items-baseline gap-1">
                       <span className="text-2xl font-semibold tracking-tight tabular-nums text-foreground">
                         {requestPreferences?.available_hours_per_week || '-'}
                       </span>
-                      <span className="text-xs text-muted-foreground font-medium">hrs</span>
+                      <span className="text-xs text-muted-foreground font-medium">{t('userRequest.hrs')}</span>
                     </div>
                   </div>
 
                   {/* Current Level */}
                   <div className="p-3.5 rounded-xl bg-white/60 dark:bg-gray-900/60 border border-border/40 shadow-sm flex flex-col justify-between min-h-[80px]">
                      <div className="flex items-center justify-between mb-2">
-                      <span className="text-[10px] uppercase text-muted-foreground font-medium tracking-wider">Start Level</span>
+                      <span className="text-[10px] uppercase text-muted-foreground font-medium tracking-wider">{t('userRequest.startLevel')}</span>
                       <div className="flex gap-0.5">
                         {[1, 2, 3].map(i => (
                           <div 
@@ -1373,7 +1377,7 @@ export default function TaskDetailPage() {
                       </div>
                     </div>
                     <div className="text-sm font-medium text-foreground">
-                      {formatText(requestPreferences?.current_level) || 'Beginner'}
+                      {formatText(requestPreferences?.current_level) || t('beginner')}
                     </div>
                   </div>
 
@@ -1381,14 +1385,14 @@ export default function TaskDetailPage() {
                   {taskInfo.turbo_mode && (
                     <div className="p-3.5 rounded-xl bg-gradient-to-br from-blue-50/50 to-indigo-50/50 dark:from-blue-900/20 dark:to-indigo-900/20 border border-blue-100 dark:border-blue-900/50 shadow-sm flex flex-col justify-between min-h-[80px]">
                       <div className="flex items-center justify-between mb-2">
-                         <span className="text-[10px] uppercase text-blue-600/70 dark:text-blue-400/70 font-medium tracking-wider">Mode</span>
+                         <span className="text-[10px] uppercase text-blue-600/70 dark:text-blue-400/70 font-medium tracking-wider">{t('userRequest.mode')}</span>
                          <span className="relative flex h-2 w-2">
                           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
                           <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
                         </span>
                       </div>
                       <div className="text-sm font-medium text-blue-700 dark:text-blue-300">
-                        Turbo Active
+                        {t('userRequest.turboActive')}
                       </div>
                     </div>
                   )}
@@ -1402,13 +1406,13 @@ export default function TaskDetailPage() {
                 <div className="space-y-4">
                   <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
                     <SlidersHorizontal className="w-3.5 h-3.5" />
-                    <span>Preferences</span>
+                    <span>{t('userRequest.preferences')}</span>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {/* Content Formats */}
                     {(requestPreferences?.content_preference || []).map((item) => (
                       <Badge key={item} variant="outline" className="px-2.5 py-1 text-xs font-normal border-dashed text-muted-foreground bg-transparent hover:bg-muted/50">
-                        {formatPreference(item)}
+                        {formatPreference(item, t)}
                       </Badge>
                     ))}
                     {/* Languages */}
@@ -1417,7 +1421,7 @@ export default function TaskDetailPage() {
                       requestPreferences?.secondary_language ? `secondary:${requestPreferences.secondary_language}` : null
                     ].filter(Boolean).map((tag) => (
                       <Badge key={tag} variant="outline" className="px-2.5 py-1 text-xs font-normal border-amber-200/50 bg-amber-50/30 text-amber-700 dark:border-amber-900/50 dark:bg-amber-900/10 dark:text-amber-400">
-                        {formatLanguage(tag!)}
+                        {formatLanguage(tag!, t)}
                       </Badge>
                     ))}
                   </div>
@@ -1426,7 +1430,7 @@ export default function TaskDetailPage() {
                 {/* Additional Context */}
                 {taskInfo.user_request?.additional_context && (
                   <div className="space-y-3 pt-2">
-                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Context</p>
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{t('userRequest.context')}</p>
                     <p className="text-sm text-muted-foreground/90 leading-relaxed bg-muted/30 p-3.5 rounded-xl border border-border/50 text-justify">
                       {taskInfo.user_request.additional_context}
                     </p>
