@@ -237,7 +237,7 @@ export function NodeDetailPopover({
     try {
       const request: RetryContentRequest = {};
 
-      let response;
+      let response: Awaited<ReturnType<typeof contentApi.regenerateTutorial>> | undefined;
       switch (contentType) {
         case 'tutorial':
           response = await contentApi.regenerateTutorial(roadmapId, conceptData.concept_id, request);
@@ -250,7 +250,7 @@ export function NodeDetailPopover({
           break;
       }
 
-      if (response.success) {
+      if (response && response.success) {
         // 后端返回 task_id 时，订阅该重试任务的 WebSocket 事件，确保前端实时更新
         const retryTaskId = (response.data as { task_id?: string } | null | undefined)?.task_id;
         if (retryTaskId) {

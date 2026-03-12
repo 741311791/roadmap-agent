@@ -85,6 +85,7 @@ export type RetryContentResponse = {
   content_type: string;
   message: string;
   new_content?: any;
+  data?: Record<string, any> | null;
 };
 
 /**
