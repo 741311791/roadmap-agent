@@ -39,6 +39,7 @@ export interface WSProgressEvent extends WSEvent {
   message?: string;
   timestamp: string;
   data?: {
+    duration_ms?: number;
     key_technologies?: string[];
     roadmap_id?: string;
     stages_count?: number;
@@ -290,6 +291,9 @@ export class TaskWebSocket {
       console.log('[WS] Connection opened');
       this.reconnectAttempts = 0;
       this.startHeartbeat();
+
+      // 主动拉取一次当前状态，避免重连期间错过 progress 事件后前端停留在旧步骤。
+      this.requestStatus();
     };
 
     this.ws.onmessage = (event) => {
@@ -392,7 +396,8 @@ export class TaskWebSocket {
         }
         
         this.reconnectTimeout = setTimeout(() => {
-          this.connect(false);
+          // 重连时强制补拉当前状态，确保断线期间的步骤切换不会丢失。
+          this.connect(true);
         }, delay);
       } else if (this.reconnectAttempts >= this.maxReconnectAttempts) {
         console.error('[WS] Max reconnect attempts reached, giving up');

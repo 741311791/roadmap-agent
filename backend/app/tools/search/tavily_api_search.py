@@ -282,6 +282,23 @@ class TavilyAPISearchTool(BaseTool[SearchQuery, SearchResult]):
                 results_count=len(results),
                 key_prefix=api_key[:10] + "...",
             )
+
+            # 说明：
+            # 在不依赖单独 beat 的情况下，缓存需要依靠运行时请求自行维护配额。
+            # 因此每次使用预分配 key 成功后，都同步扣减 Redis 中的剩余额度。
+            if self._pre_allocated_key:
+                try:
+                    from app.core.tavily_key_cache import get_tavily_key_cache
+
+                    key_cache = get_tavily_key_cache()
+                    await key_cache.update_quota(api_key, used_count=1)
+                except Exception as quota_update_error:
+                    logger.warning(
+                        "tavily_cache_quota_update_after_success_failed",
+                        query=input_data.query,
+                        key_prefix=api_key[:10] + "...",
+                        error=str(quota_update_error),
+                    )
             
             return SearchResult(
                 results=results,
@@ -289,11 +306,35 @@ class TavilyAPISearchTool(BaseTool[SearchQuery, SearchResult]):
             )
             
         except Exception as e:
+            error_message = str(e)
+
+            # 说明：
+            # 如果预分配的 key 已经被 Tavily 判定为无效，就直接从缓存中淘汰，
+            # 避免后续请求继续命中这个失效 key。
+            if self._pre_allocated_key and (
+                "Unauthorized" in error_message or "invalid API key" in error_message
+            ):
+                try:
+                    from app.core.tavily_key_cache import get_tavily_key_cache
+
+                    key_cache = get_tavily_key_cache()
+                    await key_cache.evict_key(
+                        api_key,
+                        reason="unauthorized_from_tavily_api",
+                    )
+                except Exception as evict_error:
+                    logger.warning(
+                        "tavily_cache_evict_after_api_failure_failed",
+                        query=input_data.query,
+                        key_prefix=api_key[:10] + "...",
+                        error=str(evict_error),
+                    )
+
             logger.error(
                 "tavily_api_search_failed",
                 query=input_data.query,
                 key_prefix=api_key[:10] + "...",
-                error=str(e)[:200],
+                error=error_message[:200],
                 error_type=type(e).__name__,
             )
             raise

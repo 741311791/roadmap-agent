@@ -5,7 +5,7 @@ Roadmap Editor Agent（路线图编辑师）
 - 移除 StageProcessor（过度工程化）
 - 移除依赖关系和并行处理逻辑
 - 采用两阶段生成（效仿 IntentAnalyzer）
-- 使用 LLM 生成修改总结
+- 修改总结改为本地生成，减少额外 LLM 开销
 - 完全依赖 LLM 的语义理解能力
 """
 from app.agents.base import BaseAgent
@@ -32,7 +32,7 @@ class RoadmapEditorAgent(BaseAgent):
     - 接收 EditPlan（只包含 tasks）
     - 使用两阶段生成修改整个 RoadmapFramework
     - 使用 FrameworkDiff 自动生成 modified_node_ids
-    - 调用 LLM 生成修改总结
+    - 本地生成修改总结
     
     配置从环境变量加载：
     - EDITOR_PROVIDER: 模型提供商（默认: anthropic）
@@ -80,7 +80,7 @@ class RoadmapEditorAgent(BaseAgent):
         1. 构建 Prompt（包含所有 tasks 和 existing_framework）
         2. 使用两阶段生成新的 RoadmapFramework
         3. 使用 FrameworkDiff 自动生成 modified_node_ids
-        4. 调用 LLM 生成修改总结
+        4. 本地生成修改总结
         
         Args:
             input_data: 包含现有框架、用户偏好和修改计划
@@ -91,6 +91,9 @@ class RoadmapEditorAgent(BaseAgent):
         existing_framework = input_data.existing_framework
         user_preferences = input_data.user_preferences
         edit_plan = input_data.edit_plan
+        user_constraints = await self._load_user_constraints(
+            roadmap_id=existing_framework.roadmap_id
+        )
         
         logger.info(
             "roadmap_edit_started",
@@ -106,6 +109,7 @@ class RoadmapEditorAgent(BaseAgent):
         # 加载 System Prompt
         system_prompt = self._load_system_prompt(
             "roadmap_editor.j2",
+            user_constraints=user_constraints,
             agent_name="Roadmap Editor",
             role_description="路线图编辑专家，根据修改任务调整路线图框架。",
             user_goal=user_preferences.learning_goal,
@@ -174,11 +178,11 @@ class RoadmapEditorAgent(BaseAgent):
         )
         
         # ====================================================================
-        # 阶段 3: 调用 LLM 生成修改总结
+        # 阶段 3: 本地生成修改总结
         # ====================================================================
-        logger.info("roadmap_edit_stage3_generate_summary")
-        
-        modification_summary = await self._generate_modification_summary(
+        logger.info("roadmap_edit_stage3_generate_summary_local")
+
+        modification_summary = self._build_modification_summary(
             old_framework=existing_framework,
             new_framework=updated_framework,
             tasks=edit_plan.tasks,
@@ -245,7 +249,7 @@ class RoadmapEditorAgent(BaseAgent):
 请返回修改后的完整路线图框架。
 """
     
-    async def _generate_modification_summary(
+    def _build_modification_summary(
         self,
         old_framework: RoadmapFramework,
         new_framework: RoadmapFramework,
@@ -253,7 +257,7 @@ class RoadmapEditorAgent(BaseAgent):
         modified_node_ids: list[str],
     ) -> str:
         """
-        调用 LLM 生成修改总结
+        本地生成修改总结
         
         Args:
             old_framework: 旧版框架
@@ -264,49 +268,16 @@ class RoadmapEditorAgent(BaseAgent):
         Returns:
             修改总结文本
         """
-        logger.info(
-            "generating_modification_summary",
-            modified_nodes_count=len(modified_node_ids),
-        )
-        
-        # 构建总结生成 Prompt
-        tasks_summary = "\n".join([
-            f"- [{task.action}] {task.stage_id or 'NEW'}: {task.instruction}"
+        tasks_summary = "；".join([
+            f"{task.action} {task.stage_id or 'new'}"
             for task in tasks
         ])
-        
-        prompt = f"""
-请总结路线图的修改内容（50字以内）。
-
-**执行的修改任务**:
-{tasks_summary}
-
-**修改统计**:
-- 旧版阶段数: {len(old_framework.stages)}
-- 新版阶段数: {len(new_framework.stages)}
-- 旧版总时长: {old_framework.total_estimated_hours}h
-- 新版总时长: {new_framework.total_estimated_hours}h
-- 被修改的节点数: {len(modified_node_ids)}
-
-请用一句话简洁地总结修改内容，例如：
-- "删除了 2 个高级概念，简化了阶段 2"
-- "新增了前端开发阶段（HTML/CSS/JavaScript）"
-- "精简了阶段 2 和阶段 3，总时长从 90h 降至 60h"
-"""
-        
-        # 调用 LLM 获取文本总结
-        messages = [{"role": "user", "content": prompt}]
-        
-        response = await self._standard_call(
-            messages=messages,
-            tools=None,
+        hours_diff = new_framework.total_estimated_hours - old_framework.total_estimated_hours
+        hours_sign = "+" if hours_diff >= 0 else ""
+        summary = (
+            f"{len(tasks)} 个任务已执行（{tasks_summary}），"
+            f"修改了 {len(modified_node_ids)} 个节点，"
+            f"总时长变化: {hours_sign}{hours_diff:.1f}h"
         )
-        
-        summary = response.choices[0].message.content.strip()
-        
-        logger.info(
-            "modification_summary_generated",
-            summary=summary,
-        )
-        
+        logger.info("modification_summary_generated_local", summary=summary)
         return summary

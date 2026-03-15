@@ -17,6 +17,7 @@ import time
 from app.config.settings import settings
 
 logger = structlog.get_logger()
+pool_config = settings.get_pool_config
 
 # ============================================================
 # Prometheus 指标定义（可选监控）
@@ -70,10 +71,10 @@ except ImportError:
 engine: AsyncEngine = create_async_engine(
     settings.DATABASE_URL,
     echo=False,
-    pool_size=settings.DB_POOL_SIZE,
-    max_overflow=settings.DB_MAX_OVERFLOW,
+    pool_size=pool_config["pool_size"],
+    max_overflow=pool_config["max_overflow"],
     pool_pre_ping=True,  # 启用连接健康检查
-    pool_recycle=300,  # 5分钟回收连接
+    pool_recycle=pool_config["pool_recycle"],
     pool_timeout=60,
     pool_use_lifo=True,
     connect_args={

@@ -13,12 +13,15 @@
 - 清晰职责：每个 Concept 完成后立即保存元数据
 """
 from typing import TypedDict, Annotated
+import time
 import operator
 import structlog
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Send, Command
 
+from app.crud.crud_concept import get_concept_crud
+from app.db.celery_session import get_celery_session
 from app.models.domain import (
     Concept,
     LearningPreferences,
@@ -54,6 +57,8 @@ class SingleConceptState(TypedDict):
     task_id: str
     # 所有 Concept 的名称映射（concept_id → name），用于生成前置知识超链接
     concept_name_map: dict
+    # Concept 级总耗时起点，用于统计该 Concept 三类内容生成 + 保存元数据的总耗时
+    concept_started_at: float
     
     # 并发生成的输出（使用 Reducer）
     tutorial: TutorialGenerationOutput | None
@@ -97,6 +102,25 @@ async def inner_fan_out(state: SingleConceptState, config: RunnableConfig) -> Co
         concept_name=concept.name,
     )
     
+    # 先把 Concept 运行态写入数据库，确保前端即使错过早期 WS 事件也能通过快照恢复。
+    try:
+        async with get_celery_session() as session:
+            concept_crud = get_concept_crud()
+            await concept_crud.mark_concept_generating(
+                session=session,
+                concept_id=concept.concept_id,
+                roadmap_id=state["roadmap_id"],
+            )
+    except Exception as exc:
+        logger.warning(
+            "inner_fan_out_mark_generating_failed",
+            task_id=task_id,
+            concept_id=concept.concept_id,
+            roadmap_id=state["roadmap_id"],
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+
     # 发送 Concept 开始生成通知（前端将此 Concept 加入 loading 列表）
     await ctx.notification_service.publish_concept_start(
         task_id=task_id,
@@ -329,6 +353,11 @@ async def fan_in_and_save(
             quiz=quiz,
         )
         # ✅ get_celery_session() 使用 .begin()，自动 commit/rollback
+
+    concept_started_at = state.get("concept_started_at")
+    duration_ms: int | None = None
+    if isinstance(concept_started_at, (int, float)):
+        duration_ms = max(int((time.perf_counter() - concept_started_at) * 1000), 0)
     
     # ✅ 记录执行日志：Concept 内容保存完成
     await ctx.execution_logger.info(
@@ -338,7 +367,9 @@ async def fan_in_and_save(
         message=f"Concept 内容保存完成: {concept.name}",
         concept_id=concept_id,
         roadmap_id=roadmap_id,
+        duration_ms=duration_ms,
         details={
+            "log_type": "concept_content_completed",
             "concept_name": concept.name,
             "tutorial_status": save_result.tutorial,
             "resource_status": save_result.resource,
@@ -361,6 +392,27 @@ async def fan_in_and_save(
             "metadata_saved": save_result.metadata_saved,
         },
     )
+
+    # 刷新业务任务的 updated_at，避免长时间内容生成期间被误判为“卡住”。
+    try:
+        from app.crud.crud_task import get_task_crud
+        from app.db.celery_session import get_celery_session
+
+        async with get_celery_session() as session:
+            task_crud = get_task_crud()
+            await task_crud.update_content_generation_status(
+                session=session,
+                task_id=task_id,
+                status="processing",
+            )
+    except Exception as exc:
+        logger.warning(
+            "content_generation_activity_touch_failed",
+            task_id=task_id,
+            concept_id=concept_id,
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
     
     logger.info(
         "fan_in_and_save_completed",

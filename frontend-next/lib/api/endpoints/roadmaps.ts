@@ -48,6 +48,12 @@ export interface RoadmapDetail {
  * - topic, status, stages, task_id, task_status, current_step
  */
 export type RoadmapSummary = RoadmapHistoryItem;
+export type RoadmapSummaryWithCover = RoadmapHistoryItem & {
+  cover_image_url?: string | null;
+};
+export type FeaturedRoadmapItemWithCover = FeaturedRoadmapItem & {
+  cover_image_url?: string | null;
+};
 
 /**
  * 路线图列表响应
@@ -56,7 +62,7 @@ export type RoadmapSummary = RoadmapHistoryItem;
  * 这里统一使用items作为标准命名
  */
 export interface RoadmapListResponse {
-  items: RoadmapSummary[];
+  items: RoadmapSummaryWithCover[];
   total: number;
   page?: number;
   size?: number;
@@ -66,7 +72,7 @@ export interface RoadmapListResponse {
  * 精选路线图列表响应
  */
 export interface FeaturedRoadmapListResponse {
-  items: FeaturedRoadmapItem[];
+  items: FeaturedRoadmapItemWithCover[];
   total: number;
 }
 

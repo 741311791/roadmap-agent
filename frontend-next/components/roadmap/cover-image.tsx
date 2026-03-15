@@ -15,7 +15,7 @@ interface CoverImageProps {
   topic: string;
   title: string;
   className?: string;
-  coverImageUrl?: string;  // 可选的封面图 URL（如果提供，则跳过 API 调用）
+  coverImageUrl?: string | null;  // 可选的封面图 URL（如果提供，则跳过 API 调用）
 }
 
 export function CoverImage({ roadmapId, topic, title, className = '', coverImageUrl }: CoverImageProps) {

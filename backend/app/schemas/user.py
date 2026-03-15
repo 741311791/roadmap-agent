@@ -127,6 +127,7 @@ class RoadmapHistoryItem(BaseModel):
     roadmap_id: str
     title: str
     created_at: str
+    cover_image_url: Optional[str] = None
     total_concepts: int
     completed_concepts: int
     topic: Optional[str] = None
@@ -165,6 +166,8 @@ class TaskListItem(BaseModel):
     completed_at: Optional[str] = None
     error_message: Optional[str] = None
     roadmap_id: Optional[str] = None  # 如果任务成功，关联的路线图ID
+    queue_ahead_count: Optional[int] = None
+    queue_position: Optional[int] = None
 
 
 class TaskListResponse(BaseModel):

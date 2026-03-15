@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { ExecutionLog } from '@/types/content-generation';
+import { formatWorkflowDuration } from '@/lib/utils/workflow-node-duration';
 
 interface NodeDetailPanelProps {
   /** 当前选中的节点ID */
@@ -136,6 +137,44 @@ function getLevelConfig(level: string) {
 }
 
 /**
+ * 判断日志是否匹配当前节点的共享分支来源。
+ */
+function matchesNodeEditSource(log: ExecutionLog, expectedEditSource?: string): boolean {
+  if (!expectedEditSource) {
+    return true;
+  }
+
+  return log.details?.edit_source === expectedEditSource;
+}
+
+/**
+ * 判断是否为当前节点对应的 LangGraph 完成日志。
+ */
+function isWorkflowCompletionLog(log: ExecutionLog, nodeId: string, expectedEditSource?: string): boolean {
+  if (log.category !== 'workflow' || typeof log.duration_ms !== 'number' || !matchesNodeEditSource(log, expectedEditSource)) {
+    return false;
+  }
+
+  switch (nodeId) {
+    case 'analysis':
+    case 'design':
+    case 'validate':
+    case 'plan1':
+    case 'edit1':
+    case 'plan2':
+    case 'edit2':
+      return log.details?.log_type === 'workflow_node_complete';
+    case 'content':
+      return (
+        log.details?.log_type === 'content_generation_complete' ||
+        log.details?.log_type === 'content_generation_failed'
+      );
+    default:
+      return false;
+  }
+}
+
+/**
  * LogSummaryContent 组件
  */
 function LogSummaryContent({ log }: { log: ExecutionLog }) {
@@ -160,6 +199,39 @@ function LogSummaryContent({ log }: { log: ExecutionLog }) {
       </div>
       <p className="text-sm leading-relaxed text-foreground tracking-[-0.006em]">
         {log.message}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * 节点执行摘要组件
+ */
+function WorkflowExecutionSummary({ workflowLog }: { workflowLog: ExecutionLog }) {
+  return (
+    <div className="w-full space-y-3">
+      <div className="flex items-center gap-2 flex-wrap">
+        <Badge variant="outline" className="text-xs text-sage-700 border-sage-200">
+          LangGraph
+        </Badge>
+        <Badge variant="secondary" className="text-xs tabular-nums">
+          {formatWorkflowDuration(workflowLog.duration_ms ?? 0)}
+        </Badge>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="rounded-lg border bg-muted/30 p-3">
+          <p className="text-[11px] text-muted-foreground">Completed At</p>
+          <p className="mt-1 text-sm font-medium">{formatTime(workflowLog.created_at)}</p>
+        </div>
+        <div className="rounded-lg border bg-muted/30 p-3">
+          <p className="text-[11px] text-muted-foreground">Duration</p>
+          <p className="mt-1 text-sm font-medium tabular-nums">
+            {formatWorkflowDuration(workflowLog.duration_ms ?? 0)}
+          </p>
+        </div>
+      </div>
+      <p className="text-sm leading-relaxed text-foreground tracking-[-0.006em]">
+        {workflowLog.message}
       </p>
     </div>
   );
@@ -260,8 +332,8 @@ export function NodeDetailPanel({
   executionLogs,
   onClose,
 }: NodeDetailPanelProps) {
-  // 筛选当前节点的日志
-  const filteredLogs = useMemo(() => {
+  // 筛选当前节点的 agent 日志
+  const filteredAgentLogs = useMemo(() => {
     if (!selectedNodeId) return [];
     
     const nodeConfig = NODE_TO_STEPS[selectedNodeId];
@@ -288,9 +360,29 @@ export function NodeDetailPanel({
     // 按时间倒序排列
     return logs.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }, [selectedNodeId, executionLogs]);
+
+  // 筛选当前节点的 workflow 完成日志
+  const filteredWorkflowLogs = useMemo(() => {
+    if (!selectedNodeId) return [];
+
+    const nodeConfig = NODE_TO_STEPS[selectedNodeId];
+    if (!nodeConfig) return [];
+
+    return executionLogs
+      .filter((log) => {
+        if (!log.step || !nodeConfig.steps.includes(log.step)) {
+          return false;
+        }
+
+        return isWorkflowCompletionLog(log, selectedNodeId, nodeConfig.editSource);
+      })
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }, [selectedNodeId, executionLogs]);
   
-  // 获取最新一条日志
-  const latestLog = filteredLogs[0];
+  // 获取最新日志
+  const latestWorkflowLog = filteredWorkflowLogs[0];
+  const latestAgentLog = filteredAgentLogs[0];
+  const latestLog = latestAgentLog || latestWorkflowLog;
   
   // 获取节点配置
   const nodeConfig = selectedNodeId ? NODE_TO_STEPS[selectedNodeId] : null;
@@ -302,18 +394,23 @@ export function NodeDetailPanel({
   const NodeIcon = nodeConfig.icon;
   
   // 构建步骤内容
-  const detailSections = latestLog ? [
-    {
-      title: 'Log Summary',
-      description: 'Basic execution information',
-      content: <LogSummaryContent log={latestLog} />,
-    },
-    {
+  const detailSections = [
+    ...(latestWorkflowLog ? [{
+      title: 'Execution Summary',
+      description: 'Latest LangGraph node completion',
+      content: <WorkflowExecutionSummary workflowLog={latestWorkflowLog} />,
+    }] : []),
+    ...(latestAgentLog ? [{
+      title: 'Latest Agent Log',
+      description: 'Most recent agent output for this node',
+      content: <LogSummaryContent log={latestAgentLog} />,
+    }] : []),
+    ...(latestAgentLog?.details ? [{
       title: 'Execution Details',
       description: 'Detailed output data',
-      content: <DetailsContent details={latestLog.details} />,
-    },
-  ] : [];
+      content: <DetailsContent details={latestAgentLog.details} />,
+    }] : []),
+  ];
   
   return (
     <>
@@ -410,10 +507,10 @@ export function NodeDetailPanel({
                   ))}
                   
                   {/* 历史记录统计 */}
-                  {filteredLogs.length > 1 && (
+                  {(filteredWorkflowLogs.length > 1 || filteredAgentLogs.length > 1) && (
                     <div className="pt-4 mt-4 border-t">
                       <p className="text-xs text-muted-foreground text-center tracking-[-0.006em]">
-                        Showing latest of {filteredLogs.length} log entries for this step
+                        Showing latest logs for this step
                       </p>
                     </div>
                   )}

@@ -26,6 +26,7 @@ from tests.factories import (
     IntentAnalysisFactory,
     ValidationFactory,
 )
+from app.models.domain import RoadmapEditOutput
 
 
 @pytest.fixture
@@ -179,12 +180,16 @@ async def test_roadmap_generation_validation_fail_retry(
         mock_instance.validate.side_effect = mock_validate_with_retry
         mock_validator.return_value = mock_instance
         
-        # 同时Mock EditorRunner
-        with patch("app.agents.roadmap_editor.RoadmapEditorAgent") as mock_editor:
+        # 同时 Mock 当前工厂返回的路线图编辑器
+        with patch("app.agents.factory.AgentFactory.create_roadmap_editor") as mock_create_editor:
             mock_editor_instance = AsyncMock()
-            # Mock编辑器返回修复后的路线图
-            mock_editor_instance.edit.return_value = RoadmapFactory.create_simple_roadmap()
-            mock_editor.return_value = mock_editor_instance
+            mock_editor_instance.agent_id = "adaptive_roadmap_editor"
+            mock_editor_instance.execute.return_value = RoadmapEditOutput(
+                framework=RoadmapFactory.create_simple_roadmap(),
+                modification_summary="自动修复后的路线图",
+                modified_node_ids=[],
+            )
+            mock_create_editor.return_value = mock_editor_instance
             
             response = await client.post(
                 "/api/v1/streaming/generate-stream",

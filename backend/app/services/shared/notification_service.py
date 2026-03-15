@@ -23,6 +23,7 @@ import asyncio
 import traceback
 import structlog
 
+from app.config.settings import settings
 from app.db.redis_client import redis_client
 from app.models.database import beijing_now
 from app.utils.serializers import fast_dumps
@@ -602,7 +603,7 @@ class NotificationService:
     
     async def _do_publish(self, task_id: str, event_type: str | None, message: str):
         """
-        实际执行 Redis publish 的后台协程（1秒超时）
+        实际执行 Redis publish 的后台协程（超时时间可配置）
         
         Args:
             task_id: 任务 ID
@@ -612,11 +613,12 @@ class NotificationService:
         try:
             await self._ensure_connected()
             channel = self._get_channel(task_id)
+            timeout_seconds = settings.NOTIFICATION_PROGRESS_PUBLISH_TIMEOUT_SECONDS
             
-            # 进度通知不关键，1秒超时足够，失败直接跳过
+            # 进度通知不关键，超时后直接跳过，不影响主工作流。
             await asyncio.wait_for(
                 redis_client._client.publish(channel, message),
-                timeout=1.0,
+                timeout=timeout_seconds,
             )
             
             logger.debug(
@@ -631,7 +633,7 @@ class NotificationService:
                 "notification_publish_timeout",
                 task_id=task_id,
                 event_type=event_type,
-                timeout_seconds=1,
+                timeout_seconds=timeout_seconds,
             )
         except RuntimeError as e:
             logger.warning(

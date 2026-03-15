@@ -16,7 +16,8 @@
  * 优化：使用动态导入减少初始加载体积
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { useTranslations } from 'next-intl';
 import { Card } from '@/components/ui/card';
@@ -26,7 +27,6 @@ import { Button } from '@/components/ui/button';
 import { Target, Clock, TrendingUp, Lightbulb, Loader2, ChevronLeft, ChevronRight, ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Stage, RoadmapFramework } from '@/types/generated/models';
-import Link from 'next/link';
 import { isAfterIntentAnalysis, isAfterCurriculumDesign, getStepDescription } from '@/lib/constants/workflow-steps';
 
 // ========================================
@@ -86,8 +86,6 @@ interface CoreDisplayAreaProps {
   partialFailedConceptIds?: string[];
   /** 失败内容类型映射（concept_id -> 失败的内容类型列表） */
   failedContentTypesMap?: Record<string, Array<'tutorial' | 'resources' | 'quiz'>>;
-  /** 用户学习偏好（用于重试功能） */
-  userPreferences?: any;
   /** 重试成功回调 */
   onRetrySuccess?: () => void;
   /** 最大高度 */
@@ -478,15 +476,16 @@ export function CoreDisplayArea({
   failedConceptIds = [],
   partialFailedConceptIds = [],
   failedContentTypesMap = {},
-  userPreferences,
   onRetrySuccess,
   maxHeight = 500,
   className,
 }: CoreDisplayAreaProps) {
   const t = useTranslations('taskDetail');
+  const router = useRouter();
   
   // Intent Analysis 折叠状态
   const [isIntentCollapsed, setIsIntentCollapsed] = useState(false);
+  const [isNavigatingToRoadmap, startNavigatingToRoadmap] = useTransition();
   
   // 计算显示状态
   const showIntentCard = shouldShowIntentCard(currentStep, intentAnalysis);
@@ -520,6 +519,19 @@ export function CoreDisplayArea({
   const isInContentGeneration = currentStep ? CONTENT_GENERATION_STEPS.includes(currentStep) : false;
   const isTaskCompleted = status === 'completed' || status === 'partial_failure';
   const showViewRoadmapButton = roadmapId && (isInContentGeneration || isTaskCompleted);
+
+  /**
+   * 进入路线图详情页时，先在当前卡片上展示过渡加载态，避免点击后页面短暂无反馈。
+   */
+  const handleViewRoadmap = () => {
+    if (!roadmapId || isNavigatingToRoadmap) {
+      return;
+    }
+
+    startNavigatingToRoadmap(() => {
+      router.push(`/roadmap/${roadmapId}`);
+    });
+  };
   
   /**
    * 在 content 生成阶段及之后，清空 modifiedNodeIds
@@ -530,22 +542,44 @@ export function CoreDisplayArea({
   const effectiveModifiedNodeIds = shouldClearModifiedStatus ? [] : modifiedNodeIds;
 
   return (
-    <Card className={cn('', className)}>
+    <Card className={cn('relative overflow-hidden', className)}>
+      {isNavigatingToRoadmap && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/75 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-3 rounded-2xl border border-sage-200/70 bg-white/90 px-6 py-5 shadow-lg dark:border-sage-800/60 dark:bg-gray-950/90">
+            <div className="relative">
+              <Loader2 className="h-7 w-7 animate-spin text-sage-600 dark:text-sage-400" />
+              <div className="absolute inset-0 rounded-full border border-sage-300/70 animate-ping dark:border-sage-700/70" />
+            </div>
+            <p className="text-sm font-medium text-foreground">{t('loading')}</p>
+          </div>
+        </div>
+      )}
+
       {/* 标题部分 */}
       <div className="px-6 py-4 border-b flex items-center justify-between">
         <h2 className="text-lg font-serif font-semibold">{t('learningPathOverview')}</h2>
         
         {/* View Roadmap 按钮 - 进入内容生成阶段或任务完成时显示 */}
         {showViewRoadmapButton && (
-          <Link href={`/roadmap/${roadmapId}`}>
-            <Button
-              size="sm"
-              className="h-8 gap-1.5 bg-gradient-to-r from-sage-600 to-emerald-600 hover:from-sage-700 hover:to-emerald-700 text-white shadow-sm hover:shadow-md transition-all duration-200"
-            >
-              <span className="text-xs font-medium">{t('viewRoadmap')}</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </Button>
-          </Link>
+          <Button
+            size="sm"
+            onClick={handleViewRoadmap}
+            disabled={isNavigatingToRoadmap}
+            aria-busy={isNavigatingToRoadmap}
+            className="h-8 gap-1.5 bg-gradient-to-r from-sage-600 to-emerald-600 hover:from-sage-700 hover:to-emerald-700 text-white shadow-sm hover:shadow-md transition-all duration-200 disabled:pointer-events-none disabled:opacity-90"
+          >
+            {isNavigatingToRoadmap ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <span className="text-xs font-medium">{t('loading')}</span>
+              </>
+            ) : (
+              <>
+                <span className="text-xs font-medium">{t('viewRoadmap')}</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </>
+            )}
+          </Button>
         )}
       </div>
       
@@ -603,7 +637,6 @@ export function CoreDisplayArea({
                  failedConceptIds={failedConceptIds}
                  partialFailedConceptIds={partialFailedConceptIds}
                  failedContentTypesMap={failedContentTypesMap}
-                 userPreferences={userPreferences}
                  onRetrySuccess={onRetrySuccess}
                />
              ) : showIntentCard ? (

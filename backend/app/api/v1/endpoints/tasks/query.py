@@ -102,6 +102,7 @@ async def get_content_generation_status(
         ```
     """
     from celery.result import AsyncResult
+    from app.core.celery_app import celery_app
     
     # 从数据库获取任务和 Celery task ID
     async with async_session_maker() as session:
@@ -111,21 +112,51 @@ async def get_content_generation_status(
     if not task:
         raise errors.NotFoundError(msg="任务不存在")
     
-    if not task.celery_task_id:
-        # 内容生成尚未启动
+    content_celery_task_id = task.content_generation_celery_id
+    content_generation_status = task.content_generation_status
+
+    # 优先信任数据库中的最终状态，避免 Result Backend 过期或 Broker 抖动时返回误导性状态。
+    if content_generation_status == "completed":
+        return response_base.success(data={
+            "task_id": task_id,
+            "celery_task_id": content_celery_task_id,
+            "status": "SUCCESS",
+            "message": "内容生成完成",
+        })
+
+    if content_generation_status == "partial_failure":
+        return response_base.success(data={
+            "task_id": task_id,
+            "celery_task_id": content_celery_task_id,
+            "status": "PARTIAL_FAILURE",
+            "message": "内容生成部分完成",
+        })
+
+    if content_generation_status == "failed":
+        return response_base.success(data={
+            "task_id": task_id,
+            "celery_task_id": content_celery_task_id,
+            "status": "FAILURE",
+            "message": "内容生成失败",
+        })
+
+    if not content_celery_task_id:
+        # 内容生成尚未启动，或尚未成功回写独立内容任务 ID。
+        message = "内容生成任务排队中" if content_generation_status == "processing" else "内容生成尚未开始"
+        status_value = "STARTED" if content_generation_status == "processing" else "NOT_STARTED"
         return response_base.success(data={
             "task_id": task_id,
             "celery_task_id": None,
-            "status": "NOT_STARTED",
-            "message": "内容生成尚未开始",
+            "status": status_value,
+            "message": message,
         })
     
-    # 查询 Celery 任务状态
-    result = AsyncResult(task.celery_task_id)
+    # 查询独立内容 Worker 的 Celery 任务状态
+    result = AsyncResult(content_celery_task_id, app=celery_app)
     
     response_data = {
         "task_id": task_id,
-        "celery_task_id": task.celery_task_id,
+        "celery_task_id": content_celery_task_id,
         "status": result.status,
     }
     

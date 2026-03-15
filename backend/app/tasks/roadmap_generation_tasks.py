@@ -54,18 +54,20 @@ def generate_roadmap(
     user_request: str,
     user_id: str,
     learning_preferences: Optional[dict] = None,
+    turbo_mode: bool = True,
 ) -> dict:
     """
     生成路线图的 Celery 任务（简化版）
-    
+
     架构重构：仅负责异步调度，业务逻辑在 WorkflowExecutionService。
-    
+
     Args:
         task_id: 任务 ID
-        user_request: 用户请求描述
+        user_request: 用户请求描述（learning_goal 文本）
         user_id: 用户 ID
         learning_preferences: 学习偏好（可选）
-        
+        turbo_mode: 是否启用极速模式（默认 True）
+
     Returns:
         dict: 执行结果
     """
@@ -74,11 +76,12 @@ def generate_roadmap(
         task_id=task_id,
         celery_task_id=self.request.id,
         user_id=user_id,
+        turbo_mode=turbo_mode,
     )
-    
+
     try:
         workflow_service = get_workflow_execution_service()
-        
+
         result = run_async(
             workflow_service.execute_roadmap_workflow(
                 task_id=task_id,
@@ -86,6 +89,7 @@ def generate_roadmap(
                 user_id=user_id,
                 learning_preferences=learning_preferences,
                 celery_task_id=self.request.id,
+                turbo_mode=turbo_mode,
             )
         )
         

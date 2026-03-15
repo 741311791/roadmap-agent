@@ -6,9 +6,10 @@
 - 返回纯数据（不保存数据库）
 """
 import structlog
+import time
 from langchain_core.runnables import RunnableConfig
 
-from app.core.orchestrator.base import RoadmapState
+from app.core.orchestrator.base import INTERNAL_NODE_DURATION_MS_KEY, RoadmapState
 from app.core.orchestrator.runtime_context import RuntimeContext
 from app.services.shared.execution_logger import execution_logger, LogCategory
 
@@ -38,6 +39,7 @@ async def intent_analysis_node(
     """
     # 从config获取依赖
     ctx: RuntimeContext = config["configurable"]["runtime_context"]
+    node_started_at = time.perf_counter()
     
     task_id = state["task_id"]
     user_request = state["user_request"]
@@ -87,5 +89,6 @@ async def intent_analysis_node(
         "current_step": "intent_analysis",
         "user_id": user_request.user_id,
         "execution_history": ["需求分析完成"],
+        INTERNAL_NODE_DURATION_MS_KEY: int((time.perf_counter() - node_started_at) * 1000),
     }
 

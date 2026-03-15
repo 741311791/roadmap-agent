@@ -31,7 +31,7 @@ from app.schemas.retry import (
     TaskRetryStatus,
     CheckpointInfo,
 )
-from app.models.constants import TaskStatus
+from app.models.constants import TaskStatus, WorkflowStep
 from app.core.orchestrator_factory import OrchestratorFactory
 from app.db.celery_session import get_celery_session
 from app.crud.crud_task import get_task_crud
@@ -275,6 +275,22 @@ class RetryService:
                     task_id=task_id,
                     main_graph_next=failed_nodes,
                 )
+
+            if not failed_nodes and self._should_retry_content_generation(task):
+                logger.info(
+                    "content_generation_retry_fallback_selected",
+                    task_id=task_id,
+                    current_step=task.current_step,
+                    task_status=task.status,
+                    content_generation_status=task.content_generation_status,
+                    reason="主图 checkpoint 已无可恢复节点，改为直接重发内容生成阶段",
+                )
+                return await self._retry_content_generation_stage(
+                    task_id=task_id,
+                    task=task,
+                    state_values=state.values or {},
+                    reason=request.reason,
+                )
             
             # 创建Celery任务恢复执行
             # 注意：不传checkpoint_id，LangGraph会自动从最后checkpoint恢复
@@ -331,6 +347,196 @@ class RetryService:
         # ⚠️ 不要在这里清理 Factory！
         # OrchestratorFactory 是全局单例，应该在应用生命周期内保持
         # 只在应用关闭时清理（main.py 的 shutdown 事件）
+
+    def _should_retry_content_generation(self, task) -> bool:
+        """
+        判断是否应直接重发内容生成阶段
+
+        Why：
+        - 内容生成已拆分为独立 Celery 阶段，主图在进入 content_generation_queued 后可能已经自然结束
+        - 这类任务被取消或失败后，LangGraph 主图 checkpoint 的 next 往往为空
+        - 若继续走 resume_from_checkpoint，只会得到“无节点可恢复”，无法真正重新启动内容生成
+
+        Args:
+            task: 任务 ORM 对象
+
+        Returns:
+            是否应走内容生成阶段重试
+        """
+        content_generation_steps = {
+            WorkflowStep.CONTENT_GENERATION_QUEUED.value,
+            WorkflowStep.CONTENT_GENERATION.value,
+        }
+        retryable_statuses = {
+            TaskStatus.CANCELLED.value,
+            TaskStatus.FAILED.value,
+        }
+
+        return bool(
+            task.roadmap_id
+            and task.current_step in content_generation_steps
+            and task.content_generation_status == "failed"
+            and task.status in retryable_statuses
+        )
+
+    async def _retry_content_generation_stage(
+        self,
+        task_id: str,
+        task,
+        state_values: dict,
+        reason: Optional[str],
+    ) -> RetryResponse:
+        """
+        直接重发内容生成阶段
+
+        适用场景：
+        - 主图已经走完审核批准，当前停留在 content_generation_queued / content_generation
+        - 内容生成独立 Worker 被取消、失败或重启
+        - 主图 checkpoint 已无 next 节点，无法再通过 LangGraph 主图恢复
+
+        Args:
+            task_id: 任务 ID
+            task: 任务 ORM 对象
+            state_values: 主图 checkpoint 中的状态快照
+            reason: 用户传入的重试原因
+
+        Returns:
+            重试响应
+
+        Raises:
+            ValueError: 内容生成重发失败
+        """
+        from app.core.orchestrator.nodes.auto_content_generation import trigger_content_generation
+
+        logger.info(
+            "content_generation_stage_retry_starting",
+            task_id=task_id,
+            roadmap_id=task.roadmap_id,
+            current_step=task.current_step,
+            reason=reason,
+        )
+
+        try:
+            async with get_celery_session() as session:
+                task_crud = get_task_crud()
+                task_record = await task_crud.get_by_task_id(session, task_id)
+                if not task_record:
+                    raise ValueError(f"任务 {task_id} 不存在，无法更新内容生成重试状态")
+
+                task_record.status = TaskStatus.PROCESSING.value
+                task_record.current_step = WorkflowStep.CONTENT_GENERATION_QUEUED.value
+                task_record.content_generation_status = "processing"
+                task_record.error_message = None
+                task_record.completed_at = None
+                session.add(task_record)
+                await session.flush()
+
+            # 这里改为后台派发，避免 broker 抖动时阻塞 /retry HTTP 请求。
+            asyncio.create_task(
+                self._dispatch_content_generation_stage_in_background(
+                    task_id=task_id,
+                    roadmap_id=task.roadmap_id,
+                    user_id=task.user_id,
+                    state_values=state_values,
+                ),
+                name=f"retry_content_generation_dispatch_{task_id}",
+            )
+
+            await notification_service.publish_progress(
+                task_id=task_id,
+                step=WorkflowStep.CONTENT_GENERATION_QUEUED.value,
+                status=TaskStatus.PROCESSING.value,
+                message="内容生成重试已发起，正在后台重新入队...",
+                extra_data={
+                    "mode": RetryMode.RESUME.value,
+                    "retry_stage": WorkflowStep.CONTENT_GENERATION.value,
+                    "dispatch_mode": "background",
+                },
+            )
+
+            return RetryResponse(
+                success=True,
+                message="内容生成重试已发起，正在后台重新入队",
+                task_id=task_id,
+                celery_task_id=None,
+                retry_scope=RetryScope.STAGE,
+                retry_from=WorkflowStep.CONTENT_GENERATION.value,
+            )
+        except Exception as e:
+            logger.error(
+                "content_generation_stage_retry_failed",
+                task_id=task_id,
+                roadmap_id=task.roadmap_id,
+                error=str(e),
+                exc_info=True,
+            )
+            raise ValueError(f"内容生成重试失败: {str(e)}")
+
+    async def _dispatch_content_generation_stage_in_background(
+        self,
+        task_id: str,
+        roadmap_id: str,
+        user_id: str,
+        state_values: dict,
+    ) -> None:
+        """
+        后台派发内容生成重试任务
+
+        Why：
+        - `generate_all_content_task.apply_async()` 在 broker 抖动时可能阻塞很久
+        - 如果在 HTTP 请求内同步等待，前端会误以为“重试按钮无效”
+        - 改为后台派发后，用户可以立即看到任务重新进入 processing 状态
+
+        Args:
+            task_id: 任务 ID
+            roadmap_id: 路线图 ID
+            user_id: 用户 ID
+            state_values: 主图 checkpoint 的状态快照
+        """
+        from app.core.orchestrator.nodes.auto_content_generation import trigger_content_generation
+
+        try:
+            celery_task_id = await trigger_content_generation(
+                task_id=task_id,
+                roadmap_id=roadmap_id,
+                user_id=user_id,
+                state=state_values,
+            )
+            logger.info(
+                "content_generation_stage_retry_dispatched",
+                task_id=task_id,
+                roadmap_id=roadmap_id,
+                celery_task_id=celery_task_id,
+            )
+        except Exception as e:
+            logger.error(
+                "content_generation_stage_retry_background_dispatch_failed",
+                task_id=task_id,
+                roadmap_id=roadmap_id,
+                error=str(e),
+                exc_info=True,
+            )
+
+            async with get_celery_session() as session:
+                task_crud = get_task_crud()
+                await task_crud.update_task_status(
+                    session=session,
+                    task_id=task_id,
+                    status=TaskStatus.FAILED.value,
+                    current_step=WorkflowStep.CONTENT_GENERATION_QUEUED.value,
+                    error_message=f"内容生成重试派发失败: {str(e)}",
+                )
+                await task_crud.update_content_generation_status(
+                    session=session,
+                    task_id=task_id,
+                    status="failed",
+                )
+
+            await notification_service.publish_failed(
+                task_id=task_id,
+                error=f"内容生成重试派发失败: {str(e)}",
+                step=WorkflowStep.CONTENT_GENERATION_QUEUED.value,
+            )
     
     async def _time_travel_to_node(
         self,

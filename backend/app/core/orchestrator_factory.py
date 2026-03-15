@@ -35,9 +35,8 @@ from .orchestrator.nodes import (
     structure_validation_node,
     roadmap_edit_node,
     human_review_node,
-    edit_plan_analysis_node,  # ✅ 共享的编辑计划分析节点
-    # ✅ 移除：content_generation_node（改为独立的 Celery Worker）
-    # ✅ 移除：validation_edit_plan_analysis_node（使用共享的edit_plan_analysis_node）
+    edit_plan_analysis_node,
+    auto_content_generation_node,
 )
 
 logger = structlog.get_logger()
@@ -128,8 +127,8 @@ class OrchestratorFactory:
         # 创建 AsyncPostgresSaver（使用连接池，阿里云 RDS 长链路网络优化）
         try:
             # 连接池参数说明：
-            # - min_size=1: 最小保持 1 个连接（阿里云 RDS 建连慢，避免预热浪费）
-            # - max_size: 研发=5，生产=10（Celery Worker 数 * max_size 不超过 RDS 最大连接数）
+            # - min_size=1: 最小保持 1 个连接，避免完全冷启动
+            # - max_size: 4C8G 单机生产默认收敛到 3，避免 API 和多个 Worker 空闲时也常驻大量连接
             # - max_idle=60: 空闲连接最多保持 60 秒即主动关闭，防止被阿里云代理层单方面关闭
             # - max_lifetime=300: 连接最长存活 5 分钟，定期替换（防止跨越阿里云 RDS Proxy 超时）
             # - check=AsyncConnectionPool.check_connection: 借出连接前先 ping，快速淘汰坏连接
@@ -146,12 +145,10 @@ class OrchestratorFactory:
             # - keepalives_count=3: 最多 3 次探测失败后客户端主动断开（总计 10+15=25 秒内判定死连接）
             # - options="-c statement_timeout=120000": SQL 语句超时 120 秒
             
-            langgraph_max_size = 5 if settings.ENVIRONMENT == "development" else 10
-            
             cls._connection_pool = AsyncConnectionPool(
                 conninfo=settings.CHECKPOINTER_DATABASE_URL,
-                min_size=1,
-                max_size=langgraph_max_size,
+                min_size=settings.LANGGRAPH_CHECKPOINTER_POOL_MIN_SIZE,
+                max_size=settings.LANGGRAPH_CHECKPOINTER_POOL_MAX_SIZE,
                 max_idle=60,       # 主动在 60s 内关闭空闲连接，早于阿里云代理层超时
                 max_lifetime=300,  # 连接最长存活 5 分钟，定期轮换防止跨越代理层 TCP 状态超时
                 check=AsyncConnectionPool.check_connection,  # 借出前 ping，快速淘汰坏连接
@@ -172,7 +169,8 @@ class OrchestratorFactory:
             logger.info(
                 "langgraph_connection_pool_configured",
                 environment=settings.ENVIRONMENT,
-                max_size=langgraph_max_size,
+                min_size=settings.LANGGRAPH_CHECKPOINTER_POOL_MIN_SIZE,
+                max_size=settings.LANGGRAPH_CHECKPOINTER_POOL_MAX_SIZE,
             )
             
             # 打开连接池
@@ -198,8 +196,8 @@ class OrchestratorFactory:
             logger.info(
                 "orchestrator_factory_initialized",
                 checkpointer_type="AsyncPostgresSaver",
-                pool_min_size=1,
-                pool_max_size=langgraph_max_size,
+                pool_min_size=settings.LANGGRAPH_CHECKPOINTER_POOL_MIN_SIZE,
+                pool_max_size=settings.LANGGRAPH_CHECKPOINTER_POOL_MAX_SIZE,
                 process_id=current_pid,  # ✅ 记录进程 ID
                 database_url=settings.CHECKPOINTER_DATABASE_URL.split("@")[-1].split("?")[0],  # 隐藏凭据和参数
             )
@@ -392,14 +390,13 @@ class OrchestratorFactory:
         builder = WorkflowBuilder(
             config=config,
             router=router,
-            # 传入纯函数 Node（替代 Runner 类）
             intent_node=intent_analysis_node,
             curriculum_node=curriculum_design_node,
             validation_node=structure_validation_node,
             editor_node=roadmap_edit_node,
             review_node=human_review_node,
-            edit_plan_node=edit_plan_analysis_node,  # ✅ 共享的编辑计划分析节点
-            # ✅ 移除：content_node（改为独立的 Celery Worker）
+            edit_plan_node=edit_plan_analysis_node,
+            auto_content_node=auto_content_generation_node,
         )
         
         # ===== 创建 Executor（传入所有依赖）=====

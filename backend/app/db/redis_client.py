@@ -2,6 +2,7 @@
 Redis 客户端封装
 """
 import asyncio
+import time
 from typing import Any, Type, TypeVar
 import redis.asyncio as aioredis
 import structlog
@@ -27,6 +28,63 @@ class RedisClient:
     def __init__(self):
         self._client: aioredis.Redis | None = None
         self._loop_id: int | None = None  # 记录连接创建时的事件循环 ID
+        self._last_health_check_at: float = 0.0
+        self._health_check_interval_seconds = 30.0
+
+    async def _close_current_client(self):
+        """
+        关闭当前 Redis 客户端并清理本地状态
+
+        说明：
+        - 统一处理事件循环关闭、连接已损坏等场景
+        - 无论关闭是否成功，都会清空本地引用，确保后续可以重建连接
+        """
+        if not self._client:
+            self._loop_id = None
+            self._last_health_check_at = 0.0
+            return
+
+        try:
+            try:
+                asyncio.get_running_loop()
+                await self._client.aclose()
+            except RuntimeError:
+                logger.debug(
+                    "redis_skip_close_event_loop_closed",
+                    message="Event loop 已关闭，跳过连接关闭"
+                )
+        except Exception as e:
+            logger.warning("redis_close_failed", error=str(e))
+        finally:
+            self._client = None
+            self._loop_id = None
+            self._last_health_check_at = 0.0
+
+    async def _validate_existing_client(self):
+        """
+        校验当前 Redis 客户端是否仍然可用
+
+        为什么这样做：
+        - 机器休眠或网络抖动后，连接池里的旧 socket 可能已经失效
+        - Celery Worker 是长生命周期进程，如果只复用旧连接，首次请求容易触发底层异常
+        - 通过定期 `PING` 可以在业务命令执行前提前发现坏连接并重建
+        """
+        if not self._client:
+            return
+
+        now = time.monotonic()
+        if now - self._last_health_check_at < self._health_check_interval_seconds:
+            return
+
+        try:
+            await self._client.ping()
+            self._last_health_check_at = now
+        except Exception as e:
+            logger.warning(
+                "redis_connection_unhealthy_recreating",
+                error=str(e),
+            )
+            await self._close_current_client()
     
     async def connect(self):
         """
@@ -53,21 +111,9 @@ class RedisClient:
                 old_loop_id=self._loop_id,
                 new_loop_id=current_loop_id,
             )
-            try:
-                # ✅ 检查事件循环是否还在运行
-                try:
-                    asyncio.get_running_loop()
-                    await self._client.close()
-                except RuntimeError:
-                    # Event loop 已关闭，直接清理引用
-                    logger.debug(
-                        "redis_skip_close_event_loop_closed",
-                        message="Event loop 已关闭，跳过连接关闭"
-                    )
-            except Exception as e:
-                logger.warning("redis_close_old_connection_failed", error=str(e))
-            self._client = None
-            self._loop_id = None
+            await self._close_current_client()
+        elif self._client is not None:
+            await self._validate_existing_client()
         
         if self._client is None:
             redis_url = settings.get_redis_url
@@ -93,8 +139,10 @@ class RedisClient:
             if use_ssl:
                 connection_kwargs["ssl_cert_reqs"] = "required"
             
-            self._client = await aioredis.from_url(redis_url, **connection_kwargs)
+            self._client = aioredis.from_url(redis_url, **connection_kwargs)
             self._loop_id = current_loop_id  # 记录当前事件循环 ID
+            await self._client.ping()
+            self._last_health_check_at = time.monotonic()
             logger.info(
                 "redis_client_initialized",
                 redis_url=redis_url,
@@ -105,23 +153,8 @@ class RedisClient:
     async def close(self):
         """关闭连接"""
         if self._client:
-            try:
-                # ✅ 检查事件循环是否还在运行
-                try:
-                    asyncio.get_running_loop()
-                    await self._client.close()
-                    logger.info("redis_client_closed")
-                except RuntimeError:
-                    # Event loop 已关闭，直接清理引用
-                    logger.debug(
-                        "redis_skip_close_event_loop_closed",
-                        message="Event loop 已关闭，跳过连接关闭"
-                    )
-            except Exception as e:
-                logger.warning("redis_close_failed", error=str(e))
-            finally:
-                self._client = None
-                self._loop_id = None
+            await self._close_current_client()
+            logger.info("redis_client_closed")
     
     async def ping(self) -> bool:
         """健康检查"""

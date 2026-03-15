@@ -41,10 +41,11 @@ class WorkflowExecutionService:
         user_id: str,
         learning_preferences: Optional[dict],
         celery_task_id: str,
+        turbo_mode: bool = True,
     ) -> dict:
         """
         执行路线图生成工作流
-        
+
         完整的业务逻辑流程：
         1. 验证任务记录是否存在
         2. 更新任务状态为 processing
@@ -53,14 +54,15 @@ class WorkflowExecutionService:
         5. 执行工作流
         6. 判断最终状态（完成/人工审核/部分失败）
         7. 返回执行结果
-        
+
         Args:
             task_id: 任务 ID
-            user_request: 用户请求描述
+            user_request: 用户请求描述（learning_goal 文本）
             user_id: 用户 ID
             learning_preferences: 学习偏好（字典格式）
             celery_task_id: Celery 任务 ID
-            
+            turbo_mode: 是否启用极速模式（默认 True）
+
         Returns:
             dict: 执行结果
                 - success: bool
@@ -130,7 +132,7 @@ class WorkflowExecutionService:
             # ===== 步骤5: 构造 UserRequest 对象 =====
             user_request_obj = UserRequest(
                 user_id=user_id,
-                session_id=task_id,  # 使用 task_id 作为 session_id
+                session_id=task_id,
                 preferences=LearningPreferences(**learning_preferences) if learning_preferences else LearningPreferences(
                     learning_goal=user_request,
                     available_hours_per_week=10,
@@ -139,6 +141,7 @@ class WorkflowExecutionService:
                     career_background="Not specified",
                 ),
                 additional_context=user_request,
+                turbo_mode=turbo_mode,
             )
             
             # ===== 步骤5.5: 注入用户画像数据 =====
@@ -175,12 +178,13 @@ class WorkflowExecutionService:
                     roadmap_id=roadmap_id,
                 )
             elif current_step == WorkflowStep.CONTENT_GENERATION_QUEUED.value:
-                # ✅ 主工作流完成，内容生成已入队（独立 Worker 执行）
-                # 这种情况不应该在 execute_workflow 中出现，仅在 resume_after_review 中
+                # 主工作流完成，内容生成已入队（独立 Worker 执行）
+                # 极速模式：curriculum_design 完成后直接触发内容生成，跳过人工审查
+                # 普通模式（resume_after_review）：人工审查批准后也走此分支
                 status = TaskStatus.PROCESSING
                 success = True
                 logger.info(
-                    "main_workflow_completed_content_queued_from_execute",
+                    "main_workflow_completed_content_queued",
                     task_id=task_id,
                     roadmap_id=roadmap_id,
                     current_step=current_step,
@@ -571,7 +575,15 @@ class WorkflowExecutionService:
             executor = factory.create_workflow_executor()
             
             # 从 checkpoint 恢复工作流
-            config = {"configurable": {"thread_id": task_id}}
+            # 关键修复：
+            # 恢复路径与 execute()/resume_after_human_review() 一样，必须显式注入 runtime_context，
+            # 否则节点函数读取 config["configurable"]["runtime_context"] 时会抛出 KeyError。
+            config = {
+                "configurable": {
+                    "thread_id": task_id,
+                    "runtime_context": executor.runtime_context,
+                }
+            }
             
             # 如果提供了checkpoint_id，添加到config（时间旅行模式）
             if checkpoint_id:
@@ -615,6 +627,7 @@ class WorkflowExecutionService:
                         career_background="Not specified",
                     ),
                     additional_context=req_data.get("additional_context"),
+                    turbo_mode=req_data.get("turbo_mode", True),
                 )
                 final_state = await executor.execute(
                     user_request=user_request_obj,

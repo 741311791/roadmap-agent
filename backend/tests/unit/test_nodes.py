@@ -4,9 +4,10 @@ Node纯函数单元测试
 测试所有Node的业务逻辑，无需Mock数据库
 """
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.core.orchestrator.base import RoadmapState
+from app.core.orchestrator.base import RoadmapState, WorkflowConfig
+from app.core.orchestrator.routers import WorkflowRouter
 from app.core.orchestrator.runtime_context import RuntimeContext
 from app.core.orchestrator.nodes import (
     intent_analysis_node,
@@ -14,8 +15,10 @@ from app.core.orchestrator.nodes import (
     structure_validation_node,
     roadmap_edit_node,
     human_review_node,
+    auto_content_generation_node,
 )
 from app.models.domain import (
+    LearningPreferences,
     UserRequest,
     IntentAnalysisOutput,
     RoadmapFramework,
@@ -51,10 +54,14 @@ def sample_user_request():
     """示例用户请求"""
     return UserRequest(
         user_id="test-user",
-        learning_goal="学习Python",
-        current_level="beginner",
-        available_hours_per_week=10,
-        preferences={},
+        session_id="test-session-id",
+        preferences=LearningPreferences(
+            learning_goal="学习Python",
+            current_level="beginner",
+            available_hours_per_week=10,
+            motivation="个人兴趣",
+            career_background="零基础转行",
+        ),
     )
 
 
@@ -156,32 +163,28 @@ class TestCurriculumDesignNode:
         
         # Mock Agent
         mock_agent = AsyncMock()
-        from app.models.domain import Stage, Module, Concept
+        from app.models.domain import CurriculumDesignOutput, Stage, Module, Concept
         mock_framework = RoadmapFramework(
+            roadmap_id="test-roadmap",
             title="Python学习路线图",
-            description="从零开始学习Python",
             stages=[
                 Stage(
                     stage_id="stage-1",
-                    title="基础阶段",
+                    name="基础阶段",
                     description="学习Python基础",
-                    order_index=1,
-                    estimated_duration_hours=40,
+                    order=1,
                     modules=[
                         Module(
                             module_id="module-1",
-                            title="Python语法",
+                            name="Python语法",
                             description="Python基础语法",
-                            order_index=1,
-                            estimated_duration_hours=20,
                             concepts=[
                                 Concept(
                                     concept_id="concept-1",
                                     name="变量和数据类型",
                                     description="学习变量定义和基本数据类型",
-                                    order_index=1,
-                                    estimated_duration_hours=5,
-                                    difficulty_level="easy",
+                                    estimated_hours=5,
+                                    difficulty="easy",
                                     prerequisites=[],
                                 )
                             ],
@@ -189,10 +192,12 @@ class TestCurriculumDesignNode:
                     ],
                 )
             ],
-            estimated_total_hours=40,
-            difficulty_distribution={"easy": 100},
+            total_estimated_hours=40,
+            recommended_completion_weeks=4,
         )
-        mock_agent.design = AsyncMock(return_value=mock_framework)
+        mock_agent.execute = AsyncMock(
+            return_value=CurriculumDesignOutput(framework=mock_framework)
+        )
         mock_runtime_context.agent_factory.create_curriculum_architect.return_value = mock_agent
         
         # 执行
@@ -218,30 +223,26 @@ class TestStructureValidationNode:
         # 准备
         from app.models.domain import Stage, Module, Concept
         framework = RoadmapFramework(
+            roadmap_id="test-roadmap",
             title="测试路线图",
-            description="测试",
             stages=[
                 Stage(
                     stage_id="stage-1",
-                    title="阶段1",
+                    name="阶段1",
                     description="描述",
-                    order_index=1,
-                    estimated_duration_hours=10,
+                    order=1,
                     modules=[
                         Module(
                             module_id="module-1",
-                            title="模块1",
+                            name="模块1",
                             description="描述",
-                            order_index=1,
-                            estimated_duration_hours=10,
                             concepts=[
                                 Concept(
                                     concept_id="concept-1",
                                     name="概念1",
                                     description="描述",
-                                    order_index=1,
-                                    estimated_duration_hours=5,
-                                    difficulty_level="easy",
+                                    estimated_hours=5,
+                                    difficulty="easy",
                                     prerequisites=[],
                                 )
                             ],
@@ -249,8 +250,8 @@ class TestStructureValidationNode:
                     ],
                 )
             ],
-            estimated_total_hours=10,
-            difficulty_distribution={"easy": 100},
+            total_estimated_hours=10,
+            recommended_completion_weeks=1,
         )
         
         state: RoadmapState = {
@@ -258,11 +259,22 @@ class TestStructureValidationNode:
             "roadmap_id": "test-roadmap",
             "roadmap_framework": framework,
             "validation_round": 0,
+            "user_request": UserRequest(
+                user_id="test-user",
+                session_id="test-session-id",
+                preferences=LearningPreferences(
+                    learning_goal="学习Python",
+                    current_level="beginner",
+                    available_hours_per_week=10,
+                    motivation="个人兴趣",
+                    career_background="零基础转行",
+                ),
+            ),
         }
         
         # Mock Agent
         mock_agent = AsyncMock()
-        from app.models.domain import ValidationIssue, DimensionScore, ImprovementSuggestion
+        from app.models.domain import DimensionScore
         mock_validation = ValidationOutput(
             is_valid=True,
             overall_score=95.0,
@@ -271,13 +283,13 @@ class TestStructureValidationNode:
                 DimensionScore(
                     dimension="structure",
                     score=95.0,
-                    feedback="结构合理",
+                    rationale="结构合理",
                 )
             ],
             improvement_suggestions=[],
             validation_summary="验证通过",
         )
-        mock_agent.validate = AsyncMock(return_value=mock_validation)
+        mock_agent.execute = AsyncMock(return_value=mock_validation)
         mock_runtime_context.agent_factory.create_structure_validator.return_value = mock_agent
         
         # 执行
@@ -292,54 +304,177 @@ class TestStructureValidationNode:
 
 class TestHumanReviewNode:
     """测试人工审核节点"""
-    
+
     @pytest.mark.asyncio
     async def test_human_review_approved(self, mock_config):
-        """测试人工审核批准场景"""
-        # 准备
+        """测试人工审核批准场景——应触发内容生成并返回 content_generation_queued"""
         state: RoadmapState = {
             "task_id": "test-task-id",
             "roadmap_id": "test-roadmap",
         }
-        
-        # Mock interrupt返回值（模拟用户批准）
-        from unittest.mock import patch
-        with patch("app.core.orchestrator.nodes.human_review.interrupt") as mock_interrupt:
-            mock_interrupt.return_value = {
-                "approved": True,
-                "feedback": "",
-            }
-            
-            # 执行
+
+        with (
+            patch("app.core.orchestrator.nodes.human_review.interrupt") as mock_interrupt,
+            patch("app.core.orchestrator.nodes.human_review.trigger_content_generation", new_callable=AsyncMock) as mock_trigger,
+        ):
+            mock_interrupt.return_value = {"approved": True, "feedback": ""}
+            mock_trigger.return_value = "celery-task-id-123"
+
             result = await human_review_node(state, mock_config)
-            
-            # 验证
+
             assert result["human_approved"] is True
             assert result["user_feedback"] is None
-            assert result["current_step"] == "human_review"
-    
+            assert result["current_step"] == "content_generation_queued"
+            mock_trigger.assert_called_once_with(
+                task_id="test-task-id",
+                roadmap_id="test-roadmap",
+                user_id=None,
+                state=state,
+            )
+
     @pytest.mark.asyncio
     async def test_human_review_rejected(self, mock_config):
-        """测试人工审核拒绝场景"""
-        # 准备
+        """测试人工审核拒绝场景——不触发内容生成，返回 human_review"""
         state: RoadmapState = {
             "task_id": "test-task-id",
             "roadmap_id": "test-roadmap",
         }
-        
-        # Mock interrupt返回值（模拟用户拒绝）
-        from unittest.mock import patch
+
         with patch("app.core.orchestrator.nodes.human_review.interrupt") as mock_interrupt:
-            mock_interrupt.return_value = {
-                "approved": False,
-                "feedback": "需要调整难度",
-            }
-            
-            # 执行
+            mock_interrupt.return_value = {"approved": False, "feedback": "需要调整难度"}
+
             result = await human_review_node(state, mock_config)
-            
-            # 验证
+
             assert result["human_approved"] is False
             assert result["user_feedback"] == "需要调整难度"
             assert result["current_step"] == "human_review"
+
+
+class TestAutoContentGenerationNode:
+    """测试极速模式自动内容生成节点"""
+
+    @pytest.fixture
+    def turbo_state(self):
+        """极速模式下的典型工作流状态"""
+        from app.models.domain import UserRequest, LearningPreferences
+        user_req = UserRequest(
+            user_id="test-user",
+            session_id="test-task-id",
+            preferences=LearningPreferences(
+                learning_goal="学习Python",
+                available_hours_per_week=10,
+                motivation="Personal interest",
+                current_level="beginner",
+                career_background="Not specified",
+            ),
+            turbo_mode=True,
+        )
+        return {
+            "task_id": "test-task-id",
+            "roadmap_id": "test-roadmap",
+            "user_request": user_req,
+        }
+
+    @pytest.mark.asyncio
+    async def test_auto_content_generation_success(self, mock_config, turbo_state):
+        """正常情况：触发内容生成后返回 content_generation_queued"""
+        with patch(
+            "app.core.orchestrator.nodes.auto_content_generation.trigger_content_generation",
+            new_callable=AsyncMock,
+        ) as mock_trigger:
+            mock_trigger.return_value = "celery-task-456"
+
+            result = await auto_content_generation_node(turbo_state, mock_config)
+
+            assert result["current_step"] == "content_generation_queued"
+            assert result["human_approved"] is True
+            assert result["roadmap_id"] == "test-roadmap"
+            mock_trigger.assert_called_once_with(
+                task_id="test-task-id",
+                roadmap_id="test-roadmap",
+                user_id="test-user",
+                state=turbo_state,
+            )
+
+    @pytest.mark.asyncio
+    async def test_auto_content_generation_trigger_failure(self, mock_config, turbo_state):
+        """触发失败时：仍然返回 content_generation_queued，不将异常向上传播"""
+        with patch(
+            "app.core.orchestrator.nodes.auto_content_generation.trigger_content_generation",
+            new_callable=AsyncMock,
+        ) as mock_trigger:
+            mock_trigger.side_effect = Exception("Celery 连接失败")
+
+            result = await auto_content_generation_node(turbo_state, mock_config)
+
+            assert result["current_step"] == "content_generation_queued"
+            assert result["human_approved"] is True
+
+    @pytest.mark.asyncio
+    async def test_auto_content_generation_missing_roadmap_id(self, mock_config):
+        """roadmap_id 缺失时：提前返回，不调用 trigger"""
+        state: RoadmapState = {
+            "task_id": "test-task-id",
+            "roadmap_id": None,
+        }
+
+        with patch(
+            "app.core.orchestrator.nodes.auto_content_generation.trigger_content_generation",
+            new_callable=AsyncMock,
+        ) as mock_trigger:
+            result = await auto_content_generation_node(state, mock_config)
+
+            assert result["current_step"] == "content_generation_queued"
+            assert result["human_approved"] is True
+            mock_trigger.assert_not_called()
+
+
+class TestWorkflowRouterCurriculum:
+    """测试 curriculum_design 后的路由逻辑"""
+
+    def _make_config(self, skip_human_review: bool = False) -> WorkflowConfig:
+        return WorkflowConfig(skip_human_review=skip_human_review, max_framework_retry=3)
+
+    def _make_state(self, turbo_mode: bool) -> RoadmapState:
+        from app.models.domain import UserRequest, LearningPreferences
+        user_req = UserRequest(
+            user_id="u1",
+            session_id="s1",
+            preferences=LearningPreferences(
+                learning_goal="学习Python",
+                available_hours_per_week=10,
+                motivation="Personal interest",
+                current_level="beginner",
+                career_background="Not specified",
+            ),
+            turbo_mode=turbo_mode,
+        )
+        return {"task_id": "t1", "user_request": user_req}
+
+    def test_turbo_mode_routes_to_auto_content_generation(self):
+        """极速模式：curriculum 后应路由到 auto_content_generation"""
+        router = WorkflowRouter(self._make_config())
+        state = self._make_state(turbo_mode=True)
+
+        result = router.route_after_curriculum(state)
+
+        assert result == "auto_content_generation"
+
+    def test_normal_mode_routes_to_structure_validation(self):
+        """普通模式：curriculum 后应路由到 structure_validation"""
+        router = WorkflowRouter(self._make_config())
+        state = self._make_state(turbo_mode=False)
+
+        result = router.route_after_curriculum(state)
+
+        assert result == "structure_validation"
+
+    def test_no_user_request_defaults_to_auto_content_generation(self):
+        """缺少 user_request 时默认极速模式（turbo_mode 默认为 True）"""
+        router = WorkflowRouter(self._make_config())
+        state: RoadmapState = {"task_id": "t1"}
+
+        result = router.route_after_curriculum(state)
+
+        assert result == "auto_content_generation"
 

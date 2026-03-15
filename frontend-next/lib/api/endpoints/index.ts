@@ -45,7 +45,6 @@ export type {
   RoadmapHistoryItem,
   FeaturedRoadmapItem,
   TaskStatusDetailResponse,
-  TaskItemResponse,
   IntentAnalysisResponse,
   EditRecordResponse,
   ValidationRecordResponse,
@@ -53,10 +52,14 @@ export type {
 } from '@/types/generated';
 
 // 类型别名（向后兼容）
-export type { TaskItemResponse as TaskItem } from '@/types/generated';
 export type { ExecutionLogResponse as ExecutionLog } from '@/types/generated';
 
 // 从本地API文件导出
+export type { 
+  TaskListItemResponse as TaskItem,
+  TaskListItemResponse,
+  TaskListResponse,
+} from './tasks';
 export type { 
   RetryContentRequest, 
   RetryContentResponse,

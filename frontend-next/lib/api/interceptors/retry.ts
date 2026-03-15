@@ -26,6 +26,14 @@ function calculateBackoff(attempt: number): number {
  * 判断是否应该重试
  */
 function shouldRetry(error: AxiosError): boolean {
+  if (
+    error.name === 'AbortError' ||
+    error.name === 'CanceledError' ||
+    error.code === 'ERR_CANCELED'
+  ) {
+    return false;
+  }
+
   // 仅重试幂等请求 (GET, HEAD, OPTIONS, PUT, DELETE)
   const method = error.config?.method?.toUpperCase();
   if (!method || method === 'POST' || method === 'PATCH') {

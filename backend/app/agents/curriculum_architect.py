@@ -1,12 +1,21 @@
 """
-Curriculum Architect Agent(课程架构师)
+Curriculum Architect Agent（课程架构师）
+
+Plan-and-Execute 并行生成模式：
+1. Planner：生成路线图 Stage 级大纲（RoadmapOutline）
+2. Executor（并行）：为每个 Stage 并行生成详细 Module/Concept（SimplifiedStage）
+3. Merger：合并所有 Stage、修正依赖、规范化 ID，输出完整 RoadmapFramework
+
+外部契约不变：execute() 仍然返回 CurriculumDesignOutput(framework=RoadmapFramework)
 """
+import asyncio
 from app.agents.base import BaseAgent
 from app.agents.framework_normalizer import normalize_framework_ids
 from app.models.domain import (
     CurriculumDesignInput,
     CurriculumDesignOutput,
     SimplifiedRoadmapFramework,
+    SimplifiedStage,
     RoadmapFramework,
     Stage,
     Module,
@@ -14,9 +23,33 @@ from app.models.domain import (
 )
 from app.config.settings import settings
 import structlog
+from pydantic import BaseModel, Field
 from typing import Dict, List, Set, Tuple
 
 logger = structlog.get_logger()
+
+
+# ============================================================
+# Plan-and-Execute 内部中间模型（不对外暴露）
+# ============================================================
+
+class PlannedStage(BaseModel):
+    """路线图规划阶段的 Stage 大纲（不含 Module/Concept 细节）"""
+    stage_id: str = Field(..., description="Stage ID，如 'stage-1'")
+    name: str = Field(..., description="Stage 名称")
+    description: str = Field(..., description="Stage 描述")
+    order: int = Field(..., ge=1, description="Stage 顺序")
+    estimated_hours: float = Field(..., ge=1.0, description="预计学习时长（小时）")
+    focus_areas: list[str] = Field(..., min_length=1, description="核心学习重点关键词列表")
+
+
+class RoadmapOutline(BaseModel):
+    """路线图大纲（Planner 阶段产出，不含 Module/Concept 详细内容）"""
+    roadmap_id: str = Field(..., description="路线图唯一 ID")
+    title: str = Field(..., description="路线图标题")
+    total_estimated_hours: float = Field(..., description="总预计学习时长（小时）")
+    recommended_completion_weeks: int = Field(..., ge=1, description="推荐完成周数")
+    stages: list[PlannedStage] = Field(..., min_length=1, description="Stage 大纲列表")
 
 
 class CurriculumArchitectAgent(BaseAgent):
@@ -356,118 +389,350 @@ class CurriculumArchitectAgent(BaseAgent):
             "roadmap_id": intent.roadmap_id,
         }
     
+    # ============================================================
+    # Plan-and-Execute 并行生成方法
+    # ============================================================
+
+    def _format_outline_text(self, outline: "RoadmapOutline") -> str:
+        """
+        生成供 Stage Prompt 使用的大纲摘要文本
+
+        Args:
+            outline: 路线图大纲
+
+        Returns:
+            供模板变量注入的纯文本摘要
+        """
+        lines = [
+            f"路线图：{outline.title}",
+            f"总学习时长：{outline.total_estimated_hours} 小时 | 推荐完成周数：{outline.recommended_completion_weeks} 周",
+            "",
+            "各阶段概览：",
+        ]
+        for s in outline.stages:
+            focus_text = "、".join(s.focus_areas[:4]) if s.focus_areas else "（待定）"
+            lines += [
+                f"  Stage {s.order}（{s.stage_id}）：{s.name}",
+                f"    描述：{s.description}",
+                f"    预计 {s.estimated_hours:.1f} 小时 | 核心重点：{focus_text}",
+            ]
+        return "\n".join(lines)
+
+    def _format_previous_stages_text(
+        self,
+        outline: "RoadmapOutline",
+        current_stage_order: int,
+    ) -> str:
+        """
+        生成当前 Stage 可见的前序阶段摘要
+
+        这样做的原因：
+        - Stage 生成只需要知道前面已经规划了什么，避免重复注入整份路线图大纲
+        - 同时保留跨 Stage 前置关系所需的最小上下文
+
+        Args:
+            outline: 路线图大纲
+            current_stage_order: 当前 Stage 顺序
+
+        Returns:
+            前序阶段摘要文本；如果没有前序阶段则返回固定提示
+        """
+        previous_stages = [
+            stage for stage in outline.stages if stage.order < current_stage_order
+        ]
+        if not previous_stages:
+            return "无前序 Stage。请只在本 Stage 内建立 prerequisites。"
+
+        lines = ["前序 Stage 摘要："]
+        for stage in previous_stages:
+            focus_text = "、".join(stage.focus_areas[:3]) if stage.focus_areas else "（无）"
+            lines += [
+                f"- Stage {stage.order}（{stage.stage_id}）：{stage.name}",
+                f"  重点：{focus_text}",
+            ]
+        return "\n".join(lines)
+
+    def _build_stage_prompt_context(
+        self,
+        prompt_context: dict,
+        planned_stage: "PlannedStage",
+        outline: "RoadmapOutline",
+    ) -> dict:
+        """
+        构建 Stage 生成所需的最小 Prompt 上下文
+
+        只保留当前 Stage 真正需要的信息，避免把完整路线图和过多全局说明重复注入到每个并发任务。
+
+        Args:
+            prompt_context: 全局上下文
+            planned_stage: 当前 Stage 规划信息
+            outline: 路线图大纲
+
+        Returns:
+            精简后的 Stage prompt 上下文字典
+        """
+        return {
+            "user_goal": prompt_context["user_goal"],
+            "parsed_goal": prompt_context["parsed_goal"],
+            "key_technologies": prompt_context["key_technologies"],
+            "current_level": prompt_context["current_level"],
+            "available_hours_per_week": prompt_context["available_hours_per_week"],
+            "motivation": prompt_context["motivation"],
+            "primary_language": prompt_context["primary_language"],
+            "stage_id": planned_stage.stage_id,
+            "stage_name": planned_stage.name,
+            "stage_description": planned_stage.description,
+            "current_stage_order": planned_stage.order,
+            "total_stages": len(outline.stages),
+            "stage_estimated_hours": planned_stage.estimated_hours,
+            "focus_areas": planned_stage.focus_areas,
+            "previous_stages_text": self._format_previous_stages_text(
+                outline,
+                planned_stage.order,
+            ),
+        }
+
+    async def _plan_roadmap_outline(
+        self, input_data: CurriculumDesignInput
+    ) -> "RoadmapOutline":
+        """
+        第一阶段（Planner）：生成路线图 Stage 级大纲
+
+        不生成 Module 和 Concept 的详细内容，只确定：
+        - 路线图标题、总时长、推荐周数
+        - 每个 Stage 的名称、描述、顺序、预计时长和核心学习重点
+
+        Args:
+            input_data: 课程设计输入
+
+        Returns:
+            RoadmapOutline: Stage 级大纲，供并行 Stage 生成阶段使用
+        """
+        roadmap_id = input_data.intent_analysis.roadmap_id
+
+        logger.info("plan_execute_planning_outline", roadmap_id=roadmap_id)
+
+        prompt_context = self._prepare_prompt_context(input_data)
+        system_prompt = self._load_system_prompt(
+            "curriculum_architect_outline.j2", **prompt_context
+        )
+        messages = [{"role": "system", "content": system_prompt}]
+
+        try:
+            outline = await self._call_llm(
+                messages,
+                response_model=RoadmapOutline,
+                use_two_stage=False,
+            )
+        except Exception as exc:
+            logger.warning(
+                "plan_execute_outline_direct_parse_failed",
+                roadmap_id=roadmap_id,
+                error=str(exc),
+                fallback="two_stage_generation",
+            )
+            outline = await self._call_llm(
+                messages,
+                response_model=RoadmapOutline,
+                use_two_stage=True,
+            )
+
+        outline.roadmap_id = roadmap_id
+
+        if not outline.stages:
+            raise ValueError(
+                f"Planner 返回了空的 stages 数组，roadmap_id={roadmap_id}。"
+                f"请检查模型配置或切换到更强大的模型。"
+            )
+
+        logger.info(
+            "plan_execute_outline_generated",
+            roadmap_id=roadmap_id,
+            title=outline.title[:40],
+            stages_count=len(outline.stages),
+            total_hours=outline.total_estimated_hours,
+        )
+
+        return outline
+
+    async def _generate_stage(
+        self,
+        planned_stage: "PlannedStage",
+        outline: "RoadmapOutline",
+        prompt_context: dict,
+    ) -> SimplifiedStage:
+        """
+        第二阶段（Executor）：为单个 PlannedStage 并行生成详细的 Module/Concept 结构
+
+        Args:
+            planned_stage: 来自 Planner 的 Stage 大纲信息
+            outline: 完整路线图大纲（用于构建前序阶段摘要）
+            prompt_context: 全局 prompt 上下文（用户信息等）
+
+        Returns:
+            SimplifiedStage: 包含完整 Module/Concept 的 Stage 对象
+        """
+        logger.info(
+            "plan_execute_generating_stage",
+            stage_id=planned_stage.stage_id,
+            stage_name=planned_stage.name,
+            order=planned_stage.order,
+            estimated_hours=planned_stage.estimated_hours,
+        )
+
+        stage_context = self._build_stage_prompt_context(
+            prompt_context,
+            planned_stage,
+            outline,
+        )
+
+        system_prompt = self._load_system_prompt(
+            "curriculum_architect_stage.j2", **stage_context
+        )
+        messages = [{"role": "system", "content": system_prompt}]
+
+        try:
+            stage_result = await self._call_llm(
+                messages,
+                response_model=SimplifiedStage,
+                use_two_stage=False,
+            )
+        except Exception as exc:
+            logger.warning(
+                "plan_execute_stage_direct_parse_failed",
+                stage_id=planned_stage.stage_id,
+                error=str(exc),
+                fallback="two_stage_generation",
+            )
+            stage_result = await self._call_llm(
+                messages,
+                response_model=SimplifiedStage,
+                use_two_stage=True,
+            )
+
+        # 用规划值覆盖，确保 stage_id 和 order 与 Planner 一致
+        stage_result.stage_id = planned_stage.stage_id
+        stage_result.order = planned_stage.order
+
+        concepts_count = sum(len(m.concepts) for m in stage_result.modules)
+        logger.info(
+            "plan_execute_stage_generated",
+            stage_id=planned_stage.stage_id,
+            modules_count=len(stage_result.modules),
+            concepts_count=concepts_count,
+        )
+
+        return stage_result
+
+    def _merge_to_simplified_framework(
+        self,
+        outline: "RoadmapOutline",
+        stages: list[SimplifiedStage],
+    ) -> SimplifiedRoadmapFramework:
+        """
+        第三阶段（Merger）：将大纲元信息与并行生成的 Stage 结果合并
+
+        Args:
+            outline: Planner 输出的路线图大纲
+            stages: 所有并行生成的 SimplifiedStage 列表
+
+        Returns:
+            SimplifiedRoadmapFramework: 可传入后处理流程的完整简化框架
+        """
+        sorted_stages = sorted(stages, key=lambda s: s.order)
+
+        return SimplifiedRoadmapFramework(
+            roadmap_id=outline.roadmap_id,
+            title=outline.title,
+            total_estimated_hours=outline.total_estimated_hours,
+            recommended_completion_weeks=outline.recommended_completion_weeks,
+            stages=sorted_stages,
+        )
+
     async def execute(self, input_data: CurriculumDesignInput) -> CurriculumDesignOutput:
         """
-        设计三层学习路线图框架
-        
-        性能优化：
-        1. 使用简化的 response_model 提升结构化提取速度（减少无效字段）
-        2. 转换后补充完整字段的默认值
-        3. 自动检查并修复依赖关系
-        
+        Plan-and-Execute 模式执行课程设计
+
+        三阶段并行加速流程：
+        1. Planner：生成 Stage 级大纲（1 次 LLM 调用）
+        2. Executor（并行）：asyncio.gather 并行为每个 Stage 生成 Module/Concept
+        3. Merger：合并结果，复用现有依赖修复和 ID 规范化逻辑
+
+        外部输出契约与 execute() 完全一致：返回 CurriculumDesignOutput(framework=RoadmapFramework)
+
         Args:
-            input_data: CurriculumDesignInput 对象(包含 intent_analysis 和 user_preferences)
-            
+            input_data: CurriculumDesignInput 对象
+
         Returns:
             CurriculumDesignOutput: 课程设计输出（包含完整的 framework）
         """
-        intent_analysis = input_data.intent_analysis
-        roadmap_id = intent_analysis.roadmap_id
-        
-        logger.info(
-            "curriculum_design_started",
-            roadmap_id=roadmap_id,
-            tech_stack_count=len(intent_analysis.key_technologies),
-            current_level=input_data.user_preferences.current_level,
-        )
-        
-        # 准备 Prompt 上下文变量
-        logger.debug("curriculum_design_preparing_context", roadmap_id=roadmap_id)
+        roadmap_id = input_data.intent_analysis.roadmap_id
         prompt_context = self._prepare_prompt_context(input_data)
-        
-        # 加载并渲染 Prompt 模板
-        logger.debug("curriculum_design_loading_prompt", template="curriculum_architect.j2")
-        system_prompt = self._load_system_prompt("curriculum_architect.j2", **prompt_context)
-        
-        # 构建消息列表（只需要 system prompt，所有信息都在模板中）
-        messages = [
-            {"role": "system", "content": system_prompt},
+
+        logger.info(
+            "plan_execute_started",
+            roadmap_id=roadmap_id,
+            mode="plan_and_execute",
+            tech_stack_count=len(input_data.intent_analysis.key_technologies),
+        )
+
+        # ============ 阶段 1: Planner ============
+        outline = await self._plan_roadmap_outline(input_data)
+        # ============ 阶段 2: 并行 Stage 生成 ============
+        logger.info(
+            "plan_execute_stage_fanout_started",
+            roadmap_id=roadmap_id,
+            stages_count=len(outline.stages),
+        )
+
+        stage_tasks = [
+            self._generate_stage(planned_stage, outline, prompt_context)
+            for planned_stage in outline.stages
         ]
-        
-        # ⭐ 性能优化：使用简化的 response_model
+        simplified_stages: list[SimplifiedStage] = list(
+            await asyncio.gather(*stage_tasks)
+        )
+
         logger.info(
-            "curriculum_design_calling_llm",
-            model=self.model_name,
-            provider=self.model_provider,
-            use_two_stage=True,
-            optimization="使用简化的 response_model 提升结构化提取速度",
+            "plan_execute_stage_fanout_completed",
+            roadmap_id=roadmap_id,
+            generated_stages=len(simplified_stages),
         )
-        
-        simplified_framework = await self._call_llm(
-            messages,
-            response_model=SimplifiedRoadmapFramework,  # ⭐ 使用简化模型
-            use_two_stage=True,
+
+        # ============ 阶段 3: 合并 + 后处理（复用现有逻辑）============
+        simplified_framework = self._merge_to_simplified_framework(
+            outline, simplified_stages
         )
-        
-        # 确保使用正确的 roadmap_id
         simplified_framework.roadmap_id = roadmap_id
-        
-        # ====================================================================
-        # 关键验证：确保 LLM 生成了非空的课程结构
-        # ====================================================================
+
         if not simplified_framework.stages:
-            logger.error(
-                "curriculum_design_empty_stages",
-                roadmap_id=roadmap_id,
-                model=self.model_name,
-                provider=self.model_provider,
-                message="LLM 返回了空的 stages 数组，课程结构生成失败。"
-                        "建议使用更强大的模型（如 Claude 或 GPT-4）进行课程设计。",
-            )
             raise ValueError(
-                f"课程设计失败：LLM 返回空的学习阶段列表。"
-                f"当前模型 {self.model_provider}/{self.model_name} 可能无法处理复杂的嵌套 JSON 结构。"
-                f"请检查模型配置或切换到 Claude/GPT-4 等更强大的模型。"
+                f"合并后 stages 为空，roadmap_id={roadmap_id}。"
+                f"请检查各 Stage 生成是否均成功返回。"
             )
-        
-        # ⭐ 转换为完整框架（补充默认值）
-        logger.info(
-            "converting_to_full_framework",
-            roadmap_id=roadmap_id,
-        )
+
         full_framework = self._convert_to_full_framework(simplified_framework)
-        
-        # ⭐ 检查并修复依赖关系
-        logger.info(
-            "checking_dependencies",
-            roadmap_id=roadmap_id,
-        )
         full_framework, fixes = self._check_and_fix_dependencies(full_framework)
-        
+
         if fixes:
             logger.warning(
-                "dependencies_fixed",
+                "plan_execute_dependencies_fixed",
                 roadmap_id=roadmap_id,
                 fixes_count=len(fixes),
-                fixes=fixes[:5],  # 只记录前 5 个修复
+                fixes=fixes[:5],
             )
-        
-        # ⭐ ID规范化：确保所有Stage、Module、Concept的ID符合规范
-        logger.info("curriculum_design_normalizing_ids", roadmap_id=roadmap_id)
+
         full_framework = normalize_framework_ids(full_framework)
-        
-        # 统计路线图结构
-        total_modules = sum(len(stage.modules) for stage in full_framework.stages)
+
+        total_modules = sum(len(s.modules) for s in full_framework.stages)
         total_concepts = sum(
-            len(module.concepts)
-            for stage in full_framework.stages
-            for module in stage.modules
+            len(m.concepts) for s in full_framework.stages for m in s.modules
         )
-        
+
         logger.info(
-            "curriculum_design_success",
-            roadmap_id=full_framework.roadmap_id,
-            title=full_framework.title[:30] + "..." if len(full_framework.title) > 30 else full_framework.title,
+            "plan_execute_completed",
+            roadmap_id=roadmap_id,
+            title=full_framework.title[:40],
             stages_count=len(full_framework.stages),
             modules_count=total_modules,
             concepts_count=total_concepts,
@@ -475,8 +740,5 @@ class CurriculumArchitectAgent(BaseAgent):
             completion_weeks=full_framework.recommended_completion_weeks,
             dependencies_fixed=len(fixes),
         )
-        
-        # 构建输出
-        result = CurriculumDesignOutput(framework=full_framework)
-        
-        return result
+
+        return CurriculumDesignOutput(framework=full_framework)

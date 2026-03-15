@@ -18,7 +18,7 @@ from prometheus_client import Histogram, Counter
 
 from app.models.domain import UserRequest
 from app.db.celery_session import get_celery_session
-from .base import RoadmapState
+from .base import INTERNAL_NODE_DURATION_MS_KEY, RoadmapState
 from .builder import WorkflowBuilder
 from .state_manager import StateManager
 from .runtime_context import RuntimeContext
@@ -77,6 +77,74 @@ def _deep_convert_to_dict(obj):
     else:
         # 其他类型（基本类型）直接返回
         return obj
+
+
+def _split_node_output_and_internal_duration(node_output: dict) -> tuple[dict, int | None]:
+    """
+    拆分节点输出中的内部耗时元数据。
+
+    某些 LangGraph 节点的 `on_chain_start` / `on_chain_end` 事件顺序并不稳定，
+    会导致基于事件流计算的耗时缺失或被严重低估。
+    这里允许节点函数主动回传一个内部实测耗时，作为 executor 的兜底数据源。
+
+    Args:
+        node_output: 节点返回的原始状态更新字典
+
+    Returns:
+        二元组：
+        - 清理掉内部元数据后的节点输出
+        - 节点内部上报的耗时（毫秒，若不存在则为 None）
+    """
+    cleaned_output = dict(node_output)
+    raw_duration_ms = cleaned_output.pop(INTERNAL_NODE_DURATION_MS_KEY, None)
+
+    if raw_duration_ms is None:
+        return cleaned_output, None
+
+    try:
+        duration_ms = int(raw_duration_ms)
+    except (TypeError, ValueError):
+        logger.warning(
+            "workflow_node_internal_duration_invalid",
+            raw_duration_ms=raw_duration_ms,
+        )
+        return cleaned_output, None
+
+    return cleaned_output, max(duration_ms, 0)
+
+
+def _resolve_node_duration_ms(
+    start_time: float | None,
+    current_time: float,
+    fallback_duration_ms: int | None = None,
+) -> int:
+    """
+    统一解析节点耗时。
+
+    解析优先级：
+    1. 事件流开始/结束时间差
+    2. 节点函数主动上报的内部耗时
+    3. 最终退化为 0
+
+    当事件流耗时明显偏小或缺失时，优先采用节点内部上报的耗时，
+    避免复杂节点因为 LangGraph 事件乱序而显示 0ms。
+
+    Args:
+        start_time: 节点开始时间戳
+        current_time: 当前结束时间戳
+        fallback_duration_ms: 节点内部上报的兜底耗时
+
+    Returns:
+        最终用于落库的节点耗时（毫秒）
+    """
+    measured_duration_ms = 0
+    if start_time is not None:
+        measured_duration_ms = max(int((current_time - start_time) * 1000), 0)
+
+    if fallback_duration_ms is None:
+        return measured_duration_ms
+
+    return max(measured_duration_ms, fallback_duration_ms)
 
 
 # ====================================================================
@@ -215,7 +283,9 @@ class WorkflowExecutor:
                 
                 # ===== 节点开始事件 =====
                 if event_type == "on_chain_start":
-                    node_start_times[node_name] = time.time()
+                    # 同一 LangGraph 节点内部可能触发多次 on_chain_start（如内层 Agent/LLM 调用），
+                    # 这里必须保留第一次开始时间，才能测到整个节点的真实耗时。
+                    node_start_times.setdefault(node_name, time.time())
                     
                     logger.info(
                         "workflow_node_starting",
@@ -240,9 +310,6 @@ class WorkflowExecutor:
                 
                 # ===== 节点结束事件 =====
                 elif event_type == "on_chain_end":
-                    start_time = node_start_times.pop(node_name, time.time())
-                    duration_ms = int((time.time() - start_time) * 1000)
-                    
                     # 🔍 从 event data 中提取节点输出
                     node_output = event.get("data", {}).get("output", {})
                     
@@ -275,6 +342,23 @@ class WorkflowExecutor:
                         )
                         # 跳过非字典类型的输出（内层 LLM/Agent 调用的返回）
                         continue
+
+                    node_output, internal_duration_ms = _split_node_output_and_internal_duration(node_output)
+
+                    start_time = node_start_times.pop(node_name, None)
+                    if start_time is None:
+                        logger.warning(
+                            "workflow_node_missing_start_time",
+                            task_id=task_id,
+                            node=node_name,
+                            fallback_duration_ms=internal_duration_ms,
+                            message="节点结束时未找到开始时间，将尝试使用节点内部耗时兜底",
+                        )
+                    duration_ms = _resolve_node_duration_ms(
+                        start_time=start_time,
+                        current_time=time.time(),
+                        fallback_duration_ms=internal_duration_ms,
+                    )
                     
                     # 将 node_output 增量合并到本地 final_state，避免查询 PostgreSQL checkpoint。
                     # node_output 包含节点函数返回的所有状态字段，coordinator 只需要 current_step/roadmap_id 等，
@@ -484,7 +568,9 @@ class WorkflowExecutor:
                 
                 # ===== 节点开始事件 =====
                 if event_type == "on_chain_start":
-                    node_start_times[node_name] = time.time()
+                    # 同一 LangGraph 节点内部可能触发多次 on_chain_start（如内层 Agent/LLM 调用），
+                    # 这里必须保留第一次开始时间，才能测到整个节点的真实耗时。
+                    node_start_times.setdefault(node_name, time.time())
                     
                     logger.info(
                         "workflow_resume_node_starting",
@@ -510,9 +596,6 @@ class WorkflowExecutor:
                 
                 # ===== 节点结束事件 =====
                 elif event_type == "on_chain_end":
-                    start_time = node_start_times.pop(node_name, time.time())
-                    duration_ms = int((time.time() - start_time) * 1000)
-                    
                     # 🔍 从 event data 中提取节点输出
                     node_output = event.get("data", {}).get("output", {})
                     
@@ -535,6 +618,23 @@ class WorkflowExecutor:
                         )
                         # 跳过非字典类型的输出（内层 LLM/Agent 调用的返回）
                         continue
+
+                    node_output, internal_duration_ms = _split_node_output_and_internal_duration(node_output)
+
+                    start_time = node_start_times.pop(node_name, None)
+                    if start_time is None:
+                        logger.warning(
+                            "workflow_resume_node_missing_start_time",
+                            task_id=task_id,
+                            node=node_name,
+                            fallback_duration_ms=internal_duration_ms,
+                            message="节点结束时未找到开始时间，将尝试使用节点内部耗时兜底",
+                        )
+                    duration_ms = _resolve_node_duration_ms(
+                        start_time=start_time,
+                        current_time=time.time(),
+                        fallback_duration_ms=internal_duration_ms,
+                    )
                     
                     # 将 node_output 合并到本地 final_state，避免每次都查询 PostgreSQL checkpoint。
                     # node_output 是节点函数返回的状态增量，直接合并即可满足 coordinator 和 handler 的需求。

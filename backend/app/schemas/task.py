@@ -16,6 +16,8 @@ class TaskStatusDetailResponse(BaseModel):
     error_message: Optional[str] = Field(None, description="错误信息")
     turbo_mode: Optional[bool] = Field(None, description="是否为极速模式（跳过结构验证）")
     user_request: Optional[Dict[str, Any]] = Field(None, description="任务发起时的原始 user_request")
+    queue_ahead_count: Optional[int] = Field(None, description="前方排队任务数")
+    queue_position: Optional[int] = Field(None, description="当前任务在队列中的位置（从1开始）")
     
     model_config = ConfigDict(
         json_schema_extra={
@@ -26,7 +28,9 @@ class TaskStatusDetailResponse(BaseModel):
                 "roadmap_id": "python-web-xxx",
                 "created_at": "2024-01-01T00:00:00Z",
                 "updated_at": "2024-01-01T00:01:00Z",
-                "error_message": None
+                "error_message": None,
+                "queue_ahead_count": 3,
+                "queue_position": 4,
             }
         }
     )

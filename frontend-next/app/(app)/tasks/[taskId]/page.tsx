@@ -24,20 +24,21 @@ import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TaskWebSocket } from '@/lib/api/websocket';
-import { tasksApi, roadmapsApi, usersApi } from '@/lib/api/endpoints';
+import type { TaskStatusResponse } from '@/lib/api/endpoints/tasks';
+import { tasksApi, roadmapsApi } from '@/lib/api/endpoints';
+import { useTaskStateSync } from '@/lib/hooks/use-task-state-sync';
 import { WorkflowTopology } from '@/components/task/workflow-topology';
 import { CoreDisplayArea } from '@/components/task/core-display-area';
 import { ExecutionLogTimeline } from '@/components/task/execution-log-timeline';
 import { limitLogsByStep, getLogStatsByStep } from '@/lib/utils/log-grouping';
-import { useAuthStore } from '@/lib/store/auth-store';
-import { mapToDisplayStep } from '@/lib/constants/workflow-steps';
+import { extractRoadmapConceptStates } from '@/lib/utils/roadmap-concept-state';
+import { WorkflowStep, mapToDisplayStep } from '@/lib/constants/workflow-steps';
+import { getTaskStatusFromProgressEvent } from '@/lib/utils/task-progress-status';
 import { TaskStatus } from '@/types/generated/constants';
 import type { TaskStatusType } from '@/types/generated/constants';
-import type { 
-  RoadmapFramework, 
-  LearningPreferences, 
+import type {
+  RoadmapFramework,
   ExecutionLogResponse,
-  TaskStatusDetailResponse,
   IntentAnalysisResponse,
   UserRequest,
 } from '@/types/generated/models';
@@ -65,10 +66,41 @@ interface IntentAnalysisOutput {
 type ExecutionLog = ExecutionLogResponse;
 
 /**
+ * 任务拓扑图的节点耗时需要同时消费 workflow 与 content 两类日志。
+ */
+function collectNodeDurationLogs(logs: ExecutionLog[]) {
+  return logs.filter((log) => log.category === 'workflow' || log.category === 'content');
+}
+
+interface TaskArtifactsRefreshOptions {
+  refreshLogs?: boolean;
+  refreshIntentAnalysis?: boolean;
+  refreshRoadmap?: boolean;
+  syncRoadmapId?: boolean;
+}
+
+function isTaskDetailRequestCancelled(error: unknown): boolean {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const candidate = error as {
+    name?: string;
+    code?: string;
+  };
+
+  return (
+    candidate.name === 'AbortError' ||
+    candidate.name === 'CanceledError' ||
+    candidate.code === 'ERR_CANCELED'
+  );
+}
+
+/**
  * 任务信息类型（扩展生成的类型）
  * 注意：status 字段使用 TaskStatusType 以支持字符串字面量
  */
-interface TaskInfo extends Omit<TaskStatusDetailResponse, 'status'> {
+interface TaskInfo extends Omit<TaskStatusResponse, 'status'> {
   title: string;  // 额外添加的字段
   status: TaskStatusType;  // 使用联合类型而不是枚举
   user_request?: UserRequest | null;
@@ -111,19 +143,15 @@ export default function TaskDetailPage() {
   const params = useParams();
   const router = useRouter();
   const taskId = params?.taskId as string;
-  const { getUserId } = useAuthStore();
-  
   // TanStack Query Client - 用于预填充路线图缓存，加速页面跳转
   const queryClient = useQueryClient();
 
   // 任务基本信息
   const [taskInfo, setTaskInfo] = useState<TaskInfo | null>(null);
 
-  // 用户学习偏好（用于重试功能）
-  const [userPreferences, setUserPreferences] = useState<LearningPreferences | undefined>(undefined);
-
   // 执行日志
   const [executionLogs, setExecutionLogs] = useState<ExecutionLog[]>([]);
+  const [workflowLogs, setWorkflowLogs] = useState<ExecutionLog[]>([]);
 
   // 需求分析输出
   const [intentAnalysis, setIntentAnalysis] = useState<IntentAnalysisOutput | null>(null);
@@ -168,6 +196,52 @@ export default function TaskDetailPage() {
   
   // 使用ref存储最新的roadmap_id，确保在WebSocket事件处理器中能获取到最新值
   const roadmapIdRef = useRef<string | null>(null);
+  const refreshTaskArtifactsTimeoutRef = useRef<number | null>(null);
+  const refreshTaskArtifactsInFlightRef = useRef<Promise<void> | null>(null);
+  const pendingRefreshOptionsRef = useRef<TaskArtifactsRefreshOptions | null>(null);
+  const {
+    syncLatestTaskStateTimestamp,
+    isStaleTaskStateEvent,
+    applyRealtimeTaskUpdate,
+  } = useTaskStateSync<TaskInfo>(setTaskInfo);
+
+  /**
+   * 使用接口返回的任务快照整体刷新页面状态。
+   *
+   * 该入口只用于“主动拉取”的场景，例如：
+   * - 首次进入页面
+   * - 人工审核完成后主动刷新
+   *
+   * 与 WebSocket 实时事件分开处理，可以让任务页只保留两种状态写入路径：
+   * 1. applyTaskSnapshot：整包接口快照
+   * 2. applyRealtimeTaskUpdate：实时增量事件
+   */
+  const applyTaskSnapshot = useCallback((
+    taskData: TaskStatusResponse,
+    title: string
+  ): boolean => {
+    if (isStaleTaskStateEvent(taskData.updated_at)) {
+      console.log('[TaskDetail] Ignore stale task snapshot:', {
+        updated_at: taskData.updated_at,
+        current_step: taskData.current_step,
+        status: taskData.status,
+      });
+      return false;
+    }
+
+    const displayStep = mapToDisplayStep(taskData.current_step || null);
+
+    const nextTaskInfo: TaskInfo = {
+      ...taskData,
+      current_step: displayStep ?? undefined,
+      title,
+    };
+
+    setTaskInfo(nextTaskInfo);
+    syncLatestTaskStateTimestamp(taskData.updated_at);
+    roadmapIdRef.current = taskData.roadmap_id || null;
+    return true;
+  }, [isStaleTaskStateEvent, syncLatestTaskStateTimestamp]);
 
   /**
    * 从time_constraint字符串中解析时间信息
@@ -281,60 +355,6 @@ export default function TaskDetailPage() {
   }, []);
 
   /**
-   * 从路线图框架中提取概念的加载/失败状态
-   * 
-   * 用于在刷新时从最新的路线图数据中重建状态，而不依赖 WebSocket 事件
-   */
-  const extractConceptStates = useCallback((roadmap: RoadmapFramework) => {
-    const loading: string[] = [];
-    const failed: string[] = [];
-    const partialFailed: string[] = [];
-    
-    roadmap.stages.forEach(stage => {
-      stage.modules.forEach(module => {
-        module.concepts.forEach(concept => {
-          const conceptId = concept.concept_id;
-          const statuses = [
-            concept.content_status,
-            concept.resources_status,
-            concept.quiz_status,
-          ];
-          
-          // ✅ 修复：只有明确为'pending'状态才标记为loading
-          // null/undefined状态表示内容尚未开始生成，应显示为初始状态而非loading
-          const isGenerating = statuses.some(s => s === 'pending');
-          if (isGenerating) {
-            loading.push(conceptId);
-            return;
-          }
-          
-          // ✅ 过滤掉null/undefined状态，只统计有效状态
-          const validStatuses = statuses.filter(s => s !== null && s !== undefined);
-          
-          // 如果所有状态都是null/undefined，说明还未开始生成，不需要标记为任何特殊状态
-          if (validStatuses.length === 0) {
-            return;
-          }
-          
-          // 判断失败状态
-          const failedCount = validStatuses.filter(s => s === 'failed').length;
-          const completedCount = validStatuses.filter(s => s === 'completed').length;
-          
-          if (failedCount === validStatuses.length) {
-            // 全部失败（所有有效状态都是failed）
-            failed.push(conceptId);
-          } else if (failedCount > 0 && completedCount > 0) {
-            // 部分失败（有成功有失败）
-            partialFailed.push(conceptId);
-          }
-        });
-      });
-    });
-    
-    return { loading, failed, partialFailed };
-  }, []);
-
-  /**
    * 加载路线图框架
    * 
    * 优化策略:
@@ -359,7 +379,7 @@ export default function TaskDetailPage() {
         
         // 如果需要更新概念状态（刷新时使用）
         if (updateConceptStates) {
-          const { loading, failed, partialFailed } = extractConceptStates(framework);
+          const { loading, failed, partialFailed } = extractRoadmapConceptStates(framework);
           setLoadingConceptIds(loading);
           setFailedConceptIds(failed);
           setPartialFailedConceptIds(partialFailed);
@@ -374,7 +394,136 @@ export default function TaskDetailPage() {
       }
       console.error('Failed to load roadmap framework:', err);
     }
-  }, [extractConceptStates, queryClient]);
+  }, [queryClient]);
+
+  /**
+   * 合并多次刷新请求，避免节点完成和 Concept 事件在短时间内重复全量拉取。
+   */
+  const executeTaskArtifactsRefresh = useCallback(async (options: TaskArtifactsRefreshOptions) => {
+    let currentRoadmapId = roadmapIdRef.current;
+
+    if (!currentRoadmapId && options.syncRoadmapId) {
+      try {
+        const latestTask = await tasksApi.getById(taskId);
+        if (latestTask.roadmap_id) {
+          currentRoadmapId = latestTask.roadmap_id;
+          roadmapIdRef.current = latestTask.roadmap_id;
+          applyRealtimeTaskUpdate({
+            eventAt: latestTask.updated_at,
+            roadmapId: latestTask.roadmap_id,
+          });
+        }
+      } catch (error) {
+        console.error('[TaskDetail] Failed to sync roadmap_id before artifacts refresh:', error);
+      }
+    }
+
+    const refreshJobs: Promise<unknown>[] = [];
+
+    if (options.refreshLogs) {
+      refreshJobs.push(
+        tasksApi.getLogs(
+          taskId,
+          undefined,
+          ['agent', 'workflow', 'content'],
+          1000,
+          0,
+          undefined,
+          1000
+        ).then((combinedLogsData) => {
+          const allLogs = combinedLogsData.logs || [];
+          const nextWorkflowLogs = collectNodeDurationLogs(allLogs);
+          const limitedLogs = limitLogsByStep(allLogs, 100);
+          setExecutionLogs(limitedLogs);
+          setWorkflowLogs(nextWorkflowLogs);
+        }).catch((error) => {
+          console.error('[TaskDetail] Failed to refresh task logs:', error);
+        })
+      );
+    }
+
+    if (currentRoadmapId && options.refreshIntentAnalysis) {
+      refreshJobs.push(
+        loadIntentAnalysis(currentRoadmapId).catch((error) => {
+          console.error('[TaskDetail] Failed to refresh intent analysis:', error);
+        })
+      );
+    }
+
+    if (currentRoadmapId && options.refreshRoadmap) {
+      refreshJobs.push(
+        loadRoadmapFramework(currentRoadmapId, true).catch((error) => {
+          console.error('[TaskDetail] Failed to refresh roadmap framework:', error);
+        })
+      );
+    }
+
+    await Promise.all(refreshJobs);
+  }, [applyRealtimeTaskUpdate, loadIntentAnalysis, loadRoadmapFramework, taskId]);
+
+  const scheduleTaskArtifactsRefresh = useCallback((
+    options: TaskArtifactsRefreshOptions,
+    debounceMs: number = 250
+  ) => {
+    const pendingOptions = pendingRefreshOptionsRef.current || {};
+    pendingRefreshOptionsRef.current = {
+      refreshLogs: pendingOptions.refreshLogs || options.refreshLogs,
+      refreshIntentAnalysis: pendingOptions.refreshIntentAnalysis || options.refreshIntentAnalysis,
+      refreshRoadmap: pendingOptions.refreshRoadmap || options.refreshRoadmap,
+      syncRoadmapId: pendingOptions.syncRoadmapId || options.syncRoadmapId,
+    };
+
+    if (refreshTaskArtifactsTimeoutRef.current !== null) {
+      window.clearTimeout(refreshTaskArtifactsTimeoutRef.current);
+    }
+
+    refreshTaskArtifactsTimeoutRef.current = window.setTimeout(() => {
+      refreshTaskArtifactsTimeoutRef.current = null;
+
+      const runRefresh = async () => {
+        if (refreshTaskArtifactsInFlightRef.current) {
+          await refreshTaskArtifactsInFlightRef.current;
+        }
+
+        const nextOptions = pendingRefreshOptionsRef.current;
+        if (!nextOptions) {
+          return;
+        }
+
+        pendingRefreshOptionsRef.current = null;
+        const refreshPromise = executeTaskArtifactsRefresh(nextOptions);
+        refreshTaskArtifactsInFlightRef.current = refreshPromise;
+
+        try {
+          await refreshPromise;
+        } finally {
+          if (refreshTaskArtifactsInFlightRef.current === refreshPromise) {
+            refreshTaskArtifactsInFlightRef.current = null;
+          }
+          if (pendingRefreshOptionsRef.current) {
+            scheduleTaskArtifactsRefresh({}, 0);
+          }
+        }
+      };
+
+      void runRefresh();
+    }, debounceMs);
+  }, [executeTaskArtifactsRefresh]);
+
+  /**
+   * 任务进入终态后，立即清理本地 loading 残留，并用服务端快照对账 Concept 状态。
+   */
+  const reconcileTerminalTaskArtifacts = useCallback(() => {
+    setLoadingConceptIds([]);
+    scheduleTaskArtifactsRefresh(
+      {
+        refreshLogs: true,
+        refreshRoadmap: true,
+        syncRoadmapId: true,
+      },
+      0,
+    );
+  }, [scheduleTaskArtifactsRefresh]);
 
   /**
    * 加载任务信息和日志（提取为独立函数，供初始加载和刷新使用）
@@ -420,43 +569,59 @@ export default function TaskDetailPage() {
       // 任务详情是关键请求，先确保成功拿到
       const taskData = await fetchTaskWithRetry();
 
+      /**
+       * 基于 taskData 立即并行启动后续请求，避免日志、需求分析、路线图互相等待。
+       *
+       * 设计原因：
+       * - 首屏标题依赖 intent_analysis，但路线图和日志不需要等待它完成；
+       * - 任务详情页此前会先等日志，再等 intent，再等 roadmap，形成不必要的瀑布流。
+       */
+      const combinedLogsPromise = tasksApi.getLogs(
+        taskId,
+        undefined,
+        ['agent', 'workflow', 'content'],
+        1000,
+        0,
+        signal,
+        1000
+      );
+      const intentPromise = taskData.roadmap_id
+        ? loadIntentAnalysis(taskData.roadmap_id, signal).catch(() => null)
+        : Promise.resolve(null);
+      const roadmapPromise = taskData.roadmap_id
+        ? loadRoadmapFramework(taskData.roadmap_id, true, signal)
+        : Promise.resolve();
+
       // 日志是非关键请求，失败不应让页面进入“任务不存在”
-      const [agentLogsResult, workflowLogsResult] = await Promise.allSettled([
-        tasksApi.getLogs(taskId, undefined, 'agent', 200, 0, signal),
-        tasksApi.getLogs(taskId, undefined, 'workflow', 200, 0, signal),
+      const [combinedLogsResult, intentData] = await Promise.all([
+        Promise.resolve(combinedLogsPromise).then(
+          (value) => ({ status: 'fulfilled', value } as const),
+          (reason) => ({ status: 'rejected', reason } as const),
+        ),
+        intentPromise,
       ]);
-      const agentLogsData = agentLogsResult.status === 'fulfilled' ? agentLogsResult.value : { logs: [] };
-      const workflowLogsData = workflowLogsResult.status === 'fulfilled' ? workflowLogsResult.value : { logs: [] };
-      if (agentLogsResult.status === 'rejected') {
-        console.warn('[TaskDetail] Failed to load agent logs:', agentLogsResult.reason);
+
+      if (
+        combinedLogsResult.status === 'rejected' &&
+        isTaskDetailRequestCancelled(combinedLogsResult.reason)
+      ) {
+        throw combinedLogsResult.reason;
       }
-      if (workflowLogsResult.status === 'rejected') {
-        console.warn('[TaskDetail] Failed to load workflow logs:', workflowLogsResult.reason);
+
+      const combinedLogsData = combinedLogsResult.status === 'fulfilled' ? combinedLogsResult.value : { logs: [] };
+      if (combinedLogsResult.status === 'rejected') {
+        console.warn('[TaskDetail] Failed to load combined task logs:', combinedLogsResult.reason);
       }
+
+      // 添加 title 字段（从 intentAnalysis 或默认值获取）
+      // 注意：这里不能使用 t()，因为是在回调函数中，需要在组件渲染时使用
+      applyTaskSnapshot(
+        taskData,
+        intentData?.learning_goal || 'Generating Roadmap...'
+      );
       
-      // 获取 taskData 后再加载 intentAnalysis（需要 roadmap_id）
-      let intentData = null;
-      if (taskData.roadmap_id) {
-        intentData = await loadIntentAnalysis(taskData.roadmap_id, signal).catch(() => null);
-      }
-      
-        // 🔧 优化：应用步骤映射
-        const displayStep = mapToDisplayStep(taskData.current_step || null);
-        // 添加title字段（从intentAnalysis或默认值获取）
-        // 注意：这里不能使用t()因为是在回调函数中，需要在组件渲染时使用
-        const taskInfo: TaskInfo = {
-          ...taskData,
-          current_step: displayStep,
-          title: intentData?.learning_goal || 'Generating Roadmap...',
-        };
-      setTaskInfo(taskInfo);
-      // 更新ref中的roadmap_id
-      roadmapIdRef.current = taskData.roadmap_id || null;
-      
-      const allLogs = [
-        ...(agentLogsData.logs || []),
-        ...(workflowLogsData.logs || []),
-      ];
+      const allLogs = combinedLogsData.logs || [];
+      const nextWorkflowLogs = collectNodeDurationLogs(allLogs);
       
       // 按 step 分组，每个 step 最多 100 条
       const limitedLogs = limitLogsByStep(allLogs, 100);
@@ -469,6 +634,7 @@ export default function TaskDetailPage() {
       }
       
       setExecutionLogs(limitedLogs);
+      setWorkflowLogs(nextWorkflowLogs);
       
       // 从执行日志中提取分支触发状态（用于刷新场景恢复 UI 状态）
       // 注意：WS 实时场景下分支状态由 handleProgress 立即设置，不依赖此处
@@ -503,18 +669,7 @@ export default function TaskDetailPage() {
         console.log('[TaskDetail] Extracted edit_source from logs:', latestEditSource);
       }
 
-      // 如果有 roadmap_id，并行加载路线图框架和编辑记录
-      if (taskData.roadmap_id) {
-        const loadRoadmapPromise = loadRoadmapFramework(taskData.roadmap_id, !isInitialLoad, signal);
-        
-        // 刷新时也重新加载修改记录
-        // 注意：EditRecordResponse不包含modified_node_ids字段
-        // 该字段通过WebSocket事件获取
-        const loadEditRecordPromise = Promise.resolve();
-        
-        // 并行等待路线图和编辑记录加载
-        await Promise.all([loadRoadmapPromise, loadEditRecordPromise]);
-      }
+      await roadmapPromise;
 
     } catch (err: any) {
       // 如果是取消请求，不设置错误状态
@@ -541,50 +696,26 @@ export default function TaskDetailPage() {
 
   /**
    * 初始加载任务数据
-   * 优化：添加请求取消机制，在组件卸载或taskId变化时取消请求
+   * 
+   * 仅在 taskId 变化时触发，不依赖 loadTaskData 引用。
+   * loadTaskData 的 useCallback 依赖链（loadIntentAnalysis, loadRoadmapFramework）
+   * 可能因下游 setState 而频繁重建，如果放在 deps 里会导致重复加载，
+   * 第二次加载时先 abort 第一次、再 setIsLoading(true)，造成日志/耗时短暂消失。
    */
+  const loadTaskDataRef = useRef(loadTaskData);
+  loadTaskDataRef.current = loadTaskData;
+
   useEffect(() => {
     if (!taskId) return;
     
     const controller = new AbortController();
-    loadTaskData(true, controller.signal);
+    loadTaskDataRef.current(true, controller.signal);
     
     return () => {
       controller.abort();
     };
-  }, [taskId, loadTaskData]);
-
-  /**
-   * 加载用户偏好（用于重试功能）
-   */
-  useEffect(() => {
-    const loadUserPreferences = async () => {
-      const userId = getUserId();
-      if (!userId) return;
-      
-      try {
-        const profile = await usersApi.getUserProfile();
-        // 构建 LearningPreferences 对象
-        setUserPreferences({
-          learning_goal: taskInfo?.title || roadmapFramework?.title || 'Learning',
-          available_hours_per_week: profile.weekly_commitment_hours || 10,
-          current_level: 'intermediate', // 默认值
-          career_background: profile.current_role || 'Not specified',
-          motivation: 'Continue learning',
-          content_preference: (profile.learning_style || ['text', 'visual']) as any,
-          preferred_language: profile.primary_language || 'zh',
-          primary_language: profile.primary_language || 'zh',
-          secondary_language: profile.secondary_language || null,
-        });
-      } catch (error) {
-        console.error('[TaskDetail] Failed to load user preferences:', error);
-      }
-    };
-    
-    if (taskInfo || roadmapFramework) {
-      loadUserPreferences();
-    }
-  }, [taskInfo, roadmapFramework, getUserId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskId]);
 
   /**
    * 重试成功回调
@@ -595,6 +726,14 @@ export default function TaskDetailPage() {
       loadTaskData(false);
     }
   }, [taskId, loadTaskData]);
+
+  useEffect(() => {
+    return () => {
+      if (refreshTaskArtifactsTimeoutRef.current !== null) {
+        window.clearTimeout(refreshTaskArtifactsTimeoutRef.current);
+      }
+    };
+  }, []);
 
   /**
    * 取消任务 - 功能已移除
@@ -631,28 +770,42 @@ export default function TaskDetailPage() {
     // 定义WebSocket事件处理器函数
     const handleStatus = (event: any) => {
       console.log('[TaskDetail] Status update:', event);
-      if (event.current_step) {
-        // 🔧 优化：将后端步骤映射到前端显示步骤，避免中间步骤导致UI闪烁
-        const displayStep = mapToDisplayStep(event.current_step);
-        setTaskInfo((prev) => prev ? { ...prev, current_step: displayStep } : null);
+      const previousRoadmapId = roadmapIdRef.current;
+      const accepted = applyRealtimeTaskUpdate({
+        eventAt: event.updated_at,
+        step: event.current_step,
+        status: event.status,
+        roadmapId: event.roadmap_id,
+      });
+
+      if (!accepted) {
+        return;
       }
-      if (event.status) {
-        setTaskInfo((prev) => prev ? { ...prev, status: event.status } : null);
-      }
+
       if (event.roadmap_id) {
-        setTaskInfo((prev) => prev ? { ...prev, roadmap_id: event.roadmap_id } : null);
         roadmapIdRef.current = event.roadmap_id;
         
-        // ✅ 修复：当收到 roadmap_id 时，立即加载 intent_analysis 数据
-        // 这确保在 intent_analysis 完成后能立即显示数据
-        loadIntentAnalysis(event.roadmap_id).catch((err) => {
-          console.error('[TaskDetail] Failed to load intent analysis after roadmap_id update:', err);
-        });
+        // 仅在首次拿到 roadmap_id 时拉取需求分析，避免重复状态事件反复触发相同请求。
+        if (event.roadmap_id !== previousRoadmapId) {
+          loadIntentAnalysis(event.roadmap_id).catch((err) => {
+            console.error('[TaskDetail] Failed to load intent analysis after roadmap_id update:', err);
+          });
+        }
       }
     };
 
     const handleProgress = async (event: any) => {
       console.log('[TaskDetail] Progress update:', event);
+      if (isStaleTaskStateEvent(event.timestamp)) {
+        console.log('[TaskDetail] Ignore stale progress event:', event);
+        return;
+      }
+
+      const progressRoadmapId =
+        typeof event.data?.roadmap_id === 'string' && event.data.roadmap_id.length > 0
+          ? event.data.roadmap_id
+          : undefined;
+      const previousRoadmapId = roadmapIdRef.current;
       
       // ✅ 修复：不再添加临时 WebSocket 日志，避免与数据库日志重复
       // 所有日志都应该从数据库查询，WebSocket 只负责触发刷新
@@ -661,25 +814,40 @@ export default function TaskDetailPage() {
       // 更新 current_step，同时处理 human_review 状态的进出转换
       // 🔧 优化：将后端步骤映射到前端显示步骤，避免中间步骤导致UI闪烁
       if (event.step) {
-        const displayStep = mapToDisplayStep(event.step);
-        setTaskInfo((prev) => {
-          if (!prev) return null;
-          const update: Partial<typeof prev> = { current_step: displayStep };
-          
-          if (event.step === 'human_review') {
-            // ✅ 进入 human_review：同步状态为 human_review_pending
-            // 确保 WorkflowTopology 能识别审核状态并显示 Review 面板
-            update.status = 'human_review_pending';
-          } else if (prev.status === 'human_review_pending') {
-            // ✅ 修复：离开 human_review（收到任何非 human_review 步骤的进度通知）
-            // 此时审核已批准，工作流已继续。但因为 on_node_start 跳过了 human_review
-            // 的状态更新，且该阶段的 WebSocket 通知可能超时（见日志 notification_publish_timeout），
-            // taskInfo.status 可能仍停留在 human_review_pending，导致 isHumanReviewActive=true，
-            // "已批准" 面板永远不消失。此处强制同步状态为 processing。
-            update.status = 'processing';
-          }
-          
-          return { ...prev, ...update };
+        applyRealtimeTaskUpdate({
+          eventAt: event.timestamp,
+          step: event.step,
+          roadmapId: progressRoadmapId,
+          // progress 里的 completed 仅表示“当前节点完成”，不能直接覆盖任务总状态。
+          status: getTaskStatusFromProgressEvent(event.step, event.status),
+          deriveStatus: (prevStatus) => {
+            if (event.step === WorkflowStep.HUMAN_REVIEW) {
+              // 进入人工审核时，以审核态覆盖普通 processing。
+              return TaskStatus.HUMAN_REVIEW;
+            }
+
+            if (prevStatus === TaskStatus.HUMAN_REVIEW) {
+              // 离开人工审核后，恢复到 processing，避免 UI 长时间卡在审核面板。
+              return TaskStatus.PROCESSING;
+            }
+
+            return undefined;
+          },
+        });
+      }
+
+      if (progressRoadmapId) {
+        roadmapIdRef.current = progressRoadmapId;
+      }
+
+      if (
+        progressRoadmapId &&
+        previousRoadmapId !== progressRoadmapId &&
+        event.step === WorkflowStep.INTENT_ANALYSIS &&
+        event.status === 'completed'
+      ) {
+        loadIntentAnalysis(progressRoadmapId).catch((error) => {
+          console.error('[TaskDetail] Failed to load intent analysis from progress event:', error);
         });
       }
 
@@ -700,78 +868,36 @@ export default function TaskDetailPage() {
           }
         }
       }
-      
+
       // 当节点完成时，刷新日志和路线图
       if (event.status === 'completed' && event.step) {
-        try {
-          // 只获取 agent 和 workflow 类型的日志，排除 concept 日志
-          // getLogs(taskId, level, category, limit, offset, signal)
-          // 🔧 优化：减少日志查询数量（1000→500），提升性能
-          const [agentLogsData, workflowLogsData] = await Promise.all([
-            tasksApi.getLogs(taskId, undefined, 'agent', 500, 0),
-            tasksApi.getLogs(taskId, undefined, 'workflow', 500, 0),
+        const shouldRefreshIntentAnalysis = event.step === 'intent_analysis';
+        const shouldRefreshRoadmap = ['curriculum_design', 'roadmap_edit'].includes(event.step);
+
+        scheduleTaskArtifactsRefresh({
+          refreshLogs: true,
+          refreshIntentAnalysis: shouldRefreshIntentAnalysis,
+          refreshRoadmap: shouldRefreshRoadmap,
+          syncRoadmapId: shouldRefreshIntentAnalysis || shouldRefreshRoadmap,
+        });
+
+        if (event.step === 'roadmap_edit' && event.data?.modified_concept_ids) {
+          setModifiedNodeIds(prev => [
+            ...prev,
+            ...(event.data?.modified_concept_ids || []),
           ]);
-          const allLogs = [
-            ...(agentLogsData.logs || []),
-            ...(workflowLogsData.logs || []),
-          ];
-          const limitedLogs = limitLogsByStep(allLogs, 100);
-          setExecutionLogs(limitedLogs);
-          
-          // 获取当前 roadmap_id
-          // 注意：intent_analysis 节点完成后才会在后端创建 roadmap，
-          // 此时 roadmapIdRef.current 仍为 null（初始加载时尚未创建）。
-          // 优化后的 WS useEffect 不再依赖 current_step，不会在节点完成时重连，
-          // 所以需要主动从 API 拉取最新任务信息来获取新创建的 roadmap_id。
-          let currentRoadmapId = roadmapIdRef.current;
-          if (!currentRoadmapId) {
-            try {
-              const latestTask = await tasksApi.getById(taskId);
-              if (latestTask.roadmap_id) {
-                currentRoadmapId = latestTask.roadmap_id;
-                roadmapIdRef.current = latestTask.roadmap_id;
-                // 同步更新 taskInfo.roadmap_id，使 WS useEffect dep 感知变化
-                setTaskInfo((prev) => prev ? { ...prev, roadmap_id: latestTask.roadmap_id } : null);
-                console.log('[TaskDetail] Fetched roadmap_id after node completion:', {
-                  step: event.step,
-                  roadmap_id: currentRoadmapId,
-                });
-              }
-            } catch (fetchErr) {
-              console.error('[TaskDetail] Failed to fetch roadmap_id after node completion:', fetchErr);
-            }
-          }
-          
-          // 重新加载需求分析数据（使用最新的数据库数据）
-          if (currentRoadmapId) {
-            console.log('[TaskDetail] Reloading intent analysis after node completion:', {
-              step: event.step,
-              roadmap_id: currentRoadmapId,
-            });
-            await loadIntentAnalysis(currentRoadmapId);
-          } else {
-            console.warn('[TaskDetail] Cannot reload intent analysis: roadmap_id is null', {
-              step: event.step,
-            });
-          }
-          
-          // 如果是 curriculum_design 或 roadmap_edit 完成，重新加载路线图
-          if (['curriculum_design', 'roadmap_edit'].includes(event.step)) {
-            if (currentRoadmapId) {
-              await loadRoadmapFramework(currentRoadmapId);
-            }
-            
-            // 如果是 roadmap_edit 完成，从事件中提取修改的节点
-            if (event.step === 'roadmap_edit' && event.data?.modified_concept_ids) {
-              setModifiedNodeIds(prev => [
-                ...prev,
-                ...(event.data?.modified_concept_ids || []),
-              ]);
-            }
-          }
-        } catch (err) {
-          console.error('Failed to refresh data after node completion:', err);
         }
+      }
+
+      const isTerminalCompletedEvent =
+        event.status === TaskStatus.COMPLETED &&
+        event.step === WorkflowStep.COMPLETED;
+      const isTerminalPartialFailureEvent =
+        event.status === TaskStatus.PARTIAL_FAILURE &&
+        event.step === WorkflowStep.CONTENT_GENERATION;
+
+      if (isTerminalCompletedEvent || isTerminalPartialFailureEvent) {
+        reconcileTerminalTaskArtifacts();
       }
     };
 
@@ -863,11 +989,7 @@ export default function TaskDetailPage() {
       // 刷新路线图数据以验证状态（后台同步）
       const currentRoadmapId = roadmapIdRef.current;
       if (currentRoadmapId) {
-        try {
-          await loadRoadmapFramework(currentRoadmapId);
-        } catch (err) {
-          console.error('[TaskDetail] Failed to refresh roadmap after all content complete:', err);
-        }
+        scheduleTaskArtifactsRefresh({ refreshRoadmap: true }, 300);
       }
     };
 
@@ -959,30 +1081,27 @@ export default function TaskDetailPage() {
       // 刷新路线图数据以更新concept状态
       const currentRoadmapId = roadmapIdRef.current;
       if (currentRoadmapId) {
-        try {
-          await loadRoadmapFramework(currentRoadmapId);
-        } catch (err) {
-          console.error('[TaskDetail] Failed to refresh roadmap after concept failed:', err);
-        }
+        scheduleTaskArtifactsRefresh({ refreshRoadmap: true }, 300);
       }
     };
 
     const handleHumanReview = (event: any) => {
       console.log('[TaskDetail] Human review required:', event);
-      setTaskInfo((prev) => prev ? { 
-        ...prev, 
-        status: 'human_review_pending',
-        current_step: 'human_review',
-      } : null);
+      applyRealtimeTaskUpdate({
+        eventAt: event.timestamp,
+        status: TaskStatus.HUMAN_REVIEW,
+        step: WorkflowStep.HUMAN_REVIEW,
+      });
     };
 
     const handleCompleted = (event: any) => {
       console.log('[TaskDetail] Task completed:', event);
-      setTaskInfo((prev) => prev ? { 
-        ...prev, 
-        status: 'completed', 
-        current_step: 'completed' 
-      } : null);
+      applyRealtimeTaskUpdate({
+        eventAt: event.timestamp,
+        status: TaskStatus.COMPLETED,
+        step: WorkflowStep.COMPLETED,
+      });
+      reconcileTerminalTaskArtifacts();
       
       // ✅ 修复：不添加临时日志，避免重复
       // 完成状态的日志会从数据库查询获取
@@ -994,12 +1113,13 @@ export default function TaskDetailPage() {
       // 优先使用 message（包含错误类型），其次使用 error_detail（完整堆栈），最后使用 error
       const errorMessage = event.message || event.error_detail || event.error || 'Task failed';
       
-      setTaskInfo((prev) => prev ? { 
-        ...prev, 
-        status: 'failed', 
-        current_step: 'failed',
-        error_message: errorMessage
-      } : null);
+      applyRealtimeTaskUpdate({
+        eventAt: event.timestamp,
+        status: TaskStatus.FAILED,
+        step: WorkflowStep.FAILED,
+        errorMessage,
+      });
+      reconcileTerminalTaskArtifacts();
       
       // ✅ 修复：不添加临时日志，避免重复
       // 失败状态的日志会从数据库查询获取
@@ -1033,7 +1153,58 @@ export default function TaskDetailPage() {
   // current_step 变化（每个节点完成）不应触发 WS 重连
   // WS 只需在 taskId 或任务状态（active/inactive 转换）变化时重建
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taskId, taskInfo?.status, taskInfo?.roadmap_id, loadIntentAnalysis, loadRoadmapFramework]);
+  }, [taskId, taskInfo?.status, taskInfo?.roadmap_id, loadIntentAnalysis, reconcileTerminalTaskArtifacts, scheduleTaskArtifactsRefresh]);
+
+  /**
+   * 在 starting 阶段启用短轮询兜底。
+   *
+   * 触发条件：
+   * - 任务已进入 processing
+   * - 前端仍显示 starting
+   *
+   * 目的：
+   * - 如果 WebSocket 在极早期阶段漏掉了 intent_analysis 进度事件，
+   *   通过数据库状态将 UI 迅速追平，避免长时间停留在 starting。
+   */
+  useEffect(() => {
+    if (!taskId || !taskInfo) {
+      return;
+    }
+
+    const shouldPollStartingState =
+      taskInfo.status === TaskStatus.PROCESSING &&
+      taskInfo.current_step === WorkflowStep.STARTING;
+
+    if (!shouldPollStartingState) {
+      return;
+    }
+
+    let isCancelled = false;
+
+    const syncTaskStatus = async () => {
+      try {
+        const latestTask = await tasksApi.getById(taskId);
+        if (isCancelled) {
+          return;
+        }
+
+        const title = taskInfo.title || t('generatingRoadmap');
+        applyTaskSnapshot(latestTask, title);
+      } catch (err) {
+        if (!isCancelled) {
+          console.error('[TaskDetail] Failed to poll task status during starting phase:', err);
+        }
+      }
+    };
+
+    void syncTaskStatus();
+    const intervalId = window.setInterval(syncTaskStatus, 2000);
+
+    return () => {
+      isCancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [applyTaskSnapshot, taskId, taskInfo, t]);
 
   /**
    * 获取编辑记录（modified_node_ids）
@@ -1052,22 +1223,13 @@ export default function TaskDetailPage() {
     if (taskId) {
       try {
         const taskData = await tasksApi.getById(taskId);
-        // 🔧 优化：应用步骤映射
-        const displayStep = mapToDisplayStep(taskData.current_step || null);
-        // 保留原有title
-        setTaskInfo((prev) => {
-          const title = prev?.title || t('generatingRoadmap');
-          return prev ? { 
-            ...taskData, 
-            current_step: displayStep,
-            title 
-          } : null;
-        });
+        const title = taskInfo?.title || t('generatingRoadmap');
+        applyTaskSnapshot(taskData, title);
       } catch (err) {
         console.error('Failed to refresh task after review:', err);
       }
     }
-  }, [taskId, t]);
+  }, [applyTaskSnapshot, taskId, taskInfo?.title, t]);
 
 
   /**
@@ -1076,6 +1238,14 @@ export default function TaskDetailPage() {
   const isEditingRoadmap = useMemo(() => {
     return taskInfo?.current_step === 'roadmap_edit';
   }, [taskInfo?.current_step]);
+
+  const isTaskQueued = useMemo(() => {
+    if (!taskInfo) {
+      return false;
+    }
+
+    return taskInfo.status === TaskStatus.PENDING || taskInfo.current_step === WorkflowStep.QUEUED;
+  }, [taskInfo]);
 
   const requestPreferences = taskInfo?.user_request?.preferences;
   const requestPreferenceTags = useMemo(() => {
@@ -1105,7 +1275,7 @@ export default function TaskDetailPage() {
     return (
       <div className="min-h-screen bg-background">
         {/* Header Skeleton */}
-        <header className="border-b bg-white/80 dark:bg-gray-900/80 backdrop-blur-md sticky top-0 z-50 shadow-sm">
+        <header className="sticky top-0 z-50 border-b border-sage-200/60 bg-gradient-to-b from-sage-50/95 via-background/95 to-background/90 shadow-sm backdrop-blur-md dark:border-sage-900/40 dark:from-sage-950/80 dark:via-gray-950/85 dark:to-gray-950/75">
           <div className="max-w-7xl mx-auto px-6 py-5">
             {/* 顶部操作栏骨架 */}
             <div className="flex items-center justify-between mb-4">
@@ -1232,7 +1402,7 @@ export default function TaskDetailPage() {
   return (
     <div className="min-h-screen bg-background">
       {/* Header - 重新设计版 */}
-      <header className="border-b bg-white/80 dark:bg-gray-900/80 backdrop-blur-md sticky top-0 z-50 shadow-sm">
+      <header className="sticky top-0 z-50 border-b border-sage-200/60 bg-gradient-to-b from-sage-50/95 via-background/95 to-background/90 shadow-sm backdrop-blur-md dark:border-sage-900/40 dark:from-sage-950/80 dark:via-gray-950/85 dark:to-gray-950/75">
         <div className="max-w-7xl mx-auto px-6 py-5">
           {/* 顶部操作栏 */}
           <div className="flex items-center mb-4">
@@ -1276,9 +1446,9 @@ export default function TaskDetailPage() {
       </header>
 
       {/* Main Content - 三段式布局 */}
-      <div className="max-w-7xl mx-auto px-6 py-8 space-y-6 bg-[#F8F5F0]">
+      <div className="max-w-7xl mx-auto space-y-6 bg-gradient-to-b from-sage-50/40 via-background to-background px-6 py-8 dark:from-sage-950/20">
         {/* 0. Original Request Info（原始请求信息） - Redesigned v2 */}
-        <div className="relative overflow-hidden rounded-xl border border-border/50 bg-white/50 dark:bg-gray-900/40 backdrop-blur-sm shadow-sm transition-all hover:shadow-md hover:border-border/80 group">
+        <div className="group relative overflow-hidden rounded-xl border border-sage-200/70 bg-gradient-to-br from-sage-50/95 via-white/90 to-sage-100/60 shadow-sm backdrop-blur-sm transition-all hover:border-sage-300/80 hover:shadow-md dark:border-sage-900/40 dark:from-sage-950/35 dark:via-gray-900/75 dark:to-sage-900/20">
           {/* 装饰背景 */}
           <div className="absolute top-0 right-0 -mt-16 -mr-16 w-64 h-64 bg-sage-100/30 dark:bg-sage-900/10 rounded-full blur-3xl opacity-0 group-hover:opacity-100 transition-opacity duration-700" />
           
@@ -1344,7 +1514,7 @@ export default function TaskDetailPage() {
                 {/* Stats Grid (Moved here for better balance) */}
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                   {/* Weekly Hours */}
-                  <div className="p-3.5 rounded-xl bg-white/60 dark:bg-gray-900/60 border border-border/40 shadow-sm flex flex-col justify-between min-h-[80px]">
+                  <div className="flex min-h-[80px] flex-col justify-between rounded-xl border border-sage-200/60 bg-white/70 p-3.5 shadow-sm dark:border-sage-900/40 dark:bg-gray-900/60">
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-[10px] uppercase text-muted-foreground font-medium tracking-wider">{t('userRequest.weeklyInput')}</span>
                       <Clock className="w-3.5 h-3.5 text-sage-500" />
@@ -1358,7 +1528,7 @@ export default function TaskDetailPage() {
                   </div>
 
                   {/* Current Level */}
-                  <div className="p-3.5 rounded-xl bg-white/60 dark:bg-gray-900/60 border border-border/40 shadow-sm flex flex-col justify-between min-h-[80px]">
+                  <div className="flex min-h-[80px] flex-col justify-between rounded-xl border border-sage-200/60 bg-white/70 p-3.5 shadow-sm dark:border-sage-900/40 dark:bg-gray-900/60">
                      <div className="flex items-center justify-between mb-2">
                       <span className="text-[10px] uppercase text-muted-foreground font-medium tracking-wider">{t('userRequest.startLevel')}</span>
                       <div className="flex gap-0.5">
@@ -1441,6 +1611,29 @@ export default function TaskDetailPage() {
           </div>
         </div>
 
+        {isTaskQueued && (
+          <Card className="border-amber-200 bg-amber-50/60 dark:border-amber-900/50 dark:bg-amber-900/10">
+            <div className="p-4 sm:p-5">
+              <div className="flex items-start gap-3">
+                <Clock className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                    {t('queueStatusTitle')}
+                  </p>
+                  <p className="text-sm text-amber-800/90 dark:text-amber-300/90">
+                    {typeof taskInfo.queue_ahead_count === 'number' && taskInfo.queue_ahead_count > 0
+                      ? t('queueAheadMessage', { count: taskInfo.queue_ahead_count })
+                      : t('queueNoAheadMessage')}
+                  </p>
+                  <p className="text-xs text-amber-700/80 dark:text-amber-400/80">
+                    {t('queueHint')}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </Card>
+        )}
+
         {/* 1. Workflow Progress（拓扑图版） */}
         <WorkflowTopology
           currentStep={taskInfo.current_step || null}
@@ -1452,6 +1645,7 @@ export default function TaskDetailPage() {
           stagesCount={roadmapFramework?.stages?.length || 0}
           totalConcepts={roadmapFramework?.stages?.reduce((acc, s) => acc + s.modules.reduce((ma, m) => ma + m.concepts.length, 0), 0) ?? 0}
           executionLogs={executionLogs}
+          workflowLogs={workflowLogs}
           validationBranchTriggered={validationBranchTriggered}
           reviewBranchTriggered={reviewBranchTriggered}
           onHumanReviewComplete={handleHumanReviewComplete}
@@ -1474,7 +1668,6 @@ export default function TaskDetailPage() {
           failedConceptIds={failedConceptIds}
           partialFailedConceptIds={partialFailedConceptIds}
           failedContentTypesMap={failedContentTypesMap}
-          userPreferences={userPreferences}
           onRetrySuccess={handleRetrySuccess}
           maxHeight={500}
         />

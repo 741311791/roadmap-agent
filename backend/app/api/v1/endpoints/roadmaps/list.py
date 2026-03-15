@@ -16,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
 from app.api.v1.deps import CurrentSession, CurrentUserService
+from app.core.cache import get_or_set_cache
+from app.config.settings import settings
 from app.db.session import get_db_readonly
 from app.models.database import User
 from app.core.auth.deps import current_active_user
@@ -154,7 +156,7 @@ async def get_featured_roadmaps(
     """
     获取精选路线图列表
     
-    从配置的Featured User (admin@example.com) 获取已完成的路线图，
+    从配置的固定 Featured User ID 获取已完成的路线图，
     用于首页Featured Roadmaps模块展示。
     
     Args:
@@ -188,84 +190,80 @@ async def get_featured_roadmaps(
         }
         ```
     """
-    # Featured用户邮箱（硬编码，将来可以从配置文件读取）
-    FEATURED_USER_EMAIL = "admin@example.com"
-    
     logger.info("get_featured_roadmaps_requested", 
-                email=FEATURED_USER_EMAIL,
+                featured_user_id=settings.FEATURED_USER_ID,
                 limit=limit, 
                 offset=offset)
     
     service = FeaturedService()
-    
-    # 1. 根据邮箱查找Featured用户
-    featured_user = await service.get_featured_user(db, FEATURED_USER_EMAIL)
-    
-    if not featured_user:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Featured user with email {FEATURED_USER_EMAIL} not found. "
-                   f"Please create this user first using the admin API."
-        )
-    
-    user_id = featured_user.id
-    
-    # 2. 获取该用户的所有已完成路线图及Task
-    roadmaps, tasks_by_roadmap = await service.get_featured_roadmaps(
-        db, user_id, limit, offset
-    )
-    
-    roadmap_items = []
-    
-    # 4. 转换路线图数据（优化版）
-    for roadmap in roadmaps:
-        framework_data = roadmap.framework_data or {}
-        stages = framework_data.get("stages", [])
-        
-        # 优化：快速计算总概念数
-        total_concepts = sum(
-            len(module.get("concepts", []))
-            for stage in stages
-            for module in stage.get("modules", [])
-        )
-        
-        # 从批量获取的 tasks 中获取 topic（无需额外查询）
-        task = tasks_by_roadmap.get(roadmap.roadmap_id)
-        topic = None
-        if task and task.user_request:
-            learning_goal = task.user_request.get("preferences", {}).get("learning_goal", "")
-            topic = learning_goal.lower()[:50] if learning_goal else None
-        
-        # 优化：提取 stages 摘要（使用列表推导式）
-        stage_summaries = [
-            StageSummary(
-                name=stage.get("name", ""),
-                description=stage.get("description"),
-                order=stage.get("order", idx + 1),
+
+    async def fetch_featured_response() -> FeaturedRoadmapsResponse:
+        featured_user = await service.get_featured_user(db, settings.FEATURED_USER_ID)
+
+        if not featured_user:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"Featured user with id {settings.FEATURED_USER_ID} not found. "
+                    f"Please align admin identity before requesting featured roadmaps."
+                )
             )
-            for idx, stage in enumerate(stages)
-        ]
-        
-        # Featured路线图默认为completed状态（因为是精选内容）
-        roadmap_items.append(FeaturedRoadmapItem(
-            roadmap_id=roadmap.roadmap_id,
-            title=roadmap.title,
-            created_at=roadmap.created_at.isoformat() if roadmap.created_at else "",
-            total_concepts=total_concepts,
-            completed_concepts=0,  # Featured路线图不显示完成进度
-            topic=topic,
-            status="completed",
-            stages=stage_summaries if stage_summaries else None,
-        ))
-    
-    logger.info("featured_roadmaps_retrieved", 
-                count=len(roadmap_items),
-                user_id=user_id)
-    
-    return FeaturedRoadmapsResponse(
-        roadmaps=roadmap_items,
-        total=len(roadmap_items),
-        featured_user_id=user_id,
-        featured_user_email=featured_user.email,
+
+        user_id = featured_user.id
+        roadmaps, tasks_by_roadmap, cover_image_url_map = await service.get_featured_roadmaps(
+            db, user_id, limit, offset
+        )
+
+        roadmap_items = []
+        for roadmap in roadmaps:
+            framework_data = roadmap.framework_data or {}
+            stages = framework_data.get("stages", [])
+            total_concepts = sum(
+                len(module.get("concepts", []))
+                for stage in stages
+                for module in stage.get("modules", [])
+            )
+
+            task = tasks_by_roadmap.get(roadmap.roadmap_id)
+            topic = None
+            if task and task.user_request:
+                learning_goal = task.user_request.get("preferences", {}).get("learning_goal", "")
+                topic = learning_goal.lower()[:50] if learning_goal else None
+
+            stage_summaries = [
+                StageSummary(
+                    name=stage.get("name", ""),
+                    description=stage.get("description"),
+                    order=stage.get("order", idx + 1),
+                )
+                for idx, stage in enumerate(stages)
+            ]
+
+            roadmap_items.append(FeaturedRoadmapItem(
+                roadmap_id=roadmap.roadmap_id,
+                title=roadmap.title,
+                created_at=roadmap.created_at.isoformat() if roadmap.created_at else "",
+                cover_image_url=cover_image_url_map.get(roadmap.roadmap_id),
+                total_concepts=total_concepts,
+                completed_concepts=0,
+                topic=topic,
+                status="completed",
+                stages=stage_summaries if stage_summaries else None,
+            ))
+
+        logger.info("featured_roadmaps_retrieved", count=len(roadmap_items), user_id=user_id)
+        return FeaturedRoadmapsResponse(
+            roadmaps=roadmap_items,
+            total=len(roadmap_items),
+            featured_user_id=user_id,
+            featured_user_email=featured_user.email,
+        )
+
+    cache_key = f"featured_roadmaps:{settings.FEATURED_USER_ID}:limit={limit}:offset={offset}"
+    return await get_or_set_cache(
+        key=cache_key,
+        fetch_func=fetch_featured_response,
+        model_type=FeaturedRoadmapsResponse,
+        ttl=settings.FEATURED_ROADMAPS_CACHE_TTL_SECONDS,
     )
 

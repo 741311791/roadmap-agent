@@ -14,6 +14,7 @@ import structlog
 from app.crud.crud_roadmap import RoadmapCRUD
 from app.crud.crud_task import TaskCRUD
 from app.crud.crud_progress import ProgressCRUD
+from app.crud.crud_cover_image import get_cover_image_crud
 from app.models.database import RoadmapMetadata, RoadmapTask, ConceptProgress, UserProfile
 from app.schemas.user import (
     UserProfileResponse,
@@ -36,6 +37,7 @@ class UserService:
         self.roadmap_crud = RoadmapCRUD(RoadmapMetadata)
         self.task_crud = TaskCRUD(RoadmapTask)
         self.progress_crud = ProgressCRUD(ConceptProgress)
+        self.cover_image_crud = get_cover_image_crud()
     
     async def get_user_profile(
         self,
@@ -200,31 +202,23 @@ class UserService:
         roadmaps = await self.roadmap_crud.get_by_user(
             session, user_id, skip=skip, limit=limit
         )
+        total = await self.roadmap_crud.count_by_user(session, user_id)
         
         if not roadmaps:
-            return RoadmapHistoryResponse(roadmaps=[], total=0, in_progress_count=0)
+            return RoadmapHistoryResponse(roadmaps=[], total=total, in_progress_count=0)
         
         # 批量获取所需数据（避免 N+1 查询）
         roadmap_ids = [r.roadmap_id for r in roadmaps]
-        
-        # 优化：使用单次查询获取任务信息和进度
-        from app.models.database import RoadmapTask
-        from sqlalchemy import func, outerjoin
-        
-        # 批量查询任务信息
-        # 排除 cover_image 类型的任务：封面图生成任务不应影响路线图的展示状态，
-        # 路线图状态仅由 creation / retry 类任务决定
-        task_result = await session.execute(
-            select(RoadmapTask)
-            .where(
-                RoadmapTask.roadmap_id.in_(roadmap_ids),
-                RoadmapTask.task_type != "cover_image",
-            )
-            .order_by(RoadmapTask.created_at.asc())
+        task_dict = await self.task_crud.get_tasks_by_roadmap_ids_batch(
+            session,
+            roadmap_ids,
+            exclude_task_types=["cover_image"],
         )
-        tasks = task_result.scalars().all()
-        # 相同 roadmap_id 可能存在多条任务（如重试），取最新的一条（列表已按 asc 排序，后写入覆盖）
-        task_dict = {task.roadmap_id: task for task in tasks}
+        cover_image_records = await self.cover_image_crud.batch_get_by_roadmap_ids(session, roadmap_ids)
+        cover_image_url_map = {
+            record.roadmap_id: record.cover_image_url if record.generation_status == "success" else None
+            for record in cover_image_records
+        }
         
         # 批量查询进度（使用 GROUP BY 聚合）
         progress_result = await session.execute(
@@ -282,6 +276,7 @@ class UserService:
                 roadmap_id=roadmap.roadmap_id,
                 title=roadmap.title,
                 created_at=roadmap.created_at.isoformat() if roadmap.created_at else "",
+                cover_image_url=cover_image_url_map.get(roadmap.roadmap_id),
                 total_concepts=total_concepts,
                 completed_concepts=completed_concepts,
                 topic=topic,
@@ -293,7 +288,6 @@ class UserService:
             ))
         
         # 统计进行中的任务数量
-        from sqlalchemy import func
         in_progress_result = await session.execute(
             select(func.count(RoadmapTask.task_id))
             .where(
@@ -305,7 +299,7 @@ class UserService:
         
         return RoadmapHistoryResponse(
             roadmaps=result_list,
-            total=len(roadmaps),
+            total=total,
             in_progress_count=in_progress_count,
         )
     
@@ -338,9 +332,10 @@ class UserService:
             .limit(limit)
         )
         roadmaps = list(result.scalars().all())
+        total = await self.roadmap_crud.count_by_user(session, user_id, deleted=True)
         
         if not roadmaps:
-            return DeletedRoadmapsResponse(roadmaps=[], total=0)
+            return DeletedRoadmapsResponse(roadmaps=[], total=total)
         
         # 批量获取进度
         roadmap_ids = [r.roadmap_id for r in roadmaps]
@@ -381,7 +376,7 @@ class UserService:
                 status="deleted",
             ))
         
-        return DeletedRoadmapsResponse(roadmaps=result_list, total=len(roadmaps))
+        return DeletedRoadmapsResponse(roadmaps=result_list, total=total)
     
     async def get_user_tasks(
         self,
@@ -418,6 +413,17 @@ class UserService:
         
         result = await session.execute(query)
         tasks = list(result.scalars().all())
+        total = await self.task_crud.count_by_user(
+            session,
+            user_id,
+            status=status,
+            task_type=task_type,
+        )
+
+        queue_info_map = await self.task_crud.get_creation_queue_info_map(
+            session,
+            [task.task_id for task in tasks],
+        )
         
         # 构造响应
         result_list = []
@@ -442,6 +448,8 @@ class UserService:
                 updated_at=task.updated_at.isoformat() if task.updated_at else "",
                 completed_at=task.completed_at.isoformat() if task.completed_at else None,
                 error_message=task.error_message,
+                queue_ahead_count=queue_info_map.get(task.task_id, {}).get("queue_ahead_count"),
+                queue_position=queue_info_map.get(task.task_id, {}).get("queue_position"),
             ))
         
         # 统计各状态的任务数量
@@ -469,7 +477,7 @@ class UserService:
         
         return TaskListResponse(
             tasks=result_list,
-            total=len(tasks),
+            total=total,
             pending_count=pending_count,
             processing_count=processing_count,
             completed_count=completed_count,

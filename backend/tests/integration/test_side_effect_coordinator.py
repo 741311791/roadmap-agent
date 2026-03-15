@@ -33,6 +33,8 @@ def mock_execution_logger():
     logger = Mock(spec=ExecutionLogger)
     logger.error = AsyncMock()
     logger.flush = AsyncMock()
+    logger.log_workflow_complete = AsyncMock()
+    logger.flush_stage_logs = AsyncMock()
     return logger
 
 
@@ -66,9 +68,11 @@ class TestNodeLifecycle:
         mock_state_manager,
     ):
         """测试节点开始"""
-        with patch('app.core.orchestrator.side_effect_coordinator.get_celery_session') as mock_session:
+        with patch('app.core.orchestrator.side_effect_coordinator.get_celery_session') as mock_session, \
+             patch('app.core.orchestrator.side_effect_coordinator.get_task_crud') as mock_get_task_crud:
             mock_db = AsyncMock(spec=AsyncSession)
             mock_session.return_value.__aenter__.return_value = mock_db
+            mock_get_task_crud.return_value.update_task_status = AsyncMock(return_value=True)
             
             await coordinator.on_node_start(
                 task_id="test-task-id",
@@ -89,26 +93,41 @@ class TestNodeLifecycle:
         coordinator,
         mock_notification_service,
         mock_state_manager,
+        mock_execution_logger,
     ):
         """测试节点完成"""
-        output = {"roadmap_id": "test-roadmap", "result": "success"}
-        
-        await coordinator.on_node_complete(
-            task_id="test-task-id",
-            node_name="curriculum_design",
-            output=output,
-            duration_ms=1500,
-        )
+        output = {
+            "roadmap_id": "test-roadmap",
+            "result": "success",
+            "current_step": "curriculum_design",
+        }
+
+        with patch('app.core.orchestrator.side_effect_coordinator.get_celery_session') as mock_session, \
+             patch('app.core.orchestrator.side_effect_coordinator.get_task_crud') as mock_get_task_crud:
+            mock_db = AsyncMock(spec=AsyncSession)
+            mock_session.return_value.__aenter__.return_value = mock_db
+            mock_get_task_crud.return_value.update_task_status = AsyncMock(return_value=True)
+
+            await coordinator.on_node_complete(
+                task_id="test-task-id",
+                node_name="curriculum_design",
+                output=output,
+                duration_ms=1500,
+            )
         
         # 验证副作用
         mock_state_manager.set_live_step.assert_called_once_with(
             "test-task-id",
             "curriculum_design",
         )
+        mock_execution_logger.log_workflow_complete.assert_called_once()
+        mock_execution_logger.flush_stage_logs.assert_called_once()
         mock_notification_service.publish_progress.assert_called_once()
         args = mock_notification_service.publish_progress.call_args
         assert args.kwargs["step"] == "curriculum_design"
         assert args.kwargs["status"] == "completed"
+        assert args.kwargs["extra_data"]["roadmap_id"] == "test-roadmap"
+        assert args.kwargs["extra_data"]["duration_ms"] == 1500
     
     @pytest.mark.asyncio
     async def test_on_node_failed(
@@ -120,9 +139,11 @@ class TestNodeLifecycle:
         """测试节点失败"""
         error = ValueError("Test error")
         
-        with patch('app.core.orchestrator.side_effect_coordinator.get_celery_session') as mock_session:
+        with patch('app.core.orchestrator.side_effect_coordinator.get_celery_session') as mock_session, \
+             patch('app.core.orchestrator.side_effect_coordinator.get_task_crud') as mock_get_task_crud:
             mock_db = AsyncMock(spec=AsyncSession)
             mock_session.return_value.__aenter__.return_value = mock_db
+            mock_get_task_crud.return_value.update_task_status = AsyncMock(return_value=True)
             
             await coordinator.on_node_failed(
                 task_id="test-task-id",
@@ -134,6 +155,7 @@ class TestNodeLifecycle:
             # 验证副作用
             mock_notification_service.publish_failed.assert_called_once()
             mock_execution_logger.error.assert_called_once()
+            mock_execution_logger.flush_stage_logs.assert_called_once()
 
 
 class TestWorkflowLifecycle:

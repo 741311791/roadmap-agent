@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
@@ -9,9 +9,9 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ChevronLeft, ListTodo, RefreshCw } from 'lucide-react';
 import { tasksApi } from '@/lib/api/endpoints';
-import type { TaskStatusResponse, TaskItemResponse } from '@/lib/api/endpoints';
+import type { TaskItem } from '@/lib/api/endpoints';
 import { TaskList } from '@/components/task';
-import { useAuthStore } from '@/lib/store/auth-store';
+import { useMyTasksQuery } from '@/lib/hooks/api/use-dashboard-queries';
 import { cn } from '@/lib/utils';
 import { TaskStatus } from '@/types/generated/constants';
 
@@ -26,8 +26,9 @@ interface TaskStats {
 
 export default function TasksPage() {
   const t = useTranslations('tasks');
-  const router = useRouter();
-  const [tasks, setTasks] = useState<TaskItemResponse[]>([]);
+  const queryClient = useQueryClient();
+  const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [total, setTotal] = useState(0);
   const [stats, setStats] = useState<TaskStats>({
     pending: 0,
     processing: 0,
@@ -35,38 +36,32 @@ export default function TasksPage() {
     failed: 0,
   });
   const [activeFilter, setActiveFilter] = useState<TaskFilterStatus>('all');
-  const [isLoading, setIsLoading] = useState(true);
-  const { getUserId } = useAuthStore();
-
-  const fetchTasks = async (status?: string) => {
-    const userId = getUserId();
-    try {
-      setIsLoading(true);
-      const response = await tasksApi.getMyTasks(
-        { status: status === 'all' ? undefined : status }
-      );
-      setTasks(response.tasks);
-      setStats({
-        pending: response.pending_count ?? 0,
-        processing: response.processing_count ?? 0,
-        completed: response.completed_count ?? 0,
-        failed: response.failed_count ?? 0,
-      });
-    } catch (error) {
-      console.error('Failed to fetch tasks:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 20;
+  const offset = (currentPage - 1) * itemsPerPage;
+  const { data, isLoading, refetch } = useMyTasksQuery({
+    status: activeFilter === 'all' ? undefined : activeFilter,
+    limit: itemsPerPage,
+    offset,
+  });
+  const totalPages = Math.max(1, Math.ceil(total / itemsPerPage));
 
   useEffect(() => {
-    fetchTasks(activeFilter);
-  }, [activeFilter]);
+    if (!data) {
+      return;
+    }
+
+    setTasks(data.tasks);
+    setTotal(data.total);
+    setStats({
+      pending: data.pending_count ?? 0,
+      processing: data.processing_count ?? 0,
+      completed: data.completed_count ?? 0,
+      failed: data.failed_count ?? 0,
+    });
+  }, [data]);
 
   const handleRetry = async (taskId: string) => {
-    const userId = getUserId();
-    if (!userId) return;
-    
     try {
       // 乐观更新：立即将任务状态更新为 processing
       setTasks(prevTasks => 
@@ -87,9 +82,7 @@ export default function TasksPage() {
       // 调用智能重试 API
       await tasksApi.retry(taskId);
       
-      // ✅ 修复：立即刷新任务列表以获取最新状态（移除延迟）
-      // 这样用户点击进入详情页时，能看到最新的 processing 状态
-      await fetchTasks(activeFilter);
+      await queryClient.invalidateQueries({ queryKey: ['tasks', 'my'] });
       
     } catch (error: any) {
       console.error('Failed to retry task:', error);
@@ -135,10 +128,7 @@ export default function TasksPage() {
       // 调用取消 API
       await tasksApi.cancel(taskId);
       
-      // 成功后刷新任务列表以获取最新状态
-      setTimeout(() => {
-        fetchTasks(activeFilter);
-      }, 1000);
+      await queryClient.invalidateQueries({ queryKey: ['tasks', 'my'] });
       
     } catch (error: any) {
       console.error('Failed to cancel task:', error);
@@ -165,15 +155,14 @@ export default function TasksPage() {
       return;
     }
 
-    const userId = getUserId();
-    if (!userId) return;
-    
     try {
       // ✅ 修复：调用专门的删除接口
       // 后端会自动处理：如果任务是processing状态，会先取消再删除
       await tasksApi.delete(taskId);
-      // 刷新列表
-      await fetchTasks(activeFilter);
+      if (tasks.length === 1 && currentPage > 1) {
+        setCurrentPage(currentPage - 1);
+      }
+      await queryClient.invalidateQueries({ queryKey: ['tasks', 'my'] });
     } catch (error) {
       console.error('Failed to delete task:', error);
       alert(t('deleteFailed'));
@@ -181,7 +170,7 @@ export default function TasksPage() {
   };
 
   const handleRefresh = () => {
-    fetchTasks(activeFilter);
+    void refetch();
   };
 
   return (
@@ -227,7 +216,10 @@ export default function TasksPage() {
         <div className="flex flex-wrap gap-2 mb-6">
           <Button
             variant={activeFilter === 'all' ? 'default' : 'outline'}
-            onClick={() => setActiveFilter('all')}
+            onClick={() => {
+              setActiveFilter('all');
+              setCurrentPage(1);
+            }}
             className="gap-2"
           >
             {t('all')}
@@ -237,7 +229,10 @@ export default function TasksPage() {
           </Button>
           <Button
             variant={activeFilter === 'processing' ? 'default' : 'outline'}
-            onClick={() => setActiveFilter('processing')}
+            onClick={() => {
+              setActiveFilter('processing');
+              setCurrentPage(1);
+            }}
             className="gap-2"
           >
             {t('processing')}
@@ -249,7 +244,10 @@ export default function TasksPage() {
           </Button>
           <Button
             variant={activeFilter === 'failed' ? 'default' : 'outline'}
-            onClick={() => setActiveFilter('failed')}
+            onClick={() => {
+              setActiveFilter('failed');
+              setCurrentPage(1);
+            }}
             className="gap-2"
           >
             {t('failed')}
@@ -261,7 +259,10 @@ export default function TasksPage() {
           </Button>
           <Button
             variant={activeFilter === 'completed' ? 'default' : 'outline'}
-            onClick={() => setActiveFilter('completed')}
+            onClick={() => {
+              setActiveFilter('completed');
+              setCurrentPage(1);
+            }}
             className="gap-2"
           >
             {t('completed')}
@@ -273,7 +274,10 @@ export default function TasksPage() {
           </Button>
           <Button
             variant={activeFilter === 'pending' ? 'default' : 'outline'}
-            onClick={() => setActiveFilter('pending')}
+            onClick={() => {
+              setActiveFilter('pending');
+              setCurrentPage(1);
+            }}
             className="gap-2"
           >
             {t('pending')}
@@ -289,10 +293,50 @@ export default function TasksPage() {
         <TaskList
           tasks={tasks}
           isLoading={isLoading}
+          offset={offset}
           onRetry={handleRetry}
           onDelete={handleDelete}
           onCancel={handleCancel}
         />
+
+        {totalPages > 1 && (
+          <div className="flex items-center justify-center gap-2 mt-8">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+              disabled={currentPage === 1}
+            >
+              {t('previous')}
+            </Button>
+
+            <div className="flex items-center gap-1">
+              {Array.from({ length: totalPages }, (_, index) => index + 1).map((page) => (
+                <Button
+                  key={page}
+                  variant={currentPage === page ? 'default' : 'ghost'}
+                  size="sm"
+                  className={cn(
+                    'w-9 h-9',
+                    currentPage === page && 'bg-sage-600 hover:bg-sage-700'
+                  )}
+                  onClick={() => setCurrentPage(page)}
+                >
+                  {page}
+                </Button>
+              ))}
+            </div>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+              disabled={currentPage === totalPages}
+            >
+              {t('next')}
+            </Button>
+          </div>
+        )}
       </div>
     </ScrollArea>
   );

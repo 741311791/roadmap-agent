@@ -27,12 +27,13 @@ import { ErrorLogDialog } from './error-log-dialog';
 interface TaskListProps {
   tasks: TaskItem[];
   isLoading: boolean;
+  offset?: number;
   onRetry: (taskId: string) => void;
   onDelete?: (taskId: string) => void;
   onCancel?: (taskId: string) => void;
 }
 
-export function TaskList({ tasks, isLoading, onRetry, onDelete, onCancel }: TaskListProps) {
+export function TaskList({ tasks, isLoading, offset = 0, onRetry, onDelete, onCancel }: TaskListProps) {
   const t = useTranslations('taskList');
   const tCommon = useTranslations('common');
   const [selectedErrorLog, setSelectedErrorLog] = useState<{
@@ -50,6 +51,18 @@ export function TaskList({ tasks, isLoading, onRetry, onDelete, onCancel }: Task
     
     // 格式: Jan 5, 01:04 （移除年份和 AM/PM，更紧凑）
     return `${month} ${day}, ${hours}:${minutes}`;
+  };
+
+  const getQueueHint = (queueAheadCount?: number | null) => {
+    if (typeof queueAheadCount !== 'number') {
+      return null;
+    }
+
+    if (queueAheadCount > 0) {
+      return t('queueAhead', { count: queueAheadCount });
+    }
+
+    return t('queueNoAhead');
   };
 
   // 获取状态显示配置（优化后的 sage 主题色系）
@@ -177,7 +190,7 @@ export function TaskList({ tasks, isLoading, onRetry, onDelete, onCancel }: Task
                 <TableRow key={task.task_id}>
                   {/* Index Number */}
                   <TableCell className="text-sm text-muted-foreground font-medium">
-                    {index + 1}
+                    {offset + index + 1}
                   </TableCell>
 
                   {/* Task Title */}
@@ -204,9 +217,16 @@ export function TaskList({ tasks, isLoading, onRetry, onDelete, onCancel }: Task
 
                   {/* Current Step */}
                   <TableCell>
-                    <span className="text-sm text-muted-foreground">
-                      {task.current_step || '-'}
-                    </span>
+                    <div className="space-y-1">
+                      <span className="text-sm text-muted-foreground">
+                        {task.current_step || '-'}
+                      </span>
+                      {task.status === 'pending' && (
+                        <p className="text-xs text-amber-700 dark:text-amber-400">
+                          {getQueueHint(task.queue_ahead_count)}
+                        </p>
+                      )}
+                    </div>
                   </TableCell>
 
                   {/* Created Date */}

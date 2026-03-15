@@ -12,7 +12,8 @@ import { apiClient } from '../client';
 import type { 
   UserRequest, 
   ExecutionLogListResponse, 
-  TaskListResponse,
+  TaskListResponse as GeneratedTaskListResponse,
+  TaskItemResponse as GeneratedTaskItemResponse,
   GenerateRoadmapResponse 
 } from '@/types/generated';
 import { TaskStatus } from '@/types/generated/constants';
@@ -31,6 +32,24 @@ export interface TaskStatusResponse {
   updated_at: string;
   turbo_mode?: boolean;
   user_request?: UserRequest | null;
+  queue_ahead_count?: number | null;
+  queue_position?: number | null;
+}
+
+/**
+ * 任务列表项响应
+ */
+export interface TaskListItemResponse extends Omit<GeneratedTaskItemResponse, 'status'> {
+  status: TaskStatus;
+  queue_ahead_count?: number | null;
+  queue_position?: number | null;
+}
+
+/**
+ * 任务列表响应
+ */
+export interface TaskListResponse extends Omit<GeneratedTaskListResponse, 'tasks'> {
+  tasks: TaskListItemResponse[];
 }
 
 /**
@@ -95,11 +114,6 @@ export interface ErrorLogsResponse {
   }>;
   total: number;
 }
-
-/**
- * 任务列表响应（重新导出生成的类型）
- */
-export type { TaskListResponse } from '@/types/generated';
 
 /**
  * 任务管理 API
@@ -214,15 +228,29 @@ export const tasksApi = {
   getLogs: async (
     taskId: string,
     level?: string,
-    category?: string,
+    category?: string | string[],
     limit: number = 100,
     offset: number = 0,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    limitPerCategory?: number
   ): Promise<ExecutionLogListResponse> => {
+    const params: Record<string, string | number | undefined> = {
+      level,
+      limit,
+      offset,
+      limit_per_category: limitPerCategory,
+    };
+
+    if (Array.isArray(category)) {
+      params.categories = category.join(',');
+    } else {
+      params.category = category;
+    }
+
     const { data } = await apiClient.get<ExecutionLogListResponse>(
       `/tasks/${taskId}/logs`,
       { 
-        params: { level, category, limit, offset },
+        params,
         signal 
       }
     );

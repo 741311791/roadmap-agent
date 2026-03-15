@@ -18,6 +18,7 @@
 import structlog
 from celery import group, chord
 from typing import Dict, Any
+import time
 
 from app.core.celery_app import celery_app
 from app.db.celery_session import get_celery_session
@@ -26,6 +27,7 @@ from app.crud.crud_task import get_task_crud
 from app.crud.crud_concept import get_concept_crud
 from app.agents.factory import AgentFactory
 from app.config.settings import settings
+from app.models.database import beijing_now
 from app.models.domain import (
     Concept,
     LearningPreferences,
@@ -36,7 +38,7 @@ from app.models.domain import (
 )
 from app.models.constants import WorkflowStep
 from app.services.shared.notification_service import notification_service
-from app.services.shared.execution_logger import execution_logger
+from app.services.shared.execution_logger import execution_logger, LogCategory
 
 logger = structlog.get_logger()
 
@@ -288,6 +290,7 @@ def generate_all_content_task(
         celery_task_id=self.request.id,
         architecture="langgraph_subgraph",
     )
+    content_generation_start_time = time.time()
     
     try:
         from app.tasks.event_loop_manager import run_async_in_worker_loop
@@ -320,6 +323,7 @@ def generate_all_content_task(
                     task_id=task_id,
                     roadmap_id=roadmap_id,
                     result=empty_result,
+                    duration_ms=int((time.time() - content_generation_start_time) * 1000),
                 )
             )
             return empty_result
@@ -360,6 +364,7 @@ def generate_all_content_task(
                 task_id=task_id,
                 roadmap_id=roadmap_id,
                 result=result,
+                duration_ms=int((time.time() - content_generation_start_time) * 1000),
             )
         )
         
@@ -380,6 +385,7 @@ def generate_all_content_task(
                     task_id=task_id,
                     roadmap_id=roadmap_id,
                     error_message=str(e),
+                    duration_ms=int((time.time() - content_generation_start_time) * 1000),
                 )
             )
         except Exception as notify_err:
@@ -399,6 +405,7 @@ async def _handle_content_generation_completion(
     task_id: str,
     roadmap_id: str,
     result: Dict[str, Any],
+    duration_ms: int,
 ) -> None:
     """
     内容生成任务正常完成时的状态同步
@@ -412,9 +419,8 @@ async def _handle_content_generation_completion(
         task_id: 任务 ID
         roadmap_id: 路线图 ID
         result: 子图返回的执行结果
+        duration_ms: 内容生成总耗时（毫秒）
     """
-    from datetime import datetime
-    
     status_str = result.get("status", "completed")
     successful_count = result.get("successful_count", 0)
     failed_count = result.get("failed_count", 0)
@@ -440,11 +446,16 @@ async def _handle_content_generation_completion(
                 status=final_status,
                 current_step=final_step,
             )
-            # 标记完成时间
+            await task_crud.update_content_generation_status(
+                session=session,
+                task_id=task_id,
+                status=final_status,
+            )
+            # 统一使用北京时间，避免与 created_at 出现 8 小时时差污染
             from sqlalchemy import text
             await session.execute(
                 text("UPDATE roadmap_tasks SET completed_at = :now WHERE task_id = :task_id"),
-                {"now": datetime.utcnow(), "task_id": task_id},
+                {"now": beijing_now(), "task_id": task_id},
             )
         logger.info(
             "content_generation_completion_status_updated",
@@ -464,6 +475,25 @@ async def _handle_content_generation_completion(
     
     # 推送 WebSocket 通知，让前端感知内容生成已完成
     try:
+        await execution_logger.log_workflow_complete(
+            task_id=task_id,
+            step=WorkflowStep.CONTENT_GENERATION.value,
+            message=f"内容生成完成：{successful_count}/{total_concepts} 个概念成功",
+            duration_ms=duration_ms,
+            roadmap_id=roadmap_id,
+            details={
+                "log_type": "content_generation_complete",
+                "final_status": final_status,
+                "successful_count": successful_count,
+                "failed_count": failed_count,
+                "total_concepts": total_concepts,
+            },
+        )
+        await execution_logger.flush_stage_logs(
+            task_id=task_id,
+            step=WorkflowStep.CONTENT_GENERATION.value,
+        )
+        
         if final_status == "completed":
             await notification_service.publish_progress(
                 task_id=task_id,
@@ -496,6 +526,7 @@ async def _handle_content_generation_failure(
     task_id: str,
     roadmap_id: str,
     error_message: str,
+    duration_ms: int,
 ) -> None:
     """
     内容生成任务失败时的善后处理
@@ -508,9 +539,8 @@ async def _handle_content_generation_failure(
         task_id: 任务 ID
         roadmap_id: 路线图 ID
         error_message: 异常信息
+        duration_ms: 内容生成失败前已消耗的时间（毫秒）
     """
-    from datetime import datetime
-    
     try:
         async with get_celery_session() as session:
             task_crud = get_task_crud()
@@ -520,6 +550,11 @@ async def _handle_content_generation_failure(
                 status="failed",
                 current_step=WorkflowStep.CONTENT_GENERATION,
                 error_message=error_message,
+            )
+            await task_crud.update_content_generation_status(
+                session=session,
+                task_id=task_id,
+                status="failed",
             )
         logger.info(
             "content_generation_failure_status_updated",
@@ -534,6 +569,23 @@ async def _handle_content_generation_failure(
         )
     
     try:
+        await execution_logger.error(
+            task_id=task_id,
+            category=LogCategory.WORKFLOW,
+            step=WorkflowStep.CONTENT_GENERATION.value,
+            roadmap_id=roadmap_id,
+            message="内容生成失败",
+            duration_ms=duration_ms,
+            details={
+                "log_type": "content_generation_failed",
+                "error": error_message,
+            },
+        )
+        await execution_logger.flush_stage_logs(
+            task_id=task_id,
+            step=WorkflowStep.CONTENT_GENERATION.value,
+        )
+        
         await notification_service.publish_progress(
             task_id=task_id,
             step=WorkflowStep.CONTENT_GENERATION,
@@ -854,7 +906,6 @@ async def _regenerate_single_content_async(
     任务结束后更新 RoadmapTask.status 为 completed/failed，
     确保僵尸状态检测能正确判断任务是否仍在运行。
     """
-    from datetime import datetime
     from app.services.content.content_service import ContentService
     from app.schemas.roadmap import ConceptRetryRequest
 
@@ -881,8 +932,10 @@ async def _regenerate_single_content_async(
 
         # 更新 RoadmapTask 最终状态，使僵尸检测能正确感知任务已结束
         if task:
-            task.status = "completed" if result.success else "failed"
-            task.completed_at = datetime.utcnow()
+            final_status = "completed" if result.success else "failed"
+            task.status = final_status
+            task.content_generation_status = final_status
+            task.completed_at = beijing_now()
             if not result.success:
                 task.error_message = result.message
             await session.flush()

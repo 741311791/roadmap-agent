@@ -14,7 +14,6 @@ Tavily API Key Redis 缓存管理器
 - 更符合微服务架构
 """
 import random
-import json
 import structlog
 from typing import Optional
 from datetime import datetime
@@ -49,9 +48,6 @@ class TavilyKeyCacheManager:
     KEYS_SET = "tavily:keys:available"
     KEY_DETAIL_PREFIX = "tavily:key:"
     CACHE_VERSION = "tavily:cache:version"  # 用于追踪缓存版本
-    
-    # 缓存过期时间（秒）
-    KEY_TTL = 3600  # 1小时
     
     def __init__(self):
         """初始化管理器"""
@@ -159,8 +155,12 @@ class TavilyKeyCacheManager:
                 "last_updated": datetime.utcnow().isoformat(),
             }
             
+            # 说明：
+            # 这里不再给详情 hash 设置 TTL。
+            # 如果只有详情 hash 过期，而可用 key 的 Set 永不过期，
+            # Redis 中就会残留“Set 里有 key_id、详情 hash 已消失”的孤儿项。
+            # 在不依赖单独 beat 的运行模式下，这类孤儿项会持续累积并导致误判。
             await self.redis._client.hset(key_hash, mapping=key_data)
-            await self.redis._client.expire(key_hash, self.KEY_TTL)
             
             # 添加到可用 Key 集合
             await self.redis._client.sadd(self.KEYS_SET, key_id)
@@ -182,6 +182,143 @@ class TavilyKeyCacheManager:
             )
             return False
     
+    async def _cleanup_invalid_key_ids(self, key_ids: list[str]) -> None:
+        """
+        批量清理失效的 key_id
+
+        Args:
+            key_ids: 需要清理的 key_id 列表
+        """
+        unique_key_ids = list(dict.fromkeys(key_ids))
+        for key_id in unique_key_ids:
+            await self.redis._client.srem(self.KEYS_SET, key_id)
+
+        logger.debug(
+            "tavily_keys_auto_cleaned",
+            cleaned_count=len(unique_key_ids),
+        )
+
+
+    async def _refresh_cache_on_demand(self, reason: str) -> int:
+        """
+        按需刷新缓存
+
+        Args:
+            reason: 触发刷新原因
+
+        Returns:
+            刷新的 Key 数量
+        """
+        logger.warning(
+            "tavily_key_cache_on_demand_refresh_started",
+            reason=reason,
+            message="当前未依赖定时任务，检测到脏缓存后主动回源刷新",
+        )
+        refreshed_count = await self.refresh()
+        logger.info(
+            "tavily_key_cache_on_demand_refresh_completed",
+            reason=reason,
+            refreshed_count=refreshed_count,
+        )
+        return refreshed_count
+
+
+    async def _select_random_key_once(self, min_quota: int = 1, max_retries: int = 5) -> Optional[str]:
+        """
+        单次从当前缓存中选择可用 Key
+
+        Args:
+            min_quota: 最小所需配额
+            max_retries: 最大重试次数（仅用于日志兼容）
+
+        Returns:
+            可用 API Key，如果当前缓存中没有则返回 None
+        """
+        key_ids = await self.redis._client.smembers(self.KEYS_SET)
+
+        if not key_ids:
+            logger.warning("tavily_key_cache_empty")
+            return None
+
+        # 转换为列表并打乱顺序（避免总是选中同一个 Key）
+        key_ids_list = list(key_ids)
+        random.shuffle(key_ids_list)
+
+        # 说明：
+        # Redis Set 中可能同时存在「已失效的 key」和「仍然有效的 key」。
+        # 如果只检查前几个随机 key，就可能在缓存里明明还有可用 key 的情况下误判为全部不可用。
+        # 因此这里固定遍历当前缓存集合一次，确保不会遗漏后面的有效 key。
+        attempts = 0
+        cleaned_keys = []
+
+        if max_retries < len(key_ids_list):
+            logger.info(
+                "tavily_key_retry_limit_expanded",
+                configured_max_retries=max_retries,
+                effective_attempts=len(key_ids_list),
+                total_keys=len(key_ids_list),
+                message="为避免遗漏有效 Key，当前会遍历缓存中的全部 Key 一次",
+            )
+
+        for key_id in key_ids_list:
+            attempts += 1
+            key_hash = f"{self.KEY_DETAIL_PREFIX}{key_id}"
+
+            # 获取 Key 详情
+            key_data = await self.redis._client.hgetall(key_hash)
+
+            if not key_data:
+                logger.debug(
+                    "tavily_key_not_found_in_cache",
+                    key_id=key_id[:10] + "...",
+                )
+                cleaned_keys.append(key_id)
+                continue
+
+            # 检查配额（decode_responses=True，返回的是 str）
+            remaining_quota = int(key_data.get("remaining_quota", 0))
+            if remaining_quota < min_quota:
+                logger.debug(
+                    "tavily_key_quota_insufficient",
+                    key_id=key_id[:10] + "...",
+                    remaining_quota=remaining_quota,
+                    min_quota=min_quota,
+                )
+                if remaining_quota <= 0:
+                    cleaned_keys.append(key_id)
+                continue
+
+            # ✅ 找到可用的 Key
+            api_key = key_data.get("api_key")
+
+            logger.info(
+                "tavily_key_selected_from_cache",
+                key_id=key_id[:10] + "...",
+                key_prefix=api_key[:10] + "..." if api_key else "unknown",
+                remaining_quota=remaining_quota,
+                attempts=attempts,
+            )
+
+            # 清理失效的 Key（批量）
+            if cleaned_keys:
+                await self._cleanup_invalid_key_ids(cleaned_keys)
+
+            return api_key
+
+        # 所有 Key 都不可用
+        logger.warning(
+            "tavily_no_available_keys_in_cache",
+            total_keys=len(key_ids_list),
+            attempts=attempts,
+            cleaned_keys=len(cleaned_keys),
+        )
+
+        if cleaned_keys:
+            await self._cleanup_invalid_key_ids(cleaned_keys)
+
+        return None
+
+
     async def get_random_key(self, min_quota: int = 1, max_retries: int = 5) -> Optional[str]:
         """
         从 Redis 随机获取一个可用的 API Key（带重试机制）
@@ -206,93 +343,25 @@ class TavilyKeyCacheManager:
             # 确保 Redis 连接
             await self.redis.connect()
             
-            # 获取所有可用 Key ID
-            key_ids = await self.redis._client.smembers(self.KEYS_SET)
-            
-            if not key_ids:
-                logger.warning("tavily_key_cache_empty")
-                return None
-            
-            # 转换为列表并打乱顺序（避免总是选中同一个 Key）
-            key_ids_list = list(key_ids)
-            random.shuffle(key_ids_list)
-            
-            # ✅ 重试机制：尝试多个 Key，直到找到配额充足的
-            attempts = 0
-            cleaned_keys = []
-            
-            for key_id in key_ids_list:
-                if attempts >= max_retries:
-                    logger.warning(
-                        "tavily_key_max_retries_reached",
-                        attempts=attempts,
-                        total_keys=len(key_ids_list),
-                    )
-                    break
-                
-                attempts += 1
-                key_hash = f"{self.KEY_DETAIL_PREFIX}{key_id}"
-                
-                # 获取 Key 详情
-                key_data = await self.redis._client.hgetall(key_hash)
-                
-                if not key_data:
-                    logger.debug(
-                        "tavily_key_not_found_in_cache",
-                        key_id=key_id[:10] + "...",
-                    )
-                    cleaned_keys.append(key_id)
-                    continue
-                
-                # 检查配额（decode_responses=True，返回的是 str）
-                remaining_quota = int(key_data.get("remaining_quota", 0))
-                if remaining_quota < min_quota:
-                    logger.debug(
-                        "tavily_key_quota_insufficient",
-                        key_id=key_id[:10] + "...",
-                        remaining_quota=remaining_quota,
-                        min_quota=min_quota,
-                    )
-                    if remaining_quota <= 0:
-                        cleaned_keys.append(key_id)
-                    continue
-                
-                # ✅ 找到可用的 Key
-                api_key = key_data.get("api_key")
-                
-                logger.info(
-                    "tavily_key_selected_from_cache",
-                    key_id=key_id[:10] + "...",
-                    key_prefix=api_key[:10] + "..." if api_key else "unknown",
-                    remaining_quota=remaining_quota,
-                    attempts=attempts,
-                )
-                
-                # 清理失效的 Key（批量）
-                if cleaned_keys:
-                    for clean_id in cleaned_keys:
-                        await self.redis._client.srem(self.KEYS_SET, clean_id)
-                    logger.debug(
-                        "tavily_keys_auto_cleaned",
-                        cleaned_count=len(cleaned_keys),
-                    )
-                
-                return api_key
-            
-            # 所有 Key 都不可用
-            logger.warning(
-                "tavily_no_available_keys_in_cache",
-                total_keys=len(key_ids_list),
-                attempts=attempts,
-                cleaned_keys=len(cleaned_keys),
+            api_key = await self._select_random_key_once(
+                min_quota=min_quota,
+                max_retries=max_retries,
             )
-            
-            # 清理失效的 Key
-            if cleaned_keys:
-                for clean_id in cleaned_keys:
-                    await self.redis._client.srem(self.KEYS_SET, clean_id)
-            
-            return None
+            if api_key:
+                return api_key
+
+            # 不依赖单独 beat 时，这里作为最后一道兜底：
+            # 一旦发现缓存为空或全是脏数据，主动从数据库回源重建一次缓存。
+            refreshed_count = await self._refresh_cache_on_demand(
+                reason="no_usable_key_found_in_runtime_cache",
+            )
+            if refreshed_count <= 0:
+                return None
+
+            return await self._select_random_key_once(
+                min_quota=min_quota,
+                max_retries=max_retries,
+            )
             
         except Exception as e:
             logger.error(
@@ -369,37 +438,78 @@ class TavilyKeyCacheManager:
         """
         try:
             await self.redis.connect()
-            # 查找对应的 key_id
-            key_ids = await self.redis._client.smembers(self.KEYS_SET)
-            
-            for key_id in key_ids:
-                key_hash = f"{self.KEY_DETAIL_PREFIX}{key_id}"
-                cached_key = await self.redis._client.hget(key_hash, "api_key")
-                
-                if cached_key == api_key:
-                    # 找到了，扣减配额
-                    await self.redis._client.hincrby(
-                        key_hash,
-                        "remaining_quota",
-                        -used_count
-                    )
-                    
-                    logger.debug(
-                        "tavily_key_quota_updated",
-                        key_id=key_id,
-                        used_count=used_count,
-                    )
-                    return True
-            
-            logger.warning(
-                "tavily_key_not_found_for_quota_update",
-                key_prefix=api_key[:10] + "...",
+            key_hash = f"{self.KEY_DETAIL_PREFIX}{api_key}"
+
+            if not await self.redis._client.exists(key_hash):
+                logger.warning(
+                    "tavily_key_not_found_for_quota_update",
+                    key_prefix=api_key[:10] + "...",
+                )
+                return False
+
+            # 找到了，扣减配额
+            remaining_quota = await self.redis._client.hincrby(
+                key_hash,
+                "remaining_quota",
+                -used_count
             )
-            return False
+
+            logger.debug(
+                "tavily_key_quota_updated",
+                key_id=api_key,
+                used_count=used_count,
+                remaining_quota=remaining_quota,
+            )
+
+            if remaining_quota <= 0:
+                await self.redis._client.srem(self.KEYS_SET, api_key)
+                logger.info(
+                    "tavily_key_removed_after_quota_exhausted",
+                    key_prefix=api_key[:10] + "...",
+                    remaining_quota=remaining_quota,
+                )
+
+            return True
             
         except Exception as e:
             logger.error(
                 "tavily_key_quota_update_failed",
+                error=str(e),
+            )
+            return False
+
+    async def evict_key(self, api_key: str, reason: str) -> bool:
+        """
+        从缓存中移除指定 Key
+
+        Args:
+            api_key: 需要移除的 API Key
+            reason: 移除原因
+
+        Returns:
+            是否成功执行移除操作
+        """
+        try:
+            await self.redis.connect()
+            key_hash = f"{self.KEY_DETAIL_PREFIX}{api_key}"
+
+            deleted_hash = await self.redis._client.delete(key_hash)
+            removed_from_set = await self.redis._client.srem(self.KEYS_SET, api_key)
+
+            logger.warning(
+                "tavily_key_evicted_from_cache",
+                key_prefix=api_key[:10] + "...",
+                reason=reason,
+                deleted_hash=deleted_hash > 0,
+                removed_from_set=removed_from_set > 0,
+            )
+            return True
+
+        except Exception as e:
+            logger.error(
+                "tavily_key_evict_failed",
+                key_prefix=api_key[:10] + "...",
+                reason=reason,
                 error=str(e),
             )
             return False

@@ -320,9 +320,8 @@ function DynamicHeader({ concept }: { concept: Concept }) {
           className={cn(
             'absolute bottom-4 right-4 z-20 flex items-center gap-1',
             'text-[11px] text-sage-700 font-medium',
-            'bg-white/50 backdrop-blur-sm px-2.5 py-1 rounded-full',
-            'border border-sage-300/60 hover:bg-white/70 hover:border-sage-400/60',
-            'transition-all duration-200 shadow-sm',
+            'px-2.5 py-1 rounded-full',
+            'transition-colors duration-200 hover:text-sage-900',
           )}
           aria-label="展开完整描述"
         >

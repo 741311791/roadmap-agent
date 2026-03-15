@@ -21,16 +21,19 @@ case $SERVICE_TYPE in
     python scripts/create_tables.py
     alembic stamp head
     python scripts/create_admin_user.py \
-      --email "${ADMIN_EMAIL:-admin@example.com}" \
+      --email "${ADMIN_EMAIL:-${FEATURED_USER_EMAIL:-admin@example.com}}" \
       --password "${ADMIN_PASSWORD:-admin123}" \
-      --username "${ADMIN_USERNAME:-admin}" || true
+      --user-id "${FEATURED_USER_ID:-04005faa-fb45-47dd-a83c-969a25a77046}" \
+      --username "${ADMIN_USERNAME:-admin}"
 
     # 启动 FastAPI 应用
-    # UVICORN_WORKERS 默认 8（生产环境），研发可通过环境变量降为 2-4
+    # 4C8G 单机生产默认值：
+    # - workers=2：足够覆盖常规 API 请求，同时避免空闲时常驻过多 Python 进程
+    # - 如需更高吞吐，优先先观察 CPU，再手动通过环境变量上调
     exec uvicorn app.main:app \
       --host 0.0.0.0 \
       --port "${PORT:-8000}" \
-      --workers "${UVICORN_WORKERS:-8}"
+      --workers "${UVICORN_WORKERS:-2}"
     ;;
 
   celery_worker)
@@ -47,11 +50,11 @@ case $SERVICE_TYPE in
     #
     # 参数说明：
     # - queues=celery:           只消费 celery 默认队列（与内容生成队列隔离）
-    # - concurrency:             默认 4，生产环境建议通过 CELERY_CONCURRENCY 设为 6-8
-    # - max-tasks-per-child=500: 每 500 个任务重启子进程，防止内存泄漏
+    # - concurrency:             4C8G 单机生产默认 1，先控制常驻内存，再按吞吐逐步加到 2
+    # - max-tasks-per-child=500: 每 500 个任务重启子进程，防止长期运行后的内存膨胀
     exec celery -A app.core.celery_app worker \
       --loglevel="${CELERY_LOG_LEVEL:-info}" \
-      --concurrency="${CELERY_CONCURRENCY:-4}" \
+      --concurrency="${CELERY_CONCURRENCY:-1}" \
       --pool=prefork \
       --hostname=workflow@%h \
       --queues=celery \
@@ -69,11 +72,11 @@ case $SERVICE_TYPE in
     #
     # 参数说明：
     # - queues=content_generation: 只消费内容生成专用队列
-    # - concurrency:               默认 4，内容生成 I/O 密集，适当提高并发
-    # - max-tasks-per-child=100:   内容任务内存占用高，更频繁重启以避免 OOM
+    # - concurrency:               4C8G 单机生产默认 1；内容生成任务内存更重，优先稳态而不是堆并发
+    # - max-tasks-per-child=100:   内容任务更容易累积内存碎片，保持更频繁重启
     exec celery -A app.core.celery_app worker \
       --loglevel="${CELERY_LOG_LEVEL:-info}" \
-      --concurrency="${CELERY_CONTENT_CONCURRENCY:-4}" \
+      --concurrency="${CELERY_CONTENT_CONCURRENCY:-1}" \
       --pool=prefork \
       --hostname=content@%h \
       --queues=content_generation \

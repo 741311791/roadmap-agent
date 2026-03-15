@@ -79,6 +79,13 @@ class SideEffectCoordinator:
         
         logger.info("side_effect_coordinator_initialized")
     
+    # 节点名称 → 对外暴露的步骤名称映射
+    # 极速模式的内部节点名（auto_content_generation）对前端无意义，
+    # 统一映射为 content_generation_queued，保持 DB/WS 状态语义一致
+    _NODE_STEP_DISPLAY_MAP: dict[str, str] = {
+        "auto_content_generation": "content_generation_queued",
+    }
+
     async def on_node_start(
         self,
         task_id: str,
@@ -88,46 +95,47 @@ class SideEffectCoordinator:
     ) -> None:
         """
         节点开始时的副作用处理
-        
+
         执行：
         1. 更新 Task 状态为 processing
         2. 更新 live_step 缓存
         3. 发送 WebSocket 进度通知
-        
+
         Args:
             task_id: 任务ID
             node_name: 节点名称
             roadmap_id: 路线图ID（可选）
             extra_data: 额外数据（可选，如 edit_source，用于共享节点区分分支）
         """
+        # 将内部节点名映射为对外展示的步骤名（如 auto_content_generation → content_generation_queued）
+        display_step = self._NODE_STEP_DISPLAY_MAP.get(node_name, node_name)
+
         logger.info(
             "coordinator_node_start",
             task_id=task_id,
             node_name=node_name,
+            display_step=display_step,
             roadmap_id=roadmap_id,
         )
-        
+
         # 1. 更新 Task 状态
         # ⚠️ human_review 节点有自己的状态管理（在节点函数内部直接设置 human_review_pending）
         # 不能在这里设置 processing，否则会与节点内部的状态更新产生竞态条件，导致覆盖 human_review_pending
-        # 由于 LangGraph astream_events 的事件机制，on_chain_start 可能在节点执行完毕后才被消费，
-        # 届时 processing 会覆盖节点内部已设置的 human_review_pending
         if node_name != "human_review":
             await self._update_task_status(
                 task_id=task_id,
                 status="processing",
-                current_step=node_name,
+                current_step=display_step,
                 roadmap_id=roadmap_id,
             )
-        
+
         # 2. 更新 live_step 缓存（Redis）
-        await self._update_live_step(task_id, node_name)
-        
+        await self._update_live_step(task_id, display_step)
+
         # 3. 发送 WebSocket 通知
-        # ✅ 方案 A：对 edit_plan_analysis/roadmap_edit 传递 edit_source，避免前端分支显示竞态
         await self._send_progress_notification(
             task_id=task_id,
-            step=node_name,
+            step=display_step,
             status="processing",
             extra_data=extra_data,
         )
@@ -154,20 +162,26 @@ class SideEffectCoordinator:
             duration_ms: 执行时长（毫秒）
         """
         roadmap_id = _safe_get(output, "roadmap_id")
-        
+        # 将内部节点名映射为对外展示的步骤名（保持与 on_node_start 一致）
+        display_step = self._NODE_STEP_DISPLAY_MAP.get(node_name, node_name)
+
         logger.info(
             "coordinator_node_complete",
             task_id=task_id,
             node_name=node_name,
+            display_step=display_step,
             roadmap_id=roadmap_id,
             duration_ms=duration_ms,
         )
-        
+
         # 1. 更新 live_step 缓存
-        await self._update_live_step(task_id, node_name)
-        
-        # 2. 构建extra_data，包含关键信息供前端使用
-        extra_data = {"duration_ms": duration_ms}
+        await self._update_live_step(task_id, display_step)
+
+        # 2. 构建 extra_data，包含关键信息供前端使用
+        extra_data = {}
+        if roadmap_id is not None:
+            extra_data["roadmap_id"] = roadmap_id
+        extra_data["duration_ms"] = duration_ms
         
         # ✅ 修复：传递edit_source给前端（用于分支判断）
         edit_source = _safe_get(output, "edit_source")
@@ -224,7 +238,51 @@ class SideEffectCoordinator:
                 f"This breaks frontend state sync. output_keys={list(output.keys()) if isinstance(output, dict) else 'not_dict'}"
             )
         
-        # 3. 发送 WebSocket 通知
+        workflow_log_details = {
+            "log_type": "workflow_node_complete",
+            "node_name": node_name,
+            "current_step": current_step,
+        }
+        if edit_source is not None:
+            workflow_log_details["edit_source"] = edit_source
+
+        # 3. 先写数据库，再发 WebSocket。
+        # 这样前端一旦收到 completed 事件，刷新后一定能看到该阶段的持久化日志与任务状态。
+        await self.execution_logger.log_workflow_complete(
+            task_id=task_id,
+            step=display_step,
+            message=f"节点 {display_step} 执行完成",
+            duration_ms=duration_ms,
+            roadmap_id=roadmap_id,
+            details=workflow_log_details,
+        )
+
+        try:
+            async with get_celery_session() as session:
+                task_crud = get_task_crud()
+                await self.execution_logger.flush_stage_logs(
+                    task_id=task_id,
+                    step=display_step,
+                    session=session,
+                )
+                await task_crud.update_task_status(
+                    session=session,
+                    task_id=task_id,
+                    status="processing",
+                    current_step=current_step,
+                    roadmap_id=roadmap_id,
+                )
+        except Exception as e:
+            logger.error(
+                "coordinator_failed_to_persist_node_completion",
+                task_id=task_id,
+                node_name=node_name,
+                current_step=current_step,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+
+        # 4. 发送 WebSocket 通知
         logger.info(
             "coordinator_sending_websocket",
             task_id=task_id,
@@ -239,10 +297,6 @@ class SideEffectCoordinator:
             status="completed",
             extra_data=extra_data,
         )
-        
-        # 4. 记录执行日志（可选）
-        # ExecutionLogger 由各 Node 内部记录，这里不重复
-        # 日志会在工作流完成时统一刷新到数据库（on_workflow_complete）
     
     async def on_node_failed(
         self,
@@ -274,27 +328,47 @@ class SideEffectCoordinator:
             duration_ms=duration_ms,
         )
         
-        # 1. 更新 Task 状态为 failed（不覆盖 current_step）
-        await self._update_task_status(
+        await self.execution_logger.error(
             task_id=task_id,
-            status="failed",
-            current_step=None,  # 保留失败时的阶段信息
-            error_message=str(error)[:500],
+            category="workflow",
+            message=f"节点执行失败: {node_name}",
+            step=node_name,
+            duration_ms=duration_ms,
+            details={
+                "error": str(error),
+                "error_type": type(error).__name__,
+            },
         )
+
+        try:
+            async with get_celery_session() as session:
+                task_crud = get_task_crud()
+                await self.execution_logger.flush_stage_logs(
+                    task_id=task_id,
+                    step=node_name,
+                    session=session,
+                )
+                await task_crud.update_task_status(
+                    session=session,
+                    task_id=task_id,
+                    status="failed",
+                    current_step=None,
+                    error_message=str(error)[:500],
+                )
+        except Exception as e:
+            logger.error(
+                "coordinator_failed_to_persist_node_failure",
+                task_id=task_id,
+                node_name=node_name,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
         
         # 2. 发送 WebSocket 失败通知
         await self._send_failed_notification(
             task_id=task_id,
             error=error,
             step=node_name,
-        )
-        
-        # 3. 记录错误日志
-        await self._log_error(
-            task_id=task_id,
-            node_name=node_name,
-            error=error,
-            duration_ms=duration_ms,
         )
     
     async def on_workflow_interrupted_for_review(

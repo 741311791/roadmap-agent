@@ -76,12 +76,11 @@ async def generate_roadmap_async(
     
     try:
         # ✅ 业务逻辑在Service层
-        task_id, celery_task_id = await generation_service.create_and_verify_task(request)
+        task_id = await generation_service.create_and_verify_task(request)
         
         logger.info(
             "roadmap_generation_task_created",
             task_id=task_id,
-            celery_task_id=celery_task_id,
             user_id=request.user_id,
         )
         

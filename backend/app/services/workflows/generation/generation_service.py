@@ -6,13 +6,17 @@
 """
 import asyncio
 import uuid
+
 import structlog
 
+from app.models.constants import TaskStatus, WorkflowStep
 from app.db.session import async_session_maker
 from app.crud.crud_task import get_task_crud
 from app.models.domain import UserRequest
+from app.services.shared.notification_service import notification_service
 
 logger = structlog.get_logger()
+DISPATCH_TIMEOUT_SECONDS = 10.0
 
 
 class GenerationService:
@@ -25,21 +29,21 @@ class GenerationService:
     async def create_and_verify_task(
         self,
         user_request: UserRequest,
-    ) -> tuple[str, str]:
+    ) -> str:
         """
         创建任务并验证持久化
         
         执行步骤：
         1. 创建任务记录并commit
         2. 验证任务已持久化（最多重试5次，指数退避）
-        3. 分发Celery任务
-        4. 更新celery_task_id
+        3. 异步分发Celery任务（不阻塞HTTP响应）
+        4. 后台更新celery_task_id
         
         Args:
             user_request: 用户请求
             
         Returns:
-            (task_id, celery_task_id)
+            task_id
             
         Raises:
             ValueError: 任务创建失败或持久化验证失败
@@ -62,7 +66,7 @@ class GenerationService:
                     "task_id": task_id,
                     "user_id": user_request.user_id,
                     "user_request": user_request.model_dump(mode='json'),
-                    "status": "pending",
+                    "status": TaskStatus.PENDING.value,
                     "task_type": "creation",
                 }
             )
@@ -88,36 +92,184 @@ class GenerationService:
             )
             raise ValueError(f"任务创建失败：数据库持久化验证失败（task_id={task_id}）")
         
-        # 第三步：分发Celery任务
-        # 使用 asyncio.to_thread 避免 .delay() 同步阻塞事件循环
-        from app.tasks.roadmap_generation_tasks import generate_roadmap
-        
-        celery_task = await asyncio.to_thread(
-            generate_roadmap.apply_async,
-            kwargs={
-                "task_id": task_id,
-                "user_request": user_request.preferences.learning_goal,
-                "user_id": user_request.user_id,
-                "learning_preferences": user_request.preferences.model_dump(mode='json'),
-            },
+        # 第三步：在后台分发 Celery 任务，避免用户等待 broker 响应。
+        # 如果后台分发失败，任务仍保持 pending，启动时恢复机制会兜底重新入队。
+        asyncio.create_task(
+            self._dispatch_task_in_background(
+                task_id=task_id,
+                user_request=user_request,
+            ),
+            name=f"dispatch_roadmap_generation_{task_id}",
         )
         
-        # 第四步：更新celery_task_id
+        logger.info(
+            "roadmap_generation_dispatch_scheduled",
+            task_id=task_id,
+        )
+        
+        return task_id
+
+    async def _dispatch_task_in_background(
+        self,
+        task_id: str,
+        user_request: UserRequest,
+    ) -> None:
+        """
+        后台分发路线图生成 Celery 任务。
+
+        设计目标：
+        1. 将 broker 分发耗时从 HTTP 请求链路中移除
+        2. 分发成功后异步写回 celery_task_id
+        3. 分发失败时保留 pending 任务，交由恢复机制处理
+
+        Args:
+            task_id: 任务 ID
+            user_request: 用户请求
+        """
+        try:
+            from app.tasks.roadmap_generation_tasks import generate_roadmap
+
+            logger.info(
+                "celery_task_dispatch_started",
+                task_id=task_id,
+                user_id=user_request.user_id,
+                timeout_seconds=DISPATCH_TIMEOUT_SECONDS,
+            )
+
+            celery_task = await asyncio.wait_for(
+                asyncio.to_thread(
+                    generate_roadmap.apply_async,
+                    kwargs={
+                        "task_id": task_id,
+                        "user_request": user_request.preferences.learning_goal,
+                        "user_id": user_request.user_id,
+                        "learning_preferences": user_request.preferences.model_dump(mode="json"),
+                        "turbo_mode": user_request.turbo_mode,
+                    },
+                ),
+                timeout=DISPATCH_TIMEOUT_SECONDS,
+            )
+
+            async with async_session_maker.begin() as session:
+                task_crud = get_task_crud()
+                await task_crud.update_celery_id(
+                    session=session,
+                    task_id=task_id,
+                    celery_task_id=celery_task.id,
+                )
+
+            logger.info(
+                "celery_task_dispatched",
+                task_id=task_id,
+                celery_task_id=celery_task.id,
+            )
+        except asyncio.TimeoutError as exc:
+            await asyncio.shield(
+                self._mark_dispatch_failed(
+                    task_id=task_id,
+                    user_request=user_request,
+                    error_message=(
+                        f"Celery 任务派发超时（>{DISPATCH_TIMEOUT_SECONDS:.0f}秒），"
+                        "任务已标记为失败，请手动重试"
+                    ),
+                    error=exc,
+                    failure_reason="timeout",
+                )
+            )
+        except asyncio.CancelledError as exc:
+            await asyncio.shield(
+                self._mark_dispatch_failed(
+                    task_id=task_id,
+                    user_request=user_request,
+                    error_message="Celery 任务后台派发被取消，任务已标记为失败，请手动重试",
+                    error=exc,
+                    failure_reason="cancelled",
+                )
+            )
+        except Exception as e:
+            await self._mark_dispatch_failed(
+                task_id=task_id,
+                user_request=user_request,
+                error_message=f"Celery 任务派发失败：{str(e)}",
+                error=e,
+                failure_reason="exception",
+            )
+
+    async def _mark_dispatch_failed(
+        self,
+        task_id: str,
+        user_request: UserRequest,
+        error_message: str,
+        error: BaseException | None,
+        failure_reason: str,
+    ) -> None:
+        """
+        将后台派发失败明确落库，避免任务长期静默停留在 pending。
+
+        Args:
+            task_id: 任务 ID
+            user_request: 用户请求
+            error_message: 面向数据库和前端展示的错误信息
+            error: 原始异常对象
+            failure_reason: 失败分类（timeout/cancelled/exception）
+        """
+        logger.error(
+            "celery_task_dispatch_failed",
+            task_id=task_id,
+            user_id=user_request.user_id,
+            failure_reason=failure_reason,
+            error=repr(error) if error else error_message,
+            error_type=type(error).__name__ if error else None,
+        )
+
         async with async_session_maker.begin() as session:
             task_crud = get_task_crud()
             task = await task_crud.get_by_task_id(session, task_id)
-            if task:
-                task.celery_task_id = celery_task.id
-                session.add(task)
-                # ✅ 不需要手动 commit，async_session_maker.begin() 自动处理
-        
-        logger.info(
-            "celery_task_dispatched",
-            task_id=task_id,
-            celery_task_id=celery_task.id,
-        )
-        
-        return task_id, celery_task.id
+
+            if not task:
+                logger.warning(
+                    "dispatch_failure_task_not_found",
+                    task_id=task_id,
+                    failure_reason=failure_reason,
+                )
+                return
+
+            # Why：
+            # 超时后的 to_thread 可能仍在后台继续执行，若此时 celery_task_id 已被其他链路写回，
+            # 说明任务实际上已经完成入队，不应再覆盖为 failed。
+            if task.celery_task_id:
+                logger.warning(
+                    "dispatch_failure_state_update_skipped",
+                    task_id=task_id,
+                    celery_task_id=task.celery_task_id,
+                    current_status=task.status,
+                    failure_reason=failure_reason,
+                )
+                return
+
+            await task_crud.update_task_status(
+                session=session,
+                task_id=task_id,
+                status=TaskStatus.FAILED.value,
+                current_step=WorkflowStep.FAILED.value,
+                error_message=error_message,
+            )
+
+        try:
+            await notification_service.publish_failed(
+                task_id=task_id,
+                error=error_message,
+                step=WorkflowStep.FAILED.value,
+                exception=error if isinstance(error, Exception) else None,
+            )
+        except Exception as notification_error:
+            logger.warning(
+                "dispatch_failure_notification_failed",
+                task_id=task_id,
+                failure_reason=failure_reason,
+                error=str(notification_error),
+                error_type=type(notification_error).__name__,
+            )
     
     async def _verify_task_persistence(
         self,
@@ -278,6 +430,12 @@ class GenerationService:
                 current_step=task.current_step,
                 error_message="Task cancelled by user",
             )
+            if task.content_generation_status == "processing":
+                await task_crud.update_content_generation_status(
+                    session=session,
+                    task_id=task_id,
+                    status="failed",
+                )
             # ✅ 不需要手动 commit，async_session_maker.begin() 自动处理
         
         logger.info(

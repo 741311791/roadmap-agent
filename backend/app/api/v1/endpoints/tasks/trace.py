@@ -43,8 +43,10 @@ async def get_logs(
     service: CurrentTraceService,
     level: Optional[str] = None,
     category: Optional[str] = None,
+    categories: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
+    limit_per_category: Optional[int] = None,
 ) -> ResponseSchemaModel[ExecutionLogListResponse]:
     """
     获取指定任务的执行日志
@@ -62,8 +64,10 @@ async def get_logs(
         service: 日志追踪服务
         level: 日志级别筛选（可选）
         category: 日志分类筛选（可选）
+        categories: 多个日志分类筛选，使用逗号分隔（可选）
         limit: 返回数量限制
         offset: 分页偏移
+        limit_per_category: 每个 category 的返回上限（可选）
         
     Returns:
         日志列表和分页信息
@@ -78,9 +82,17 @@ async def get_logs(
         user_id=current_user.id,
         level=level,
         category=category,
+        categories=categories,
         limit=limit,
         offset=offset,
+        limit_per_category=limit_per_category,
     )
+
+    normalized_categories = [
+        item.strip()
+        for item in (categories or "").split(",")
+        if item.strip()
+    ]
     
     # 验证任务所有权
     await service.verify_task_ownership(
@@ -94,8 +106,12 @@ async def get_logs(
     total, logs = await service.get_execution_logs(
         session=db,
         task_id=task_id,
+        level=level,
+        category=category,
+        categories=normalized_categories or None,
         offset=offset,
         limit=limit,
+        limit_per_category=limit_per_category,
     )
     
     # 转换为响应格式

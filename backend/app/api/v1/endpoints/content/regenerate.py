@@ -74,6 +74,7 @@ async def _dispatch_regenerate_task(
         "content_type": content_type,
         "task_type": f"regenerate_{content_type}",
         "status": "processing",
+        "content_generation_status": "processing",
         "current_step": "content_generation",
         "celery_task_id": celery_task_id,
         "user_request": {

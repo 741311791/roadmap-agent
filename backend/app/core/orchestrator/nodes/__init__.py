@@ -9,8 +9,8 @@ from .curriculum_design import curriculum_design_node
 from .structure_validation import structure_validation_node
 from .roadmap_edit import roadmap_edit_node
 from .human_review import human_review_node
-from .edit_plan_analysis import edit_plan_analysis_node  # ✅ 共享的编辑计划分析节点
-# ✅ 移除：content_generation_node（改为独立的 Celery Worker，在 human_review_node 中触发）
+from .edit_plan_analysis import edit_plan_analysis_node
+from .auto_content_generation import auto_content_generation_node
 
 __all__ = [
     "intent_analysis_node",
@@ -18,7 +18,7 @@ __all__ = [
     "structure_validation_node",
     "roadmap_edit_node",
     "human_review_node",
-    "edit_plan_analysis_node",  # ✅ 共享节点
-    # ✅ 移除：content_generation_node
+    "edit_plan_analysis_node",
+    "auto_content_generation_node",
 ]
 

@@ -44,7 +44,8 @@ class WorkflowBuilder:
         validation_node=None,
         editor_node=None,
         review_node=None,
-        edit_plan_node=None,  # ✅ 共享的编辑计划分析节点（由edit_source区分来源）
+        edit_plan_node=None,
+        auto_content_node=None,  # 极速模式：跳过人工审查直接触发内容生成
     ):
         self.config = config
         self.router = router
@@ -55,7 +56,8 @@ class WorkflowBuilder:
         self.validation_node = validation_node
         self.editor_node = editor_node
         self.review_node = review_node
-        self.edit_plan_node = edit_plan_node  # ✅ 共享节点
+        self.edit_plan_node = edit_plan_node
+        self.auto_content_node = auto_content_node
     
     def build(self, checkpointer) -> CompiledStateGraph:
         """
@@ -137,43 +139,52 @@ class WorkflowBuilder:
                 retry_policy=LLM_RETRY_POLICY,
             )
         
-        # 可选节点：人工审核
+        # 可选节点：人工审核（普通模式使用）
         if not self.config.skip_human_review and self.review_node:
             workflow.add_node(
                 "human_review",
                 self.review_node,
                 retry_policy=NO_RETRY_POLICY,  # 使用 interrupt
             )
-        
-        # ✅ 内容生成已移除：改为独立的 Celery Worker
-        # 在 human_review_node 批准后触发 Celery 任务
-        # 不再作为 LangGraph 节点（避免主工作流 checkpoint 包含大量内容数据）
+
+        # 极速模式专用节点：跳过人工审查，直接触发内容生成入队
+        if self.auto_content_node:
+            workflow.add_node(
+                "auto_content_generation",
+                self.auto_content_node,
+                retry_policy=NO_RETRY_POLICY,
+            )
     
     def _add_edges(self, workflow: StateGraph):
         """
         定义工作流边（流程控制）
-        
-        简化后的流程：
-        - 极速模式：intent_analysis → curriculum_design → human_review（可选）→ END
-        - 普通模式：intent_analysis → curriculum_design → structure_validation 
+
+        流程说明：
+        - 极速模式：intent_analysis → curriculum_design → auto_content_generation → END
+        - 普通模式：intent_analysis → curriculum_design → structure_validation
           → [验证循环] → human_review（可选） → END
         """
         # 设置入口点
         workflow.set_entry_point("intent_analysis")
-        
+
         # 固定边：Intent → Curriculum
         workflow.add_edge("intent_analysis", "curriculum_design")
-        
-        # 课程设计后的条件路由：极速模式直接进入 human_review，普通模式进入 structure_validation
+
+        # 课程设计后的条件路由：
+        # - 极速模式 → auto_content_generation（跳过验证和人工审查）
+        # - 普通模式 → structure_validation
         workflow.add_conditional_edges(
             "curriculum_design",
             self.router.route_after_curriculum,
             {
+                "auto_content_generation": "auto_content_generation",
                 "structure_validation": "structure_validation",
-                "human_review": "human_review" if not self.config.skip_human_review else END,
-                "end": END,
             },
         )
+
+        # 极速模式：自动内容生成节点完成后直接结束主工作流
+        if self.auto_content_node:
+            workflow.add_edge("auto_content_generation", END)
         
         # 结构验证后的条件路由
         workflow.add_conditional_edges(

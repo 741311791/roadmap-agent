@@ -403,6 +403,48 @@ class ConceptCRUD(BaseCRUD[ConceptMetadata, ConceptCreate, ConceptUpdate]):
             )
             return metadata
     
+    async def mark_concept_generating(
+        self,
+        session: AsyncSession,
+        concept_id: str,
+        roadmap_id: str,
+    ) -> ConceptMetadata:
+        """
+        将 Concept 标记为运行中。
+
+        设计原因：
+        - 内容生成子图开始时，前端可能还未连上 WebSocket，或中途发生重连；
+        - 仅依赖 `concept_start` 实时事件会导致刷新后丢失运行态；
+        - 因此需要把 `overall_status=generating` 持久化，供任务详情页通过快照恢复。
+
+        Args:
+            session: 数据库会话
+            concept_id: 概念 ID
+            roadmap_id: 路线图 ID
+
+        Returns:
+            更新后的 ConceptMetadata 对象
+        """
+        metadata = await self.create_or_update_metadata(
+            session=session,
+            concept_id=concept_id,
+            roadmap_id=roadmap_id,
+        )
+
+        if metadata.overall_status in {"pending", "generating"}:
+            metadata.overall_status = "generating"
+            metadata.updated_at = beijing_now()
+            session.add(metadata)
+
+        logger.debug(
+            "concept_marked_generating",
+            concept_id=concept_id,
+            roadmap_id=roadmap_id,
+            overall_status=metadata.overall_status,
+        )
+
+        return metadata
+
     async def update_content_status(
         self,
         session: AsyncSession,

@@ -7,14 +7,24 @@
  * 支持浏览器语言自动检测和localStorage持久化
  */
 
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, ReactNode } from 'react';
 import { NextIntlClientProvider } from 'next-intl';
 import { useUIStore } from '@/lib/store/ui-store';
-import { detectBrowserLocale } from '@/i18n/config';
+import { defaultTimeZone, detectBrowserLocale } from '@/i18n/config';
+import enMessages from '@/messages/en.json';
+import zhMessages from '@/messages/zh.json';
+
+type Locale = 'en' | 'zh';
+type LocaleMessages = typeof enMessages;
+
+const LOCALE_MESSAGES: Record<Locale, LocaleMessages> = {
+  en: enMessages,
+  zh: zhMessages,
+};
 
 type LocaleContextType = {
-  locale: 'en' | 'zh';
-  setLocale: (locale: 'en' | 'zh') => void;
+  locale: Locale;
+  setLocale: (locale: Locale) => Promise<void>;
 };
 
 const LocaleContext = createContext<LocaleContextType | undefined>(undefined);
@@ -29,62 +39,35 @@ export function useLocaleContext() {
 
 export function LocaleProvider({ children }: { children: ReactNode }) {
   const { locale: storeLocale, setLocale: setStoreLocale } = useUIStore();
-  const [locale, setLocaleState] = useState<'en' | 'zh'>('en');
-  const [messages, setMessages] = useState<any>(null);
-  const [isReady, setIsReady] = useState(false);
+  const [locale, setLocaleState] = useState<Locale>(() => storeLocale || 'en');
 
-  // 初始化locale
+  const messages = useMemo(() => LOCALE_MESSAGES[locale], [locale]);
+
+  // 说明：
+  // 为了避免根布局在 hydration 前被整页 loading 阻塞，这里默认同步渲染英文包，
+  // 再在客户端挂载后根据 localStorage / 浏览器语言切换到目标语言。
   useEffect(() => {
-    const initializeLocale = async () => {
-      // 优先级：localStorage > 浏览器语言 > 默认en
-      const savedLocale = localStorage.getItem('locale') as 'en' | 'zh' | null;
-      const initialLocale = savedLocale || detectBrowserLocale();
-      
-      // 加载对应语言的翻译文件
-      const localeMessages = await import(`@/messages/${initialLocale}.json`);
-      
-      setLocaleState(initialLocale);
-      setStoreLocale(initialLocale);
-      setMessages(localeMessages.default);
-      
-      // 设置cookie供服务端使用
-      document.cookie = `NEXT_LOCALE=${initialLocale}; path=/; max-age=31536000`;
-      
-      setIsReady(true);
-    };
+    const savedLocale = localStorage.getItem('locale') as Locale | null;
+    const initialLocale = savedLocale || detectBrowserLocale();
+    setLocaleState(initialLocale);
+    setStoreLocale(initialLocale);
+    document.cookie = `NEXT_LOCALE=${initialLocale}; path=/; max-age=31536000`;
+  }, [setStoreLocale]);
 
-    initializeLocale();
-  }, []);
-
-  const setLocale = async (newLocale: 'en' | 'zh') => {
-    // 加载新语言的翻译文件
-    const localeMessages = await import(`@/messages/${newLocale}.json`);
-    
-    // 更新状态
+  const setLocale = async (newLocale: Locale) => {
     setLocaleState(newLocale);
     setStoreLocale(newLocale);
-    setMessages(localeMessages.default);
-    
-    // 持久化到localStorage和cookie
     localStorage.setItem('locale', newLocale);
     document.cookie = `NEXT_LOCALE=${newLocale}; path=/; max-age=31536000`;
   };
 
-  // 等待初始化完成
-  if (!isReady || !messages) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <div className="w-12 h-12 border-4 border-sage-200 border-t-sage-600 rounded-full animate-spin mx-auto mb-3" />
-          <p className="text-sm text-muted-foreground">Loading...</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <LocaleContext.Provider value={{ locale, setLocale }}>
-      <NextIntlClientProvider locale={locale} messages={messages}>
+      <NextIntlClientProvider
+        locale={locale}
+        messages={messages}
+        timeZone={defaultTimeZone}
+      >
         {children}
       </NextIntlClientProvider>
     </LocaleContext.Provider>

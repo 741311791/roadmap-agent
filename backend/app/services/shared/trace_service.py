@@ -77,8 +77,12 @@ class TraceService:
         self,
         session: AsyncSession,
         task_id: str,
+        level: Optional[str] = None,
+        category: Optional[str] = None,
+        categories: Optional[List[str]] = None,
         offset: int = 0,
         limit: int = 100,
+        limit_per_category: Optional[int] = None,
     ) -> Tuple[int, List[ExecutionLog]]:
         """
         获取执行日志列表
@@ -86,8 +90,12 @@ class TraceService:
         Args:
             session: 数据库会话
             task_id: 任务ID
+            level: 日志级别过滤（可选）
+            category: 日志分类过滤（可选）
+            categories: 多个日志分类过滤（可选）
             offset: 偏移量
             limit: 返回数量（最大2000）
+            limit_per_category: 每个分类的返回上限（可选）
             
         Returns:
             (总数, 日志列表)
@@ -97,18 +105,33 @@ class TraceService:
         
         # 获取总数和日志列表
         total = await self.roadmap_crud.count_execution_logs_by_trace(
-            session, task_id
+            session=session,
+            task_id=task_id,
+            level=level,
+            category=category,
+            categories=categories,
         )
         
         logs = await self.roadmap_crud.get_execution_logs_by_trace(
-            session, task_id, offset=offset, limit=limit
+            session=session,
+            task_id=task_id,
+            level=level,
+            category=category,
+            categories=categories,
+            offset=offset,
+            limit=limit,
+            limit_per_category=limit_per_category,
         )
         
         logger.info(
             "execution_logs_retrieved",
             task_id=task_id,
+            level=level,
+            category=category,
+            categories=categories,
             total=total,
             returned=len(logs),
+            limit_per_category=limit_per_category,
         )
         
         return total, logs

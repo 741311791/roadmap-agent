@@ -26,7 +26,7 @@ function LoginForm() {
   const t = useTranslations('login');
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { isAuthenticated, user } = useAuthStore();
+  const { hasHydrated, isAuthenticated, loginWithPassword, user } = useAuthStore();
   
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -37,11 +37,19 @@ function LoginForm() {
   
   // 如果已登录，跳转到目标页面
   useEffect(() => {
+    if (!hasHydrated) {
+      return;
+    }
+
+    if (!authService.isTokenValid()) {
+      return;
+    }
+
     if (isAuthenticated) {
       console.log('[Login] Already authenticated, redirecting to:', redirectUrl);
       router.push(redirectUrl);
     }
-  }, [isAuthenticated, router, redirectUrl]);
+  }, [hasHydrated, isAuthenticated, router, redirectUrl]);
   
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -56,7 +64,7 @@ function LoginForm() {
     setIsLoading(true);
     
     try {
-      const success = await authService.loginWithPassword(email, password);
+      const success = await loginWithPassword(email, password);
       
       if (success) {
         console.log('[Login] Login successful, redirecting to:', redirectUrl);
@@ -88,7 +96,7 @@ function LoginForm() {
   };
   
   // 如果已登录，显示跳转状态
-  if (isAuthenticated && user) {
+  if (hasHydrated && isAuthenticated && authService.isTokenValid() && user) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#f8f5f0]">
         <motion.div

@@ -1,15 +1,18 @@
 """
 Intent Analyzer Agent（需求分析师）
 """
+import json
 import re
 import uuid
-import json
 from typing import Any, Dict, List, Optional
+
+from pydantic import ValidationError
+
 from app.agents.base import BaseAgent
 from app.models.domain import (
-    UserRequest, 
-    IntentAnalysisOutput, 
+    IntentAnalysisOutput,
     LanguagePreferences,
+    UserRequest,
 )
 from app.tools.registry import ToolRegistry
 from app.config.settings import settings
@@ -29,7 +32,8 @@ class IntentAnalyzerAgent(BaseAgent):
     - ANALYZER_API_KEY: API 密钥（必需）
     
     可选工具支持：
-    - 注入 ToolRegistry 后自动启用 web_search（两阶段模式）
+    - 注入 ToolRegistry 后自动启用 web_search + ReAct 分析
+    - 优先采用“一阶段直出 + 本地校验”，解析失败时才回退到第二阶段结构化提取
     - 未注入时降级为单阶段结构化输出（向后兼容）
     """
     
@@ -58,6 +62,62 @@ class IntentAnalyzerAgent(BaseAgent):
         
         # 注入 ToolRegistry（可选，未注入时降级为无工具模式）
         self.tool_registry = tool_registry
+
+    def _parse_phase1_structured_output(self, raw_text: str) -> IntentAnalysisOutput:
+        """
+        解析第一阶段直出的结构化结果。
+
+        设计说明：
+        - ReAct 模式下，模型最终响应已经被 prompt 明确要求“直接输出 JSON”
+        - 对 Gemini 来说，再额外走一次结构化提取容易触发长度截断
+        - 因此优先在本地解析第一阶段结果，只有解析失败时才回退到第二阶段提取
+
+        Args:
+            raw_text: 第一阶段模型原始输出文本
+
+        Returns:
+            解析并校验后的 IntentAnalysisOutput
+
+        Raises:
+            ValueError: 文本中未找到可解析的 JSON
+            ValidationError: JSON 结构不符合 IntentAnalysisOutput
+        """
+        cleaned_text = raw_text.strip()
+        candidate_payloads: list[str] = []
+
+        if cleaned_text:
+            candidate_payloads.append(cleaned_text)
+
+        # 兼容模型把 JSON 包在 markdown code block 中的情况。
+        code_block_match = re.search(
+            r"```(?:json)?\s*(\{.*\})\s*```",
+            cleaned_text,
+            flags=re.DOTALL,
+        )
+        if code_block_match:
+            candidate_payloads.append(code_block_match.group(1).strip())
+
+        # 兼容模型在 JSON 前后附带解释文本的情况。
+        json_object_match = re.search(r"(\{.*\})", cleaned_text, flags=re.DOTALL)
+        if json_object_match:
+            candidate_payloads.append(json_object_match.group(1).strip())
+
+        seen_payloads: set[str] = set()
+        last_error: Exception | None = None
+
+        for candidate in candidate_payloads:
+            if not candidate or candidate in seen_payloads:
+                continue
+            seen_payloads.add(candidate)
+
+            try:
+                return IntentAnalysisOutput.model_validate(json.loads(candidate))
+            except (json.JSONDecodeError, ValidationError) as exc:
+                last_error = exc
+
+        raise ValueError(
+            "第一阶段输出未能解析为 IntentAnalysisOutput"
+        ) from last_error
     
     def _get_tools_definition(self) -> List[Dict[str, Any]]:
         """
@@ -128,9 +188,10 @@ class IntentAnalyzerAgent(BaseAgent):
         """
         分析用户学习需求
         
-        若注入了 ToolRegistry，则执行两阶段流程：
-        - Phase 1：ReAct 循环，调用 web_search 获取最新技术信息（最多 3 次迭代）
-        - Phase 2：从 Phase 1 的文本输出中结构化提取 IntentAnalysisOutput
+        若注入了 ToolRegistry，则执行增强流程：
+        - Phase 1：ReAct 循环，按需调用 web_search 获取最新技术信息（最多 3 次迭代）
+        - 优先将 Phase 1 的最终结果按 JSON 直出进行本地校验
+        - 仅当本地校验失败时，才回退到 Phase 2 结构化提取 IntentAnalysisOutput
         
         否则，直接使用单阶段结构化输出（向后兼容）
         
@@ -271,27 +332,42 @@ class IntentAnalyzerAgent(BaseAgent):
                 user_id=user_request.user_id,
                 output_length=len(phase1_text),
             )
-            
-            # ====== Phase 2: 从 Phase 1 文本中提取结构化数据 ======
-            logger.info(
-                "intent_analysis_phase2_extraction_started",
-                user_id=user_request.user_id,
-            )
-            
-            extraction_messages = [
-                {"role": "system", "content": self.EXTRACTION_SYSTEM_PROMPT},
-                {"role": "user", "content": phase1_text},
-            ]
-            
-            result = await self._call_llm(
-                messages=extraction_messages,
-                response_model=IntentAnalysisOutput,
-            )
-            
-            logger.info(
-                "intent_analysis_phase2_extraction_completed",
-                user_id=user_request.user_id,
-            )
+
+            # 优先尝试“一阶段直出 + 本地校验”，避免 Gemini 在二次 parse 时被截断。
+            try:
+                result = self._parse_phase1_structured_output(phase1_text)
+                logger.info(
+                    "intent_analysis_phase1_direct_parse_completed",
+                    user_id=user_request.user_id,
+                )
+            except (ValueError, ValidationError) as parse_error:
+                logger.warning(
+                    "intent_analysis_phase1_direct_parse_failed",
+                    user_id=user_request.user_id,
+                    error=str(parse_error),
+                    error_type=type(parse_error).__name__,
+                )
+
+                # ====== Phase 2: 从 Phase 1 文本中提取结构化数据 ======
+                logger.info(
+                    "intent_analysis_phase2_extraction_started",
+                    user_id=user_request.user_id,
+                )
+
+                extraction_messages = [
+                    {"role": "system", "content": self.EXTRACTION_SYSTEM_PROMPT},
+                    {"role": "user", "content": phase1_text},
+                ]
+
+                result = await self._call_llm(
+                    messages=extraction_messages,
+                    response_model=IntentAnalysisOutput,
+                )
+
+                logger.info(
+                    "intent_analysis_phase2_extraction_completed",
+                    user_id=user_request.user_id,
+                )
         else:
             # ====== 无工具模式：单阶段结构化输出（向后兼容）======
             result = await self._call_llm(

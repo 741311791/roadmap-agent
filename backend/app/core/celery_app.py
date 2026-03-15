@@ -20,7 +20,14 @@ from app.config.logging_config import setup_logging
 setup_logging()
 
 from celery import Celery
-from celery.signals import worker_process_init, worker_process_shutdown, task_failure, task_retry
+from celery.signals import (
+    worker_process_init,
+    worker_process_shutdown,
+    worker_ready,
+    worker_shutdown,
+    task_failure,
+    task_retry,
+)
 from app.config.settings import settings
 
 # 构建 Redis URL（支持 Upstash 等云服务的完整 URL，或根据配置构建）
@@ -359,3 +366,53 @@ celery_app.conf.beat_schedule = {
         'schedule': crontab(minute=15),  # 每小时的第 15 分钟
     },
 }
+
+
+@worker_ready.connect
+def on_worker_ready(sender=None, **kwargs):
+    """
+    Worker 主进程就绪后启动 heartbeat 上报
+    """
+    import structlog
+
+    logger = structlog.get_logger()
+    try:
+        from app.core.celery_worker_heartbeat import (
+            heartbeat_manager,
+            infer_worker_queues,
+            resolve_worker_hostname,
+        )
+
+        worker_hostname = resolve_worker_hostname(sender, **kwargs)
+        heartbeat_manager.start(
+            worker_hostname=worker_hostname,
+            queues=infer_worker_queues(worker_hostname),
+        )
+        logger.info("worker_ready_heartbeat_started", worker_hostname=worker_hostname)
+    except Exception as e:
+        logger.warning(
+            "worker_ready_heartbeat_failed",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+
+
+@worker_shutdown.connect
+def on_worker_shutdown(sender=None, **kwargs):
+    """
+    Worker 主进程关闭时停止 heartbeat 上报
+    """
+    import structlog
+
+    logger = structlog.get_logger()
+    try:
+        from app.core.celery_worker_heartbeat import heartbeat_manager
+
+        heartbeat_manager.stop()
+        logger.info("worker_shutdown_heartbeat_stopped")
+    except Exception as e:
+        logger.warning(
+            "worker_shutdown_heartbeat_failed",
+            error=str(e),
+            error_type=type(e).__name__,
+        )

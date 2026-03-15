@@ -136,9 +136,10 @@ class AgentFactory:
         - 学习偏好
         - roadmap_id
         
-        注入 ToolRegistry 后自动启用 web_search 两阶段模式：
+        注入 ToolRegistry 后自动启用增强模式：
         - Phase 1：ReAct 循环（LLM 按规则决定是否搜索）
-        - Phase 2：结构化提取
+        - 优先使用一阶段直出结果做本地校验
+        - 仅在直出结果不可解析时，才回退到第二阶段结构化提取
         
         Returns:
             IntentAnalyzerAgent 实例
@@ -203,22 +204,46 @@ class AgentFactory:
         """
         创建路线图编辑器
         
-        根据验证结果修复路线图框架：
-        - 修复 ID 冲突
-        - 修复引用错误
-        - 补充缺失字段
+        路由策略：
+        - UPDATE / CREATE：优先走 JSON Patch 局部编辑
+        - REGENERATE：走快速全量重建编辑
+        - patch 失败：自动回退到传统全量编辑
         
         Returns:
-            RoadmapEditorAgent 实例
+            兼容 RoadmapEditorProtocol 的适配器实例
         """
+        from app.agents.json_patch_editor import (
+            AdaptiveRoadmapEditorAgent,
+            JsonPatchEditorAgent,
+        )
+        from app.agents.roadmap_regenerate_editor import FastFullRegenerateEditorAgent
         from app.agents.roadmap_editor import RoadmapEditorAgent
         
-        return RoadmapEditorAgent(
+        legacy_editor = RoadmapEditorAgent(
             agent_id="roadmap_editor",
             model_provider=self.settings.EDITOR_PROVIDER,
             model_name=self.settings.EDITOR_MODEL,
             base_url=self.settings.EDITOR_BASE_URL,
             api_key=self.settings.EDITOR_API_KEY,
+        )
+        patch_editor = JsonPatchEditorAgent(
+            agent_id="json_patch_editor",
+            model_provider=self.settings.EDITOR_PROVIDER,
+            model_name=self.settings.EDITOR_MODEL,
+            base_url=self.settings.EDITOR_BASE_URL,
+            api_key=self.settings.EDITOR_API_KEY,
+        )
+        regenerate_editor = FastFullRegenerateEditorAgent(
+            agent_id="fast_full_regenerate_editor",
+            model_provider=self.settings.ARCHITECT_PROVIDER,
+            model_name=self.settings.ARCHITECT_MODEL,
+            base_url=self.settings.ARCHITECT_BASE_URL,
+            api_key=self.settings.ARCHITECT_API_KEY,
+        )
+        return AdaptiveRoadmapEditorAgent(
+            patch_editor=patch_editor,
+            regenerate_editor=regenerate_editor,
+            legacy_editor=legacy_editor,
         )
     
     def create_edit_plan_analyzer(self):

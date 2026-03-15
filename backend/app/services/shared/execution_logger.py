@@ -1,52 +1,25 @@
 """
-执行日志服务 (ExecutionLogger) - Celery 异步队列版本
+执行日志服务（ExecutionLogger）
 
-提供结构化日志记录功能，用于：
-- 通过 task_id 追踪请求完整生命周期
-- 聚合错误报告
-- 性能分析和问题定位
+当前设计目标：
+- `workflow` 分类日志作为任务阶段的权威落库数据；
+- 阶段完成时支持“先同步写库，再发 WebSocket”；
+- `agent/tool` 日志暂不落库，避免拖慢主流程并减少噪音。
 
-重构版本特点：
-- 使用 Celery 异步任务处理日志写入
-- 完全解耦主流程和数据库操作
-- 本地缓冲区减少 Celery 任务数量
-- API 兼容性：所有方法签名保持不变
-
-使用示例：
-    ```python
-    from app.services.shared.execution_logger import execution_logger
-
-    # 记录工作流开始
-    await execution_logger.log_workflow_start(
-        task_id="abc-123",
-        step="intent_analysis",
-        message="开始需求分析",
-    )
-
-    # 记录 Agent 执行
-    await execution_logger.log_agent_complete(
-        task_id="abc-123",
-        agent_name="IntentAnalyzer",
-        message="需求分析完成",
-        duration_ms=1500,
-        details={"key_technologies": ["Python", "FastAPI"]},
-    )
-
-    # 记录错误
-    await execution_logger.error(
-        task_id="abc-123",
-        category="agent",
-        message="教程生成失败",
-        details={"error": str(e), "concept_id": "concept-1"},
-    )
-    ```
+说明：
+- 为兼容现有调用方，`log()/info()/error()` 等 API 保持不变；
+- 仅 `workflow` 分类日志会进入阶段缓冲区；
+- 调用方可在阶段结束时显式触发 `flush_stage_logs()` 保证数据库先于前端事件可见。
 """
+from collections import defaultdict
 from typing import Optional
 import time
 import asyncio
 from contextlib import asynccontextmanager
 import structlog
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.celery_session import get_celery_session
 from app.models.database import ExecutionLog, beijing_now
 
 logger = structlog.get_logger()
@@ -72,25 +45,18 @@ class LogCategory:
 
 class ExecutionLogger:
     """
-    执行日志服务（Celery 异步队列版本）
-    
-    所有日志写入都通过 Celery 异步任务处理，完全解耦主流程和数据库操作。
-    支持所有工作流节点和重试场景。
-    
-    架构：
-    - 本地缓冲区：减少 Celery 任务数量
-    - 批量发送：达到阈值或超时时发送
-    - 异步处理：不阻塞主流程
-    - 降级保护：发送失败时重新入队
+    执行日志服务
+
+    设计原则：
+    1. `workflow` 日志按 task_id + step 分阶段缓存；
+    2. 阶段完成时由调用方显式同步落库；
+    3. 非 `workflow` 日志暂不写数据库，仅保留返回对象兼容旧调用。
     """
     
     def __init__(self):
-        # 本地缓冲区：减少 Celery 任务数量
-        self._log_buffer: list[dict] = []
-        self._buffer_size = 50  # 本地缓冲区大小
-        self._flush_interval = 2.0  # 2 秒刷新一次
-        self._last_flush_time = time.time()
-        self._flush_lock = asyncio.Lock()  # 防止并发刷新
+        # 按任务与阶段分桶，确保“某阶段完成时”能够精确提取并同步写库。
+        self._stage_log_buffer: dict[tuple[str, str], list[dict]] = defaultdict(list)
+        self._flush_lock = asyncio.Lock()
     
     async def log(
         self,
@@ -106,17 +72,10 @@ class ExecutionLogger:
         duration_ms: Optional[int] = None,
     ) -> ExecutionLog:
         """
-        写入执行日志（异步，非阻塞）
-        
-        将日志数据放入本地缓冲区，达到批量大小或超时时，
-        发送到 Celery 任务队列。
-        
-        支持所有场景：
-        - 工作流节点日志（IntentAnalysis, CurriculumDesign, Validation 等）
-        - Agent 执行日志（开始、完成、错误）
-        - 工具调用日志
-        - 重试场景日志
-        - 错误处理日志
+        记录执行日志。
+
+        当前仅 `workflow` 分类日志进入阶段缓冲区，等待后续显式落库；
+        其他分类日志仅返回兼容对象，不会写入数据库。
         
         Args:
             task_id: 任务 ID
@@ -133,7 +92,6 @@ class ExecutionLogger:
         Returns:
             创建的日志记录（注意：实际写入是异步的，返回的对象可能还没有 ID）
         """
-        # 构建日志数据字典
         log_data = {
             "task_id": task_id,
             "level": level,
@@ -147,63 +105,111 @@ class ExecutionLogger:
             "duration_ms": duration_ms,
             "created_at": beijing_now(),
         }
-        
-        # 添加到本地缓冲区
-        async with self._flush_lock:
-            self._log_buffer.append(log_data)
-            
-            # 检查是否需要刷新
-            current_time = time.time()
-            should_flush = (
-                len(self._log_buffer) >= self._buffer_size or
-                (current_time - self._last_flush_time) >= self._flush_interval
-            )
-            
-            if should_flush:
-                await self._flush_to_celery()
-        
-        # 返回模拟的 ExecutionLog 对象（保持 API 兼容性）
-        # 注意：实际写入是异步的，这个对象可能还没有数据库 ID
+
+        if category == LogCategory.WORKFLOW and step:
+            async with self._flush_lock:
+                self._stage_log_buffer[(task_id, step)].append(log_data)
+
         return ExecutionLog(**log_data)
-    
-    async def _flush_to_celery(self):
-        """将缓冲区中的日志发送到 Celery"""
-        if not self._log_buffer:
-            return
-        
-        batch = self._log_buffer.copy()
-        self._log_buffer.clear()
-        self._last_flush_time = time.time()
-        
-        # 发送到 Celery（非阻塞）
-        try:
-            # 延迟导入避免循环依赖
-            from app.tasks.log_tasks import batch_write_logs
-            
-            # 使用 apply_async 异步发送，不等待结果
-            batch_write_logs.apply_async(
-                args=[batch],
-            )
-        except Exception as e:
-            logger.warning(
-                "execution_logger_celery_send_failed",
-                error=str(e),
-                batch_size=len(batch),
-                error_type=type(e).__name__,
-            )
-            # 发送失败时的降级方案：重新放入缓冲区
-            # 这样不会丢失日志，但可能导致内存增长
-            self._log_buffer.extend(batch)
-    
+
+    async def drain_stage_logs(
+        self,
+        task_id: str,
+        step: str,
+    ) -> list[dict]:
+        """
+        提取并清空指定阶段的缓冲日志。
+
+        Args:
+            task_id: 任务 ID
+            step: 阶段名
+
+        Returns:
+            该阶段缓存的日志列表
+        """
+        async with self._flush_lock:
+            return self._stage_log_buffer.pop((task_id, step), [])
+
+    async def persist_logs(
+        self,
+        logs: list[dict],
+        session: AsyncSession | None = None,
+    ) -> int:
+        """
+        同步写入日志到数据库。
+
+        Args:
+            logs: 待写入日志列表
+            session: 可选外部事务会话；若未提供则内部自建事务
+
+        Returns:
+            成功写入的日志数量
+        """
+        if not logs:
+            return 0
+
+        if session is not None:
+            await self._persist_logs_to_session(session, logs)
+            return len(logs)
+
+        async with get_celery_session() as managed_session:
+            await self._persist_logs_to_session(managed_session, logs)
+            return len(logs)
+
+    async def flush_stage_logs(
+        self,
+        task_id: str,
+        step: str,
+        session: AsyncSession | None = None,
+    ) -> int:
+        """
+        将指定阶段的缓冲日志同步写入数据库。
+
+        Args:
+            task_id: 任务 ID
+            step: 阶段名
+            session: 可选外部事务会话
+
+        Returns:
+            成功写入的日志数量
+        """
+        logs = await self.drain_stage_logs(task_id, step)
+        return await self.persist_logs(logs, session=session)
+
     async def flush(self):
         """
-        立即刷新所有待发送的日志
-        
-        用于应用关闭时确保所有日志都被发送。
+        同步刷新所有阶段缓冲日志。
+
+        主要用于：
+        - 工作流结束时兜底；
+        - 应用关闭前确保已缓存的 workflow 日志全部入库。
         """
         async with self._flush_lock:
-            if self._log_buffer:
-                await self._flush_to_celery()
+            all_logs: list[dict] = []
+            for logs in self._stage_log_buffer.values():
+                all_logs.extend(logs)
+            self._stage_log_buffer.clear()
+
+        if not all_logs:
+            return
+
+        await self.persist_logs(all_logs)
+
+    async def _persist_logs_to_session(
+        self,
+        session: AsyncSession,
+        logs: list[dict],
+    ) -> None:
+        """
+        使用指定会话将日志写入数据库。
+
+        Args:
+            session: 数据库会话
+            logs: 待写入日志列表
+        """
+        log_entries = [ExecutionLog(**log_data) for log_data in logs]
+        session.add_all(log_entries)
+        await session.flush()
     
     # ============================================================
     # 便捷方法：按日志级别（保持不变，内部调用 log()）

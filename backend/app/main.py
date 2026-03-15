@@ -18,6 +18,7 @@ from app.api.v1.router import router as api_router_v1
 from app.api.v1.websocket import router as websocket_router
 from app.config.settings import settings
 from app.core.dependencies import init_orchestrator, cleanup_orchestrator
+from app.db.session import async_session_maker
 from app.db.s3_init import ensure_bucket_exists
 from app.middleware.request_id import RequestIDMiddleware
 from app.middleware.trace_middleware import TraceIDMiddleware
@@ -25,6 +26,7 @@ from app.middleware.opera_log_middleware import OperaLogMiddleware
 from app.middleware.rbac_middleware import RBACMiddleware
 from app.middleware.prometheus_middleware import PrometheusMiddleware
 from app.core.prometheus.instruments import set_app_info
+from app.models.database import User
 from app.core.global_exception_handlers import (
     http_exception_handler,
     validation_exception_handler,
@@ -40,6 +42,54 @@ def get_recover_interrupted_tasks_on_startup():
 
 
 logger = structlog.get_logger()
+
+
+async def validate_featured_user_identity() -> None:
+    """
+    校验 featured/admin 固定身份配置。
+
+    说明：
+    - 该校验用于尽早发现 FEATURED_USER_ID 与 admin@example.com 漂移；
+    - 这里只做显式日志告警，不在启动阶段自动迁移数据，避免静默改写生产数据。
+    """
+    async with async_session_maker() as session:
+        featured_user = await session.get(User, settings.FEATURED_USER_ID)
+        admin_result = await session.execute(
+            User.__table__.select().where(User.email == settings.FEATURED_USER_EMAIL)
+        )
+        admin_user_row = admin_result.first()
+
+    if not featured_user:
+        logger.error(
+            "featured_user_id_not_found",
+            featured_user_id=settings.FEATURED_USER_ID,
+            featured_user_email=settings.FEATURED_USER_EMAIL,
+        )
+        return
+
+    if not admin_user_row:
+        logger.error(
+            "featured_admin_email_not_found",
+            featured_user_id=settings.FEATURED_USER_ID,
+            featured_user_email=settings.FEATURED_USER_EMAIL,
+        )
+        return
+
+    admin_user = admin_user_row._mapping
+    if admin_user["id"] != settings.FEATURED_USER_ID:
+        logger.error(
+            "featured_user_identity_mismatch",
+            featured_user_id=settings.FEATURED_USER_ID,
+            featured_user_email=settings.FEATURED_USER_EMAIL,
+            admin_user_id=admin_user["id"],
+        )
+        return
+
+    logger.info(
+        "featured_user_identity_validated",
+        featured_user_id=settings.FEATURED_USER_ID,
+        featured_user_email=settings.FEATURED_USER_EMAIL,
+    )
 
 
 @asynccontextmanager
@@ -72,6 +122,16 @@ async def lifespan(app: FastAPI):
     
     # 初始化 S3 兼容存储 bucket（如果不存在则创建）
     await ensure_bucket_exists()
+
+    # 校验 featured/admin 固定身份配置，避免环境漂移长期隐蔽存在
+    try:
+        await validate_featured_user_identity()
+    except Exception as e:
+        logger.error(
+            "featured_user_identity_validation_error",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
     
     # ============================================================
     # MCP Servers 初始化已废弃 (2026-01-19)
@@ -123,6 +183,39 @@ async def lifespan(app: FastAPI):
             error=str(e),
             error_type=type(e).__name__,
         )
+
+    # 清理长期停留在 init 的历史 pending 创建任务
+    try:
+        from app.services.workflows.generation.stale_pending_task_cleanup_service import (
+            cleanup_stale_pending_tasks_on_startup,
+        )
+        stale_pending_result = await cleanup_stale_pending_tasks_on_startup()
+        if stale_pending_result.total_found > 0:
+            logger.info(
+                "stale_pending_task_cleanup_on_startup_completed",
+                total_found=stale_pending_result.total_found,
+                cleaned=stale_pending_result.cleaned,
+                failed=stale_pending_result.failed,
+            )
+    except Exception as e:
+        logger.error(
+            "stale_pending_task_cleanup_on_startup_error",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+
+    # 启动后台 watchdog，定期清理长期卡住的 processing 任务
+    try:
+        from app.services.workflows.generation.stale_task_cleanup_service import (
+            stale_task_cleanup_service,
+        )
+        await stale_task_cleanup_service.start_watchdog()
+    except Exception as e:
+        logger.error(
+            "stale_task_watchdog_startup_error",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
     
     # 初始化技术栈测验数据（先检查，如果已全部生成则跳过Celery任务）
     try:
@@ -166,6 +259,19 @@ async def lifespan(app: FastAPI):
     yield
     
     logger.info("application_shutdown")
+
+    # 先停止后台 watchdog，避免关闭阶段继续访问外部依赖
+    try:
+        from app.services.workflows.generation.stale_task_cleanup_service import (
+            stale_task_cleanup_service,
+        )
+        await stale_task_cleanup_service.stop_watchdog()
+    except Exception as e:
+        logger.error(
+            "stale_task_watchdog_shutdown_error",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
     
     # 刷新所有待发送的日志
     try:

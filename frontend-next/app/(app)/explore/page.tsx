@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
@@ -8,8 +8,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { EmptyState } from '@/components/common/empty-state';
 import { FeaturedRoadmapCard, type FeaturedRoadmap } from '@/components/roadmap';
 import { ChevronLeft, TrendingUp, LayoutGrid, List } from 'lucide-react';
-import { roadmapsApi } from '@/lib/api/endpoints';
-import { batchFetchCoverImagesFromAPI } from '@/lib/cover-image';
+import { useFeaturedRoadmapsQuery } from '@/lib/hooks/api/use-dashboard-queries';
 import { cn } from '@/lib/utils';
 
 type ViewMode = 'grid' | 'list';
@@ -21,54 +20,29 @@ type ViewMode = 'grid' | 'list';
  */
 export default function ExplorePage() {
   const t = useTranslations('explore');
-  const [isLoading, setIsLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [currentPage, setCurrentPage] = useState(1);
-  const [featuredRoadmaps, setFeaturedRoadmaps] = useState<FeaturedRoadmap[]>([]);
-  const [coverImageMap, setCoverImageMap] = useState<Map<string, string | null>>(new Map());
+  const { data, isLoading } = useFeaturedRoadmapsQuery({ limit: 100, offset: 0 });
   
   const itemsPerPage = viewMode === 'grid' ? 12 : 20;
-  
-  // Fetch featured roadmaps
-  useEffect(() => {
-    const fetchFeaturedRoadmaps = async () => {
-      try {
-        setIsLoading(true);
-        const response = await roadmapsApi.getFeatured({ limit: 100, offset: 0 }); // 获取所有精选路线图
-        const featuredData: FeaturedRoadmap[] = response.items
-          .filter(item => item.status === 'completed') // 只显示已完成的路线图
-          .map((item) => ({
-            id: item.roadmap_id,
-            title: item.title,
-            topic: item.topic || item.title.toLowerCase(),
-            totalConcepts: item.total_concepts || 0,
-            totalHours: Math.ceil((item.total_concepts || 0) * 0.5), // 估算小时数：每个概念约0.5小时
-            difficulty: 'intermediate' as const,
-            createdAt: item.created_at,
-            stages: item.stages?.map(stage => ({
-              name: stage.name,
-              description: stage.description || undefined,
-              order: stage.order,
-            })),
-          }));
-        setFeaturedRoadmaps(featuredData);
-        
-        // 批量获取封面图
-        const roadmapIds = featuredData.map(item => item.id);
-        if (roadmapIds.length > 0) {
-          const coverImages = await batchFetchCoverImagesFromAPI(roadmapIds);
-          setCoverImageMap(coverImages);
-        }
-      } catch (error) {
-        console.error('Failed to fetch featured roadmaps:', error);
-        setFeaturedRoadmaps([]);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    
-    fetchFeaturedRoadmaps();
-  }, []);
+
+  const featuredRoadmaps: FeaturedRoadmap[] = (data?.items || [])
+    .filter(item => item.status === 'completed')
+    .map((item) => ({
+      id: item.roadmap_id,
+      title: item.title,
+      topic: item.topic || item.title.toLowerCase(),
+      coverImageUrl: item.cover_image_url ?? null,
+      totalConcepts: item.total_concepts || 0,
+      totalHours: Math.ceil((item.total_concepts || 0) * 0.5),
+      difficulty: 'intermediate' as const,
+      createdAt: item.created_at,
+      stages: item.stages?.map(stage => ({
+        name: stage.name,
+        description: stage.description || undefined,
+        order: stage.order,
+      })),
+    }));
   
   // Pagination
   const totalPages = Math.ceil(featuredRoadmaps.length / itemsPerPage);
@@ -161,7 +135,7 @@ export default function ExplorePage() {
                   <FeaturedRoadmapCard
                     key={roadmap.id}
                     roadmap={roadmap}
-                    coverImageUrl={coverImageMap.get(roadmap.id) || undefined}
+                    coverImageUrl={roadmap.coverImageUrl ?? null}
                   />
                 ))}
               </div>

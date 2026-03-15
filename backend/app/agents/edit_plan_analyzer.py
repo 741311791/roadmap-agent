@@ -27,7 +27,6 @@ class EditPlanAnalyzerAgent(BaseAgent):
     - 将用户反馈解析为 Stage 级别的修改任务
     - 只生成 3 种动作：CREATE/UPDATE/REGENERATE
     - 用自然语言描述修改意图，而非细粒度指令
-    - 识别任务依赖关系，支持并行执行
     
     配置从环境变量加载：
     - ANALYZER_PROVIDER: 模型提供商（默认: openai）
@@ -52,7 +51,7 @@ class EditPlanAnalyzerAgent(BaseAgent):
             base_url=base_url or settings.ANALYZER_BASE_URL,
             api_key=api_key or settings.ANALYZER_API_KEY,
             temperature=0.2,  # 低温度确保解析的稳定性
-            max_tokens=10000,
+            max_tokens=2000,
         )
     
     def _get_required_constraints(self) -> list[str]:
@@ -70,7 +69,7 @@ class EditPlanAnalyzerAgent(BaseAgent):
     
     def _build_roadmap_structure_summary(self, framework: RoadmapFramework) -> str:
         """
-        构建路线图结构摘要，用于帮助 LLM 定位修改目标
+        构建轻量结构摘要，用于帮助 LLM 定位修改目标
         
         Args:
             framework: 路线图框架
@@ -85,12 +84,20 @@ class EditPlanAnalyzerAgent(BaseAgent):
         lines.append("")
         
         for stage in framework.stages:
-            lines.append(f"Stage {stage.order}: {stage.name} (ID: {stage.stage_id})")
+            lines.append(
+                f"Stage {stage.order}: {stage.name} (ID: {stage.stage_id}, 模块数: {len(stage.modules)}, 时长: {stage.total_hours}h)"
+            )
             for module in stage.modules:
-                lines.append(f"  └─ Module: {module.name} (ID: {module.module_id})")
-                for concept in module.concepts:
-                    difficulty_emoji = {"easy": "🟢", "medium": "🟡", "hard": "🔴"}.get(concept.difficulty, "⚪")
-                    lines.append(f"      └─ {difficulty_emoji} {concept.name} (ID: {concept.concept_id}, {concept.estimated_hours}h)")
+                concept_preview = ", ".join(
+                    f"{concept.name}({concept.concept_id})"
+                    for concept in module.concepts[:3]
+                )
+                extra_count = len(module.concepts) - 3
+                if extra_count > 0:
+                    concept_preview += f", ... 其余 {extra_count} 个概念"
+                lines.append(
+                    f"  - Module: {module.name} (ID: {module.module_id}) | 概念: {concept_preview}"
+                )
         
         return "\n".join(lines)
     
@@ -122,7 +129,6 @@ class EditPlanAnalyzerAgent(BaseAgent):
             "edit_plan_analyzer.j2",
             agent_name="Edit Plan Analyzer",
             role_description="分析用户的修改反馈，将其解析为结构化的修改计划，明确修改目标和保留要求。",
-            roadmap_summary=roadmap_summary,
             user_goal=user_preferences.learning_goal,
             current_level=user_preferences.current_level,
         )

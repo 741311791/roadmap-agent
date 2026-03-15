@@ -39,6 +39,18 @@ class Settings(BaseSettings):
         default="http://localhost:3000",
         description="允许的跨域来源（逗号分隔的字符串）"
     )
+    FEATURED_USER_ID: str = Field(
+        "04005faa-fb45-47dd-a83c-969a25a77046",
+        description="精选路线图归属用户 ID（固定 featured/admin 身份）"
+    )
+    FEATURED_USER_EMAIL: str = Field(
+        "admin@example.com",
+        description="精选路线图归属邮箱（主要用于初始化与一致性校验）"
+    )
+    FEATURED_ROADMAPS_CACHE_TTL_SECONDS: int = Field(
+        300,
+        description="精选路线图列表缓存 TTL（秒）"
+    )
     
     @property
     def get_cors_origins(self) -> list[str]:
@@ -59,42 +71,27 @@ class Settings(BaseSettings):
     POSTGRES_PASSWORD: str = Field("roadmap_pass", description="数据库密码")
     POSTGRES_DB: str = Field("roadmap_db", description="数据库名称")
     
-    # 连接池配置（阿里云数据库优化）
-    # 
-    # ⚠️ 关键计算：
-    # 总连接数 = (DB_POOL_SIZE + DB_MAX_OVERFLOW) × 总进程数
-    # 
-    # 数据库连接配额：
-    # - 研发环境最大连接数: 300
-    # - 生产环境最大连接数: 350
-    # 
-    # 研发环境进程数（推荐配置）：
-    # - FastAPI (uvicorn --workers 4): 4 个进程
-    # - Celery logs (--concurrency=4): 5 个进程
-    # - Celery content_generation (--concurrency=6): 7 个进程
-    # - Celery workflow (--concurrency=4): 5 个进程
-    # 总计: 21 个进程
-    # 每进程连接: 8 + 6 = 14
-    # 总需求: 21 × 14 = 294（实际峰值 60% ≈ 176）
+    # 连接池配置（4C8G 单机生产默认值）
     #
-    # 生产环境进程数（默认配置）：
-    # - FastAPI (uvicorn --workers 8): 8 个进程
-    # - Celery logs (--concurrency=8): 9 个进程
-    # - Celery content_generation (--concurrency=10): 11 个进程
-    # - Celery workflow (--concurrency=6): 7 个进程
-    # 总计: 35 个进程
-    # 每进程连接: 7 + 3 = 10
-    # 总需求: 35 × 10 = 350（实际峰值 60% ≈ 210）
-    #
-    # 优化后的连接池配置
-    # 研发环境默认值，生产环境通过 .env 覆盖
+    # 设计目标：
+    # - API、Celery、Redis 共用一台机器时，降低空闲常驻内存
+    # - 保留适度突发能力，但避免每个进程都持有过大的连接池
+    # - 需要更高吞吐时，优先通过环境变量覆盖，而不是继续放大默认值
     DB_POOL_SIZE: int = Field(
-        8, 
-        description="数据库连接池基础大小（研发环境默认 8，生产环境建议 7）"
+        3,
+        description="数据库连接池基础大小（4C8G 单机生产默认值）"
     )
     DB_MAX_OVERFLOW: int = Field(
-        6, 
-        description="数据库连接池最大溢出数（研发环境默认 6，生产环境建议 3）"
+        2,
+        description="数据库连接池最大溢出数（4C8G 单机生产默认值）"
+    )
+    LANGGRAPH_CHECKPOINTER_POOL_MIN_SIZE: int = Field(
+        1,
+        description="LangGraph Checkpointer 连接池最小连接数"
+    )
+    LANGGRAPH_CHECKPOINTER_POOL_MAX_SIZE: int = Field(
+        3,
+        description="LangGraph Checkpointer 连接池最大连接数（4C8G 单机生产默认值）"
     )
     
     @property
@@ -102,27 +99,22 @@ class Settings(BaseSettings):
         """
         根据运行环境动态返回数据库连接池配置
         
-        优化后的配置：
-        - 研发环境: pool_size=8, max_overflow=6, pool_recycle=1800（总配额 300 连接）
-        - 生产环境: pool_size=7, max_overflow=3, pool_recycle=900（总配额 350 连接）
-        
-        计算说明：
-        - 研发环境：21 进程 × 14 连接 = 294 个峰值（总配额 300，使用率 98%）
-        - 生产环境：35 进程 × 10 连接 = 350 个峰值（总配额 350，使用率 100%）
-        - Celery Worker 使用 NullPool，不占用连接池配额
+        说明：
+        - 连接数直接取环境变量或字段默认值，避免“注释推荐值”和“实际生效值”不一致
+        - 生产环境缩短 pool_recycle，尽早回收空闲连接
         
         Returns:
             连接池配置字典
         """
         if self.ENVIRONMENT == "production":
             return {
-                "pool_size": 7,
-                "max_overflow": 3,
+                "pool_size": self.DB_POOL_SIZE,
+                "max_overflow": self.DB_MAX_OVERFLOW,
                 "pool_recycle": 900,  # 15分钟
             }
         return {
-            "pool_size": 8,
-            "max_overflow": 6,
+            "pool_size": self.DB_POOL_SIZE,
+            "max_overflow": self.DB_MAX_OVERFLOW,
             "pool_recycle": 1800,  # 30分钟
         }
     
@@ -184,6 +176,41 @@ class Settings(BaseSettings):
     )
     
     # 注意：TAVILY_RATE_LIMIT_PER_MINUTE 已在上面定义，不重复
+
+    # ==================== Gemini 网关配置 ====================
+    GEMINI_API_KEY: str | None = Field(
+        None,
+        description="Gemini API 密钥（通过 OpenAI 兼容网关调用时使用）"
+    )
+    GEMINI_MODEL: str = Field(
+        "google/gemini-3-flash-preview",
+        description="Gemini 模型名称（OpenAI 兼容格式）"
+    )
+    GEMINI_BASE_URL: str | None = Field(
+        None,
+        description="Gemini 网关地址；若使用 OfoxAI 的 /gemini 入口，会自动转换为 /v1"
+    )
+
+    @property
+    def get_gemini_openai_base_url(self) -> str | None:
+        """
+        获取适用于 OpenAI SDK 的 Gemini 兼容 Base URL
+
+        说明：
+        - 当前项目通过 `AsyncOpenAI` 统一调用不同网关
+        - OfoxAI 首页给出的 OpenAI 兼容入口是 `https://api.ofox.ai/v1`
+        - 如果环境变量误配为 `https://api.ofox.ai/gemini`，这里自动纠正，避免 404
+
+        Returns:
+            适用于 OpenAI SDK 的 Base URL；未配置时返回 None
+        """
+        if not self.GEMINI_BASE_URL:
+            return None
+
+        normalized_url = self.GEMINI_BASE_URL.rstrip("/")
+        if normalized_url.endswith("/gemini"):
+            return normalized_url[: -len("/gemini")] + "/v1"
+        return normalized_url
     
     # ==================== LLM 配置 ====================
     # A1: Intent Analyzer (需求分析师)
@@ -324,6 +351,10 @@ class Settings(BaseSettings):
     # ==================== 业务配置 ====================
     MAX_FRAMEWORK_RETRY: int = Field(3, description="路线图结构验证最大重试次数")
     HUMAN_REVIEW_TIMEOUT_HOURS: int = Field(24, description="人工审核超时时间（小时）")
+    NOTIFICATION_PROGRESS_PUBLISH_TIMEOUT_SECONDS: float = Field(
+        3.0,
+        description="普通 progress 通知发布超时时间（秒）",
+    )
     # PARALLEL_TUTORIAL_LIMIT 已废弃：改用 Celery --concurrency 参数控制全局并发
     # PARALLEL_TUTORIAL_LIMIT: int = Field(5, description="并发生成教程的最大数量")
     
@@ -380,6 +411,32 @@ class Settings(BaseSettings):
     PENDING_TASK_RECOVERY_MAX_AGE_HOURS: int = Field(
         2,
         description="Pending 任务重新入队最大年龄（小时），仅处理此时间内创建的任务"
+    )
+    ENABLE_STALE_PENDING_TASK_CLEANUP: bool = Field(
+        True,
+        description="启用长期 pending 创建任务自动清理，避免历史孤儿任务污染排队统计"
+    )
+    STALE_PENDING_TASK_CLEANUP_AFTER_HOURS: int = Field(
+        6,
+        description="Pending 创建任务超过此小时数仍停留在 init 时，视为陈旧孤儿任务"
+    )
+
+    # Stale processing 任务清理配置（管理员手动清理 + 后台 watchdog）
+    ENABLE_STALE_TASK_WATCHDOG: bool = Field(
+        True,
+        description="启用后台 watchdog，定期清理长期卡住的 processing 任务"
+    )
+    STALE_TASK_CLEANUP_AFTER_MINUTES: int = Field(
+        30,
+        description="任务超过此分钟数未更新时，视为卡住候选任务"
+    )
+    STALE_TASK_WATCHDOG_INTERVAL_SECONDS: int = Field(
+        300,
+        description="后台 watchdog 扫描间隔（秒）"
+    )
+    STALE_TASK_WATCHDOG_BATCH_SIZE: int = Field(
+        20,
+        description="后台 watchdog 单次最多处理的任务数量"
     )
     
     # ==================== JWT 认证配置 ====================

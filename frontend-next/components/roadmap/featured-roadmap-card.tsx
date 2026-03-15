@@ -40,6 +40,7 @@ export interface FeaturedRoadmap {
   tags?: string[];
   totalConcepts?: number;
   totalHours?: number;
+  coverImageUrl?: string | null;
   difficulty?: 'beginner' | 'intermediate' | 'advanced';
   isTrending?: boolean;
   createdAt?: string;
@@ -53,7 +54,8 @@ export interface FeaturedRoadmap {
 interface FeaturedRoadmapCardProps {
   roadmap: FeaturedRoadmap;
   className?: string;
-  coverImageUrl?: string;  // 可选的封面图 URL（用于批量获取）
+  coverImageUrl?: string | null;  // 可选的封面图 URL（用于批量获取）
+  enableFlip?: boolean;
 }
 
 // 难度级别配置（仅颜色）
@@ -100,7 +102,7 @@ function formatRelativeTime(dateString: string | undefined, t: any): string {
 /**
  * 卡片正面内容
  */
-function CardFront({ roadmap, coverImageUrl }: { roadmap: FeaturedRoadmap; coverImageUrl?: string }) {
+function CardFront({ roadmap, coverImageUrl }: { roadmap: FeaturedRoadmap; coverImageUrl?: string | null }) {
   const t = useTranslations();
   const [imageUrl, setImageUrl] = useState(getCoverImage(roadmap.topic, 400, 300));
   const [imageLoading, setImageLoading] = useState(true);
@@ -112,8 +114,10 @@ function CardFront({ roadmap, coverImageUrl }: { roadmap: FeaturedRoadmap; cover
   
   // 如果提供了 coverImageUrl，直接使用；否则尝试从 API 获取封面图
   useEffect(() => {
-    if (coverImageUrl) {
-      setImageUrl(coverImageUrl);
+    if (coverImageUrl !== undefined) {
+      if (coverImageUrl) {
+        setImageUrl(coverImageUrl);
+      }
       setImageLoading(false);
     } else if (roadmap.id) {
       fetchCoverImageFromAPI(roadmap.id).then((apiUrl) => {
@@ -327,16 +331,27 @@ function CardBack({ roadmap }: { roadmap: FeaturedRoadmap }) {
   );
 }
 
-export function FeaturedRoadmapCard({ roadmap, className, coverImageUrl }: FeaturedRoadmapCardProps) {
+export function FeaturedRoadmapCard({
+  roadmap,
+  className,
+  coverImageUrl,
+  enableFlip = true,
+}: FeaturedRoadmapCardProps) {
   return (
     <Link href={`/roadmap/${roadmap.id}`} className={cn('block', className)}>
-      <FlippingCard
-        width={280}
-        height={350}
-        frontContent={<CardFront roadmap={roadmap} coverImageUrl={coverImageUrl} />}
-        backContent={<CardBack roadmap={roadmap} />}
-        className="w-full"
-      />
+      {enableFlip ? (
+        <FlippingCard
+          width={280}
+          height={350}
+          frontContent={<CardFront roadmap={roadmap} coverImageUrl={coverImageUrl} />}
+          backContent={<CardBack roadmap={roadmap} />}
+          className="w-full"
+        />
+      ) : (
+        <div className="w-[280px] h-[350px] rounded-xl border border-neutral-200 bg-white shadow-lg overflow-hidden">
+          <CardFront roadmap={roadmap} coverImageUrl={coverImageUrl} />
+        </div>
+      )}
     </Link>
   );
 }

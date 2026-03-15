@@ -16,6 +16,7 @@
 - 共享的内容生成函数位于 content_generation_shared.py
 - 新架构支持更细粒度的状态管理和独立测试
 """
+import time
 from typing import TypedDict, Annotated
 import operator
 import structlog
@@ -96,6 +97,8 @@ def outer_fan_out(state: ContentGenState) -> Command:
             "user_preferences": user_preferences,
             "task_id": task_id,
             "concept_name_map": concept_name_map,
+            # 记录单个 Concept 子图的开始时间，供 fan_in_and_save 统计总耗时。
+            "concept_started_at": time.perf_counter(),
             "tutorial": None,
             "resource": None,
             "quiz": None,

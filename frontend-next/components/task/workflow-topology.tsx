@@ -17,6 +17,7 @@
 
 import { useState, useEffect, useRef, useMemo } from 'react';
 import dynamic from 'next/dynamic';
+import { AnimatePresence, motion } from 'framer-motion';
 import { useTranslations } from 'next-intl';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -37,6 +38,11 @@ import { cn } from '@/lib/utils';
 import { tasksApi } from '@/lib/api/endpoints';
 import { NodeDetailPanel } from './node-detail-panel';
 import type { ExecutionLog } from '@/types/content-generation';
+import {
+  collectWorkflowNodeDurations,
+  formatWorkflowDuration,
+  type WorkflowNodeDurationStat,
+} from '@/lib/utils/workflow-node-duration';
 
 // ========================================
 // 优化：动态导入 GradientTracing 组件
@@ -122,7 +128,8 @@ const MAIN_STAGES_KEYS = [
     labelKey: 'contentGeneration',
     shortLabelKey: 'content',
     descriptionKey: 'generatingMaterials',
-    steps: ['content_generation_queued', 'content_generation'],
+    // auto_content_generation 是极速模式的内部节点名，WS 可能短暂推送此步骤，映射到 content 阶段
+    steps: ['auto_content_generation', 'content_generation_queued', 'content_generation'],
   },
 ];
 
@@ -230,6 +237,56 @@ const REVIEW_BRANCH: WorkflowBranch = {
   })),
 };
 
+/**
+ * 运行中文案轮播配置。
+ *
+ * 说明：
+ * - 仅在当前执行节点上展示；
+ * - 使用翻译 key，避免把展示文案硬编码进渲染逻辑。
+ */
+const NODE_LOADING_MESSAGE_KEYS: Record<string, string[]> = {
+  analysis: [
+    'nodeLoadingAnalysisProfile',
+    'nodeLoadingAnalysisGoal',
+    'nodeLoadingAnalysisConstraint',
+  ],
+  design: [
+    'nodeLoadingDesignStages',
+    'nodeLoadingDesignPath',
+    'nodeLoadingDesignDifficulty',
+  ],
+  validate: [
+    'nodeLoadingValidatePrerequisites',
+    'nodeLoadingValidateDependencies',
+    'nodeLoadingValidateRisks',
+  ],
+  plan1: [
+    'nodeLoadingPlanValidationIssues',
+    'nodeLoadingPlanValidationFixes',
+    'nodeLoadingPlanValidationImpact',
+  ],
+  edit1: [
+    'nodeLoadingEditValidationStructure',
+    'nodeLoadingEditValidationDependencies',
+    'nodeLoadingEditValidationConsistency',
+  ],
+  plan2: [
+    'nodeLoadingPlanReviewFeedback',
+    'nodeLoadingPlanReviewIntent',
+    'nodeLoadingPlanReviewRevision',
+  ],
+  edit2: [
+    'nodeLoadingEditReviewUpdates',
+    'nodeLoadingEditReviewStructure',
+    'nodeLoadingEditReviewConsistency',
+  ],
+  content: [
+    'nodeLoadingContentTutorials',
+    'nodeLoadingContentResources',
+    'nodeLoadingContentQuiz',
+  ],
+};
+
 // ============================================================================
 // 工具函数
 // ============================================================================
@@ -253,6 +310,12 @@ export function getStepLocation(
   // 处理 null 值
   if (!currentStep) {
     return { stageId: 'START', isOnBranch: false };
+  }
+
+  // 终态步骤不参与正常节点匹配，但拓扑图仍需要一个稳定锚点。
+  // completed / failed 都锚定到最后一个主路节点，避免在控制台产生无意义警告。
+  if (currentStep === 'completed' || currentStep === 'failed') {
+    return { stageId: 'content', isOnBranch: false };
   }
   
   // 检查主路节点
@@ -326,6 +389,8 @@ interface WorkflowTopologyProps {
   stagesCount?: number;
   /** 执行日志（时间轴展示用，不再用于判断分支触发状态） */
   executionLogs?: ExecutionLog[];
+  /** 节点耗时原始日志（包含 workflow/content，避免被时间轴截断影响） */
+  workflowLogs?: ExecutionLog[];
   /**
    * 验证分支是否已被触发（由父组件维护，避免依赖存在写入延迟的 DB 日志）
    * 真实来源：WS progress 事件（实时）+ DB 日志（刷新恢复）
@@ -361,6 +426,7 @@ export function WorkflowTopology({
   roadmapTitle,
   stagesCount = 0,
   executionLogs = [],
+  workflowLogs = [],
   validationBranchTriggered: validationBranchTriggeredProp = false,
   reviewBranchTriggered: reviewBranchTriggeredProp = false,
   onHumanReviewComplete,
@@ -378,9 +444,11 @@ export function WorkflowTopology({
   const [reviewError, setReviewError] = useState<string | null>(null);
   
   // 动态翻译主路节点（组件内使用的翻译版本）
-  // 极速模式下过滤掉 validate（structure_validation）节点，避免产生疑问
+  // 极速模式下过滤掉 validate（结构验证）和 review（人工审查）节点
+  // 极速模式拓扑：Analysis → Design → Content
+  // 普通模式拓扑：Analysis → Design → Validate → Review → Content
   const mainStagesTranslated: WorkflowNode[] = useMemo(() => MAIN_STAGES_KEYS
-    .filter(stage => !(turboMode && stage.id === 'validate'))
+    .filter(stage => !(turboMode && (stage.id === 'validate' || stage.id === 'review')))
     .map(stage => ({
       id: stage.id,
       label: t(stage.labelKey as any),
@@ -501,6 +569,35 @@ export function WorkflowTopology({
       log.details?.edit_source === 'human_review'
   );
 
+  const nodeDurationStats = useMemo(
+    () => collectWorkflowNodeDurations(workflowLogs),
+    [workflowLogs]
+  );
+
+  /**
+   * 为当前节点生成轻量的轮播加载提示。
+   */
+  const renderNodeLoadingHint = (
+    nodeId: string,
+    nodeStatus: NodeStatus,
+    suppressHint: boolean = false
+  ) => {
+    if (nodeStatus !== 'current' || suppressHint) {
+      return null;
+    }
+
+    const messageKeys = NODE_LOADING_MESSAGE_KEYS[nodeId];
+    if (!messageKeys || messageKeys.length === 0) {
+      return null;
+    }
+
+    return (
+      <NodeLoadingHint
+        messages={messageKeys.map((key) => t(key as any))}
+      />
+    );
+  };
+
   /**
    * 获取主路节点状态
    * 
@@ -619,6 +716,43 @@ export function WorkflowTopology({
       default:
         return <Clock className="w-5 h-5 opacity-40" />;
     }
+  };
+
+  /**
+   * 获取节点耗时统计
+   */
+  const getNodeDurationStat = (nodeId: string): WorkflowNodeDurationStat | null => {
+    return nodeDurationStats[nodeId as keyof typeof nodeDurationStats] ?? null;
+  };
+
+  /**
+   * 渲染节点耗时标签
+   */
+  const renderNodeDuration = (nodeId: string, nodeStatus: NodeStatus) => {
+    const durationStat = getNodeDurationStat(nodeId);
+
+    if (!durationStat) {
+      return null;
+    }
+
+    return (
+      <span
+        className={cn(
+          'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium tabular-nums',
+          nodeStatus === 'completed' && 'bg-sage-100 text-sage-700',
+          nodeStatus === 'current' && 'bg-sage-50 text-sage-700',
+          nodeStatus === 'failed' && 'bg-red-50 text-red-600',
+          (nodeStatus === 'pending' || nodeStatus === 'skipped') && 'bg-muted text-muted-foreground'
+        )}
+        title={
+          durationStat.count > 1
+            ? `${t('durationLabel')} ${formatWorkflowDuration(durationStat.latestMs)}`
+            : `${t('durationLabel')} ${formatWorkflowDuration(durationStat.latestMs)}`
+        }
+      >
+        {t('durationLabel')} {formatWorkflowDuration(durationStat.latestMs)}
+      </span>
+    );
   };
 
   /**
@@ -776,7 +910,11 @@ export function WorkflowTopology({
                 // 当 reviewStatus 为 'rejected' 时隐藏面板，改为显示审核分支节点（计划/编辑）
                 // 这样用户提交反馈后，能立即看到分支节点以 pending 状态等待后端执行
                 const isReviewStage = stage.id === 'review';
-                const showHumanReviewPanel = isReviewStage && isHumanReviewActive && taskId && reviewStatus !== 'rejected';
+                const showHumanReviewPanel =
+                  isReviewStage &&
+                  isHumanReviewActive &&
+                  Boolean(taskId) &&
+                  reviewStatus !== 'rejected';
 
                 // 是否有激活的分支
                 const hasBranch = stage.id === 'validate' || stage.id === 'review';
@@ -798,6 +936,8 @@ export function WorkflowTopology({
                           isActive={isReviewBranchActive}
                           getNodeStatus={(idx, id) => getBranchNodeStatus('review', idx, id)}
                           getNodeIcon={getNodeIcon}
+                          renderNodeDuration={renderNodeDuration}
+                          renderLoadingHint={renderNodeLoadingHint}
                           selectedNodeId={selectedNodeId}
                           onNodeSelect={onNodeSelect}
                         />
@@ -821,7 +961,7 @@ export function WorkflowTopology({
                         {getNodeIcon(nodeStatus, stage.id)}
                       </button>
 
-                      <div className="mt-3 text-center space-y-1 max-w-[90px]">
+                      <div className="mt-3 text-center space-y-1 max-w-[128px]">
                         <p
                           className={cn(
                             'text-xs font-medium transition-colors',
@@ -834,6 +974,12 @@ export function WorkflowTopology({
                         >
                           {stage.shortLabel}
                         </p>
+                        <div className="flex justify-center">
+                          {renderNodeDuration(stage.id, nodeStatus)}
+                        </div>
+                        <div className="flex justify-center">
+                          {renderNodeLoadingHint(stage.id, nodeStatus, showHumanReviewPanel)}
+                        </div>
                         <p 
                           className={cn(
                             'text-[10px] hidden sm:block transition-colors',
@@ -864,6 +1010,8 @@ export function WorkflowTopology({
                           isActive={isValidationBranchActive}
                           getNodeStatus={(idx, id) => getBranchNodeStatus('validation', idx, id)}
                           getNodeIcon={getNodeIcon}
+                          renderNodeDuration={renderNodeDuration}
+                          renderLoadingHint={renderNodeLoadingHint}
                           selectedNodeId={selectedNodeId}
                           onNodeSelect={onNodeSelect}
                         />
@@ -935,11 +1083,23 @@ interface BranchNodesProps {
   isActive: boolean;
   getNodeStatus: (index: number, nodeId: string) => NodeStatus;
   getNodeIcon: (status: NodeStatus, nodeId: string) => React.ReactNode;
+  renderNodeDuration: (nodeId: string, nodeStatus: NodeStatus) => React.ReactNode;
+  renderLoadingHint: (nodeId: string, nodeStatus: NodeStatus) => React.ReactNode;
   selectedNodeId?: string | null;
   onNodeSelect?: (nodeId: string | null) => void;
 }
 
-function BranchNodes({ branch, branchType, isActive, getNodeStatus, getNodeIcon, selectedNodeId, onNodeSelect }: BranchNodesProps) {
+function BranchNodes({
+  branch,
+  branchType,
+  isActive,
+  getNodeStatus,
+  getNodeIcon,
+  renderNodeDuration,
+  renderLoadingHint,
+  selectedNodeId,
+  onNodeSelect,
+}: BranchNodesProps) {
   const isTopBranch = branch.position === 'top';
   
   return (
@@ -1018,6 +1178,8 @@ function BranchNodes({ branch, branchType, isActive, getNodeStatus, getNodeIcon,
                 )}>
                   {node.shortLabel}
                 </span>
+                {renderNodeDuration(node.id, nodeStatus)}
+                {renderLoadingHint(node.id, nodeStatus)}
               </div>
             </div>
           );
@@ -1033,6 +1195,57 @@ function BranchNodes({ branch, branchType, isActive, getNodeStatus, getNodeIcon,
           )}
         />
       )}
+    </div>
+  );
+}
+
+interface NodeLoadingHintProps {
+  messages: string[];
+}
+
+function NodeLoadingHint({ messages }: NodeLoadingHintProps) {
+  const [messageIndex, setMessageIndex] = useState(0);
+
+  useEffect(() => {
+    setMessageIndex(0);
+
+    if (messages.length <= 1) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      setMessageIndex((prevIndex) => (prevIndex + 1) % messages.length);
+    }, 2200);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [messages]);
+
+  if (messages.length === 0) {
+    return null;
+  }
+
+  const activeMessage = messages[messageIndex];
+
+  return (
+    <div className="flex min-h-5 items-center justify-center" aria-live="polite" aria-atomic="true">
+      <div className="relative h-4 w-[136px] overflow-hidden text-[10px] leading-4 text-sage-700/80">
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={`${messageIndex}-${activeMessage}`}
+            initial={{ opacity: 0, y: 10, filter: 'blur(6px)' }}
+            animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+            exit={{ opacity: 0, y: -10, filter: 'blur(6px)' }}
+            transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
+            className="absolute inset-0 flex items-center justify-center px-1"
+          >
+            <span className="block w-full text-center truncate">
+              {activeMessage}
+            </span>
+          </motion.div>
+        </AnimatePresence>
+      </div>
     </div>
   );
 }

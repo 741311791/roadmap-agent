@@ -5,10 +5,11 @@
 - 调用CurriculumArchitectAgent执行课程设计
 - 返回纯数据（不保存数据库）
 """
+import time
 import structlog
 from langchain_core.runnables import RunnableConfig
 
-from app.core.orchestrator.base import RoadmapState
+from app.core.orchestrator.base import INTERNAL_NODE_DURATION_MS_KEY, RoadmapState
 from app.core.orchestrator.runtime_context import RuntimeContext
 from app.services.shared.execution_logger import execution_logger, LogCategory
 
@@ -34,6 +35,8 @@ async def curriculum_design_node(
         - roadmap_framework: RoadmapFramework
         - current_step: 当前步骤
     """
+    node_started_at = time.perf_counter()
+
     # 从config获取依赖
     ctx: RuntimeContext = config["configurable"]["runtime_context"]
     
@@ -107,5 +110,8 @@ async def curriculum_design_node(
         "user_id": user_request.user_id,     # ✅ Handler 需要
         "current_step": "curriculum_design",
         "execution_history": ["课程设计完成"],
+        # 某些 LangGraph 事件流场景下，executor 可能拿不到稳定的开始时间。
+        # 这里回传节点内部实测耗时，供 executor 作为落库兜底值使用。
+        INTERNAL_NODE_DURATION_MS_KEY: int((time.perf_counter() - node_started_at) * 1000),
     }
 

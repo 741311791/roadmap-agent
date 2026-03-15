@@ -198,6 +198,17 @@ class APIRateLimiter:
                     error=str(e),
                     error_type=type(e).__name__,
                 )
+
+                # 主动丢弃可能已损坏的 Redis 连接，避免后续请求持续复用坏连接。
+                try:
+                    await self.redis_client.close()
+                except Exception as close_error:
+                    logger.warning(
+                        "rate_limiter_close_bad_redis_failed",
+                        provider=provider,
+                        error=str(close_error),
+                        error_type=type(close_error).__name__,
+                    )
                 
                 # 发生错误时，优雅降级：允许通过（避免阻塞业务）
                 logger.warning(
@@ -261,6 +272,15 @@ class APIRateLimiter:
                 provider=provider,
                 error=str(e)
             )
+            try:
+                await self.redis_client.close()
+            except Exception as close_error:
+                logger.warning(
+                    "rate_limiter_close_bad_redis_failed",
+                    provider=provider,
+                    error=str(close_error),
+                    error_type=type(close_error).__name__,
+                )
             return {
                 "provider": provider,
                 "error": str(e)
@@ -322,6 +342,15 @@ class APIRateLimiter:
                 provider=provider,
                 error=str(e)
             )
+            try:
+                await self.redis_client.close()
+            except Exception as close_error:
+                logger.warning(
+                    "rate_limiter_close_bad_redis_failed",
+                    provider=provider,
+                    error=str(close_error),
+                    error_type=type(close_error).__name__,
+                )
             return False
 
 

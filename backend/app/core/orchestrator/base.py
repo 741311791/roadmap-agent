@@ -23,6 +23,7 @@ from app.models.domain import (
 )
 
 logger = structlog.get_logger()
+INTERNAL_NODE_DURATION_MS_KEY = "_internal_node_duration_ms"
 
 
 def merge_dicts(left: dict, right: dict) -> dict:

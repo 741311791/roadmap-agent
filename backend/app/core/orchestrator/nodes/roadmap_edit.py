@@ -2,13 +2,14 @@
 路线图编辑节点（纯函数）
 
 职责：
-- 调用RoadmapEditorAgent执行编辑
+- 调用当前配置的路线图编辑器执行编辑
 - 返回纯数据（不保存数据库）
 """
 import structlog
+import time
 from langchain_core.runnables import RunnableConfig
 
-from app.core.orchestrator.base import RoadmapState
+from app.core.orchestrator.base import INTERNAL_NODE_DURATION_MS_KEY, RoadmapState
 from app.core.orchestrator.runtime_context import RuntimeContext
 from app.services.shared.execution_logger import execution_logger, LogCategory
 
@@ -38,6 +39,7 @@ async def roadmap_edit_node(
     """
     # 从config获取依赖
     ctx: RuntimeContext = config["configurable"]["runtime_context"]
+    node_started_at = time.perf_counter()
     
     task_id = state["task_id"]
     roadmap_id = state.get("roadmap_id")
@@ -60,6 +62,7 @@ async def roadmap_edit_node(
     
     # 创建Agent
     agent = ctx.agent_factory.create_roadmap_editor()
+    agent_name = getattr(agent, "agent_id", agent.__class__.__name__)
     
     # 准备输入数据
     from app.models.domain import RoadmapEditInput
@@ -95,11 +98,12 @@ async def roadmap_edit_node(
         task_id=task_id,
         category=LogCategory.AGENT,
         step="roadmap_edit",
-        agent_name="RoadmapEditorAgent",
+        agent_name=agent_name,
         roadmap_id=roadmap_id,
         message=f"✅ Roadmap edited: modification #{modification_count} (source: {edit_source})",
         details={
             "log_type": "roadmap_edit_output",
+            "editor_agent": agent_name,
             "edit_source": edit_source,  # ✅ 添加：记录edit_source（与前端保持一致）
             "modification_count": modification_count,
             "modified_nodes_count": len(modified_node_ids),
@@ -120,6 +124,7 @@ async def roadmap_edit_node(
         "edit_source": edit_source,  # ✅ 添加：传递edit_source给前端
         "modified_node_ids": modified_node_ids,  # ✅ 添加：传递modified_node_ids给前端
         "execution_history": [f"路线图编辑完成（第 {modification_count} 轮）"],
+        INTERNAL_NODE_DURATION_MS_KEY: int((time.perf_counter() - node_started_at) * 1000),
     }
 
 

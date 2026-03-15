@@ -52,7 +52,8 @@ export interface MyLearningCardProps {
   onDelete?: (id: string) => void;
   showActions?: boolean;
   className?: string;
-  coverImageUrl?: string;  // 可选的封面图 URL（用于批量获取）
+  coverImageUrl?: string | null;  // 可选的封面图 URL（用于批量获取）
+  enableFlip?: boolean;
   stages?: Array<{
     name: string;
     description?: string;
@@ -388,6 +389,7 @@ export function MyLearningCard(props: MyLearningCardProps) {
     showActions = true,
     className,
     coverImageUrl,
+    enableFlip = true,
     stages,
   } = props;
 
@@ -403,10 +405,39 @@ export function MyLearningCard(props: MyLearningCardProps) {
 
   return (
     <Link href={href} className={cn('block', className)}>
-      <FlippingCard
-        width={280}
-        height={350}
-        frontContent={
+      {enableFlip ? (
+        <FlippingCard
+          width={280}
+          height={350}
+          frontContent={
+            <CardFront
+              id={id}
+              title={title}
+              topic={topic}
+              status={status}
+              totalConcepts={totalConcepts}
+              completedConcepts={completedConcepts}
+              coverImageUrl={coverImageUrl}
+            />
+          }
+          backContent={
+            <CardBack
+              id={id}
+              title={title}
+              status={status}
+              totalConcepts={totalConcepts}
+              totalHours={totalHours}
+              lastAccessedAt={lastAccessedAt}
+              currentStep={currentStep}
+              onDelete={onDelete}
+              showActions={showActions}
+              stages={stages}
+            />
+          }
+          className="w-full"
+        />
+      ) : (
+        <div className="w-[280px] h-[350px] rounded-xl border border-neutral-200 bg-white shadow-lg overflow-hidden">
           <CardFront
             id={id}
             title={title}
@@ -416,23 +447,8 @@ export function MyLearningCard(props: MyLearningCardProps) {
             completedConcepts={completedConcepts}
             coverImageUrl={coverImageUrl}
           />
-        }
-        backContent={
-          <CardBack
-            id={id}
-            title={title}
-            status={status}
-            totalConcepts={totalConcepts}
-            totalHours={totalHours}
-            lastAccessedAt={lastAccessedAt}
-            currentStep={currentStep}
-            onDelete={onDelete}
-            showActions={showActions}
-            stages={stages}
-          />
-        }
-        className="w-full"
-      />
+        </div>
+      )}
     </Link>
   );
 }

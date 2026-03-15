@@ -4,13 +4,13 @@
  * 保护需要登录的页面，自动重定向到登录页
  * 
  * 优化点：
- * - 移除不必要的延迟和状态
- * - 使用 useMemo 缓存计算结果
- * - 简化渲染逻辑，减少重渲染
+ * - 受保护页面不再等待 `/users/me` 返回后才渲染
+ * - 仅在 store hydrate 完成后判断登录态，避免误跳转
+ * - 将用户刷新改为后台同步，避免每次路由切换串行阻塞
  */
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuthStore } from '@/lib/store/auth-store';
 import { Loader2 } from 'lucide-react';
@@ -60,46 +60,53 @@ interface AuthGuardProps {
 export function AuthGuard({ children }: AuthGuardProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const { isAuthenticated, refreshUser } = useAuthStore();
-  const [isChecking, setIsChecking] = useState(true);
+  const { isAuthenticated, hasHydrated, refreshUser } = useAuthStore();
   
   // 缓存公开路由检查结果
   const isPublic = useMemo(() => isPublicRoute(pathname), [pathname]);
   
   useEffect(() => {
-    // 公开路由直接跳过检查
-    if (isPublic) {
-      setIsChecking(false);
+    if (isPublic || !hasHydrated) {
       return;
     }
-    
-    console.log('[AuthGuard] Checking auth for path:', pathname);
-    
-    // 刷新用户状态（同步操作，从 localStorage 读取）
-    refreshUser();
-    
-    // 检查认证状态
+
     if (!isAuthenticated) {
       console.log('[AuthGuard] ❌ Unauthorized, redirecting to login');
-      router.push('/login?redirect=' + encodeURIComponent(pathname));
-    } else {
-      console.log('[AuthGuard] ✅ Access granted');
-      setIsChecking(false);
+      router.replace('/login?redirect=' + encodeURIComponent(pathname));
     }
-  }, [pathname, isAuthenticated, isPublic, refreshUser, router]);
+  }, [pathname, hasHydrated, isAuthenticated, isPublic, router]);
+
+  useEffect(() => {
+    if (!hasHydrated || !isAuthenticated) {
+      return;
+    }
+
+    void refreshUser();
+  }, [hasHydrated, isAuthenticated, refreshUser]);
   
   // 公开路由直接渲染
   if (isPublic) {
     return <>{children}</>;
   }
   
-  // 未登录时显示加载状态
-  if (!isAuthenticated || isChecking) {
+  // 等待持久化状态恢复，避免刷新页面时先误判为未登录
+  if (!hasHydrated) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="text-center">
           <Loader2 className="w-12 h-12 animate-spin text-sage-600 mx-auto mb-4" />
-          <p className="text-muted-foreground">Checking authentication...</p>
+          <p className="text-muted-foreground">Restoring session...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-center">
+          <Loader2 className="w-12 h-12 animate-spin text-sage-600 mx-auto mb-4" />
+          <p className="text-muted-foreground">Redirecting to login...</p>
         </div>
       </div>
     );

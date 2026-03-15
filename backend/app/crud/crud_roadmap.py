@@ -88,6 +88,36 @@ class RoadmapCRUD(BaseCRUD[RoadmapMetadata, RoadmapCreate, RoadmapUpdate]):
             .limit(limit)
         )
         return list(result.scalars().all())
+
+    async def count_by_user(
+        self,
+        session: AsyncSession,
+        user_id: str,
+        *,
+        deleted: bool = False,
+    ) -> int:
+        """
+        统计用户路线图数量。
+
+        Args:
+            session: 数据库会话
+            user_id: 用户ID
+            deleted: 是否统计已删除路线图
+
+        Returns:
+            路线图数量
+        """
+        query = select(func.count()).select_from(RoadmapMetadata).where(
+            RoadmapMetadata.user_id == user_id
+        )
+
+        if deleted:
+            query = query.where(RoadmapMetadata.deleted_at.is_not(None))
+        else:
+            query = query.where(RoadmapMetadata.deleted_at.is_(None))
+
+        result = await session.execute(query)
+        return int(result.scalar() or 0)
     
     async def get_with_concepts(
         self,
@@ -299,6 +329,41 @@ class RoadmapCRUD(BaseCRUD[RoadmapMetadata, RoadmapCreate, RoadmapUpdate]):
             )
         )
         return result.scalar_one_or_none()
+
+    def _apply_execution_log_filters(
+        self,
+        query,
+        *,
+        task_id: str,
+        level: Optional[str] = None,
+        category: Optional[str] = None,
+        categories: Optional[List[str]] = None,
+    ):
+        """
+        统一应用执行日志过滤条件。
+
+        Args:
+            query: 原始 SQLAlchemy 查询对象
+            task_id: 任务ID
+            level: 单个日志级别过滤
+            category: 单个日志分类过滤（兼容旧参数）
+            categories: 多个日志分类过滤（新参数，优先级高于 category）
+
+        Returns:
+            应用过滤条件后的查询对象
+        """
+        filtered_query = query.where(ExecutionLog.task_id == task_id)
+
+        if level:
+            filtered_query = filtered_query.where(ExecutionLog.level == level)
+
+        normalized_categories = [item for item in (categories or []) if item]
+        if normalized_categories:
+            filtered_query = filtered_query.where(ExecutionLog.category.in_(normalized_categories))
+        elif category:
+            filtered_query = filtered_query.where(ExecutionLog.category == category)
+
+        return filtered_query
     
     # ========== 执行日志相关 ==========
     
@@ -308,8 +373,10 @@ class RoadmapCRUD(BaseCRUD[RoadmapMetadata, RoadmapCreate, RoadmapUpdate]):
         task_id: str,
         level: Optional[str] = None,
         category: Optional[str] = None,
+        categories: Optional[List[str]] = None,
         offset: int = 0,
         limit: int = 100,
+        limit_per_category: Optional[int] = None,
     ) -> List[ExecutionLog]:
         """
         获取指定task_id的执行日志
@@ -318,22 +385,49 @@ class RoadmapCRUD(BaseCRUD[RoadmapMetadata, RoadmapCreate, RoadmapUpdate]):
             session: 数据库会话
             task_id: 追踪ID
             level: 过滤日志级别（可选）
-            category: 过滤日志分类（可选）
+            category: 过滤日志分类（可选，兼容旧参数）
+            categories: 过滤多个日志分类（可选）
             offset: 分页偏移
             limit: 返回数量限制
+            limit_per_category: 每个 category 的返回上限（仅多 category 查询时生效）
             
         Returns:
-            执行日志列表（按时间升序）
+            执行日志列表（按时间倒序，最新优先）
         """
-        query = select(ExecutionLog).where(ExecutionLog.task_id == task_id)
-        
-        if level:
-            query = query.where(ExecutionLog.level == level)
-        if category:
-            query = query.where(ExecutionLog.category == category)
-        
-        query = query.order_by(ExecutionLog.created_at.asc()).offset(offset).limit(limit)
-        
+        normalized_categories = [item for item in (categories or []) if item]
+        should_apply_category_window = limit_per_category is not None and len(normalized_categories) > 1
+
+        if should_apply_category_window:
+            ranked_log_ids = self._apply_execution_log_filters(
+                select(
+                    ExecutionLog.id.label("log_id"),
+                    func.row_number().over(
+                        partition_by=ExecutionLog.category,
+                        order_by=ExecutionLog.created_at.desc(),
+                    ).label("category_rank"),
+                ),
+                task_id=task_id,
+                level=level,
+                categories=normalized_categories,
+            ).subquery()
+
+            query = (
+                select(ExecutionLog)
+                .join(ranked_log_ids, ExecutionLog.id == ranked_log_ids.c.log_id)
+                .where(ranked_log_ids.c.category_rank <= limit_per_category)
+                .order_by(ExecutionLog.created_at.desc())
+                .offset(offset)
+                .limit(limit)
+            )
+        else:
+            query = self._apply_execution_log_filters(
+                select(ExecutionLog),
+                task_id=task_id,
+                level=level,
+                category=category,
+                categories=normalized_categories,
+            ).order_by(ExecutionLog.created_at.desc()).offset(offset).limit(limit)
+
         result = await session.execute(query)
         return list(result.scalars().all())
     
@@ -343,6 +437,7 @@ class RoadmapCRUD(BaseCRUD[RoadmapMetadata, RoadmapCreate, RoadmapUpdate]):
         task_id: str,
         level: Optional[str] = None,
         category: Optional[str] = None,
+        categories: Optional[List[str]] = None,
     ) -> int:
         """
         统计指定task_id的执行日志总数
@@ -351,18 +446,20 @@ class RoadmapCRUD(BaseCRUD[RoadmapMetadata, RoadmapCreate, RoadmapUpdate]):
             session: 数据库会话
             task_id: 追踪ID
             level: 过滤日志级别（可选）
-            category: 过滤日志分类（可选）
+            category: 过滤日志分类（可选，兼容旧参数）
+            categories: 过滤多个日志分类（可选）
             
         Returns:
             满足条件的日志总数
         """
-        query = select(func.count(ExecutionLog.id)).where(ExecutionLog.task_id == task_id)
-        
-        if level:
-            query = query.where(ExecutionLog.level == level)
-        if category:
-            query = query.where(ExecutionLog.category == category)
-        
+        query = self._apply_execution_log_filters(
+            select(func.count(ExecutionLog.id)),
+            task_id=task_id,
+            level=level,
+            category=category,
+            categories=categories,
+        )
+
         result = await session.execute(query)
         return result.scalar_one()
     

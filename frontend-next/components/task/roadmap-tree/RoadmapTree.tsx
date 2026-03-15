@@ -143,7 +143,6 @@ export function RoadmapTree({
   partialFailedConceptIds = [],
   failedContentTypesMap = {},
   onNodeClick,
-  userPreferences,
   onRetrySuccess,
   className,
 }: RoadmapTreeProps) {
@@ -173,10 +172,28 @@ export function RoadmapTree({
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
   const [showHistoryDropdown, setShowHistoryDropdown] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
-  
-  // 获取历史版本列表
+  const [hasLoadedHistory, setHasLoadedHistory] = useState(false);
+
+  // 路线图切换时重置历史版本缓存，避免沿用旧路线图的加载状态。
   useEffect(() => {
-    if (!showHistoryButton || !roadmapId) return;
+    setHistoryVersions([]);
+    setSelectedVersion(null);
+    setShowHistoryDropdown(false);
+    setHistoryLoading(false);
+    setHasLoadedHistory(false);
+  }, [roadmapId]);
+  
+  // 懒加载历史版本列表，避免首屏为未打开的下拉菜单提前发请求。
+  useEffect(() => {
+    if (
+      !showHistoryButton ||
+      !roadmapId ||
+      !showHistoryDropdown ||
+      historyLoading ||
+      hasLoadedHistory
+    ) {
+      return;
+    }
     
     const fetchHistory = async () => {
       setHistoryLoading(true);
@@ -188,11 +205,12 @@ export function RoadmapTree({
         setHistoryVersions([]); // 出错时重置为空数组
       } finally {
         setHistoryLoading(false);
+        setHasLoadedHistory(true);
       }
     };
     
     fetchHistory();
-  }, [roadmapId, showHistoryButton]);
+  }, [hasLoadedHistory, historyLoading, roadmapId, showHistoryButton, showHistoryDropdown]);
   
   // 版本选择处理
   const handleVersionSelect = useCallback((versionNumber: number) => {

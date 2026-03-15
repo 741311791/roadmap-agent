@@ -5,7 +5,6 @@
  */
 
 import type { Stage, Module, Concept } from '@/types/generated/models';
-import type { ContentStatus } from '@/types/generated/constants';
 
 // ============================================================
 // 节点状态枚举
@@ -145,9 +144,6 @@ export interface RoadmapTreeProps {
   /** 节点点击回调 */
   onNodeClick?: (node: TreeNodeData) => void;
   
-  /** 用户学习偏好（用于重试功能） */
-  userPreferences?: any;
-  
   /** 重试成功回调 */
   onRetrySuccess?: () => void;
   
@@ -274,15 +270,13 @@ export function getConceptNodeStatus(
   modifiedIds?: string[],
 ): TreeNodeStatus {
   const conceptId = concept.concept_id;
+  const conceptWithOverallStatus = concept as Concept & {
+    overall_status?: 'pending' | 'completed' | 'failed' | 'partial_failed' | null;
+  };
   
   // 优先检查修改状态
   if (modifiedIds?.includes(conceptId)) {
     return 'modified';
-  }
-  
-  // 检查加载状态
-  if (loadingIds?.includes(conceptId)) {
-    return 'loading';
   }
   
   // 检查失败状态
@@ -298,7 +292,7 @@ export function getConceptNodeStatus(
   // 🆕 优先使用 overall_status（来自 concept_metadata 表）
   // 但为保证前端“实时事件驱动”的更新，当 overall_status= pending 且本地已收到
   // content/resources/quiz 的完成或失败信号时，应回退到细粒度字段推断，避免节点卡在 pending。
-  const overallStatus = (concept as any).overall_status;
+  const overallStatus = conceptWithOverallStatus.overall_status;
   if (overallStatus && overallStatus !== 'pending') {
     switch (overallStatus) {
       case 'completed':
@@ -351,6 +345,11 @@ export function getConceptNodeStatus(
       concept.quiz_status === 'completed';
     
     return anyCompleted ? 'partial_failure' : 'failed';
+  }
+
+  // 非终态时，再使用本地 loading 标记驱动动画，避免过期 loading 覆盖终态。
+  if (loadingIds?.includes(conceptId)) {
+    return 'loading';
   }
   
   // 注意：content_status === 'pending' 表示"正在生成中"

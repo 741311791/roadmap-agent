@@ -89,6 +89,11 @@ class User(SQLAlchemyBaseUserTable[str], Base):
 class RoadmapTask(SQLModel, table=True):
     """路线图生成任务表"""
     __tablename__ = "roadmap_tasks"
+    __table_args__ = (
+        Index("idx_roadmap_tasks_user_created_at", "user_id", "created_at"),
+        Index("idx_roadmap_tasks_user_status_created_at", "user_id", "status", "created_at"),
+        Index("idx_roadmap_tasks_creation_pending_created_at", "task_type", "status", "created_at"),
+    )
     
     task_id: str = Field(primary_key=True)
     # 移除外键约束，user_id 可能来自外部身份验证服务
@@ -162,6 +167,9 @@ class RoadmapTask(SQLModel, table=True):
 class RoadmapMetadata(SQLModel, table=True):
     """路线图元数据表（存储轻量级框架，不包含详细内容）"""
     __tablename__ = "roadmap_metadata"
+    __table_args__ = (
+        Index("idx_roadmap_metadata_user_deleted_created_at", "user_id", "deleted_at", "created_at"),
+    )
     
     roadmap_id: str = Field(primary_key=True)
     # 移除外键约束，user_id 可能来自外部身份验证服务
@@ -614,6 +622,7 @@ class ConceptProgress(SQLModel, table=True):
     # 唯一约束：每个用户对每个Concept只有一条记录
     __table_args__ = (
         UniqueConstraint('user_id', 'roadmap_id', 'concept_id', name='uq_user_concept'),
+        Index('idx_concept_progress_user_roadmap_completed', 'user_id', 'roadmap_id', 'is_completed'),
     )
 
 

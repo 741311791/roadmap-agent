@@ -45,6 +45,7 @@ export interface MyRoadmap {
   totalHours: number;
   lastAccessedAt: string;
   topic: string;
+  coverImageUrl?: string | null;
   taskId?: string | null;
   taskStatus?: string | null;
   currentStep?: string | null;

@@ -90,6 +90,7 @@ class RoadmapService:
                     session_id=user_request.session_id,
                     preferences=enriched_prefs,
                     additional_context=user_request.additional_context,
+                    turbo_mode=user_request.turbo_mode,
                 )
                 
                 logger.info(
@@ -160,84 +161,30 @@ class RoadmapService:
         async with async_session_maker() as session:
             task_crud = get_task_crud()
             task = await task_crud.get_by_task_id(session, task_id)
+            queue_info = await task_crud.get_creation_queue_info(session, task) if task else None
         
         if not task:
             return None
-        
-        # 如果任务正在处理中，从 AsyncPostgresSaver 获取实时状态
-        current_step = task.current_step
-        if task.status == "processing":
-            try:
-                realtime_step = await self._get_realtime_step_from_checkpointer(task_id)
-                if realtime_step:
-                    current_step = realtime_step
-            except Exception as e:
-                # 如果获取实时状态失败，使用数据库中的状态
-                logger.warning(
-                    "get_realtime_step_failed",
-                    task_id=task_id,
-                    error=str(e),
-                )
-        
+
         # 从 user_request JSON 中提取 turbo_mode（默认 True，与 UserRequest 模型默认值保持一致）
         user_request_data = task.user_request or {}
         turbo_mode = user_request_data.get("turbo_mode", True) if isinstance(user_request_data, dict) else True
+        queue_ahead_count = queue_info[0] if queue_info else None
+        queue_position = queue_info[1] if queue_info else None
         
         return TaskStatusDetailResponse(
             task_id=task.task_id,
             status=task.status,
-            current_step=current_step,
+            current_step=task.current_step,
             roadmap_id=task.roadmap_id,
             created_at=task.created_at.isoformat() if task.created_at else None,
             updated_at=task.updated_at.isoformat() if task.updated_at else None,
             error_message=task.error_message,
             turbo_mode=turbo_mode,
             user_request=task.user_request if isinstance(task.user_request, dict) else None,
+            queue_ahead_count=queue_ahead_count,
+            queue_position=queue_position,
         )
-    
-    async def _get_realtime_step_from_checkpointer(self, task_id: str) -> str | None:
-        """
-        从 AsyncPostgresSaver 获取工作流的实时步骤
-        
-        Args:
-            task_id: 任务 ID（同时也是 LangGraph 的 thread_id）
-            
-        Returns:
-            当前步骤名称，如果获取失败则返回 None
-        """
-        try:
-            config = {"configurable": {"thread_id": task_id}}
-            checkpoint_tuple = await self.orchestrator.checkpointer.aget_tuple(config)
-            
-            if checkpoint_tuple and checkpoint_tuple.checkpoint:
-                channel_values = checkpoint_tuple.checkpoint.get("channel_values", {})
-                current_step = channel_values.get("current_step")
-                
-                logger.debug(
-                    "checkpointer_realtime_step",
-                    task_id=task_id,
-                    current_step=current_step,
-                    has_channel_values=bool(channel_values),
-                    channel_keys=list(channel_values.keys()) if channel_values else [],
-                )
-                
-                return current_step
-            else:
-                logger.debug(
-                    "checkpointer_no_checkpoint",
-                    task_id=task_id,
-                    has_tuple=checkpoint_tuple is not None,
-                    has_checkpoint=checkpoint_tuple.checkpoint is not None if checkpoint_tuple else False,
-                )
-            
-            return None
-        except Exception as e:
-            logger.warning(
-                "checkpointer_get_step_failed",
-                task_id=task_id,
-                error=str(e),
-            )
-            return None
     
     async def get_roadmap(self, roadmap_id: str) -> RoadmapDetail | None:
         """

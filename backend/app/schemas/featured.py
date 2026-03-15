@@ -23,6 +23,7 @@ class FeaturedRoadmapItem(BaseModel):
     roadmap_id: str
     title: str
     created_at: str
+    cover_image_url: Optional[str] = None
     total_concepts: int
     completed_concepts: int = 0
     topic: Optional[str] = None
