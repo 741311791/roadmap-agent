@@ -1,119 +1,185 @@
 #!/bin/bash
-# Railway 多服务启动脚本
+# 多服务启动脚本
 #
-# 根据 SERVICE_TYPE 环境变量决定启动哪个服务：
-# - api:                   FastAPI 应用（默认），含数据库初始化
-# - celery_worker:         主工作流 Worker（处理 celery 默认队列）
-# - celery_content_worker: 内容生成 Worker（处理 content_generation 队列）
-# - celery_beat:           Celery Beat 定时调度器
-# - flower:                Celery Flower 监控界面
+# 使用 SERVICE_ROLE 环境变量决定当前服务角色：
+# - api_redis
+# - workflow_worker
+# - content_worker
+# - celery_beat
+# - flower
+#
+# 生产安全原则：
+# 1. 数据库建表、迁移、管理员初始化均改为显式开关
+# 2. Worker / Beat 启动参数优先读取环境变量
+# 3. 统一使用 uv run，避免依赖外部虚拟环境激活
 
-set -e
+set -euo pipefail
 
-SERVICE_TYPE=${SERVICE_TYPE:-api}
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$PROJECT_ROOT"
 
-echo "Starting service: $SERVICE_TYPE"
 
-case $SERVICE_TYPE in
-  api)
-    echo "Starting FastAPI API server..."
-    # 数据库初始化（只在 API 服务启动时执行一次）
-    python scripts/create_tables.py
-    alembic stamp head
-    python scripts/create_admin_user.py \
+log() {
+  echo "[entrypoint] $*"
+}
+
+
+is_true() {
+  case "${1:-false}" in
+    1|true|TRUE|yes|YES|on|ON)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+
+require_env() {
+  local env_name="$1"
+  if [ -z "${!env_name:-}" ]; then
+    log "缺少必填环境变量：${env_name}"
+    exit 1
+  fi
+}
+
+
+normalize_service_role() {
+  local raw_service_role="${SERVICE_ROLE:-api_redis}"
+
+  case "$raw_service_role" in
+    api_redis)
+      echo "api"
+      ;;
+    workflow_worker)
+      echo "celery_worker"
+      ;;
+    content_worker)
+      echo "celery_content_worker"
+      ;;
+    celery_beat)
+      echo "celery_beat"
+      ;;
+    flower)
+      echo "flower"
+      ;;
+    *)
+      log "未知服务角色：${raw_service_role}"
+      log "有效值：api_redis, workflow_worker, content_worker, celery_beat, flower"
+      exit 1
+      ;;
+  esac
+}
+
+
+run_api_bootstrap() {
+  # 说明：
+  # - 全新数据库首次初始化：RUN_DB_CREATE_TABLES=true
+  # - Alembic 正式迁移：RUN_DB_MIGRATIONS=true
+  # - 初始化管理员：RUN_CREATE_ADMIN_USER=true，并显式提供 ADMIN_PASSWORD
+  if is_true "${RUN_DB_CREATE_TABLES:-false}"; then
+    log "执行数据库建表脚本"
+    uv run python scripts/create_tables.py
+  else
+    log "跳过数据库建表脚本"
+  fi
+
+  if is_true "${RUN_DB_MIGRATIONS:-false}"; then
+    log "执行 Alembic 迁移"
+    uv run alembic upgrade head
+  else
+    log "跳过 Alembic 迁移"
+  fi
+
+  if is_true "${RUN_CREATE_ADMIN_USER:-false}"; then
+    require_env ADMIN_PASSWORD
+
+    log "执行管理员初始化脚本"
+    uv run python scripts/create_admin_user.py \
       --email "${ADMIN_EMAIL:-${FEATURED_USER_EMAIL:-admin@example.com}}" \
-      --password "${ADMIN_PASSWORD:-admin123}" \
+      --password "${ADMIN_PASSWORD}" \
       --user-id "${FEATURED_USER_ID:-04005faa-fb45-47dd-a83c-969a25a77046}" \
       --username "${ADMIN_USERNAME:-admin}"
+  else
+    log "跳过管理员初始化脚本"
+  fi
+}
 
-    # 启动 FastAPI 应用
-    # 4C8G 单机生产默认值：
-    # - workers=2：足够覆盖常规 API 请求，同时避免空闲时常驻过多 Python 进程
-    # - 如需更高吞吐，优先先观察 CPU，再手动通过环境变量上调
-    exec uvicorn app.main:app \
+
+start_celery_worker() {
+  local default_queue="$1"
+  local default_hostname="$2"
+  local default_concurrency="$3"
+  local default_max_tasks_per_child="$4"
+
+  local celery_log_level="${CELERY_LOG_LEVEL:-info}"
+  local celery_pool="${CELERY_POOL:-prefork}"
+  local celery_queue="${CELERY_QUEUE:-$default_queue}"
+  local celery_hostname="${CELERY_HOSTNAME:-$default_hostname}"
+  local celery_concurrency="${CELERY_CONCURRENCY:-$default_concurrency}"
+  local celery_max_tasks_per_child="${CELERY_MAX_TASKS_PER_CHILD:-$default_max_tasks_per_child}"
+
+  log "等待依赖服务就绪"
+  sleep "${DEPENDENCY_WAIT_SECONDS:-5}"
+
+  log "启动 Celery Worker"
+  log "queue=${celery_queue} pool=${celery_pool} concurrency=${celery_concurrency} hostname=${celery_hostname}"
+
+  exec uv run celery -A app.core.celery_app worker \
+    --loglevel="${celery_log_level}" \
+    --concurrency="${celery_concurrency}" \
+    --pool="${celery_pool}" \
+    --hostname="${celery_hostname}" \
+    --queues="${celery_queue}" \
+    --max-tasks-per-child="${celery_max_tasks_per_child}"
+}
+
+
+SERVICE_TYPE_NORMALIZED="$(normalize_service_role)"
+log "启动服务：${SERVICE_TYPE_NORMALIZED}"
+
+case "$SERVICE_TYPE_NORMALIZED" in
+  api)
+    log "启动 FastAPI API 服务"
+    run_api_bootstrap
+
+    exec uv run uvicorn app.main:app \
       --host 0.0.0.0 \
-      --port "${PORT:-8000}" \
-      --workers "${UVICORN_WORKERS:-2}"
+      --port "${PORT:-${APP_PORT:-8000}}" \
+      --workers "${UVICORN_WORKERS:-1}"
     ;;
 
   celery_worker)
-    echo "Starting Celery Worker (queue: celery)..."
-    # 等待 Redis / PostgreSQL 就绪
-    sleep 5
-
-    # 主工作流 Worker，处理以下任务：
-    # - 路线图生成工作流（LangGraph 编排）
-    # - 工作流断点恢复（人工审核后续流程）
-    # - 执行日志批量写入
-    # - 定时维护任务（Checkpoint 清理等）
-    # - Tavily Key 缓存刷新
-    #
-    # 参数说明：
-    # - queues=celery:           只消费 celery 默认队列（与内容生成队列隔离）
-    # - concurrency:             4C8G 单机生产默认 1，先控制常驻内存，再按吞吐逐步加到 2
-    # - max-tasks-per-child=500: 每 500 个任务重启子进程，防止长期运行后的内存膨胀
-    exec celery -A app.core.celery_app worker \
-      --loglevel="${CELERY_LOG_LEVEL:-info}" \
-      --concurrency="${CELERY_CONCURRENCY:-1}" \
-      --pool=prefork \
-      --hostname=workflow@%h \
-      --queues=celery \
-      --max-tasks-per-child=500
+    start_celery_worker "celery" "workflow@%h" "1" "500"
     ;;
 
   celery_content_worker)
-    echo "Starting Celery Content Generation Worker (queue: content_generation)..."
-    # 等待 Redis / PostgreSQL 就绪
-    sleep 5
-
-    # 内容生成专用 Worker，处理以下任务：
-    # - generate_all_content（批量生成教程、资源、测验）
-    # - content.regenerate_single（单 Concept 重新生成）
-    #
-    # 参数说明：
-    # - queues=content_generation: 只消费内容生成专用队列
-    # - concurrency:               4C8G 单机生产默认 1；内容生成任务内存更重，优先稳态而不是堆并发
-    # - max-tasks-per-child=100:   内容任务更容易累积内存碎片，保持更频繁重启
-    exec celery -A app.core.celery_app worker \
-      --loglevel="${CELERY_LOG_LEVEL:-info}" \
-      --concurrency="${CELERY_CONTENT_CONCURRENCY:-1}" \
-      --pool=prefork \
-      --hostname=content@%h \
-      --queues=content_generation \
-      --max-tasks-per-child=100
+    start_celery_worker "content_generation" "content@%h" "1" "100"
     ;;
 
   celery_beat)
-    echo "Starting Celery Beat scheduler..."
-    # 等待 Redis 就绪
-    sleep 5
+    log "等待依赖服务就绪"
+    sleep "${DEPENDENCY_WAIT_SECONDS:-5}"
 
-    # 启动 Celery Beat 定时调度器
-    # 负责触发以下周期性任务：
-    # - 每天凌晨 3 点：清理旧 Checkpoint（maintenance.cleanup_old_checkpoints）
-    # - 每小时整点：监控 Checkpoint 表大小（maintenance.monitor_checkpoint_size）
-    # - 每 5 分钟：刷新 Tavily API Key 缓存（tavily_cache.refresh_keys）
-    # - 每小时第 15 分钟：清理失效 Tavily Key（tavily_cache.cleanup_expired）
-    #
-    # 注意：生产环境只能运行一个 Beat 实例，不可水平扩展
-    exec celery -A app.core.celery_app beat \
+    log "启动 Celery Beat 调度器"
+    if [ -n "${CELERY_BEAT_SCHEDULE_FILE:-}" ]; then
+      exec uv run celery -A app.core.celery_app beat \
+        --loglevel="${CELERY_LOG_LEVEL:-info}" \
+        --schedule="${CELERY_BEAT_SCHEDULE_FILE}"
+    fi
+
+    exec uv run celery -A app.core.celery_app beat \
       --loglevel="${CELERY_LOG_LEVEL:-info}"
     ;;
 
   flower)
-    echo "Starting Celery Flower monitoring dashboard..."
-    # 等待 Redis 就绪
-    sleep 5
+    log "等待依赖服务就绪"
+    sleep "${DEPENDENCY_WAIT_SECONDS:-5}"
 
-    # 启动 Flower 监控界面（同时监控两个队列）
-    exec celery -A app.core.celery_app flower \
+    log "启动 Flower 监控面板"
+    exec uv run celery -A app.core.celery_app flower \
       --port="${FLOWER_PORT:-5555}"
-    ;;
-
-  *)
-    echo "Unknown SERVICE_TYPE: $SERVICE_TYPE"
-    echo "Valid options: api, celery_worker, celery_content_worker, celery_beat, flower"
-    exit 1
     ;;
 esac
 
