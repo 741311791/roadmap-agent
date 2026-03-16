@@ -67,6 +67,9 @@ class CurriculumArchitectAgent(BaseAgent):
     - 转换后补充完整字段的默认值
     - 自动检查并修复依赖关系
     """
+
+    OUTLINE_PROMPT_TEMPLATE = "curriculum_architect_outline.j2"
+    STAGE_PROMPT_TEMPLATE = "curriculum_architect_stage.j2"
     
     def __init__(
         self,
@@ -514,7 +517,8 @@ class CurriculumArchitectAgent(BaseAgent):
 
         prompt_context = self._prepare_prompt_context(input_data)
         system_prompt = self._load_system_prompt(
-            "curriculum_architect_outline.j2", **prompt_context
+            self.OUTLINE_PROMPT_TEMPLATE,
+            **prompt_context,
         )
         messages = [{"role": "system", "content": system_prompt}]
 
@@ -587,7 +591,8 @@ class CurriculumArchitectAgent(BaseAgent):
         )
 
         system_prompt = self._load_system_prompt(
-            "curriculum_architect_stage.j2", **stage_context
+            self.STAGE_PROMPT_TEMPLATE,
+            **stage_context,
         )
         messages = [{"role": "system", "content": system_prompt}]
 

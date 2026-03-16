@@ -18,7 +18,7 @@ import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTranslations, useLocale } from 'next-intl';
-import { ArrowLeft, AlertCircle, CheckCircle2, Loader2, Clock, Eye, Target, UserRound, SlidersHorizontal } from 'lucide-react';
+import { ArrowLeft, AlertCircle, CheckCircle2, ChevronDown, Loader2, Clock, Eye, Target, UserRound, SlidersHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
@@ -34,6 +34,7 @@ import { limitLogsByStep, getLogStatsByStep } from '@/lib/utils/log-grouping';
 import { extractRoadmapConceptStates } from '@/lib/utils/roadmap-concept-state';
 import { WorkflowStep, mapToDisplayStep } from '@/lib/constants/workflow-steps';
 import { getTaskStatusFromProgressEvent } from '@/lib/utils/task-progress-status';
+import { cn } from '@/lib/utils';
 import { TaskStatus } from '@/types/generated/constants';
 import type { TaskStatusType } from '@/types/generated/constants';
 import type {
@@ -188,6 +189,7 @@ export default function TaskDetailPage() {
 
   // 节点选中状态（用于侧边面板）
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [isRequestCardExpanded, setIsRequestCardExpanded] = useState(false);
 
   // 取消任务确认对话框 - 已移除功能
 
@@ -1448,166 +1450,193 @@ export default function TaskDetailPage() {
       {/* Main Content - 三段式布局 */}
       <div className="max-w-7xl mx-auto space-y-6 bg-gradient-to-b from-sage-50/40 via-background to-background px-6 py-8 dark:from-sage-950/20">
         {/* 0. Original Request Info（原始请求信息） - Redesigned v2 */}
-        <div className="group relative overflow-hidden rounded-xl border border-sage-200/70 bg-gradient-to-br from-sage-50/95 via-white/90 to-sage-100/60 shadow-sm backdrop-blur-sm transition-all hover:border-sage-300/80 hover:shadow-md dark:border-sage-900/40 dark:from-sage-950/35 dark:via-gray-900/75 dark:to-sage-900/20">
+        <div className="group relative overflow-hidden rounded-xl border border-border/70 bg-card/95 shadow-sm backdrop-blur-sm transition-all hover:border-border hover:shadow-md dark:border-border/80">
           {/* 装饰背景 */}
-          <div className="absolute top-0 right-0 -mt-16 -mr-16 w-64 h-64 bg-sage-100/30 dark:bg-sage-900/10 rounded-full blur-3xl opacity-0 group-hover:opacity-100 transition-opacity duration-700" />
+          <div className="absolute top-0 right-0 -mt-16 -mr-16 h-64 w-64 rounded-full bg-muted/50 blur-3xl opacity-0 transition-opacity duration-700 group-hover:opacity-100 dark:bg-sage-900/10" />
           
-          <div className="relative p-6 space-y-6">
-            {/* Header: 学习目标 */}
-            <div className="space-y-3">
-              <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                <Target className="w-4 h-4 text-sage-600 dark:text-sage-400" />
-                <span>{t('userRequest.learningGoal')}</span>
-              </div>
-              <h2 className="text-xl md:text-2xl font-serif font-medium text-foreground leading-relaxed text-balance">
-                “{requestPreferences?.learning_goal || taskInfo.title || t('userRequest.noGoalSet')}”
-              </h2>
-            </div>
-
-            <div className="h-px w-full bg-gradient-to-r from-transparent via-border to-transparent opacity-50" />
-
-            {/* Content Grid - 左右分栏优化 */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12">
-              
-              {/* Left Column: Profile & Stats (占比更大) */}
-              <div className="lg:col-span-7 space-y-8">
-                
-                {/* User Persona & Motivation */}
-                <div className="space-y-4">
-                  <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                    <UserRound className="w-3.5 h-3.5" />
-                    <span>{t('userRequest.profileMotivation')}</span>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {/* 职业与行业 */}
-                    {[
-                      requestPreferences?.current_role,
-                      requestPreferences?.career_background,
-                      requestPreferences?.industry
-                    ].map(formatText).filter(Boolean).map((tag, i) => (
-                      <Badge 
-                        key={`role-${i}`} 
-                        variant="secondary" 
-                        className="px-3 py-1 bg-sage-50/80 hover:bg-sage-100 text-sage-900 border-sage-200 dark:bg-sage-900/30 dark:text-sage-100 dark:border-sage-800 transition-colors"
-                      >
-                        {tag}
-                      </Badge>
-                    ))}
-                    
-                    {/* 动机 (作为特殊的 Badge) */}
-                    {requestPreferences?.motivation && (
-                      <Badge 
-                        variant="outline" 
-                        className="px-3 py-1 border-amber-200 bg-amber-50/50 text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-300 gap-1.5"
-                      >
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-                        {requestPreferences.motivation}
-                      </Badge>
-                    )}
-
-                    {![requestPreferences?.current_role, requestPreferences?.career_background, requestPreferences?.industry, requestPreferences?.motivation].some(Boolean) && (
-                      <span className="text-sm text-muted-foreground italic">{t('userRequest.noProfileProvided')}</span>
-                    )}
-                  </div>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setIsRequestCardExpanded((prev) => !prev)}
+              aria-expanded={isRequestCardExpanded}
+              className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/35 dark:hover:bg-muted/20"
+            >
+              <div className="flex min-w-0 flex-1 items-center gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted text-sage-700 dark:bg-secondary dark:text-sage-300">
+                  <Target className="h-4 w-4" />
                 </div>
+                <div className="min-w-0">
+                  <div className="mb-1 flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                    <span>{t('userRequest.learningGoal')}</span>
+                  </div>
+                  <p
+                    className={cn(
+                      'font-serif font-medium text-foreground transition-all',
+                      isRequestCardExpanded
+                        ? 'line-clamp-2 text-base leading-6 md:text-lg'
+                        : 'truncate text-sm leading-5 md:text-base'
+                    )}
+                    title={requestPreferences?.learning_goal || taskInfo.title || t('userRequest.noGoalSet')}
+                  >
+                    “{requestPreferences?.learning_goal || taskInfo.title || t('userRequest.noGoalSet')}”
+                  </p>
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <ChevronDown
+                  className={cn(
+                    'h-4 w-4 text-muted-foreground transition-transform duration-200',
+                    isRequestCardExpanded && 'rotate-180'
+                  )}
+                />
+              </div>
+            </button>
 
-                {/* Stats Grid (Moved here for better balance) */}
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                  {/* Weekly Hours */}
-                  <div className="flex min-h-[80px] flex-col justify-between rounded-xl border border-sage-200/60 bg-white/70 p-3.5 shadow-sm dark:border-sage-900/40 dark:bg-gray-900/60">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-[10px] uppercase text-muted-foreground font-medium tracking-wider">{t('userRequest.weeklyInput')}</span>
-                      <Clock className="w-3.5 h-3.5 text-sage-500" />
+            {isRequestCardExpanded && (
+              <div className="px-4 pb-4">
+                <div className="h-px w-full bg-gradient-to-r from-transparent via-border to-transparent opacity-50" />
+
+                {/* Content Grid - 左右分栏优化 */}
+                <div className="grid grid-cols-1 gap-6 pt-4 lg:grid-cols-12 lg:gap-10">
+                  {/* Left Column: Profile & Stats (占比更大) */}
+                  <div className="space-y-6 lg:col-span-7">
+                    {/* User Persona & Motivation */}
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                        <UserRound className="h-3.5 w-3.5" />
+                        <span>{t('userRequest.profileMotivation')}</span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {/* 职业与行业 */}
+                        {[
+                          requestPreferences?.current_role,
+                          requestPreferences?.career_background,
+                          requestPreferences?.industry
+                        ].map(formatText).filter(Boolean).map((tag, i) => (
+                          <Badge
+                            key={`role-${i}`}
+                            variant="secondary"
+                            className="border-sage-200 bg-sage-50/80 px-3 py-1 text-sage-900 transition-colors hover:bg-sage-100 dark:border-sage-800 dark:bg-sage-900/30 dark:text-sage-100"
+                          >
+                            {tag}
+                          </Badge>
+                        ))}
+
+                        {/* 动机 (作为特殊的 Badge) */}
+                        {requestPreferences?.motivation && (
+                          <Badge
+                            variant="outline"
+                            className="gap-1.5 border-amber-200 bg-amber-50/50 px-3 py-1 text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-300"
+                          >
+                            <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
+                            {requestPreferences.motivation}
+                          </Badge>
+                        )}
+
+                        {![requestPreferences?.current_role, requestPreferences?.career_background, requestPreferences?.industry, requestPreferences?.motivation].some(Boolean) && (
+                          <span className="text-sm italic text-muted-foreground">{t('userRequest.noProfileProvided')}</span>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex items-baseline gap-1">
-                      <span className="text-2xl font-semibold tracking-tight tabular-nums text-foreground">
-                        {requestPreferences?.available_hours_per_week || '-'}
-                      </span>
-                      <span className="text-xs text-muted-foreground font-medium">{t('userRequest.hrs')}</span>
+
+                    {/* Stats Grid (Moved here for better balance) */}
+                    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+                      {/* Weekly Hours */}
+                      <div className="flex min-h-[72px] flex-col justify-between rounded-xl border border-sage-200/60 bg-white/70 p-3 shadow-sm dark:border-sage-900/40 dark:bg-gray-900/60">
+                        <div className="mb-2 flex items-center justify-between">
+                          <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{t('userRequest.weeklyInput')}</span>
+                          <Clock className="h-3.5 w-3.5 text-sage-500" />
+                        </div>
+                        <div className="flex items-baseline gap-1">
+                          <span className="text-xl font-semibold tracking-tight tabular-nums text-foreground">
+                            {requestPreferences?.available_hours_per_week || '-'}
+                          </span>
+                          <span className="text-xs font-medium text-muted-foreground">{t('userRequest.hrs')}</span>
+                        </div>
+                      </div>
+
+                      {/* Current Level */}
+                      <div className="flex min-h-[72px] flex-col justify-between rounded-xl border border-sage-200/60 bg-white/70 p-3 shadow-sm dark:border-sage-900/40 dark:bg-gray-900/60">
+                        <div className="mb-2 flex items-center justify-between">
+                          <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{t('userRequest.startLevel')}</span>
+                          <div className="flex gap-0.5">
+                            {[1, 2, 3].map(i => (
+                              <div
+                                key={i}
+                                className={`h-2 w-1 rounded-[1px] ${
+                                  (requestPreferences?.current_level === 'advanced' && i <= 3) ||
+                                  (requestPreferences?.current_level === 'intermediate' && i <= 2) ||
+                                  (requestPreferences?.current_level === 'beginner' && i <= 1)
+                                    ? 'bg-sage-500'
+                                    : 'bg-muted/50'
+                                }`}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                        <div className="text-sm font-medium text-foreground">
+                          {formatText(requestPreferences?.current_level) || t('beginner')}
+                        </div>
+                      </div>
+
+                      {/* Turbo Mode (If active) */}
+                      {taskInfo.turbo_mode && (
+                        <div className="flex min-h-[72px] flex-col justify-between rounded-xl border border-blue-100 bg-gradient-to-br from-blue-50/50 to-indigo-50/50 p-3 shadow-sm dark:border-blue-900/50 dark:from-blue-900/20 dark:to-indigo-900/20">
+                          <div className="mb-2 flex items-center justify-between">
+                            <span className="text-[10px] font-medium uppercase tracking-wider text-blue-600/70 dark:text-blue-400/70">{t('userRequest.mode')}</span>
+                            <span className="relative flex h-2 w-2">
+                              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75"></span>
+                              <span className="relative inline-flex h-2 w-2 rounded-full bg-blue-500"></span>
+                            </span>
+                          </div>
+                          <div className="text-sm font-medium text-blue-700 dark:text-blue-300">
+                            {t('userRequest.turboActive')}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  {/* Current Level */}
-                  <div className="flex min-h-[80px] flex-col justify-between rounded-xl border border-sage-200/60 bg-white/70 p-3.5 shadow-sm dark:border-sage-900/40 dark:bg-gray-900/60">
-                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-[10px] uppercase text-muted-foreground font-medium tracking-wider">{t('userRequest.startLevel')}</span>
-                      <div className="flex gap-0.5">
-                        {[1, 2, 3].map(i => (
-                          <div 
-                            key={i} 
-                            className={`w-1 h-2 rounded-[1px] ${
-                              (requestPreferences?.current_level === 'advanced' && i <= 3) ||
-                              (requestPreferences?.current_level === 'intermediate' && i <= 2) ||
-                              (requestPreferences?.current_level === 'beginner' && i <= 1)
-                                ? 'bg-sage-500' 
-                                : 'bg-muted/50'
-                            }`}
-                          />
+                  {/* Right Column: Preferences & Context */}
+                  <div className="space-y-6 lg:col-span-5 lg:border-l lg:border-border/40 lg:pl-8">
+                    {/* Learning Preferences */}
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                        <SlidersHorizontal className="h-3.5 w-3.5" />
+                        <span>{t('userRequest.preferences')}</span>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {/* Content Formats */}
+                        {(requestPreferences?.content_preference || []).map((item) => (
+                          <Badge key={item} variant="outline" className="border-dashed bg-transparent px-2.5 py-1 text-xs font-normal text-muted-foreground hover:bg-muted/50">
+                            {formatPreference(item, t)}
+                          </Badge>
+                        ))}
+                        {/* Languages */}
+                        {[
+                          requestPreferences?.primary_language ? `primary:${requestPreferences.primary_language}` : null,
+                          requestPreferences?.secondary_language ? `secondary:${requestPreferences.secondary_language}` : null
+                        ].filter(Boolean).map((tag) => (
+                          <Badge key={tag} variant="outline" className="border-amber-200/50 bg-amber-50/30 px-2.5 py-1 text-xs font-normal text-amber-700 dark:border-amber-900/50 dark:bg-amber-900/10 dark:text-amber-400">
+                            {formatLanguage(tag!, t)}
+                          </Badge>
                         ))}
                       </div>
                     </div>
-                    <div className="text-sm font-medium text-foreground">
-                      {formatText(requestPreferences?.current_level) || t('beginner')}
-                    </div>
-                  </div>
 
-                  {/* Turbo Mode (If active) */}
-                  {taskInfo.turbo_mode && (
-                    <div className="p-3.5 rounded-xl bg-gradient-to-br from-blue-50/50 to-indigo-50/50 dark:from-blue-900/20 dark:to-indigo-900/20 border border-blue-100 dark:border-blue-900/50 shadow-sm flex flex-col justify-between min-h-[80px]">
-                      <div className="flex items-center justify-between mb-2">
-                         <span className="text-[10px] uppercase text-blue-600/70 dark:text-blue-400/70 font-medium tracking-wider">{t('userRequest.mode')}</span>
-                         <span className="relative flex h-2 w-2">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
-                        </span>
+                    {/* Additional Context */}
+                    {taskInfo.user_request?.additional_context && (
+                      <div className="space-y-3 pt-2">
+                        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{t('userRequest.context')}</p>
+                        <p className="rounded-xl border border-border/50 bg-muted/30 p-3.5 text-sm leading-relaxed text-muted-foreground/90 text-justify">
+                          {taskInfo.user_request.additional_context}
+                        </p>
                       </div>
-                      <div className="text-sm font-medium text-blue-700 dark:text-blue-300">
-                        {t('userRequest.turboActive')}
-                      </div>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               </div>
-
-              {/* Right Column: Preferences & Context */}
-              <div className="lg:col-span-5 space-y-6 lg:border-l lg:border-border/40 lg:pl-8">
-                
-                {/* Learning Preferences */}
-                <div className="space-y-4">
-                  <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                    <SlidersHorizontal className="w-3.5 h-3.5" />
-                    <span>{t('userRequest.preferences')}</span>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {/* Content Formats */}
-                    {(requestPreferences?.content_preference || []).map((item) => (
-                      <Badge key={item} variant="outline" className="px-2.5 py-1 text-xs font-normal border-dashed text-muted-foreground bg-transparent hover:bg-muted/50">
-                        {formatPreference(item, t)}
-                      </Badge>
-                    ))}
-                    {/* Languages */}
-                    {[
-                      requestPreferences?.primary_language ? `primary:${requestPreferences.primary_language}` : null,
-                      requestPreferences?.secondary_language ? `secondary:${requestPreferences.secondary_language}` : null
-                    ].filter(Boolean).map((tag) => (
-                      <Badge key={tag} variant="outline" className="px-2.5 py-1 text-xs font-normal border-amber-200/50 bg-amber-50/30 text-amber-700 dark:border-amber-900/50 dark:bg-amber-900/10 dark:text-amber-400">
-                        {formatLanguage(tag!, t)}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Additional Context */}
-                {taskInfo.user_request?.additional_context && (
-                  <div className="space-y-3 pt-2">
-                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{t('userRequest.context')}</p>
-                    <p className="text-sm text-muted-foreground/90 leading-relaxed bg-muted/30 p-3.5 rounded-xl border border-border/50 text-justify">
-                      {taskInfo.user_request.additional_context}
-                    </p>
-                  </div>
-                )}
-              </div>
-            </div>
+            )}
           </div>
         </div>
 

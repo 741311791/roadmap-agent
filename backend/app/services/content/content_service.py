@@ -87,7 +87,11 @@ class ContentService:
     def resource_agent(self) -> ResourceRecommenderAgent:
         """延迟初始化资源推荐Agent"""
         if self._resource_agent is None:
-            self._resource_agent = ResourceRecommenderAgent()
+            # 资源重试必须复用 AgentFactory 注入的 ToolRegistry，
+            # 否则 web_search 等工具不会注册，LLM 会在无工具可用时快速失败。
+            from app.agents.factory import get_agent_factory
+
+            self._resource_agent = get_agent_factory().create_resource_recommender()
         return self._resource_agent
     
     @property

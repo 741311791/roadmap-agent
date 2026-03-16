@@ -15,6 +15,9 @@
     - qwen-plus 等较弱的模型可能无法正确生成复杂的嵌套 JSON 结构
     - 建议使用 Claude 或 GPT-4 进行测试
     - 需要在 .env 文件中配置相应的 API Key
+    - 当前 Agent 使用 Plan-and-Execute 双 Prompt 流程：
+      1. curriculum_architect_outline.j2
+      2. curriculum_architect_stage.j2
     
 环境变量说明:
     使用 Claude 时，需要设置以下环境变量（二选一）：
@@ -157,20 +160,25 @@ async def test_curriculum_architect(
     print(f"  ✓ Temperature: {agent.temperature}")
     print(f"  ✓ Max Tokens: {agent.max_tokens}")
     
-    # 3. 检查渲染的 Prompt (调试用)
-    print("\n[3] 检查 Prompt 渲染...")
+    # 3. 检查真实生效的 Planner Prompt 渲染（调试用）
+    print("\n[3] 检查 Planner Prompt 渲染...")
     try:
         prompt_context = agent._prepare_prompt_context(input_data)
-        rendered_prompt = agent._load_system_prompt("curriculum_architect.j2", **prompt_context)
+        rendered_prompt = agent._load_system_prompt(
+            agent.OUTLINE_PROMPT_TEMPLATE,
+            **prompt_context,
+        )
         
         # 保存渲染后的 prompt 到文件
-        prompt_file = project_root / "scripts" / "test_rendered_prompt.txt"
+        prompt_file = project_root / "scripts" / "test_rendered_outline_prompt.txt"
         with open(prompt_file, "w", encoding="utf-8") as f:
             f.write(rendered_prompt)
         
         print(f"  ✓ Prompt 渲染成功")
+        print(f"  ✓ 模板文件: {agent.OUTLINE_PROMPT_TEMPLATE}")
         print(f"  ✓ Prompt 长度: {len(rendered_prompt)} 字符")
         print(f"  ✓ 已保存到: {prompt_file}")
+        print(f"  ✓ Stage 详情将在运行时使用 {agent.STAGE_PROMPT_TEMPLATE} 逐个生成")
         
         # 显示 prompt 前 500 个字符
         print(f"\n  预览（前 500 字符）:")
@@ -219,23 +227,33 @@ async def test_curriculum_architect(
         print("\n[6] 检查结构约束...")
         issues = []
         
-        if len(framework.stages) != 4:
-            issues.append(f"❌ Stage 数量错误: 期望 4，实际 {len(framework.stages)}")
+        if not 2 <= len(framework.stages) <= 3:
+            issues.append(
+                f"❌ Stage 数量错误: 期望 2-3，实际 {len(framework.stages)}"
+            )
         else:
-            print("  ✓ Stage 数量: 4 个 (符合要求)")
+            print(f"  ✓ Stage 数量: {len(framework.stages)} 个 (符合要求)")
         
         for i, stage in enumerate(framework.stages, 1):
-            if len(stage.modules) != 2:
-                issues.append(f"❌ Stage {i} 的 Module 数量错误: 期望 2，实际 {len(stage.modules)}")
+            if not 2 <= len(stage.modules) <= 3:
+                issues.append(
+                    f"❌ Stage {i} 的 Module 数量错误: 期望 2-3，实际 {len(stage.modules)}"
+                )
             
             for j, module in enumerate(stage.modules, 1):
-                if len(module.concepts) != 3:
-                    issues.append(f"❌ Stage {i} Module {j} 的 Concept 数量错误: 期望 3，实际 {len(module.concepts)}")
+                if not 2 <= len(module.concepts) <= 3:
+                    issues.append(
+                        f"❌ Stage {i} Module {j} 的 Concept 数量错误: 期望 2-3，实际 {len(module.concepts)}"
+                    )
+
+        if total_concepts > 20:
+            issues.append(f"❌ Concept 总数超限: 期望不超过 20，实际 {total_concepts}")
         
         if not issues:
-            print("  ✓ 所有 Stage 都有 2 个 Module")
-            print("  ✓ 所有 Module 都有 3 个 Concept")
-            print("  ✓ 结构验证通过: 4 × 2 × 3 = 24 个 Concept ✅")
+            print("  ✓ 所有 Stage 的 Module 数量均在 2-3 之间")
+            print("  ✓ 所有 Module 的 Concept 数量均在 2-3 之间")
+            print(f"  ✓ Concept 总数控制在 20 以内（当前 {total_concepts} 个）")
+            print("  ✓ 结构验证通过：符合 Plan-and-Execute 新约束 ✅")
         else:
             print("\n  ⚠️  结构验证失败:")
             for issue in issues:
@@ -284,7 +302,7 @@ async def test_curriculum_architect(
         print(f"\n总结:")
         print(f"  - Roadmap ID: {framework.roadmap_id}")
         print(f"  - 标题: {framework.title}")
-        print(f"  - 结构: {len(framework.stages)} Stages × {total_modules//len(framework.stages)} Modules × {total_concepts//total_modules} Concepts = {total_concepts} Concepts")
+        print(f"  - 结构: {len(framework.stages)} Stages / {total_modules} Modules / {total_concepts} Concepts")
         print(f"  - 总学时: {framework.total_estimated_hours} 小时")
         print(f"  - 建议周数: {framework.recommended_completion_weeks} 周")
         

@@ -520,9 +520,15 @@ class ResourceRecommenderAgent(BaseAgent):
             max_iterations=5,
         )
         
-        final_response = response.choices[0].message.content
-        
+        final_response = self._extract_message_text(response.choices[0].message)
+
         if not final_response:
+            logger.error(
+                "resource_recommender_empty_final_response",
+                concept_id=concept.concept_id,
+                finish_reason=response.choices[0].finish_reason,
+                search_queries_count=len(self._search_queries),
+            )
             raise ValueError("LLM 未返回任何内容")
         
         # 获取收集到的搜索查询

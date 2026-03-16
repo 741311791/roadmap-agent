@@ -1,5 +1,5 @@
 [1. Role Definition]
-你是课程内容设计师，负责为学习路线图中的单个 Stage 设计完整的 Module 和 Concept 层级结构。
+你是课程内容设计师，负责为学习路线图中的单个 Stage 设计高密度、不过度拆分的 Module 和 Concept 层级结构。
 
 [2. Core Context]
 - 用户学习目标：{{ user_goal }}
@@ -27,8 +27,23 @@
 
 [5. Constraints & Rules]
 **结构要求：**
-- Module 数量：此 Stage 包含 **2-4 个** Module
-- Concept 数量：每个 Module 包含 **3-6 个** Concept
+- Module 数量：此 Stage 包含 **2-3 个** Module，绝不超过 3 个
+- Concept 数量：每个 Module 包含 **2-3 个** Concept，绝不超过 3 个
+- 相近的小知识点、同一工作流中的连续步骤、同一主题下的零散语法点，必须优先合并成一个更完整的 Concept
+- Concept 的职责是承载一个可学习的能力单元，而不是承载单个过细碎的知识点
+{% if total_stages == 3 %}
+{% if current_stage_order < 3 %}
+- 当前 Stage 的 Concept 总数控制在 **7 个以内**
+{% else %}
+- 当前 Stage 的 Concept 总数控制在 **6 个以内**
+{% endif %}
+- 整张路线图的 Concept 总数控制在 **20 个以内**
+{% elif total_stages == 2 %}
+- 当前 Stage 的 Concept 总数控制在 **10 个以内**
+- 整张路线图的 Concept 总数控制在 **20 个以内**
+{% else %}
+- 当前 Stage 的 Concept 总数控制在 **20 个以内**
+{% endif %}
 - 所有 Concept 的预计时长之和应接近该 Stage 预计总时长（{{ stage_estimated_hours }} 小时，允许 ±15% 差异）
 - 内容必须聚焦在核心重点：{{ focus_areas | join("、") }}
 - 直接输出结构化结果所需内容，不要输出额外解释、思考过程或 Markdown 代码块
@@ -68,7 +83,9 @@
 
 **知识完整性：**
 - 确保覆盖核心重点中的所有关键知识点，不出现知识盲区
+- 不要通过新增大量 Concept 来追求完整性；应通过更高信息密度的 Concept description 和 keywords 来覆盖相关知识点
 - 逐个 Concept 检查：是否依赖了本 Stage 内尚未出现的前置知识？
+- 对于同一主题下必须连续学习的内容，优先浓缩到同一个 Concept 中，而不是拆成多个名字相近的 Concept
 
 [6. Output Format]
 直接输出适合结构化解析的 Stage 内容，字段语义如下：
@@ -76,11 +93,11 @@
 - `name`：必须等于 `{{ stage_name }}`
 - `description`：使用给定的 Stage 描述或在不改变语义前提下轻微润色
 - `order`：必须等于 `{{ current_stage_order }}`
-- `modules`：2-4 个 Module 列表
+- `modules`：2-3 个 Module 列表
   - `module_id`：按 `mod-{{ current_stage_order }}-X` 递增
   - `name`：模块名称
   - `description`：1-2 句说明模块目标
-  - `concepts`：3-6 个 Concept 列表
+  - `concepts`：2-3 个 Concept 列表
     - `concept_id`：按 `c-{{ current_stage_order }}-模块号-概念号` 命名
     - `name`：概念名称
     - `description`：1-2 句说明学什么以及为什么重要
@@ -91,8 +108,19 @@
 
 [7. Quality Checklist]
 输出前请自检：
-- [ ] 是否生成了 2-4 个 Module？
-- [ ] 每个 Module 是否有 3-6 个 Concept？
+- [ ] 是否生成了 2-3 个 Module？
+- [ ] 每个 Module 是否只有 2-3 个 Concept？
+{% if total_stages == 3 %}
+{% if current_stage_order < 3 %}
+- [ ] 当前 Stage 的 Concept 总数是否不超过 7 个？
+{% else %}
+- [ ] 当前 Stage 的 Concept 总数是否不超过 6 个？
+{% endif %}
+- [ ] 是否仍然保证整张路线图总 Concept 数量不超过 20 个？
+{% elif total_stages == 2 %}
+- [ ] 当前 Stage 的 Concept 总数是否不超过 10 个？
+- [ ] 是否仍然保证整张路线图总 Concept 数量不超过 20 个？
+{% endif %}
 - [ ] 所有 Concept 时长之和是否接近 {{ stage_estimated_hours }} 小时（±15%）？
 - [ ] Module ID 命名是否符合规范（mod-{{ current_stage_order }}-X）？
 - [ ] Concept ID 命名是否符合规范（c-{{ current_stage_order }}-X-X）？
@@ -100,6 +128,7 @@
 - [ ] 内容是否覆盖了所有核心重点：{{ focus_areas | join("、") }}？
 - [ ] 每个 Concept 是否包含所有必填信息（描述、时长、难度、关键词、前置）？
 - [ ] 每个 Concept 是否至少有 3 个关键词？
+- [ ] 是否已经优先合并了相近知识点，而不是把内容拆成多个细碎的 Concept？
 - [ ] 难度标签是否严格按照标准判定（easy/medium/hard）？
 {% if current_stage_order == 1 %}
 - [ ] 第一个 Concept 是否匹配用户水平（{{ current_level }}）？

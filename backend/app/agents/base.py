@@ -41,6 +41,50 @@ class BaseAgent(ABC):
     # 第二阶段的通用提取 prompt
     EXTRACTION_SYSTEM_PROMPT = """你是一个数据提取助手。请将用户提供的 Markdown 文本精确转换为 JSON 格式。
 严格遵守给定的数据结构，不要遗漏任何信息。"""
+
+    @staticmethod
+    def _extract_message_text(message: Any) -> str:
+        """
+        从聊天消息中提取纯文本内容。
+
+        兼容不同提供商返回的 content 形态：
+        - 普通字符串
+        - 内容分段列表
+        - 空值
+
+        Args:
+            message: OpenAI SDK 返回的消息对象
+
+        Returns:
+            提取后的纯文本；若无可用文本则返回空字符串
+        """
+        content = getattr(message, "content", None)
+
+        if isinstance(content, str):
+            return content
+
+        if not isinstance(content, list):
+            return ""
+
+        text_parts: list[str] = []
+
+        for part in content:
+            if isinstance(part, str):
+                if part.strip():
+                    text_parts.append(part)
+                continue
+
+            if isinstance(part, dict):
+                text = part.get("text")
+                if isinstance(text, str) and text.strip():
+                    text_parts.append(text)
+                continue
+
+            text = getattr(part, "text", None)
+            if isinstance(text, str) and text.strip():
+                text_parts.append(text)
+
+        return "\n".join(text_parts).strip()
     
     def __init__(
         self,
@@ -352,10 +396,41 @@ class BaseAgent(ABC):
             )
             
             message = response.choices[0].message
+            message_text = self._extract_message_text(message)
             
             # 检查是否有工具调用
             if not message.tool_calls:
-                # 没有工具调用，返回最终响应
+                if not message_text:
+                    logger.warning(
+                        "react_empty_final_message",
+                        agent_id=self.agent_id,
+                        iteration=iteration,
+                        finish_reason=response.choices[0].finish_reason,
+                    )
+
+                    conversation.append({
+                        "role": "user",
+                        "content": (
+                            "你上一轮没有输出任何正文。\n\n"
+                            "请不要再调用工具，直接基于已收集的信息输出最终结果。"
+                        ),
+                    })
+
+                    response = await self._standard_call(
+                        messages=conversation,
+                        tools=tools,
+                        tool_choice="none",
+                    )
+                    message = response.choices[0].message
+                    message_text = self._extract_message_text(message)
+
+                    logger.info(
+                        "react_empty_final_message_recovered",
+                        agent_id=self.agent_id,
+                        recovered=bool(message_text),
+                        final_message_length=len(message_text),
+                    )
+
                 logger.info(
                     "react_loop_completed",
                     agent_id=self.agent_id,
