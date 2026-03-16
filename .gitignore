@@ -44,6 +44,7 @@ env/
 *.env
 *.env.bak
 .env.bak
+backend/.env.production*
 
 # Node.js
 node_modules/
@@ -79,6 +80,7 @@ tmp/
 temp/
 *.tmp
 *.temp
+backend/scripts/plan_execute_output.json
 
 # Coverage reports
 coverage/
