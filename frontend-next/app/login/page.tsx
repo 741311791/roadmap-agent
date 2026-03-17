@@ -235,7 +235,7 @@ function LoginForm() {
               </Button>
             </form>
             
-            {/* Beta 提示 */}
+            {/* 试用提示 */}
             <div className="mt-6 pt-6 border-t border-sage-100">
               <p className="text-center text-xs text-muted-foreground">
                 {t('betaNotice')}

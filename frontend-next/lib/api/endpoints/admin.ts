@@ -99,7 +99,7 @@ export const adminApi = {
     status: 'invited' | 'already_invited' | 'existing_account';
     message: string;
   }> => {
-    const { data } = await apiClient.post('/trial-access', {
+    const { data } = await apiClient.post('/waitlist/trial-access', {
       email,
       source: 'landing_page',
     });
