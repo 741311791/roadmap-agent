@@ -230,7 +230,8 @@
     "title": "掌握任何技能",
     "titleHighlight": "快人一步",
     "subtitle": "AI创建个性化学习路线图，适配你的目标、经验和学习风格。",
-    "joinCount": "加入2,400+学习者，共同构建未来",
+    "joinCount": "填写邮箱后，我们会立即发送试用账号到你的邮箱。",
+    "checkEmailHint": "请留意发件人为 lizizai.lzz 的邮件，临时用户名和密码会随邮件送达。",
     "paused": "已暂停",
     "autoRotating": "每2秒自动切换"
   },
@@ -287,19 +288,20 @@
     "scrollingTestimonials": "滚动评价"
   },
   "waitlist": {
-    "title": "加入候补名单",
+    "title": "立即申请试用",
     "titleHighlight": "Fast Learning",
     "emailPlaceholder": "输入你的邮箱",
-    "joinButton": "加入候补名单",
-    "joining": "加入中...",
-    "successTitle": "你已在名单中！",
-    "successMessage": "我们会在开放访问后立即通知你。",
-    "errorMessage": "出了点问题，请重试。"
+    "joinButton": "立即试用",
+    "joining": "发送中...",
+    "successTitle": "请查看邮箱",
+    "successMessage": "我们刚刚发送了临时用户名和密码，请检查收件箱和垃圾邮件中的 lizizai.lzz 来信。",
+    "errorMessage": "试用邀请发送失败，请稍后重试。"
   },
   "cta": {
-    "title": "立即开启你的学习之旅",
-    "subtitle": "加入数千名学习者，用AI驱动的个性化路线图构建你的未来",
-    "noCredit": "无需信用卡 · 几分钟即可开始学习",
+    "title": "邀请自己先试用一下",
+    "subtitle": "输入邮箱后即可自动收到临时用户名和密码，马上体验 Fast Learning。",
+    "noCredit": "无需排队 · 无需信用卡 · 邮箱即刻收取试用凭证",
+    "checkEmailHint": "如果几分钟内没看到邮件，请检查发件人为 lizizai.lzz 的垃圾邮件或推广邮件。",
     "alreadyAccount": "已有账户？",
     "signIn": "登录"
   },

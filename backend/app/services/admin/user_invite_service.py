@@ -95,8 +95,17 @@ class UserInviteService:
         )
         waitlist_entry = waitlist_result.scalars().first()
         if waitlist_entry:
+            waitlist_entry.username = username
+            waitlist_entry.password = temp_password
+            waitlist_entry.expires_at = expires_at
             waitlist_entry.invited = True
             waitlist_entry.invited_at = beijing_now()
+            waitlist_entry.sent_content = {
+                "username": username,
+                "expires_at": expires_at.isoformat(),
+                "sent_at": beijing_now().isoformat() if send_email else None,
+                "email_sent": send_email,
+            }
             await session.flush()
         
         logger.info(
@@ -115,10 +124,14 @@ class UserInviteService:
                 expires_at=expires_at,
                 username=username,
             )
+            if not email_sent:
+                logger.warning("invite_email_failed", email=email)
+                await session.rollback()
+                raise RuntimeError("Failed to send invitation email")
         
         message = f"User created. Password expires on {expires_at.strftime('%Y-%m-%d %H:%M')} (Beijing Time)."
         if send_email:
-            message += " Invitation email sent." if email_sent else " Failed to send invitation email."
+            message += " Invitation email sent."
         
         return {
             "success": True,

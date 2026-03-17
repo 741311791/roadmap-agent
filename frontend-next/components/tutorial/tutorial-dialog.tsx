@@ -8,8 +8,10 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
+import rehypeKatex from 'rehype-katex';
+import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
 import { RotateCw, Edit, Clock, ExternalLink, CheckCircle2, Loader2 } from 'lucide-react';
 import { getLatestTutorial, downloadTutorialContent, getResourcesByConceptId, getQuizByConceptId, regenerateTutorial, getTutorialVersions } from '@/lib/api/endpoints';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
@@ -210,8 +212,8 @@ export function TutorialDialog({
                   ) : (
                     <div className="prose prose-sm max-w-none dark:prose-invert">
                       <ReactMarkdown
-                        remarkPlugins={[remarkGfm]}
-                        rehypePlugins={[rehypeHighlight]}
+                        remarkPlugins={[remarkGfm, remarkMath]}
+                        rehypePlugins={[rehypeKatex, rehypeHighlight]}
                         components={{
                           // 代码块自定义渲染（支持 Mermaid）
                           code({ className, children, ...props }) {

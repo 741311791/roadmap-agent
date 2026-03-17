@@ -16,6 +16,45 @@ const MIN_SCALE = 0.3;
 const MAX_SCALE = 5;
 const ZOOM_STEP = 0.2;
 const WHEEL_SENSITIVITY = 0.001;
+const INLINE_FIT_PADDING = 32;
+const DIALOG_FIT_PADDING = 48;
+const INLINE_DEFAULT_SCALE_RATIO = 0.88;
+const DIALOG_DEFAULT_SCALE_RATIO = 0.96;
+
+interface DiagramViewState {
+  scale: number;
+  translate: {
+    x: number;
+    y: number;
+  };
+}
+
+/**
+ * 获取 SVG 的自然尺寸，优先使用 viewBox，避免 transform 后的视觉尺寸干扰适配计算。
+ *
+ * Args:
+ * svgEl: Mermaid 渲染后的 SVG 元素
+ *
+ * Returns:
+ * SVG 的自然宽高
+ */
+function getSvgIntrinsicSize(svgEl: SVGSVGElement): { width: number; height: number } {
+  const viewBox = svgEl.viewBox?.baseVal;
+  if (viewBox && viewBox.width > 0 && viewBox.height > 0) {
+    return {
+      width: viewBox.width,
+      height: viewBox.height,
+    };
+  }
+
+  const width = Number(svgEl.getAttribute('width')) || svgEl.getBoundingClientRect().width;
+  const height = Number(svgEl.getAttribute('height')) || svgEl.getBoundingClientRect().height;
+
+  return {
+    width,
+    height,
+  };
+}
 
 // ===================== useZoomPan Hook =====================
 /**
@@ -32,11 +71,40 @@ function useZoomPan(
 ) {
   const [scale, setScale] = useState(1);
   const [translate, setTranslate] = useState({ x: 0, y: 0 });
+  const defaultViewRef = useRef<DiagramViewState>({
+    scale: 1,
+    translate: { x: 0, y: 0 },
+  });
   const isDragging = useRef(false);
   const lastPointer = useRef({ x: 0, y: 0 });
   const lastPinchDist = useRef<number | null>(null);
   const scaleRef = useRef(scale);
   scaleRef.current = scale;
+
+  /**
+   * 统一设置当前视图，可选择同步更新“重置视图”的默认值。
+   *
+   * Args:
+   * nextView: 目标缩放和平移状态
+   * persistAsDefault: 是否将该视图保存为默认视图
+   *
+   * Returns:
+   * 无
+   */
+  const applyView = useCallback((nextView: DiagramViewState, persistAsDefault = false) => {
+    const normalizedScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, nextView.scale));
+    const normalizedTranslate = nextView.translate;
+
+    if (persistAsDefault) {
+      defaultViewRef.current = {
+        scale: normalizedScale,
+        translate: normalizedTranslate,
+      };
+    }
+
+    setScale(normalizedScale);
+    setTranslate(normalizedTranslate);
+  }, []);
 
   /** 将平移量限制在合理边界内，防止图表完全移出视野 */
   const clampTranslate = useCallback(
@@ -82,9 +150,8 @@ function useZoomPan(
 
   /** 重置到初始视图 */
   const resetView = useCallback(() => {
-    setScale(1);
-    setTranslate({ x: 0, y: 0 });
-  }, []);
+    applyView(defaultViewRef.current);
+  }, [applyView]);
 
   // 鼠标滚轮缩放（必须 passive:false 以 preventDefault）
   useEffect(() => {
@@ -173,6 +240,7 @@ function useZoomPan(
     scale,
     translate,
     isDragging,
+    applyView,
     zoomAt,
     resetView,
     onMouseDown,
@@ -221,7 +289,7 @@ function ZoomableContainer({
   const wrapperRef = useRef<HTMLDivElement>(null);
   const svgContainerRef = useRef<HTMLDivElement>(null);
 
-  const { scale, translate, isDragging, zoomAt, resetView, onMouseDown, onMouseMove, onMouseUp, onTouchStart, onTouchMove, onTouchEnd } =
+  const { scale, translate, isDragging, applyView, zoomAt, resetView, onMouseDown, onMouseMove, onMouseUp, onTouchStart, onTouchMove, onTouchEnd } =
     useZoomPan(outerRef, wrapperRef, svgContainerRef);
 
   // 将 svgHtml 注入 DOM（innerHTML 方式保留 SVG 原生特性）
@@ -236,6 +304,45 @@ function ZoomableContainer({
       }
     }
   }, [svgHtml]);
+
+  useEffect(() => {
+    if (!svgHtml) return;
+
+    const updateDefaultView = () => {
+      const outer = outerRef.current;
+      const svgEl = svgContainerRef.current?.querySelector('svg') as SVGSVGElement | null;
+
+      if (!outer || !svgEl) {
+        return;
+      }
+
+      const { width, height } = getSvgIntrinsicSize(svgEl);
+      if (!width || !height) {
+        return;
+      }
+
+      // 默认先按容器做 fit，再额外缩小一点，让流程图初始展示更紧凑但仍然完整可见。
+      const padding = fillHeight ? DIALOG_FIT_PADDING : INLINE_FIT_PADDING;
+      const scaleRatio = fillHeight ? DIALOG_DEFAULT_SCALE_RATIO : INLINE_DEFAULT_SCALE_RATIO;
+      const availableWidth = Math.max(outer.clientWidth - padding * 2, 1);
+      const availableHeight = fillHeight ? Math.max(outer.clientHeight - padding * 2, 1) : Number.POSITIVE_INFINITY;
+      const widthScale = availableWidth / width;
+      const heightScale = Number.isFinite(availableHeight) ? availableHeight / height : Number.POSITIVE_INFINITY;
+      const fittedScale = Math.min(widthScale, heightScale, 1);
+      const defaultScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, fittedScale * scaleRatio));
+
+      applyView(
+        {
+          scale: defaultScale,
+          translate: { x: 0, y: 0 },
+        },
+        true,
+      );
+    };
+
+    const frameId = window.requestAnimationFrame(updateDefaultView);
+    return () => window.cancelAnimationFrame(frameId);
+  }, [applyView, fillHeight, svgHtml]);
 
   return (
     <div className={cn('relative', fillHeight ? 'h-full' : '', className)}>

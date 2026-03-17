@@ -1,8 +1,10 @@
 'use client';
 
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
+import rehypeKatex from 'rehype-katex';
+import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
 import { CodeBlock } from './code-block';
 import { MermaidDiagram } from './mermaid-diagram';
 import { cn } from '@/lib/utils';
@@ -20,6 +22,7 @@ interface MarkdownRendererProps {
  * 
  * 功能:
  * - GitHub Flavored Markdown 支持
+ * - LaTeX 数学公式渲染
  * - 代码语法高亮
  * - 自定义组件样式
  * - 响应式表格
@@ -29,8 +32,8 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
   return (
     <div className={cn('prose prose-slate dark:prose-invert max-w-none', className)}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeHighlight]}
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex, rehypeHighlight]}
         components={{
           // 代码块自定义渲染
           code({ node, className, children, ...props }) {
@@ -215,7 +218,8 @@ export function CompactMarkdownRenderer({
       )}
     >
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex]}
         components={{
           // 简化代码块
           code({ className, children }) {

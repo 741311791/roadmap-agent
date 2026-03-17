@@ -9,8 +9,10 @@ import { CheckCircle2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { TechAssessment } from '@/types/assessment';
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
+import rehypeKatex from 'rehype-katex';
+import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
 import 'highlight.js/styles/github-dark.css';
 
 interface AssessmentQuestionsProps {
@@ -32,8 +34,8 @@ function QuestionMarkdown({ content }: { content: string }) {
   return (
     <div className="w-full min-w-0 overflow-hidden">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeHighlight]}
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex, rehypeHighlight]}
         components={{
           // 代码块渲染
           code({ node, className, children, ...props }) {

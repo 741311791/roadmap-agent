@@ -17,13 +17,13 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Particles } from '@/components/ui/particles';
 import { WaitlistForm } from '@/components/ui/waitlist-form';
-import { joinWaitlist } from '@/lib/api/endpoints';
+import { requestTrialAccess } from '@/lib/api/endpoints';
 
 export function CTASection() {
   const t = useTranslations('cta');
   
   const handleJoin = async (email: string) => {
-    await joinWaitlist(email);
+    return await requestTrialAccess(email);
   };
 
   return (
@@ -63,6 +63,9 @@ export function CTASection() {
 
         <p className="text-sm text-white/80">
           {t('noCredit')}
+        </p>
+        <p className="text-sm text-white/80 mt-2">
+          {t('checkEmailHint')}
         </p>
 
         {/* 或者直接开始 */}

@@ -75,6 +75,7 @@ export type { UserProfileData } from './users';
 import { adminApi } from './admin';
 export const getAvailableTechnologies = adminApi.getAvailableTechnologies;
 export const joinWaitlist = adminApi.joinWaitlist;
+export const requestTrialAccess = adminApi.requestTrialAccess;
 
 // Learning API
 import { learningApi } from './learning';

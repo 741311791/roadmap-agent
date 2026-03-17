@@ -26,6 +26,8 @@ from app.core.response_schema import ResponseSchemaModel, response_base
 
 # ✅ 导入 Schema
 from app.schemas.waitlist import (
+    TrialAccessRequest,
+    TrialAccessResponse,
     WaitlistJoinRequest,
     WaitlistJoinResponse,
 )
@@ -162,6 +164,94 @@ async def get_waitlist_count(
         "invited": invited,
         "pending": total - invited,
     })
+
+
+@router_public.post("/trial-access", response_model=ResponseSchemaModel[TrialAccessResponse])
+async def request_trial_access(
+    request: TrialAccessRequest,
+    db: CurrentSessionTransaction,
+    user_manager: UserManager = Depends(get_user_manager),
+    email_service: EmailService = Depends(get_email_service),
+) -> ResponseSchemaModel[TrialAccessResponse]:
+    """
+    公开申请试用资格并自动发送临时凭证
+
+    用户在落地页提交邮箱后，系统会直接复用现有邀请能力：
+    - 首次申请：创建账号并发送临时用户名与密码
+    - 已邀请邮箱：直接提示检查历史邮件
+    - 已存在账号：提示直接登录
+
+    Args:
+        request: 试用申请请求
+        db: 数据库会话（自动 commit/rollback）
+        user_manager: 用户管理器
+        email_service: 邮件服务
+
+    Returns:
+        试用申请结果
+    """
+    email = request.email.lower().strip()
+
+    logger.info(
+        "public_trial_access_requested",
+        email=email,
+        source=request.source,
+    )
+
+    waitlist_result = await db.execute(
+        select(WaitlistEmail).where(WaitlistEmail.email == email)
+    )
+    waitlist_entry = waitlist_result.scalar_one_or_none()
+
+    if waitlist_entry and waitlist_entry.invited:
+        return response_base.success(data=TrialAccessResponse(
+            success=True,
+            email=email,
+            status="already_invited",
+            message="We've already sent temporary access to this email. Please check your inbox and spam for a message from lizizai.lzz.",
+        ))
+
+    user_result = await db.execute(
+        select(User).where(User.email == email)
+    )
+    existing_user = user_result.scalar_one_or_none()
+    if existing_user:
+        return response_base.success(data=TrialAccessResponse(
+            success=True,
+            email=email,
+            status="existing_account",
+            message="This email already has access. Please sign in, or check your previous email from lizizai.lzz for the temporary credentials.",
+        ))
+
+    if not waitlist_entry:
+        waitlist_entry = WaitlistEmail(
+            email=email,
+            source=request.source,
+            invited=False,
+            invited_at=None,
+            created_at=beijing_now(),
+        )
+        db.add(waitlist_entry)
+        await db.flush()
+
+    service = UserInviteService()
+    await service.invite_single_user(
+        session=db,
+        email=email,
+        password_validity_days=30,
+        user_manager=user_manager,
+        email_service=email_service,
+        send_email=True,
+    )
+
+    logger.info("public_trial_access_sent", email=email)
+
+    return response_base.success(data=TrialAccessResponse(
+        success=True,
+        email=email,
+        status="invited",
+        message="Your temporary username and password are on the way. Please check your inbox and spam for a message from lizizai.lzz.",
+    ))
 
 
 # ============================================================

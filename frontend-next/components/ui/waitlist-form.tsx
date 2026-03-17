@@ -43,7 +43,7 @@ function useWindowWidth() {
 }
 
 interface WaitlistFormProps {
-  onSubmit?: (email: string) => Promise<void> | void;
+  onSubmit?: (email: string) => Promise<{ message?: string } | void> | { message?: string } | void;
   isSubmitting?: boolean;
   showTitle?: boolean;
   className?: string;
@@ -59,6 +59,7 @@ const WaitlistForm: React.FC<WaitlistFormProps> = ({
   const [email, setEmail] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [localSubmitting, setLocalSubmitting] = useState(false);
+  const [submittedMessage, setSubmittedMessage] = useState("");
   const width = useWindowWidth();
   
   // 在客户端 hydration 完成前，默认使用桌面版布局
@@ -85,8 +86,11 @@ const WaitlistForm: React.FC<WaitlistFormProps> = ({
     setLocalSubmitting(true);
     
     try {
+      const response = onSubmit ? await onSubmit(email) : undefined;
       if (onSubmit) {
-        await onSubmit(email);
+        setSubmittedMessage(response?.message || t('successMessage'));
+      } else {
+        setSubmittedMessage(t('successMessage'));
       }
       setSubmitted(true);
       triggerSageConfetti();
@@ -129,7 +133,7 @@ const WaitlistForm: React.FC<WaitlistFormProps> = ({
           {t('successTitle')}
         </h2>
         <p className="text-base md:text-lg text-charcoal-light/80">
-          {t('successMessage')}
+          {submittedMessage || t('successMessage')}
         </p>
       </div>
     </motion.div>

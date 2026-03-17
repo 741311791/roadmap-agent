@@ -38,8 +38,10 @@ import {
   Star
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
+import rehypeKatex from 'rehype-katex';
+import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
 import 'highlight.js/styles/github-dark.css';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -1279,8 +1281,8 @@ export function LearningStage({ concept, className, tutorialContent, tutorialLoa
                   prose-blockquote:border-l-sage-300 prose-blockquote:bg-sage-50/50 prose-blockquote:rounded-r-lg prose-blockquote:py-1 prose-blockquote:text-foreground/70"
                 >
                   <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
-                    rehypePlugins={[rehypeHighlight]}
+                    remarkPlugins={[remarkGfm, remarkMath]}
+                    rehypePlugins={[rehypeKatex, rehypeHighlight]}
                     components={{
                       // Add id to headings for TOC navigation
                       h2: ({ children, ...props }) => {

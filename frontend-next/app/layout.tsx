@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Inter, Playfair_Display } from 'next/font/google';
+import 'katex/dist/katex.min.css';
 import './globals.css';
 import './fonts.css'; // 本地字体配置
 import { Providers } from './providers';

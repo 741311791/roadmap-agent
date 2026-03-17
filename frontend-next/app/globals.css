@@ -412,3 +412,14 @@
   animation: shine 2s infinite;
 }
 
+/* KaTeX 公式在窄容器中允许横向滚动，避免被裁切 */
+.katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.5rem 0;
+}
+
+.katex-display > .katex {
+  min-width: fit-content;
+}
+

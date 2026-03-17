@@ -230,7 +230,8 @@
     "title": "Master Any Skill",
     "titleHighlight": "Faster Than Ever",
     "subtitle": "AI creates personalized learning roadmaps that adapt to your goals, experience, and learning style.",
-    "joinCount": "Join 2,400+ learners building their future",
+    "joinCount": "Enter your email and we'll send trial access right away.",
+    "checkEmailHint": "Look for an email from lizizai.lzz with your temporary username and password.",
     "paused": "Paused",
     "autoRotating": "Auto-rotating every 5s"
   },
@@ -287,19 +288,20 @@
     "scrollingTestimonials": "Scrolling Testimonials"
   },
   "waitlist": {
-    "title": "Join the Waitlist for",
+    "title": "Get Trial Access to",
     "titleHighlight": "Fast Learning",
     "emailPlaceholder": "Enter your email",
-    "joinButton": "Join Waitlist",
-    "joining": "Joining...",
-    "successTitle": "You're on the List!",
-    "successMessage": "We'll notify you as soon as access becomes available.",
-    "errorMessage": "Something went wrong. Please try again."
+    "joinButton": "Start Trial",
+    "joining": "Sending...",
+    "successTitle": "Check Your Email",
+    "successMessage": "We just sent your temporary username and password. Please check your inbox and spam for a message from lizizai.lzz.",
+    "errorMessage": "We couldn't send your trial invite. Please try again."
   },
   "cta": {
-    "title": "Start Your Learning Journey Today",
-    "subtitle": "Join thousands of learners building their future with AI-powered personalized roadmaps",
-    "noCredit": "No credit card required · Start learning in minutes",
+    "title": "Invite Yourself to Try It",
+    "subtitle": "Enter an email and we'll automatically send a temporary username and password for Fast Learning.",
+    "noCredit": "No waitlist · No credit card · Trial credentials arrive by email",
+    "checkEmailHint": "If you don't see it in a few minutes, check spam or promotions for mail from lizizai.lzz.",
     "alreadyAccount": "Already have an account?",
     "signIn": "Sign In"
   },

@@ -89,6 +89,24 @@ export const adminApi = {
   },
 
   /**
+   * 公开申请试用（自动发送临时账号凭证）
+   */
+  requestTrialAccess: async (
+    email: string
+  ): Promise<{
+    success: boolean;
+    email: string;
+    status: 'invited' | 'already_invited' | 'existing_account';
+    message: string;
+  }> => {
+    const { data } = await apiClient.post('/trial-access', {
+      email,
+      source: 'landing_page',
+    });
+    return data;
+  },
+
+  /**
    * 获取Waitlist列表（管理员）
    */
   getWaitlist: async (params?: {

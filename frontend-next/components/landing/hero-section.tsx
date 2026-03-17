@@ -15,13 +15,13 @@ import { useTranslations } from 'next-intl';
 import { motion } from 'motion/react';
 import { WorkflowAnimationSvg } from './workflow-animation-svg';
 import { WaitlistForm } from '@/components/ui/waitlist-form';
-import { joinWaitlist } from '@/lib/api/endpoints';
+import { requestTrialAccess } from '@/lib/api/endpoints';
 
 export function HeroSection() {
   const t = useTranslations('hero');
   
   const handleJoin = async (email: string) => {
-    await joinWaitlist(email);
+    return await requestTrialAccess(email);
   };
 
   return (
@@ -94,6 +94,9 @@ export function HeroSection() {
             
             <p className="text-sm text-muted-foreground mt-4 text-center lg:text-left pl-2">
               {t('joinCount')}
+            </p>
+            <p className="text-sm text-muted-foreground/90 mt-2 text-center lg:text-left pl-2">
+              {t('checkEmailHint')}
             </p>
           </motion.div>
         </div>
