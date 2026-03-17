@@ -23,6 +23,7 @@ import {
   ListTodo,
   BookOpen,
   Mail,
+  Megaphone,
   Key,
   Activity,
 } from 'lucide-react';
@@ -266,6 +267,13 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
                 label={t('admin.waitlistManagement')}
                 href="/admin/waitlist"
                 active={isActive('/admin/waitlist')}
+                isCollapsed={isCollapsed}
+              />
+              <NavItem
+                icon={Megaphone}
+                label={t('admin.customerEmailsManagement')}
+                href="/admin/customer-emails"
+                active={isActive('/admin/customer-emails')}
                 isCollapsed={isCollapsed}
               />
               <NavItem

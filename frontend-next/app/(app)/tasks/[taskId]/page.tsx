@@ -186,6 +186,7 @@ export default function TaskDetailPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hasResolvedInitialTaskLoad, setHasResolvedInitialTaskLoad] = useState(false);
 
   // 节点选中状态（用于侧边面板）
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -621,6 +622,9 @@ export default function TaskDetailPage() {
         taskData,
         intentData?.learning_goal || 'Generating Roadmap...'
       );
+      if (isInitialLoad) {
+        setHasResolvedInitialTaskLoad(true);
+      }
       
       const allLogs = combinedLogsData.logs || [];
       const nextWorkflowLogs = collectNodeDurationLogs(allLogs);
@@ -687,6 +691,9 @@ export default function TaskDetailPage() {
       }
       console.error('Failed to load task data:', err);
       setError(err.message || 'Failed to load task details');
+      if (isInitialLoad) {
+        setHasResolvedInitialTaskLoad(true);
+      }
     } finally {
       if (isInitialLoad) {
         setIsLoading(false);
@@ -709,7 +716,9 @@ export default function TaskDetailPage() {
 
   useEffect(() => {
     if (!taskId) return;
-    
+
+    // 任务 ID 切换后先重置首屏加载完成标记，避免旧请求被 abort 时短暂落入“任务不存在”态。
+    setHasResolvedInitialTaskLoad(false);
     const controller = new AbortController();
     loadTaskDataRef.current(true, controller.signal);
     
@@ -1273,7 +1282,7 @@ export default function TaskDetailPage() {
   // ========================================
   // 优化：分区域骨架屏加载，提供更好的加载体验
   // ========================================
-  if (isLoading) {
+  if (isLoading || (!hasResolvedInitialTaskLoad && !taskInfo)) {
     return (
       <div className="min-h-screen bg-background">
         {/* Header Skeleton */}
@@ -1379,7 +1388,7 @@ export default function TaskDetailPage() {
   }
 
   // 错误状态
-  if (error || !taskInfo) {
+  if (error && !taskInfo) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-6">
         <Card className="max-w-md w-full p-6">
@@ -1398,6 +1407,12 @@ export default function TaskDetailPage() {
           </div>
         </Card>
       </div>
+    );
+  }
+
+  if (!taskInfo) {
+    return (
+      <div className="min-h-screen bg-background" />
     );
   }
 

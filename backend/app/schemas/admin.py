@@ -7,7 +7,7 @@
 - Tavily API Key 管理
 - 超级管理员管理
 """
-from typing import Optional, List
+from typing import Optional, List, Literal
 from pydantic import BaseModel, EmailStr, Field
 
 
@@ -82,6 +82,69 @@ class BatchSendInviteRequest(BaseModel):
 
 class BatchSendInviteResponse(BaseModel):
     """批量发送响应"""
+    success: int
+    failed: int
+    errors: List[dict]
+
+
+# ============================================================
+# 客户邮件相关
+# ============================================================
+
+CustomerEmailTemplateKey = Literal["custom", "product_update", "promotion"]
+
+
+class CustomerEmailUserItem(BaseModel):
+    """客户邮件用户列表项"""
+
+    email: str
+    username: str
+    is_active: bool
+    is_superuser: bool
+    is_verified: bool
+    created_at: str
+
+
+class CustomerEmailUserListResponse(BaseModel):
+    """客户邮件用户列表响应"""
+
+    items: List[CustomerEmailUserItem]
+    total: int
+
+
+class CustomerEmailTemplateItem(BaseModel):
+    """客户邮件模板项"""
+
+    key: CustomerEmailTemplateKey
+    name: str
+    description: str
+    subject: str
+    html_content: str = Field(description="HTML 模板壳，使用 {{subject}} 和 {{content}} 占位")
+    text_content: Optional[str] = Field(None, description="Markdown 正文默认内容")
+
+
+class CustomerEmailTemplateListResponse(BaseModel):
+    """客户邮件模板列表响应"""
+
+    items: List[CustomerEmailTemplateItem]
+
+
+class CustomerEmailSendRequest(BaseModel):
+    """客户邮件发送请求"""
+
+    recipient_emails: List[EmailStr] = Field(..., min_length=1, description="收件人邮箱列表")
+    subject: str = Field(..., min_length=1, max_length=200, description="邮件主题")
+    html_content: str = Field(..., min_length=1, description="HTML 模板壳")
+    text_content: Optional[str] = Field(None, description="Markdown 格式正文内容")
+    template_key: CustomerEmailTemplateKey = Field(
+        default="custom",
+        description="模板标识：custom/product_update/promotion",
+    )
+
+
+class CustomerEmailSendResponse(BaseModel):
+    """客户邮件发送响应"""
+
     success: int
     failed: int
     errors: List[dict]

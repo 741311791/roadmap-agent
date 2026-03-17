@@ -195,6 +195,32 @@ class EmailService:
             subject=subject,
             html_content=html_content,
         )
+
+    async def send_custom_email(
+        self,
+        to_email: str,
+        subject: str,
+        html_content: str,
+        text_content: Optional[str] = None,
+    ) -> bool:
+        """
+        发送自定义邮件
+
+        Args:
+            to_email: 收件人邮箱
+            subject: 邮件主题
+            html_content: HTML 正文
+            text_content: 纯文本正文
+
+        Returns:
+            是否发送成功
+        """
+        return await self._send_email(
+            to_email=to_email,
+            subject=subject,
+            html_content=html_content,
+            text_content=text_content,
+        )
     
     async def _send_email(
         self,
