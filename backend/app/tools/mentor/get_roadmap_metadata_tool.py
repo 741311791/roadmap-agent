@@ -3,7 +3,7 @@
 
 用于获取路线图的基本信息和结构。
 """
-from typing import Optional, List, Dict, Any
+from typing import Optional
 from pydantic import BaseModel, Field
 import structlog
 
@@ -74,7 +74,7 @@ class GetRoadmapMetadataTool(BaseTool[GetRoadmapMetadataInput, GetRoadmapMetadat
             async with async_session_maker() as session:
                 roadmap_crud = get_roadmap_crud()
                 
-                roadmap = await roadmap_crud.get_by_roadmap_id(input_data.roadmap_id)
+                roadmap = await roadmap_crud.get_by_roadmap_id(session, input_data.roadmap_id)
                 
                 if not roadmap:
                     logger.info(
@@ -147,7 +147,7 @@ class GetRoadmapMetadataTool(BaseTool[GetRoadmapMetadataInput, GetRoadmapMetadat
             async with async_session_maker() as session:
                 roadmap_crud = get_roadmap_crud()
                 
-                roadmap = await roadmap_crud.get_by_roadmap_id(roadmap_id)
+                roadmap = await roadmap_crud.get_by_roadmap_id(session, roadmap_id)
                 
                 if not roadmap:
                     return None

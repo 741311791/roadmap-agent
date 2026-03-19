@@ -68,17 +68,22 @@ async def is_blacklisted(jti: str) -> bool:
     """
     if not jti:
         return False
-    
-    await redis_client.connect()
-    key = f"{JWT_BLACKLIST_PREFIX}{jti}"
-    exists = await redis_client._client.exists(key)
-    
-    is_blocked = exists > 0
-    
-    if is_blocked:
-        logger.debug("jwt_blacklist_check_blocked", jti=jti)
-    
-    return is_blocked
+
+    try:
+        await redis_client.connect()
+        key = f"{JWT_BLACKLIST_PREFIX}{jti}"
+        exists = await redis_client._client.exists(key)
+
+        is_blocked = exists > 0
+
+        if is_blocked:
+            logger.debug("jwt_blacklist_check_blocked", jti=jti)
+
+        return is_blocked
+    except Exception as exc:
+        # 为什么这样做：Redis 短暂不可用时不应阻断登录态校验，优先保证主业务可用。
+        logger.warning("jwt_blacklist_check_failed_skip", jti=jti, error=str(exc))
+        return False
 
 
 async def is_blacklisted_batch(jtis: list[str]) -> dict[str, bool]:

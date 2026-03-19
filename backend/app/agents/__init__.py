@@ -9,6 +9,7 @@ from app.agents.resource_recommender import ResourceRecommenderAgent
 from app.agents.quiz_generator import QuizGeneratorAgent
 from app.agents.tech_assessment_generator import TechAssessmentGenerator
 from app.agents.tech_capability_analyzer import TechCapabilityAnalyzer
+from app.agents.mentor_agent import MentorAgent
 
 __all__ = [
     "IntentAnalyzerAgent",
@@ -20,4 +21,5 @@ __all__ = [
     "QuizGeneratorAgent",
     "TechAssessmentGenerator",
     "TechCapabilityAnalyzer",
+    "MentorAgent",
 ]

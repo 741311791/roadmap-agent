@@ -67,7 +67,7 @@ class GetUserProfileTool(BaseTool[GetUserProfileInput, GetUserProfileOutput]):
             async with async_session_maker() as session:
                 user_profile_crud = get_user_profile_crud()
                 
-                profile = await user_profile_crud.get_by_user_id(input_data.user_id)
+                profile = await user_profile_crud.get_by_user_id(session, input_data.user_id)
                 
                 if not profile:
                     logger.info(

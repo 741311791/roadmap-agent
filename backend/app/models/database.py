@@ -9,7 +9,7 @@
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from sqlmodel import SQLModel, Field, Column, JSON
-from sqlalchemy import Text, DateTime, UniqueConstraint, String, Boolean, text, Index, ForeignKey
+from sqlalchemy import Text, DateTime, UniqueConstraint, String, text, Index, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, DeclarativeBase
 from fastapi_users.db import SQLAlchemyBaseUserTable
 import uuid
@@ -984,6 +984,16 @@ class ChatSession(SQLModel, table=True):
         default=None, 
         index=True,
         description="当前聚焦的概念 ID（可选）"
+    )
+    agent_mode: str = Field(
+        default="companion",
+        index=True,
+        description="会话模式：companion 或 tutoring"
+    )
+    model_name: str = Field(
+        default="qwen-plus",  # pragma: allowlist secret
+        index=True,
+        description="会话模型：qwen 系列"
     )
     
     # 会话元数据
