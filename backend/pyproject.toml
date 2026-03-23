@@ -58,6 +58,8 @@ dependencies = [
     "langchain>=1.2.6",
     "langchain-litellm>=0.3.0",
     "langchain-mcp-adapters>=0.1.0",
+    "mem0ai>=1.0.7",
+    "pgvector>=0.4.2",
 ]
 
 [project.optional-dependencies]

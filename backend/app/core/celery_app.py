@@ -19,8 +19,8 @@ Worker 进程初始化：
 from app.config.logging_config import setup_logging
 setup_logging()
 
-from celery import Celery
-from celery.signals import (
+from celery import Celery  # noqa: E402
+from celery.signals import (  # noqa: E402
     worker_process_init,
     worker_process_shutdown,
     worker_ready,
@@ -28,7 +28,9 @@ from celery.signals import (
     task_failure,
     task_retry,
 )
-from app.config.settings import settings
+from celery.schedules import crontab  # noqa: E402
+
+from app.config.settings import settings  # noqa: E402
 
 # 构建 Redis URL（支持 Upstash 等云服务的完整 URL，或根据配置构建）
 redis_url = settings.get_redis_url
@@ -65,11 +67,16 @@ celery_app.conf.update(
     task_routes={
         "generate_all_content": {"queue": "content_generation"},
         "content.regenerate_single": {"queue": "content_generation"},  # 单 Concept 重新生成
+        "mentor.persist_and_extract_memory": {"queue": "mentor_persist"},
+        "mentor.extract_long_term_memory": {"queue": "mentor_memory"},
+        "mentor.run_reflection": {"queue": "mentor_memory"},
     },
     # 队列定义
     task_queues={
         "celery": {"exchange": "celery", "routing_key": "celery"},  # 默认队列
         "content_generation": {"exchange": "content_generation", "routing_key": "content_generation"},  # 内容生成队列
+        "mentor_persist": {"exchange": "mentor_persist", "routing_key": "mentor_persist"},
+        "mentor_memory": {"exchange": "mentor_memory", "routing_key": "mentor_memory"},
     },
     # Worker 配置
     worker_prefetch_multiplier=1,
@@ -138,6 +145,7 @@ celery_app.conf.update(
         "app.tasks.assessment_initialization_tasks",  # 测验题初始化任务
         "app.tasks.capability_analysis_tasks",  # 技术能力分析任务
         "app.tasks.content_generation_tasks",  # ✅ 内容生成任务
+        "app.tasks.mentor_memory_tasks",  # AI 伴学助手记忆任务
     ),
 )
 
@@ -342,8 +350,6 @@ def on_task_retry(sender=None, task_id=None, **kwargs):
 # ============================================================
 # Celery Beat 定时任务配置
 # ============================================================
-from celery.schedules import crontab
-
 celery_app.conf.beat_schedule = {
     # 每天凌晨 3 点清理旧的 Checkpoint
     'cleanup-old-checkpoints': {
@@ -364,6 +370,11 @@ celery_app.conf.beat_schedule = {
     'cleanup-expired-tavily-keys': {
         'task': 'tavily_cache.cleanup_expired',
         'schedule': crontab(minute=15),  # 每小时的第 15 分钟
+    },
+    # AI 伴学助手长对话 reflection
+    'mentor-reflection': {
+        'task': 'mentor.run_reflection',
+        'schedule': crontab(hour=3, minute=30),
     },
 }
 

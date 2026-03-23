@@ -5,6 +5,8 @@
 # - api_redis
 # - workflow_worker
 # - content_worker
+# - mentor_persist_worker
+# - mentor_memory_worker
 # - celery_beat
 # - flower
 #
@@ -58,6 +60,12 @@ normalize_service_role() {
     content_worker)
       echo "celery_content_worker"
       ;;
+    mentor_persist_worker)
+      echo "celery_mentor_persist_worker"
+      ;;
+    mentor_memory_worker)
+      echo "celery_mentor_memory_worker"
+      ;;
     celery_beat)
       echo "celery_beat"
       ;;
@@ -66,7 +74,7 @@ normalize_service_role() {
       ;;
     *)
       log "未知服务角色：${raw_service_role}"
-      log "有效值：api_redis, workflow_worker, content_worker, celery_beat, flower"
+      log "有效值：api_redis, workflow_worker, content_worker, mentor_persist_worker, mentor_memory_worker, celery_beat, flower"
       exit 1
       ;;
   esac
@@ -156,6 +164,14 @@ case "$SERVICE_TYPE_NORMALIZED" in
 
   celery_content_worker)
     start_celery_worker "content_generation" "content@%h" "1" "100"
+    ;;
+
+  celery_mentor_persist_worker)
+    start_celery_worker "mentor_persist" "mentor-persist@%h" "1" "300"
+    ;;
+
+  celery_mentor_memory_worker)
+    start_celery_worker "mentor_memory" "mentor-memory@%h" "1" "100"
     ;;
 
   celery_beat)

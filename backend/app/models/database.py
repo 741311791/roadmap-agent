@@ -9,7 +9,7 @@
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from sqlmodel import SQLModel, Field, Column, JSON
-from sqlalchemy import Text, DateTime, UniqueConstraint, String, Boolean, text, Index, ForeignKey
+from sqlalchemy import Text, DateTime, UniqueConstraint, String, text, Index, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, DeclarativeBase
 from fastapi_users.db import SQLAlchemyBaseUserTable
 import uuid
@@ -992,6 +992,15 @@ class ChatSession(SQLModel, table=True):
         sa_column=Column(Text, nullable=True),
         description="会话标题，如'React Hooks 学习讨论'"
     )
+    agent_type: str = Field(
+        default="tutoring",
+        index=True,
+        description="AI 伴学助手模式：tutoring/company"
+    )
+    model_id: Optional[str] = Field(
+        default=None,
+        description="本会话最近一次使用的模型 ID"
+    )
     message_count: int = Field(default=0, description="消息数量")
     last_message_preview: Optional[str] = Field(
         default=None,
@@ -1037,6 +1046,28 @@ class ChatMessage(SQLModel, table=True):
     intent_type: Optional[str] = Field(
         default=None,
         description="意图类型: qa, quiz_request, note_record, explanation, analogy"
+    )
+    agent_type: Optional[str] = Field(
+        default=None,
+        index=True,
+        description="本条消息所属的 AI 伴学助手模式"
+    )
+    model_id: Optional[str] = Field(
+        default=None,
+        description="生成该消息所使用的模型 ID"
+    )
+    trace_id: Optional[str] = Field(
+        default=None,
+        index=True,
+        description="链路追踪 ID"
+    )
+    token_usage_input: Optional[int] = Field(
+        default=None,
+        description="输入 Token 数，仅在 assistant 消息上记录"
+    )
+    token_usage_output: Optional[int] = Field(
+        default=None,
+        description="输出 Token 数，仅在 assistant 消息上记录"
     )
     message_metadata: Optional[dict] = Field(
         default=None,
@@ -1095,6 +1126,74 @@ class LearningNote(SQLModel, table=True):
     updated_at: datetime = Field(
         default_factory=beijing_now,
         sa_column=Column(DateTime(timezone=False))
+    )
+
+
+class MentorMemoryJob(SQLModel, table=True):
+    """
+    AI 伴学助手记忆任务表
+
+    记录消息归档、短期记忆更新与长期记忆提炼任务的执行状态，
+    便于幂等去重、失败补偿和后台运维排查。
+    """
+    __tablename__ = "mentor_memory_jobs"
+    __table_args__ = (
+        Index("ix_mentor_memory_jobs_user_status_created", "user_id", "status", "created_at"),
+        Index("ix_mentor_memory_jobs_session_created", "session_id", "created_at"),
+        Index("ix_mentor_memory_jobs_message_id_unique", "message_id", unique=True),
+    )
+
+    job_id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        primary_key=True,
+        description="任务唯一标识"
+    )
+    message_id: str = Field(
+        index=True,
+        description="本轮对话的唯一消息 ID"
+    )
+    user_id: str = Field(index=True, description="用户 ID")
+    session_id: str = Field(index=True, description="关联的会话 ID")
+    celery_task_id: Optional[str] = Field(
+        default=None,
+        index=True,
+        description="Celery 任务 ID"
+    )
+    status: str = Field(
+        default="pending",
+        index=True,
+        description="任务状态：pending/processing/succeeded/failed/dead_letter"
+    )
+    retry_count: int = Field(default=0, description="已重试次数")
+    last_error: Optional[str] = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
+        description="最近一次错误信息"
+    )
+    payload: dict = Field(
+        default_factory=dict,
+        sa_column=Column(JSON),
+        description="任务原始载荷"
+    )
+    started_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=False), nullable=True),
+        description="任务开始时间"
+    )
+    finished_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=False), nullable=True),
+        description="任务结束时间"
+    )
+    created_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False)),
+        description="创建时间（北京时间）"
+    )
+    updated_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False)),
+        description="更新时间（北京时间）"
     )
 
 

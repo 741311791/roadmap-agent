@@ -9,9 +9,11 @@ import {
   ResizablePanel, 
   ResizableHandle 
 } from '@/components/ui/resizable';
+import { ImperativePanelHandle } from 'react-resizable-panels';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { KnowledgeRail } from '@/components/roadmap/immersive/knowledge-rail';
 import { LearningStage } from '@/components/roadmap/immersive/learning-stage';
+import { MentorSidebar } from '@/components/mentor/mentor-sidebar';
 import { useRoadmap } from '@/lib/hooks/api/use-roadmap';
 import { useTutorial } from '@/lib/hooks/api/use-tutorial';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
@@ -22,7 +24,7 @@ import {
   getRoadmapProgress
 } from '@/lib/api/endpoints';
 import type { RoadmapFramework, Concept, Stage, Module, LearningPreferences } from '@/types/generated/models';
-import { Loader2, AlertCircle, ArrowLeft, Menu } from 'lucide-react';
+import { Loader2, AlertCircle, ArrowLeft, Menu, Bot } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
@@ -79,6 +81,9 @@ export default function RoadmapDetailPage() {
 
   // UI State - 抽屉状态
   const [isKnowledgeRailOpen, setIsKnowledgeRailOpen] = useState(false);
+  const [isMentorSheetOpen, setIsMentorSheetOpen] = useState(false);
+  const [isMentorCollapsed, setIsMentorCollapsed] = useState(false);
+  const mentorPanelRef = useRef<ImperativePanelHandle>(null);
 
   // 1. Sync Roadmap Data to Store
   useEffect(() => {
@@ -208,6 +213,7 @@ export default function RoadmapDetailPage() {
 
   // Helper: Calculate overall progress
   const overallProgress = calculateRoadmapProgress(currentRoadmap);
+  const activeConcept = getActiveConcept();
 
   // Loading State
   if (roadmapLoading) {
@@ -313,7 +319,7 @@ export default function RoadmapDetailPage() {
           {/* CENTER: Learning Stage */}
           <ResizablePanel defaultSize={55} className="min-w-[320px]">
             <LearningStage
-              concept={getActiveConcept()}
+              concept={activeConcept}
               tutorialContent={tutorialData?.full_content}
               tutorialLoading={tutorialLoading}
               roadmapId={roadmapId}
@@ -335,14 +341,76 @@ export default function RoadmapDetailPage() {
           <ResizableHandle 
             withHandle 
             className={cn(
-              "w-px bg-border hidden md:block",
+              "w-px bg-border hidden xl:block",
               "hover:bg-sage-300 transition-colors duration-200",
               "data-[resize-handle-active]:bg-sage-400"
             )} 
           />
 
+          {/* RIGHT: Mentor Sidebar - xl+ 大屏用 ResizablePanel，移除 transition-all 以消除拖动延迟 */}
+          <ResizablePanel
+            ref={mentorPanelRef}
+            collapsible
+            collapsedSize={0}
+            onCollapse={() => setIsMentorCollapsed(true)}
+            onExpand={() => setIsMentorCollapsed(false)}
+            defaultSize={25}
+            minSize={20}
+            maxSize={35}
+            className={cn(
+              "hidden xl:block",
+              isMentorCollapsed ? "min-w-0" : "min-w-[360px]"
+            )}
+          >
+            <MentorSidebar 
+              roadmapId={roadmapId} 
+              activeConcept={activeConcept} 
+              onCollapse={() => mentorPanelRef.current?.collapse()}
+            />
+          </ResizablePanel>
+
         </ResizablePanelGroup>
       </div>
+
+      {/* Mentor Sheet - xl 以下屏幕使用抽屉替代 Panel */}
+      <div className="xl:hidden">
+        <Sheet open={isMentorSheetOpen} onOpenChange={setIsMentorSheetOpen}>
+          <SheetContent side="right" className="p-0 w-[340px] sm:w-[400px]">
+            <MentorSidebar 
+              roadmapId={roadmapId} 
+              activeConcept={activeConcept} 
+              onCollapse={() => setIsMentorSheetOpen(false)}
+            />
+          </SheetContent>
+        </Sheet>
+      </div>
+
+      {/* Mentor 浮动按钮 - xl 以下屏幕显示 Sheet 触发器，xl+ 大屏折叠时显示展开按钮 */}
+      <Button
+        variant="outline"
+        size="icon"
+        className={cn(
+          "fixed right-4 top-4 z-50 rounded-full shadow-md bg-white/90 backdrop-blur-sm border-border/60 hover:bg-slate-50",
+          // xl 以下：始终显示（作为 Sheet 触发器）
+          // xl 以上：仅折叠时显示（作为展开按钮）
+          "xl:hidden",
+        )}
+        onClick={() => setIsMentorSheetOpen(true)}
+      >
+        <Bot className="h-5 w-5 text-slate-700" />
+      </Button>
+
+      {/* Expand Mentor Button - 仅 xl+ 且 Panel 折叠时显示 */}
+      {isMentorCollapsed && (
+        <Button
+          variant="outline"
+          size="icon"
+          className="fixed right-4 top-4 z-50 rounded-full shadow-md bg-white/90 backdrop-blur-sm border-border/60 hover:bg-slate-50 hidden xl:flex"
+          onClick={() => mentorPanelRef.current?.expand()}
+        >
+          <Bot className="h-5 w-5 text-slate-700" />
+        </Button>
+      )}
     </div>
   );
 }

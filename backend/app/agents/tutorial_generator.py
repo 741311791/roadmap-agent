@@ -1,6 +1,7 @@
 """
 Tutorial Generator Agent（研究 / 写作两阶段模式）
 """
+import re
 import uuid
 from datetime import datetime
 from typing import Any, Dict, Literal
@@ -139,6 +140,19 @@ BASIC_DEVELOPMENT_CONCEPT_HINTS = {
     "condition",
 }
 
+TUTORIAL_JSON_ARTIFACT_HINTS = {
+    '"markdown_content"',
+    '"metadata"',
+    '"estimated_completion_time"',
+}
+
+TUTORIAL_BANNED_CLAIMS = {
+    "响应速度提升至毫秒级",
+    "系统会根据数据依赖自动触发并行执行",
+    "自动根据数据依赖触发并行执行",
+    "自动捕获并行任务的中间状态",
+}
+
 
 class TutorialMetadataDraft(BaseModel):
     """
@@ -255,7 +269,7 @@ class TutorialGeneratorAgent(BaseAgent):
             model_name=model_name or settings.GENERATOR_MODEL,
             base_url=base_url or settings.GENERATOR_BASE_URL,
             api_key=api_key or settings.GENERATOR_API_KEY,
-            temperature=0.8,
+            temperature=0.3,
             max_tokens=32768,
         )
         self._langchain_tools: dict[str, Any] = {}
@@ -575,15 +589,17 @@ class TutorialGeneratorAgent(BaseAgent):
         context: dict,
         user_preferences: LearningPreferences,
         research_notes: TutorialResearchNotes,
+        output_mode: Literal["structured", "markdown"] = "structured",
     ) -> str:
         """
-        构建结构化写作阶段 Prompt
+        构建教程写作 Prompt
 
         Args:
             concept: 概念信息
             context: 上下文信息
             user_preferences: 用户偏好
             research_notes: 研究阶段产物
+            output_mode: 输出模式，支持 structured 和 markdown
 
         Returns:
             渲染后的 Prompt 文本
@@ -601,7 +617,199 @@ class TutorialGeneratorAgent(BaseAgent):
             language_preferences=language_prefs.model_dump() if language_prefs else None,
             research_notes_text=research_notes.to_prompt_text(),
             is_dev_scenario=research_notes.scenario == "development",
+            output_mode=output_mode,
+            force_conservative_claims=(
+                research_notes.scenario == "development" and not research_notes.used_official_docs
+            ),
         )
+
+    def _get_expected_section_titles(
+        self,
+        user_preferences: LearningPreferences,
+        has_prerequisites: bool,
+    ) -> list[str]:
+        """
+        获取教程正文必须包含的章节标题
+
+        Args:
+            user_preferences: 用户偏好
+            has_prerequisites: 是否存在前置概念
+
+        Returns:
+            章节标题列表
+
+        Raises:
+            无
+        """
+
+        primary_language = (user_preferences.primary_language or "zh").lower()
+        is_english = primary_language.startswith("en")
+
+        titles = [
+            "## Overview" if is_english else "## 概述",
+        ]
+
+        if has_prerequisites:
+            titles.append("## Prerequisites Review" if is_english else "## 前置知识回顾")
+
+        titles.extend(
+            [
+                "## Demystify" if is_english else "## 知识祛魅",
+                "## Core Concepts" if is_english else "## 核心概念",
+                "## Practical Examples" if is_english else "## 实践示例",
+                "## Summary" if is_english else "## 总结",
+            ]
+        )
+        return titles
+
+    @staticmethod
+    def _extract_markdown_title(markdown_content: str, concept: Concept) -> str:
+        """
+        从 Markdown 中提取教程标题
+
+        Args:
+            markdown_content: 教程 Markdown 正文
+            concept: 概念信息
+
+        Returns:
+            教程标题
+
+        Raises:
+            无
+        """
+
+        title_match = re.search(r"^#\s+(.+)$", markdown_content, flags=re.MULTILINE)
+        if title_match:
+            return title_match.group(1).strip()
+        return concept.name
+
+    def _build_metadata_from_markdown(
+        self,
+        markdown_content: str,
+        concept: Concept,
+        user_preferences: LearningPreferences,
+    ) -> TutorialMetadataDraft:
+        """
+        从 Markdown 正文中构建回退用教程元数据
+
+        Args:
+            markdown_content: 教程 Markdown 正文
+            concept: 概念信息
+            user_preferences: 用户偏好
+
+        Returns:
+            回退元数据
+
+        Raises:
+            无
+        """
+
+        primary_language = (user_preferences.primary_language or "zh").lower()
+        is_english = primary_language.startswith("en")
+        summary_pattern = (
+            r"^Tutorial Summary:\s*(.+)$"
+            if is_english else
+            r"^教程摘要[:：]\s*(.+)$"
+        )
+        time_pattern = (
+            r"^Estimated Completion Time:\s*(\d+)\s*minutes$"
+            if is_english else
+            r"^预计完成时间[:：]\s*(\d+)\s*分钟$"
+        )
+
+        title = self._extract_markdown_title(markdown_content, concept)
+
+        summary_match = re.search(summary_pattern, markdown_content, flags=re.MULTILINE)
+        if summary_match:
+            summary = summary_match.group(1).strip()
+        else:
+            # 优先从概述段首段提炼摘要，避免回退时再次依赖模型。
+            overview_match = re.search(
+                r"##\s+(?:概述|Overview)\s*\n+(.+?)(?:\n##\s+|\Z)",
+                markdown_content,
+                flags=re.DOTALL,
+            )
+            if overview_match:
+                overview_text = re.sub(r"\s+", " ", overview_match.group(1)).strip()
+                summary = overview_text[:100] if overview_text else concept.description[:100]
+            else:
+                summary = concept.description[:100]
+
+        time_match = re.search(time_pattern, markdown_content, flags=re.MULTILINE)
+        estimated_completion_time = int(time_match.group(1)) if time_match else max(
+            1,
+            int(round(concept.estimated_hours * 60)),
+        )
+
+        return TutorialMetadataDraft(
+            title=title,
+            summary=summary,
+            estimated_completion_time=estimated_completion_time,
+        )
+
+    def _validate_tutorial_draft(
+        self,
+        draft: TutorialDraft,
+        concept: Concept,
+        context: dict,
+        user_preferences: LearningPreferences,
+    ) -> None:
+        """
+        对教程草稿执行本地质量校验
+
+        Args:
+            draft: 教程草稿
+            concept: 概念信息
+            context: 上下文信息
+            user_preferences: 用户偏好
+
+        Returns:
+            无
+
+        Raises:
+            ValueError: 当草稿包含明显质量问题时抛出
+        """
+
+        markdown_content = draft.markdown_content.strip()
+        issues: list[str] = []
+
+        if not markdown_content:
+            issues.append("markdown_content 为空")
+
+        if "\\n" in markdown_content and markdown_content.count("\n") <= 2:
+            issues.append("正文包含未展开的换行转义，疑似写入了字符串化内容")
+
+        if markdown_content.startswith("{") or any(token in markdown_content for token in TUTORIAL_JSON_ARTIFACT_HINTS):
+            issues.append("正文包含 JSON/结构化字段痕迹，疑似混入原始结构化输出")
+
+        expected_titles = self._get_expected_section_titles(
+            user_preferences=user_preferences,
+            has_prerequisites=bool(context.get("prerequisite_concepts")),
+        )
+        missing_titles = [title for title in expected_titles if title not in markdown_content]
+        if missing_titles:
+            issues.append(f"缺少固定章节：{', '.join(missing_titles)}")
+
+        if "```mermaid" not in markdown_content:
+            issues.append("缺少 Mermaid 图表")
+
+        for claim in TUTORIAL_BANNED_CLAIMS:
+            if claim in markdown_content:
+                issues.append(f"包含高风险错误断言：{claim}")
+
+        if len(draft.metadata.summary.strip()) > 100:
+            issues.append("metadata.summary 超过 100 字约束")
+
+        if draft.metadata.title.strip() != self._extract_markdown_title(markdown_content, concept):
+            issues.append("metadata.title 与正文一级标题不一致")
+
+        if issues:
+            logger.warning(
+                "tutorial_draft_validation_failed",
+                concept_id=concept.concept_id,
+                issues=issues,
+            )
+            raise ValueError("；".join(issues))
 
     async def _run_research_stage(
         self,
@@ -734,22 +942,29 @@ class TutorialGeneratorAgent(BaseAgent):
             Exception: 当单阶段与降级阶段都失败时抛出
         """
 
-        system_prompt = self._get_write_prompt(
+        structured_prompt = self._get_write_prompt(
             concept=concept,
             context=context,
             user_preferences=user_preferences,
             research_notes=research_notes,
+            output_mode="structured",
         )
-        messages = [
-            {"role": "system", "content": system_prompt},
+        structured_messages = [
+            {"role": "system", "content": structured_prompt},
             {"role": "user", "content": "请直接输出结构化教程草稿。"},
         ]
 
         try:
             draft: TutorialDraft = await self._call_llm(
-                messages=messages,
+                messages=structured_messages,
                 response_model=TutorialDraft,
                 use_two_stage=False,
+            )
+            self._validate_tutorial_draft(
+                draft=draft,
+                concept=concept,
+                context=context,
+                user_preferences=user_preferences,
             )
             logger.info(
                 "tutorial_structured_write_completed",
@@ -763,17 +978,40 @@ class TutorialGeneratorAgent(BaseAgent):
                 "tutorial_structured_write_direct_failed",
                 concept_id=concept.concept_id,
                 error=str(exc),
-                fallback="two_stage_generation",
+                fallback="markdown_only_generation",
             )
-            draft = await self._call_llm(
-                messages=messages,
-                response_model=TutorialDraft,
-                use_two_stage=True,
+
+            markdown_prompt = self._get_write_prompt(
+                concept=concept,
+                context=context,
+                user_preferences=user_preferences,
+                research_notes=research_notes,
+                output_mode="markdown",
+            )
+            markdown_messages = [
+                {"role": "system", "content": markdown_prompt},
+                {"role": "user", "content": "请只输出 Markdown 教程正文。"},
+            ]
+            markdown_response = await self._call_llm(messages=markdown_messages)
+            markdown_content = self._extract_message_text(markdown_response.choices[0].message)
+            draft = TutorialDraft(
+                markdown_content=markdown_content,
+                metadata=self._build_metadata_from_markdown(
+                    markdown_content=markdown_content,
+                    concept=concept,
+                    user_preferences=user_preferences,
+                ),
+            )
+            self._validate_tutorial_draft(
+                draft=draft,
+                concept=concept,
+                context=context,
+                user_preferences=user_preferences,
             )
             logger.info(
                 "tutorial_structured_write_completed",
                 concept_id=concept.concept_id,
-                mode="two_stage_structured",
+                mode="markdown_only_fallback",
                 markdown_length=len(draft.markdown_content),
             )
             return draft

@@ -162,22 +162,53 @@ async def test_structured_write_falls_back_to_two_stage(
     mock_concept: Concept,
     mock_user_preferences: LearningPreferences,
 ) -> None:
-    """测试结构化写作失败时会降级到 two-stage"""
+    """测试结构化写作失败时会降级到 Markdown 回退链路"""
 
     agent = TutorialGeneratorAgent()
-    expected_draft = TutorialDraft(
-        markdown_content="# React Hooks 教程\n\n## 概述\n内容",
-        metadata=TutorialMetadataDraft(
-            title="React Hooks 教程",
-            summary="讲解 React Hooks 的核心用法",
-            estimated_completion_time=45,
-        ),
+    fallback_markdown = """# React Hooks 教程
+教程摘要：讲解 React Hooks 的核心用法
+预计完成时间：45 分钟
+
+## 概述
+内容
+
+## 前置知识回顾
+- `[React 基础](/roadmap/roadmap-1?concept=react-basics)`
+
+## 知识祛魅
+把 Hook 理解为组件内部可复用的状态插槽。
+
+## 核心概念
+```mermaid
+flowchart LR
+    A[组件渲染] --> B[Hook 调用]
+```
+
+## 实践示例
+```python
+print("hello")
+```
+
+## 总结
+- 掌握核心概念
+"""
+    fallback_response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content=fallback_markdown
+                )
+            )
+        ]
     )
-    agent._call_llm = AsyncMock(side_effect=[RuntimeError("parse failed"), expected_draft])
+    agent._call_llm = AsyncMock(side_effect=[RuntimeError("parse failed"), fallback_response])
 
     draft = await agent._write_tutorial_draft(
         concept=mock_concept,
-        context={"roadmap_id": "roadmap-1"},
+        context={
+            "roadmap_id": "roadmap-1",
+            "prerequisite_concepts": [{"concept_id": "react-basics", "name": "React 基础"}],
+        },
         user_preferences=mock_user_preferences,
         research_notes=TutorialResearchNotes(
             scenario="development",
@@ -187,9 +218,43 @@ async def test_structured_write_falls_back_to_two_stage(
         ),
     )
 
-    assert draft == expected_draft
+    assert draft.metadata.title == "React Hooks 教程"
+    assert draft.metadata.summary == "讲解 React Hooks 的核心用法"
+    assert draft.metadata.estimated_completion_time == 45
+    assert draft.markdown_content == fallback_markdown
     assert agent._call_llm.await_args_list[0].kwargs["use_two_stage"] is False
-    assert agent._call_llm.await_args_list[1].kwargs["use_two_stage"] is True
+    assert "response_model" not in agent._call_llm.await_args_list[1].kwargs
+
+
+def test_validate_tutorial_draft_rejects_json_artifacts_and_bad_claims(
+    hard_concept: Concept,
+    mock_user_preferences: LearningPreferences,
+) -> None:
+    """测试本地校验会拒绝 JSON 污染和高风险错误断言"""
+
+    agent = TutorialGeneratorAgent()
+    bad_draft = TutorialDraft(
+        markdown_content=(
+            '{"markdown_content":"# 标题\\n\\n## 概述\\n内容","metadata":{"title":"标题"}}'
+            "系统会根据数据依赖自动触发并行执行。"
+        ),
+        metadata=TutorialMetadataDraft(
+            title="标题",
+            summary="一个摘要",
+            estimated_completion_time=30,
+        ),
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        agent._validate_tutorial_draft(
+            draft=bad_draft,
+            concept=hard_concept,
+            context={"prerequisite_concepts": []},
+            user_preferences=mock_user_preferences,
+        )
+
+    assert "JSON/结构化字段痕迹" in str(exc_info.value)
+    assert "高风险错误断言" in str(exc_info.value)
 
 
 @pytest.mark.asyncio

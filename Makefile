@@ -192,11 +192,15 @@ ifeq ($(UNAME_S),Darwin)
     CELERY_POOL := solo
     CELERY_CONCURRENCY_WORKFLOW := 1
     CELERY_CONCURRENCY_CONTENT := 1
+    CELERY_CONCURRENCY_MENTOR_PERSIST := 1
+    CELERY_CONCURRENCY_MENTOR_MEMORY := 1
 else
     # Linux 生产环境：使用 prefork pool（多进程模式）
     CELERY_POOL := prefork
     CELERY_CONCURRENCY_WORKFLOW := 8
     CELERY_CONCURRENCY_CONTENT := 20
+    CELERY_CONCURRENCY_MENTOR_PERSIST := 8
+    CELERY_CONCURRENCY_MENTOR_MEMORY := 4
 endif
 
 # 启动主 Celery Worker（处理工作流任务）
@@ -221,10 +225,32 @@ celery-content:
 		--max-tasks-per-child=100 \
 		--queues=content_generation
 
-# 启动所有 Worker（同时启动两个队列）
+# 启动 AI 伴学助手持久化 Worker
+celery-mentor-persist:
+	@echo "🚀 Starting Celery Worker (Mentor Persist Queue) - Pool: $(CELERY_POOL)..."
+	cd backend && uv run celery -A app.core.celery_app worker \
+		--loglevel=info \
+		--pool=$(CELERY_POOL) \
+		--concurrency=$(CELERY_CONCURRENCY_MENTOR_PERSIST) \
+		--hostname=mentor-persist@%h \
+		--max-tasks-per-child=300 \
+		--queues=mentor_persist
+
+# 启动 AI 伴学助手记忆 Worker
+celery-mentor-memory:
+	@echo "🚀 Starting Celery Worker (Mentor Memory Queue) - Pool: $(CELERY_POOL)..."
+	cd backend && uv run celery -A app.core.celery_app worker \
+		--loglevel=info \
+		--pool=$(CELERY_POOL) \
+		--concurrency=$(CELERY_CONCURRENCY_MENTOR_MEMORY) \
+		--hostname=mentor-memory@%h \
+		--max-tasks-per-child=100 \
+		--queues=mentor_memory
+
+# 启动所有 Worker
 celery-all:
 	@echo "🚀 Starting All Celery Workers - Pool: $(CELERY_POOL)..."
-	@make -j2 celery-workflow celery-content
+	@make -j4 celery-workflow celery-content celery-mentor-persist celery-mentor-memory
 
 # 查看系统状态
 status:

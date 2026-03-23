@@ -64,18 +64,19 @@ from app.schemas.quiz import (
     QuizSubmitResponse,
 )
 
-# 伴学Schemas (已移除 mentor 模块)
-# from app.schemas.mentor import (
-#     ChatStreamRequest,
-#     ChatSessionResponse,
-#     ChatMessageResponse,
-#     LearningNoteResponse,
-#     LearningNoteCreate,
-#     LearningNoteUpdate,
-#     PaginatedChatSessionsResponse,
-#     PaginatedChatMessagesResponse,
-#     PaginatedLearningNotesResponse,
-# )
+# 伴学Schemas
+from app.schemas.mentor import (
+    MentorChatContext,
+    MentorChatRequest,
+    MentorChatMessageResponse,
+    MentorSessionResponse,
+    MentorSessionCreateRequest,
+    MentorSessionListResponse,
+    MentorMessageListResponse,
+    MentorMemoryJobResponse,
+    LearningNoteCreate,
+    LearningNoteUpdate,
+)
 
 # 用户Schemas
 from app.schemas.user import (
@@ -212,11 +213,17 @@ __all__ = [
     "QuizSubmitRequest",
     "QuizDetail",
     "QuizSubmitResponse",
-    # Mentor (已移除)
-    # "MentorChatRequest",
-    # "MentorChatResponse",
-    # "MentorFeedbackRequest",
-    # "MentorFeedbackResponse",
+    # Mentor
+    "MentorChatContext",
+    "MentorChatRequest",
+    "MentorChatMessageResponse",
+    "MentorSessionResponse",
+    "MentorSessionCreateRequest",
+    "MentorSessionListResponse",
+    "MentorMessageListResponse",
+    "MentorMemoryJobResponse",
+    "LearningNoteCreate",
+    "LearningNoteUpdate",
     # User
     "UserCreate",
     "UserUpdate",
@@ -230,6 +237,15 @@ __all__ = [
     "DeletedRoadmapsResponse",
     # Task
     "TaskStatusDetailResponse",
+    # Handler IO
+    "IntentAnalysisHandlerInput",
+    "CurriculumDesignHandlerInput",
+    "ValidationHandlerInput",
+    "EditPlanHandlerInput",
+    "EditorHandlerInput",
+    "ReviewHandlerInput",
+    "ContentHandlerInput",
+    "ConceptContentSaveResult",
     # Cover Image
     "CoverImageStatusResponse",
     "CoverImageResponse",

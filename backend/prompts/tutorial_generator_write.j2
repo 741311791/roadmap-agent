@@ -61,6 +61,10 @@
 - 核心概念：必须包含至少一个 Mermaid 图表来解释复杂逻辑
 - 实践示例：给出完整、可读、能运行或足够接近真实环境的示例
 - 总结：回顾 3-5 条关键结论
+- 所有技术断言必须以“研究摘要”中已确认的信息为准；未确认时必须使用保守表述
+- 未确认性能数据时，禁止写量化收益或绝对化结论，例如“毫秒级提升”“性能飞跃”“必备技术”
+- 不要把 Python `asyncio.gather` 等并发编排，错误描述成 LangGraph 会“自动根据数据依赖触发并行执行”
+- 不要把 `astream` 的行为，笼统描述为“一定会自动捕获所有并行任务的中间状态”
 
 [9. Mermaid Constraints]
 - 必须显式声明图类型，如 `graph TD`、`flowchart LR`、`sequenceDiagram`
@@ -69,15 +73,34 @@
 - 中文显示文本必须放在方括号或圆括号中
 - 单个 Mermaid 图保持简洁，避免节点过多
 
-[10. Structured Output]
+[10. Output Mode]
+{% if output_mode == "structured" %}
 请直接输出结构化结果，并满足以下字段语义：
 - `markdown_content`：完整 Markdown 教程正文
 - `metadata.title`：教程标题
 - `metadata.summary`：不超过 100 字的简短摘要
 - `metadata.estimated_completion_time`：单位为分钟的整数
+{% else %}
+请只输出 Markdown 教程正文，不要输出 JSON，不要输出代码块外的解释。
+
+Markdown 正文必须满足：
+- 第一行必须是一级标题：`# 教程标题`
+{% if language_preferences and language_preferences.primary_language == 'en' %}
+- 第二行必须是：`Tutorial Summary: <summary>`
+- 第三行必须是：`Estimated Completion Time: <integer> minutes`
+{% else %}
+- 第二行必须是：`教程摘要：<summary>`
+- 第三行必须是：`预计完成时间：<整数> 分钟`
+{% endif %}
+- 在元信息之后空一行，再开始固定章节正文
+{% endif %}
 
 [11. Quality Bar]
 - 禁止输出与教程无关的前言或解释
 - 如果研究摘要中存在版本约束，代码示例必须遵守
 - 如果研究阶段未确认版本，不要编造特定版本细节
 - 只生成教程正文与元数据，不生成资源推荐或测验内容
+{% if force_conservative_claims %}
+- 当前未实际确认官方文档细节，必须采用保守写法
+- 可以解释通用原理，但不要对具体 API 行为、流式事件语义、版本差异做强断言
+{% endif %}

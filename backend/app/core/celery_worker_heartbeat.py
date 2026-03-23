@@ -164,6 +164,10 @@ def infer_worker_queues(worker_hostname: str) -> list[str]:
     """
     if worker_hostname.startswith("content@"):
         return ["content_generation"]
+    if worker_hostname.startswith("mentor-persist@"):
+        return ["mentor_persist"]
+    if worker_hostname.startswith("mentor-memory@"):
+        return ["mentor_memory"]
     return ["celery"]
 
 

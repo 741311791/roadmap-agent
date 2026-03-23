@@ -46,6 +46,9 @@ env/
 .env.bak
 backend/.env.production*
 
+# Mem0 本地配置（含数据库与 API 密钥，勿提交）
+backend/mem0_config.json
+
 # Node.js
 node_modules/
 npm-debug.log*

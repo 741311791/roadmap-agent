@@ -16,12 +16,16 @@
 - 资源修改师 (RESOURCE_MODIFIER_*)
 - 测验修改师 (QUIZ_MODIFIER_*)
 """
+from pathlib import Path
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """全局配置"""
+
+    _backend_dir = Path(__file__).resolve().parents[2]
     
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -254,6 +258,24 @@ class Settings(BaseSettings):
     QUIZ_MODEL: str = Field("gpt-4o-mini", description="模型名称")
     QUIZ_BASE_URL: str | None = None
     QUIZ_API_KEY: str = Field("your_openai_api_key_here", description="API 密钥")
+
+    # Mentor Agent（AI 伴学助手）
+    MENTOR_AGENT_PROVIDER: str = Field("openai", description="AI 伴学助手模型提供商")
+    MENTOR_AGENT_MODEL: str = Field("gpt-4o-mini", description="AI 伴学助手默认模型名称")
+    MENTOR_AGENT_BASE_URL: str | None = Field(None, description="AI 伴学助手自定义 API 端点")
+    MENTOR_AGENT_API_KEY: str | None = Field(None, description="AI 伴学助手 API 密钥")
+    MENTOR_AGENT_TEMPERATURE: float = Field(0.7, description="AI 伴学助手采样温度")
+    MENTOR_AGENT_MAX_TOKENS: int = Field(2048, description="AI 伴学助手最大输出 Token 数")
+
+    @property
+    def get_mentor_agent_api_key(self) -> str:
+        """
+        获取 AI 伴学助手 API 密钥
+
+        优先使用专用配置；若未配置则回退到 ANALYZER_API_KEY，
+        这样本地开发环境即使未单独配置也可以先跑通主链路。
+        """
+        return self.MENTOR_AGENT_API_KEY or self.ANALYZER_API_KEY
     
     # ==================== Modifier Agents 配置（内容修改）====================
     # 测验修改师（Quiz Modifier）
@@ -308,6 +330,101 @@ class Settings(BaseSettings):
         获取 Redis 连接 URL
         """
         return self.get_redis_url
+
+    # ==================== Mentor 运行时配置 ====================
+    MENTOR_STM_WINDOW_SIZE: int = Field(
+        20,
+        description="AI 伴学助手短期记忆窗口大小（按消息条数）"
+    )
+    MENTOR_STM_TTL_SECONDS: int = Field(
+        86400,
+        description="AI 伴学助手短期记忆 TTL（秒）"
+    )
+    MENTOR_LTM_TOP_K: int = Field(
+        5,
+        description="AI 伴学助手长期记忆召回数量"
+    )
+    MENTOR_MAX_MESSAGE_LENGTH: int = Field(
+        4000,
+        description="单条用户消息最大长度"
+    )
+    MENTOR_CONTEXT_EXCERPT_MAX_LENGTH: int = Field(
+        1200,
+        description="章节上下文截断长度"
+    )
+    MENTOR_RATE_LIMIT_PER_MINUTE: int = Field(
+        30,
+        description="单用户每分钟请求上限"
+    )
+    MENTOR_IP_RATE_LIMIT_PER_MINUTE: int = Field(
+        60,
+        description="单 IP 每分钟请求上限"
+    )
+    MENTOR_TASK_DONE_TTL_SECONDS: int = Field(
+        604800,
+        description="异步任务幂等完成标记 TTL（秒）"
+    )
+    MENTOR_MEMORY_LOCK_TIMEOUT_SECONDS: int = Field(
+        30,
+        description="长期记忆提炼分布式锁超时时间（秒）"
+    )
+    MENTOR_MEMORY_LOCK_RETRY_SECONDS: float = Field(
+        0.2,
+        description="长期记忆提炼锁重试间隔（秒）"
+    )
+    MENTOR_REFLECTION_MIN_MESSAGES: int = Field(
+        50,
+        description="触发长对话 reflection 的最小消息数"
+    )
+    MENTOR_LTM_CACHE_TTL_SECONDS: int = Field(
+        600,
+        description="AI 伴学助手长期记忆预热缓存 TTL（秒，默认 10 分钟）"
+    )
+    MENTOR_CONTEXT_CACHE_TTL_SECONDS: int = Field(
+        1800,
+        description="AI 伴学助手学习上下文预热缓存 TTL（秒，默认 30 分钟）"
+    )
+
+    # ==================== Mem0 配置 ====================
+    MEM0_ENABLED: bool = Field(
+        False,
+        description="是否启用 Mem0 长期记忆能力"
+    )
+    MEM0_CONFIG_JSON: str | None = Field(
+        None,
+        description="Mem0 配置 JSON 字符串；生产环境可通过此字段注入 PgVector 配置"
+    )
+    MEM0_LTM_COLLECTION_NAME: str = Field(
+        "mentor_memories",
+        description="Mem0 长期记忆集合名称"
+    )
+
+    @property
+    def get_mem0_config_json(self) -> str | None:
+        """
+        获取 Mem0 配置 JSON
+
+        读取优先级：
+        1. `MEM0_CONFIG_JSON` 为 JSON 字符串时直接使用。
+        2. `MEM0_CONFIG_JSON` 为文件路径时读取对应文件。
+        3. 回退读取后端根目录下的 `mem0_config.json`。
+        """
+        raw_value = (self.MEM0_CONFIG_JSON or "").strip()
+        if raw_value:
+            if raw_value.startswith("{"):
+                return raw_value
+
+            candidate_path = Path(raw_value)
+            if not candidate_path.is_absolute():
+                candidate_path = self._backend_dir / candidate_path
+            if candidate_path.exists():
+                return candidate_path.read_text(encoding="utf-8")
+
+        default_config_path = self._backend_dir / "mem0_config.json"
+        if default_config_path.exists():
+            return default_config_path.read_text(encoding="utf-8")
+
+        return None
     
     @property
     def get_tavily_api_keys(self) -> list[str]:

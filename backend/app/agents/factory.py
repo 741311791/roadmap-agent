@@ -28,7 +28,7 @@ tutorial_generator = factory.create_tutorial_generator()
 result = await tutorial_generator.execute(input_data)
 ```
 """
-from typing import Protocol, Optional
+from typing import Optional
 import structlog
 
 from app.config.settings import Settings
@@ -380,6 +380,30 @@ class AgentFactory:
     # ============================================================
     # Learning & Mentor Agents（学习与导师）
     # ============================================================
+
+    def create_mentor_agent(
+        self,
+        *,
+        agent_type: str = "tutoring",
+        model_name: str | None = None,
+    ):
+        """
+        创建 AI 伴学助手 Agent
+
+        Args:
+            agent_type: AI 伴学助手模式
+            model_name: 指定模型 ID；为空时使用默认配置
+
+        Returns:
+            MentorAgent 实例
+        """
+        from app.agents.mentor_agent import MentorAgent
+
+        return MentorAgent(
+            self.settings,
+            agent_type=agent_type,
+            model_name=model_name,
+        )
 
 
 # ============================================================
