@@ -42,7 +42,7 @@ cd "$(dirname "$0")/.."
 uv run celery -A app.core.celery_app worker \
     --loglevel=info \
     --concurrency=3 \
-    --pool=prefork \
+    --pool=solo \
     --hostname=content@%h \
     --max-tasks-per-child=100 \
     --queues=content_generation

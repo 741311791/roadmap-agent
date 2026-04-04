@@ -104,6 +104,60 @@ def _apply_test_mode_truncation(
     return framework, truncated_concepts
 
 
+def _select_initial_concepts_for_generation(
+    framework: "RoadmapFramework",
+    concepts: list[Concept],
+    task_id: str,
+) -> list[Concept]:
+    """
+    选择初始化阶段需要自动生成内容的 Concept。
+
+    当前产品策略：
+    - 无论极速模式还是普通模式，都只自动生成
+      第一个 Stage -> 第一个 Module -> 第一个 Concept
+    - 其他 Concept 保持 pending，等待后续学习解锁
+
+    Args:
+        framework: 路线图框架
+        concepts: 候选 Concept 列表
+        task_id: 任务 ID
+
+    Returns:
+        需要进入内容生成子图的 Concept 列表
+    """
+    if not framework.stages or not framework.stages[0].modules:
+        logger.warning(
+            "initial_concept_selection_skipped",
+            task_id=task_id,
+            reason="framework_missing_stage_or_module",
+        )
+        return []
+
+    first_module = framework.stages[0].modules[0]
+    if not first_module.concepts:
+        logger.warning(
+            "initial_concept_selection_skipped",
+            task_id=task_id,
+            reason="first_module_has_no_concepts",
+        )
+        return []
+
+    first_concept_id = first_module.concepts[0].concept_id
+    selected_concept = next(
+        (concept for concept in concepts if concept.concept_id == first_concept_id),
+        first_module.concepts[0],
+    )
+
+    logger.info(
+        "initial_concept_selected_for_generation",
+        task_id=task_id,
+        selected_concept_id=first_concept_id,
+        original_concepts=len(concepts),
+        selected_concepts=1,
+    )
+    return [selected_concept]
+
+
 async def _execute_content_generation_subgraph(
     task_id: str,
     roadmap_id: str,
@@ -689,6 +743,12 @@ async def _get_framework_and_concepts_optimized(
                         framework, concepts, task_id
                     )
                 
+                concepts = _select_initial_concepts_for_generation(
+                    framework,
+                    concepts,
+                    task_id,
+                )
+
                 return framework, concepts, user_constraints, user_request
         
         except Exception as e:
@@ -749,6 +809,12 @@ async def _get_framework_and_concepts_optimized(
                             framework_obj, concepts, task_id
                         )
                     
+                    concepts = _select_initial_concepts_for_generation(
+                        framework_obj,
+                        concepts,
+                        task_id,
+                    )
+
                     return framework_obj, concepts, user_constraints, user_request_dict
             
             logger.info(
@@ -816,6 +882,12 @@ async def _get_framework_and_concepts_optimized(
                 framework, concepts, task_id
             )
         
+        concepts = _select_initial_concepts_for_generation(
+            framework,
+            concepts,
+            task_id,
+        )
+
         return framework, concepts, user_constraints, user_request
 
 

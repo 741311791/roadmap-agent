@@ -17,6 +17,7 @@
 - 测验修改师 (QUIZ_MODIFIER_*)
 """
 from pathlib import Path
+from typing import Any
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -152,6 +153,23 @@ class Settings(BaseSettings):
     S3_SECRET_ACCESS_KEY: str = Field("minioadmin123", description="访问密钥")
     S3_BUCKET_NAME: str = Field("roadmap-content", description="存储桶名称")
     S3_REGION: str | None = Field("auto", description="区域（R2 使用 'auto'，MinIO 可留空）")
+
+    # ==================== Linear 反馈配置 ====================
+    LINEAR_API_KEY: str | None = Field(None, description="Linear Personal API Key")
+    LINEAR_TEAM_ID: str | None = Field(None, description="Linear 团队 ID")
+    LINEAR_PROJECT_ID: str | None = Field(
+        None,
+        description="Linear 固定项目 ID（可选；未配置时仅按 Team 归属）",
+    )
+    LINEAR_WORKSPACE_URL: str | None = Field(
+        None,
+        description="Linear 工作区 URL，例如 https://linear.app/your-workspace",
+    )
+    LINEAR_LABEL_USER_FEEDBACK: str | None = Field(None, description="User Feedback 标签 ID")
+    LINEAR_LABEL_BUG: str | None = Field(None, description="Bug 标签 ID")
+    LINEAR_LABEL_IMPROVEMENT: str | None = Field(None, description="Improvement 标签 ID")
+    LINEAR_LABEL_QUESTION: str | None = Field(None, description="Question 标签 ID")
+    LINEAR_LABEL_NEW_FEATURE: str | None = Field(None, description="New Feature 标签 ID")
     
     # ==================== Web Search 配置 ====================
     TAVILY_API_KEY: str | None = Field(None, description="Tavily API 密钥（可选，单个 Key）")
@@ -266,6 +284,46 @@ class Settings(BaseSettings):
     MENTOR_AGENT_API_KEY: str | None = Field(None, description="AI 伴学助手 API 密钥")
     MENTOR_AGENT_TEMPERATURE: float = Field(0.7, description="AI 伴学助手采样温度")
     MENTOR_AGENT_MAX_TOKENS: int = Field(2048, description="AI 伴学助手最大输出 Token 数")
+    MODEL_REGISTRY_ENCRYPTION_KEY: str | None = Field(
+        None,
+        description="Mentor 模型注册表密钥加密种子；为空时回退使用 JWT_SECRET_KEY",
+    )
+    MENTOR_MODEL_REGISTRY_CACHE_TTL_SECONDS: int = Field(
+        300,
+        description="Mentor 模型配置缓存 TTL（秒）",
+    )
+    MENTOR_MODEL_LIST_CACHE_TTL_SECONDS: int = Field(
+        300,
+        description="Mentor 模型列表缓存 TTL（秒）",
+    )
+    DEERFLOW_BASE_URL: str | None = Field(
+        "http://localhost:8001",
+        description="独立部署的 Deer-Flow Gateway 地址，例如 http://localhost:8001",
+    )
+    DEERFLOW_API_KEY: str | None = Field(
+        None,
+        description="调用 Deer-Flow Gateway 时使用的 Bearer Token（可选）",
+    )
+    DEERFLOW_DEFAULT_ASSISTANT_ID: str = Field(
+        "lead_agent",
+        description="Deer-Flow 默认 assistant ID",
+    )
+    DEERFLOW_DEFAULT_MODEL_NAME: str | None = Field(
+        None,
+        description="Deer-Flow 默认模型名称；为空时使用 Deer-Flow 自身默认模型",
+    )
+    DEERFLOW_REQUEST_TIMEOUT_SECONDS: float = Field(
+        30.0,
+        description="普通 Deer-Flow HTTP 请求超时时间（秒）",
+    )
+    DEERFLOW_STREAM_CONNECT_TIMEOUT_SECONDS: float = Field(
+        30.0,
+        description="Deer-Flow SSE 建连超时时间（秒）",
+    )
+    DEERFLOW_STREAM_READ_TIMEOUT_SECONDS: float = Field(
+        300.0,
+        description="Deer-Flow SSE 读取超时时间（秒）",
+    )
 
     @property
     def get_mentor_agent_api_key(self) -> str:
@@ -276,6 +334,59 @@ class Settings(BaseSettings):
         这样本地开发环境即使未单独配置也可以先跑通主链路。
         """
         return self.MENTOR_AGENT_API_KEY or self.ANALYZER_API_KEY
+
+    MENTOR_MODE_RESOLVER_PROVIDER: str = Field("openai", description="回答模式解析 Agent 模型提供商")
+    MENTOR_MODE_RESOLVER_MODEL: str | None = Field(None, description="回答模式解析 Agent 模型名称")
+    MENTOR_MODE_RESOLVER_BASE_URL: str | None = Field(None, description="回答模式解析 Agent 自定义 API 端点")
+    MENTOR_MODE_RESOLVER_API_KEY: str | None = Field(None, description="回答模式解析 Agent API 密钥")
+    MENTOR_MODE_RESOLVER_TEMPERATURE: float = Field(0.1, description="回答模式解析 Agent 采样温度")
+    MENTOR_MODE_RESOLVER_MAX_TOKENS: int = Field(256, description="回答模式解析 Agent 最大输出 Token 数")
+    MENTOR_MODE_RESOLVER_CONFIDENCE_THRESHOLD: float = Field(
+        0.7,
+        ge=0.0,
+        le=1.0,
+        description="回答模式解析 Agent 置信度阈值，低于该值时回退到规则匹配",
+    )
+
+    @property
+    def get_mentor_mode_resolver_model(self) -> str:
+        """
+        获取回答模式解析 Agent 模型名称
+        """
+        configured_value = (self.MENTOR_MODE_RESOLVER_MODEL or "").strip()
+        return configured_value or self.MENTOR_AGENT_MODEL
+
+    @property
+    def get_mentor_mode_resolver_base_url(self) -> str | None:
+        """
+        获取回答模式解析 Agent Base URL
+        """
+        configured_value = (self.MENTOR_MODE_RESOLVER_BASE_URL or "").strip()
+        if configured_value:
+            return configured_value
+
+        mentor_base_url = (self.MENTOR_AGENT_BASE_URL or "").strip()
+        return mentor_base_url or None
+
+    @property
+    def get_mentor_mode_resolver_api_key(self) -> str:
+        """
+        获取回答模式解析 Agent API Key
+        """
+        configured_value = (self.MENTOR_MODE_RESOLVER_API_KEY or "").strip()
+        return configured_value or self.get_mentor_agent_api_key
+
+    @property
+    def get_model_registry_encryption_secret(self) -> str:
+        """
+        获取 Mentor 模型注册表加密种子
+
+        说明：
+        - 优先使用专用的 MODEL_REGISTRY_ENCRYPTION_KEY
+        - 未配置时回退到 JWT_SECRET_KEY，避免本地开发环境额外配置
+        """
+        configured_value = (self.MODEL_REGISTRY_ENCRYPTION_KEY or "").strip()
+        return configured_value or self.JWT_SECRET_KEY
     
     # ==================== Modifier Agents 配置（内容修改）====================
     # 测验修改师（Quiz Modifier）
@@ -390,41 +501,162 @@ class Settings(BaseSettings):
         False,
         description="是否启用 Mem0 长期记忆能力"
     )
-    MEM0_CONFIG_JSON: str | None = Field(
+    MEM0_VECTOR_STORE_PROVIDER: str = Field(
+        "pgvector",
+        description="Mem0 向量存储提供商"
+    )
+    MEM0_VECTOR_STORE_CONNECTION_STRING: str | None = Field(
         None,
-        description="Mem0 配置 JSON 字符串；生产环境可通过此字段注入 PgVector 配置"
+        description="Mem0 向量存储连接串；未配置时默认复用主数据库标准 PostgreSQL 连接串"
     )
     MEM0_LTM_COLLECTION_NAME: str = Field(
         "mentor_memories",
         description="Mem0 长期记忆集合名称"
     )
+    MEM0_EMBEDDING_DIMS: int = Field(
+        1024,
+        description="Mem0 向量维度配置"
+    )
+    MEM0_LLM_PROVIDER: str = Field(
+        "openai",
+        description="Mem0 LLM 提供商"
+    )
+    MEM0_LLM_MODEL: str | None = Field(
+        None,
+        description="Mem0 LLM 模型；未配置时复用 Mentor Agent 模型"
+    )
+    MEM0_LLM_BASE_URL: str | None = Field(
+        None,
+        description="Mem0 LLM Base URL；未配置时复用 Mentor Agent Base URL"
+    )
+    MEM0_LLM_API_KEY: str | None = Field(
+        None,
+        description="Mem0 LLM API Key；未配置时复用 Mentor Agent API Key"
+    )
+    MEM0_EMBEDDER_PROVIDER: str = Field(
+        "openai",
+        description="Mem0 Embedder 提供商"
+    )
+    MEM0_EMBEDDER_MODEL: str = Field(
+        "bailian/text-embedding-v4",
+        description="Mem0 Embedder 模型"
+    )
+    MEM0_EMBEDDER_BASE_URL: str | None = Field(
+        None,
+        description="Mem0 Embedder Base URL；未配置时复用 Mem0 LLM Base URL"
+    )
+    MEM0_EMBEDDER_API_KEY: str | None = Field(
+        None,
+        description="Mem0 Embedder API Key；未配置时复用 Mem0 LLM API Key"
+    )
 
     @property
-    def get_mem0_config_json(self) -> str | None:
+    def get_mem0_vector_store_connection_string(self) -> str:
         """
-        获取 Mem0 配置 JSON
-
-        读取优先级：
-        1. `MEM0_CONFIG_JSON` 为 JSON 字符串时直接使用。
-        2. `MEM0_CONFIG_JSON` 为文件路径时读取对应文件。
-        3. 回退读取后端根目录下的 `mem0_config.json`。
+        获取 Mem0 向量库连接串
         """
-        raw_value = (self.MEM0_CONFIG_JSON or "").strip()
-        if raw_value:
-            if raw_value.startswith("{"):
-                return raw_value
+        configured_value = (self.MEM0_VECTOR_STORE_CONNECTION_STRING or "").strip()
+        return configured_value or self.CHECKPOINTER_DATABASE_URL
 
-            candidate_path = Path(raw_value)
-            if not candidate_path.is_absolute():
-                candidate_path = self._backend_dir / candidate_path
-            if candidate_path.exists():
-                return candidate_path.read_text(encoding="utf-8")
+    @property
+    def get_mem0_llm_model(self) -> str:
+        """
+        获取 Mem0 LLM 模型名称
+        """
+        configured_value = (self.MEM0_LLM_MODEL or "").strip()
+        return configured_value or self.MENTOR_AGENT_MODEL
 
-        default_config_path = self._backend_dir / "mem0_config.json"
-        if default_config_path.exists():
-            return default_config_path.read_text(encoding="utf-8")
+    @property
+    def get_mem0_llm_base_url(self) -> str | None:
+        """
+        获取 Mem0 LLM Base URL
+        """
+        configured_value = (self.MEM0_LLM_BASE_URL or "").strip()
+        if configured_value:
+            return configured_value
 
-        return None
+        mentor_base_url = (self.MENTOR_AGENT_BASE_URL or "").strip()
+        return mentor_base_url or None
+
+    @property
+    def get_mem0_llm_api_key(self) -> str:
+        """
+        获取 Mem0 LLM API Key
+        """
+        configured_value = (self.MEM0_LLM_API_KEY or "").strip()
+        return configured_value or self.get_mentor_agent_api_key
+
+    @property
+    def get_mem0_embedder_base_url(self) -> str | None:
+        """
+        获取 Mem0 Embedder Base URL
+        """
+        configured_value = (self.MEM0_EMBEDDER_BASE_URL or "").strip()
+        if configured_value:
+            return configured_value
+        return self.get_mem0_llm_base_url
+
+    @property
+    def get_mem0_embedder_api_key(self) -> str:
+        """
+        获取 Mem0 Embedder API Key
+        """
+        configured_value = (self.MEM0_EMBEDDER_API_KEY or "").strip()
+        return configured_value or self.get_mem0_llm_api_key
+
+    def _read_backend_prompt(self, prompt_file_name: str) -> str:
+        """
+        读取后端 Prompt 模板文件
+
+        Args:
+            prompt_file_name: Prompt 文件名
+
+        Returns:
+            Prompt 文本内容
+
+        Raises:
+            FileNotFoundError: Prompt 文件不存在
+        """
+        prompt_path = self._backend_dir / "prompts" / prompt_file_name
+        return prompt_path.read_text(encoding="utf-8").strip()
+
+    @property
+    def get_mem0_config(self) -> dict[str, Any] | None:
+        """
+        构建 Mem0 配置字典
+        """
+        if not self.MEM0_ENABLED:
+            return None
+
+        return {
+            "vector_store": {
+                "provider": self.MEM0_VECTOR_STORE_PROVIDER,
+                "config": {
+                    "collection_name": self.MEM0_LTM_COLLECTION_NAME,
+                    "embedding_model_dims": self.MEM0_EMBEDDING_DIMS,
+                    "connection_string": self.get_mem0_vector_store_connection_string,
+                },
+            },
+            "llm": {
+                "provider": self.MEM0_LLM_PROVIDER,
+                "config": {
+                    "model": self.get_mem0_llm_model,
+                    "api_key": self.get_mem0_llm_api_key,
+                    "openai_base_url": self.get_mem0_llm_base_url,
+                },
+            },
+            "embedder": {
+                "provider": self.MEM0_EMBEDDER_PROVIDER,
+                "config": {
+                    "model": self.MEM0_EMBEDDER_MODEL,
+                    "embedding_dims": self.MEM0_EMBEDDING_DIMS,
+                    "api_key": self.get_mem0_embedder_api_key,
+                    "openai_base_url": self.get_mem0_embedder_base_url,
+                },
+            },
+            "custom_fact_extraction_prompt": self._read_backend_prompt("mem0_fact_extraction.j2"),
+            "custom_update_memory_prompt": self._read_backend_prompt("mem0_update_memory.j2"),
+        }
     
     @property
     def get_tavily_api_keys(self) -> list[str]:
@@ -464,6 +696,12 @@ class Settings(BaseSettings):
     # ==================== 观测性配置 ====================
     OTEL_ENABLED: bool = Field(False, description="是否启用 OpenTelemetry")
     OTEL_EXPORTER_OTLP_ENDPOINT: str | None = Field(None, description="OTLP 导出端点")
+    LANGFUSE_ENABLED: bool = Field(False, description="是否启用 Langfuse 观测")
+    LANGFUSE_PUBLIC_KEY: str | None = Field(None, description="Langfuse Public Key")
+    LANGFUSE_SECRET_KEY: str | None = Field(None, description="Langfuse Secret Key")
+    LANGFUSE_BASE_URL: str | None = Field(None, description="Langfuse 服务地址")
+    LANGFUSE_DEBUG: bool = Field(False, description="是否开启 Langfuse 调试日志")
+    LANGFUSE_SAMPLE_RATE: float | None = Field(None, description="Langfuse 采样率（0-1）")
     
     # ==================== 业务配置 ====================
     MAX_FRAMEWORK_RETRY: int = Field(3, description="路线图结构验证最大重试次数")

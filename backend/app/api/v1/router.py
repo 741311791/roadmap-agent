@@ -19,7 +19,8 @@ API v1 主路由（业务领域驱动架构）
 from fastapi import APIRouter
 
 # 导入各业务领域的路由
-from .endpoints import auth, users, roadmaps, tasks, content, learning, admin
+from .endpoints import auth, users, roadmaps, roadmap, tasks, content, learning, admin
+from .endpoints.deerflow.router import router as deerflow_router
 from .endpoints.admin.waitlist import router_public as waitlist_public_router
 
 # FastAPI Users认证
@@ -37,6 +38,7 @@ router.include_router(users.router)
 
 # ==================== 路线图管理 ====================
 router.include_router(roadmaps.router)
+router.include_router(roadmap.router)
 
 # ==================== 任务管理 ====================
 router.include_router(tasks.router)
@@ -46,6 +48,9 @@ router.include_router(content.router)
 
 # ==================== 学习体验 ====================
 router.include_router(learning.router)
+
+# ==================== Deer-Flow 独立实验室 ====================
+router.include_router(deerflow_router)
 
 # ==================== 平台管理 ====================
 router.include_router(admin.router)

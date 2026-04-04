@@ -13,8 +13,15 @@ from openai import AuthenticationError, BadRequestError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.factory import AgentFactory, get_agent_factory
-from app.agents.mentor_agent import MentorAgentInput
 from app.config.settings import settings
+from app.core.observability import (
+    build_mentor_trace_metadata,
+    create_langfuse_trace_id,
+    flush_langfuse,
+    propagate_mentor_attributes,
+    start_langfuse_observation,
+    update_current_span_safely,
+)
 from app.core.celery_app import celery_app
 from app.core.custom_exceptions import errors
 from app.crud.crud_chat import chat_message_crud, chat_session_crud
@@ -23,6 +30,16 @@ from app.crud.crud_roadmap import get_roadmap_crud
 from app.db.session import async_session_maker
 from app.models.database import ChatMessage, ChatSession, MentorMemoryJob, User
 from app.schemas.mentor import MentorChatRequest
+from app.services.learning.mentor import (
+    MentorEmotionAnalysis,
+    MentorPlaceholderAgentInput,
+    MentorQaAgentInput,
+    MentorTextDeltaEvent,
+    MentorThinkingDeltaEvent,
+    MentorToolResultEvent,
+    MentorToolStartEvent,
+)
+from app.services.learning.mentor.agent_registry import MentorAgentRegistry
 from app.services.learning.mentor_context_service import (
     MentorContextService,
     get_mentor_context_service,
@@ -30,6 +47,10 @@ from app.services.learning.mentor_context_service import (
 from app.services.learning.mentor_rate_limit_service import (
     MentorRateLimitService,
     get_mentor_rate_limit_service,
+)
+from app.services.shared.mentor_model_registry_service import (
+    MentorModelRegistryService,
+    get_mentor_model_registry_service,
 )
 
 logger = structlog.get_logger()
@@ -43,9 +64,21 @@ class MentorChatStreamContext:
 
     session_id: str
     trace_id: str
+    langfuse_trace_id: str
     user_message_id: str
     assistant_message_id: str
     stream: AsyncGenerator[str, None]
+
+
+@dataclass(slots=True)
+class MentorChatAgentContext:
+    """
+    当前聊天轮次的 Agent 上下文
+    """
+
+    agent_kind: str
+    qa_style: str | None
+    emotion: MentorEmotionAnalysis
 
 
 class MentorService:
@@ -53,11 +86,25 @@ class MentorService:
     AI 伴学助手服务
     """
 
-    STREAM_SANITIZE_HOLDBACK_CHARS = 24
+    STREAM_SANITIZE_HOLDBACK_CHARS = 8
     MARKDOWN_HORIZONTAL_RULE_PATTERN = re.compile(r"(?m)^[ \t]{0,3}(?:---|\*\*\*|___)[ \t]*$")
+    DOUBLE_BACKTICK_INLINE_CODE_PATTERN = re.compile(r"(?<!`)``([^`\n]+?)``(?!`)")
+    DOUBLE_BACKTICK_WRAPPED_INLINE_CODE_PATTERN = re.compile(
+        r"(?<!`)``\s*`([^`\n]+)`\s*``(?!`)"
+    )
     INLINE_BOLD_PATTERN = re.compile(r"\*\*[^*\n]+?\*\*")
     INLINE_CODE_PATTERN = re.compile(r"(?<!`)`[^`\n]+`(?!`)")
     INLINE_MARKDOWN_ADJACENT_PATTERN = re.compile(r"[\u4e00-\u9fffA-Za-z0-9]")
+    EMOJI_PATTERN = re.compile(
+        "["
+        "\U0001F300-\U0001FAD6"
+        "\U0001FAE0-\U0001FAFF"
+        "\U00002700-\U000027BF"
+        "\u2600-\u26FF"
+        "\uFE0F"
+        "]+",
+        flags=re.UNICODE,
+    )
 
     def __init__(
         self,
@@ -65,12 +112,57 @@ class MentorService:
         agent_factory: AgentFactory | None = None,
         context_service: MentorContextService | None = None,
         rate_limit_service: MentorRateLimitService | None = None,
+        model_registry_service: MentorModelRegistryService | None = None,
     ) -> None:
         self.agent_factory = agent_factory or get_agent_factory()
         self.context_service = context_service or get_mentor_context_service()
         self.rate_limit_service = rate_limit_service or get_mentor_rate_limit_service()
+        self.model_registry_service = model_registry_service or get_mentor_model_registry_service()
         self.roadmap_crud = get_roadmap_crud()
         self.roadmap_crud = get_roadmap_crud()
+
+    @staticmethod
+    def _analyze_user_emotion(message: str) -> MentorEmotionAnalysis:
+        """
+        基于轻量规则判断用户当前情绪
+        """
+
+        normalized_message = message.strip().lower()
+        if not normalized_message:
+            return MentorEmotionAnalysis(label="neutral", summary="用户语气平稳，未显著暴露情绪。")
+
+        anxious_keywords = ("不会", "看不懂", "好难", "卡住", "崩溃", "焦虑", "迷茫", "不会做")
+        frustrated_keywords = ("报错", "错误", "怎么不行", "为什么不", "没反应", "有问题", "bug")
+        curious_keywords = ("为什么", "原理", "区别", "举例", "怎么理解", "是什么")
+
+        if any(keyword in normalized_message for keyword in anxious_keywords):
+            return MentorEmotionAnalysis(label="anxious", summary="用户当前有明显卡住或焦虑倾向，需要先降低理解门槛。")
+
+        if any(keyword in normalized_message for keyword in frustrated_keywords):
+            return MentorEmotionAnalysis(label="frustrated", summary="用户当前带有排错或受阻情绪，需要先快速定位问题。")
+
+        if any(keyword in normalized_message for keyword in curious_keywords):
+            return MentorEmotionAnalysis(label="curious", summary="用户当前偏探索和求知，适合给出清晰解释与例子。")
+
+        return MentorEmotionAnalysis(label="neutral", summary="用户语气平稳，适合直接进入问题解答。")
+
+    def _create_chat_agent(
+        self,
+        *,
+        agent_kind: str,
+        runtime_model_config,
+    ):
+        """
+        按静态 Agent 类型创建聊天运行时
+        """
+
+        if agent_kind == "qa":
+            return self.agent_factory.create_qa_agent(runtime_config=runtime_model_config)
+        if agent_kind == "guide":
+            return self.agent_factory.create_guide_agent(runtime_config=runtime_model_config)
+        if agent_kind == "quiz":
+            return self.agent_factory.create_quiz_agent(runtime_config=runtime_model_config)
+        raise errors.BadRequestError(msg=f"不支持的聊天 Agent 类型：{agent_kind}")
 
     async def build_chat_stream(
         self,
@@ -95,8 +187,18 @@ class MentorService:
 
         session_id = request.session_id or str(uuid.uuid4())
         trace_id = str(uuid.uuid4())
+        langfuse_trace_id = create_langfuse_trace_id(trace_id)
         user_message_id = str(uuid.uuid4())
         assistant_message_id = str(uuid.uuid4())
+        agent_kind = request.agent_kind
+        if not MentorAgentRegistry.is_supported(agent_kind):
+            raise errors.BadRequestError(msg=f"不支持的聊天 Agent 类型：{agent_kind}")
+        runtime_model_config = await self.model_registry_service.get_runtime_config(
+            db,
+            model_id=request.model_id,
+            user_id=current_user.id,
+        )
+        request_model_id = request.model_id or runtime_model_config.model_id
 
         # 重要约束：
         # - AsyncSession 不能在多个协程中并发使用。
@@ -119,6 +221,8 @@ class MentorService:
                 user_id=current_user.id,
                 session_id=session_id,
                 request=request,
+                resolved_agent_type=agent_kind,
+                model_id=request_model_id,
             )
         )
 
@@ -143,26 +247,51 @@ class MentorService:
             for message in stm_messages
             if message.get("role") in {"system", "user", "assistant"}
         ]
+        agent_context = MentorChatAgentContext(
+            agent_kind=agent_kind,
+            qa_style=request.qa_style if agent_kind == "qa" else None,
+            emotion=self._analyze_user_emotion(request.message),
+        )
+        logger.info(
+            "mentor_chat_agent_resolved",
+            user_id=current_user.id,
+            session_id=session_id,
+            trace_id=trace_id,
+            agent_kind=agent_context.agent_kind,
+            qa_style=agent_context.qa_style,
+            emotion_label=agent_context.emotion.label,
+        )
 
         learning_profile = self._build_learning_profile(current_user)
-        agent = self.agent_factory.create_mentor_agent(
-            agent_type=request.agent_type,
-            model_name=request.model_id,
+        agent = self._create_chat_agent(
+            agent_kind=agent_context.agent_kind,
+            runtime_model_config=runtime_model_config,
         )
-        agent_input = MentorAgentInput(
-            user_message=request.message,
-            history_messages=history_messages,
-            concept_title=learning_context.get("concept_title"),
-            tutorial_excerpt=learning_context.get("tutorial_excerpt"),
-            roadmap_context=learning_context.get("roadmap_context"),
-            ltm_facts=ltm_fact_summaries,
-            ltm_preferences=ltm_sections["preferences"],
-            ltm_goals=ltm_sections["goals"],
-            ltm_misconceptions=ltm_sections["misconceptions"],
-            ltm_progress=ltm_sections["progress"],
-            ltm_other_facts=ltm_sections["other_facts"],
-            learning_profile=learning_profile,
-        )
+        if agent_context.agent_kind == "qa":
+            agent_input = MentorQaAgentInput(
+                user_message=request.message,
+                history_messages=history_messages,
+                concept_title=learning_context.get("concept_title"),
+                tutorial_excerpt=learning_context.get("tutorial_excerpt"),
+                roadmap_context=learning_context.get("roadmap_context"),
+                ltm_facts=ltm_fact_summaries,
+                ltm_preferences=ltm_sections["preferences"],
+                ltm_goals=ltm_sections["goals"],
+                ltm_misconceptions=ltm_sections["misconceptions"],
+                ltm_progress=ltm_sections["progress"],
+                ltm_other_facts=ltm_sections["other_facts"],
+                learning_profile=learning_profile,
+                qa_style=agent_context.qa_style or "casual",
+                emotion=agent_context.emotion,
+                trace_id=trace_id,
+                langfuse_trace_id=langfuse_trace_id,
+            )
+        else:
+            agent_input = MentorPlaceholderAgentInput(
+                user_message=request.message,
+                concept_title=learning_context.get("concept_title"),
+                agent_kind=agent_context.agent_kind,
+            )
 
         async def event_stream() -> AsyncGenerator[str, None]:
             """
@@ -170,92 +299,269 @@ class MentorService:
             """
             raw_assistant_text = ""
             emitted_length = 0
-            yield self._build_sse_payload(
-                {
-                    "type": "meta",
-                    "session_id": session_id,
-                    "trace_id": trace_id,
-                    "user_message_id": user_message_id,
-                    "assistant_message_id": assistant_message_id,
-                }
+            persisted_content_parts: list[dict] = []
+            request_metadata = build_mentor_trace_metadata(
+                external_trace_id=trace_id,
+                user_id=current_user.id,
+                session_id=session_id,
+                roadmap_id=request.context.roadmap_id,
+                concept_id=request.context.concept_id,
+                agent_id=agent.agent_id,
+                agent_type=agent_context.agent_kind,
+                model=runtime_model_config.model_name,
+                provider=runtime_model_config.provider,
+                assist_mode="answer",
+                resolved_assist_mode="answer",
+                prompt_template=getattr(agent, "get_template_name", lambda: None)(),
+                extra_metadata={
+                    "emotion_label": agent_context.emotion.label,
+                    "emotion_summary": agent_context.emotion.summary,
+                    "history_message_count": len(history_messages),
+                    "ltm_fact_count": len(ltm_facts),
+                    "model_id": request_model_id,
+                    "resolved_model_name": runtime_model_config.model_name,
+                    "langfuse_trace_id": langfuse_trace_id,
+                    "qa_style": agent_context.qa_style,
+                },
             )
+            request_input = {
+                "message_length": len(request.message),
+                "roadmap_id": request.context.roadmap_id,
+                "concept_id": request.context.concept_id,
+                "model_id": request_model_id,
+                "resolved_model_name": runtime_model_config.model_name,
+                "agent_kind": agent_context.agent_kind,
+                "qa_style": agent_context.qa_style,
+                "emotion_label": agent_context.emotion.label,
+            }
 
             try:
-                async for delta in agent.stream_chat(agent_input):
-                    raw_assistant_text += delta
-                    sanitized_delta, emitted_length = self._build_incremental_sanitized_delta(
-                        raw_text=raw_assistant_text,
-                        emitted_length=emitted_length,
-                    )
-                    if sanitized_delta:
-                        yield self._build_sse_payload({"type": "delta", "delta": sanitized_delta})
-            except Exception as exc:
-                logger.exception(
-                    "mentor_chat_stream_failed",
+                with propagate_mentor_attributes(
                     user_id=current_user.id,
                     session_id=session_id,
-                    error=str(exc),
-                )
-                yield self._build_sse_payload(
-                    {
-                        "type": "error",
-                        "message": self._build_stream_error_message(exc),
-                    }
-                )
-                return
+                    trace_name="mentor.chat.stream",
+                    metadata={
+                        "external_trace_id": trace_id,
+                        "langfuse_trace_id": langfuse_trace_id,
+                        "roadmap_id": request.context.roadmap_id,
+                        "concept_id": request.context.concept_id,
+                        "agent_type": agent_context.agent_kind,
+                    },
+                    tags=["mentor", agent_context.agent_kind],
+                ):
+                    with start_langfuse_observation(
+                        name="mentor.chat.stream",
+                        as_type="span",
+                        trace_id=langfuse_trace_id,
+                        input=request_input,
+                        metadata=request_metadata,
+                    ):
+                        yield self._build_sse_payload(
+                            {
+                                "type": "meta",
+                                "session_id": session_id,
+                                "trace_id": trace_id,
+                                "langfuse_trace_id": langfuse_trace_id,
+                                "user_message_id": user_message_id,
+                                "assistant_message_id": assistant_message_id,
+                                "agent_kind": agent_context.agent_kind,
+                                "qa_style": agent_context.qa_style,
+                                "emotion_label": agent_context.emotion.label,
+                                "emotion_summary": agent_context.emotion.summary,
+                            }
+                        )
 
-            assistant_message = self._sanitize_assistant_message(raw_assistant_text)
-            if not assistant_message:
-                assistant_message = "我这次没有成功生成回答，请换一种问法再试试。"
-            final_delta = assistant_message[emitted_length:]
-            if final_delta:
-                yield self._build_sse_payload({"type": "delta", "delta": final_delta})
+                        persist_succeeded = False
+                        memory_job_enqueued = False
 
-            try:
-                await self._persist_chat_round(
-                    current_user=current_user,
-                    request=request,
-                    session_id=session_id,
-                    trace_id=trace_id,
-                    user_message_id=user_message_id,
-                    assistant_message_id=assistant_message_id,
-                    assistant_message=assistant_message,
-                )
-            except Exception as exc:
-                logger.exception(
-                    "mentor_chat_persist_failed",
-                    user_id=current_user.id,
-                    session_id=session_id,
-                    trace_id=trace_id,
-                    error=str(exc),
-                )
+                        try:
+                            async for event in agent.stream_chat(agent_input):
+                                if isinstance(event, MentorThinkingDeltaEvent):
+                                    self._append_thinking_content_part(
+                                        persisted_content_parts,
+                                        event.delta,
+                                    )
+                                    yield self._build_sse_payload(
+                                        {
+                                            "type": "thinking",
+                                            "delta": event.delta,
+                                        }
+                                    )
+                                    continue
 
-            try:
-                await self._dispatch_memory_job(
-                    current_user=current_user,
-                    request=request,
-                    session_id=session_id,
-                    trace_id=trace_id,
-                    user_message_id=user_message_id,
-                    assistant_message_id=assistant_message_id,
-                    assistant_message=assistant_message,
-                )
-            except Exception as exc:
-                logger.exception(
-                    "mentor_memory_job_dispatch_failed",
-                    user_id=current_user.id,
-                    session_id=session_id,
-                    trace_id=trace_id,
-                    error=str(exc),
-                )
-            yield "data: [DONE]\n\n"
+                                if isinstance(event, MentorTextDeltaEvent):
+                                    raw_assistant_text += event.delta
+                                    sanitized_delta, emitted_length = self._build_incremental_sanitized_delta(
+                                        raw_text=raw_assistant_text,
+                                        emitted_length=emitted_length,
+                                    )
+                                    if sanitized_delta:
+                                        self._append_text_content_part(
+                                            persisted_content_parts,
+                                            sanitized_delta,
+                                        )
+                                        yield self._build_sse_payload(
+                                            {"type": "delta", "delta": sanitized_delta}
+                                        )
+                                    continue
+
+                                if isinstance(event, MentorToolStartEvent):
+                                    self._upsert_tool_content_part(
+                                        persisted_content_parts,
+                                        tool_call_id=event.tool_call_id,
+                                        tool_name=event.tool_name,
+                                        arguments=event.arguments,
+                                        state="running",
+                                    )
+                                    yield self._build_sse_payload(
+                                        {
+                                            "type": "tool_start",
+                                            "tool_call_id": event.tool_call_id,
+                                            "tool_name": event.tool_name,
+                                            "arguments": event.arguments,
+                                        }
+                                    )
+                                    continue
+
+                                if isinstance(event, MentorToolResultEvent):
+                                    self._upsert_tool_content_part(
+                                        persisted_content_parts,
+                                        tool_call_id=event.tool_call_id,
+                                        tool_name=event.tool_name,
+                                        arguments=event.arguments,
+                                        state="completed",
+                                        result=event.result,
+                                        is_error=event.is_error,
+                                    )
+                                    yield self._build_sse_payload(
+                                        {
+                                            "type": "tool_result",
+                                            "tool_call_id": event.tool_call_id,
+                                            "tool_name": event.tool_name,
+                                            "arguments": event.arguments,
+                                            "result": event.result,
+                                            "is_error": event.is_error,
+                                        }
+                                    )
+                        except Exception as exc:
+                            logger.exception(
+                                "mentor_chat_stream_failed",
+                                user_id=current_user.id,
+                                session_id=session_id,
+                                error=str(exc),
+                            )
+                            update_current_span_safely(
+                                output={
+                                    "status": "stream_failed",
+                                    "assistant_message_length": len(raw_assistant_text),
+                                },
+                                metadata={"error_type": type(exc).__name__},
+                                level="ERROR",
+                                status_message=str(exc),
+                            )
+                            yield self._build_sse_payload(
+                                {
+                                    "type": "error",
+                                    "message": self._build_stream_error_message(exc),
+                                }
+                            )
+                            return
+
+                        assistant_message = self._sanitize_assistant_message(raw_assistant_text)
+                        if not assistant_message:
+                            assistant_message = "我这次没有成功生成回答，请换一种问法再试试。"
+                            if not persisted_content_parts:
+                                self._append_text_content_part(
+                                    persisted_content_parts,
+                                    assistant_message,
+                                )
+                        final_delta = assistant_message[emitted_length:]
+                        if final_delta:
+                            self._append_text_content_part(persisted_content_parts, final_delta)
+                            yield self._build_sse_payload({"type": "delta", "delta": final_delta})
+
+                        try:
+                            await self._persist_chat_round(
+                                current_user=current_user,
+                                request=request,
+                                model_id=request_model_id,
+                                session_id=session_id,
+                                trace_id=trace_id,
+                                user_message_id=user_message_id,
+                                assistant_message_id=assistant_message_id,
+                                assistant_message=assistant_message,
+                                assistant_content_parts=persisted_content_parts,
+                                agent_context=agent_context,
+                            )
+                            persist_succeeded = True
+                        except Exception as exc:
+                            logger.exception(
+                                "mentor_chat_persist_failed",
+                                user_id=current_user.id,
+                                session_id=session_id,
+                                trace_id=trace_id,
+                                error=str(exc),
+                            )
+
+                        try:
+                            await self._dispatch_memory_job(
+                                current_user=current_user,
+                                request=request,
+                                model_id=request_model_id,
+                                resolved_model_name=runtime_model_config.model_name,
+                                provider=runtime_model_config.provider,
+                                session_id=session_id,
+                                trace_id=trace_id,
+                                langfuse_trace_id=langfuse_trace_id,
+                                user_message_id=user_message_id,
+                                assistant_message_id=assistant_message_id,
+                                assistant_message=assistant_message,
+                                agent_context=agent_context,
+                            )
+                            memory_job_enqueued = True
+                        except Exception as exc:
+                            logger.exception(
+                                "mentor_memory_job_dispatch_failed",
+                                user_id=current_user.id,
+                                session_id=session_id,
+                                trace_id=trace_id,
+                                error=str(exc),
+                            )
+
+                        update_current_span_safely(
+                            output={
+                                "status": "completed",
+                                "assistant_message_length": len(assistant_message),
+                                "persist_succeeded": persist_succeeded,
+                                "memory_job_enqueued": memory_job_enqueued,
+                            }
+                        )
+                        flush_langfuse()
+                        yield "data: [DONE]\n\n"
+            finally:
+                flush_langfuse()
 
         return MentorChatStreamContext(
             session_id=session_id,
             trace_id=trace_id,
+            langfuse_trace_id=langfuse_trace_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
             stream=event_stream(),
+        )
+
+    async def list_available_models(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: str,
+    ) -> tuple[list, str | None]:
+        """
+        获取 Mentor 前端可用模型列表
+        """
+        return await self.model_registry_service.list_available_models(
+            db,
+            user_id=user_id,
         )
 
     async def warmup_context_cache(
@@ -571,6 +877,8 @@ class MentorService:
         user_id: str,
         session_id: str,
         request: MentorChatRequest,
+        resolved_agent_type: str,
+        model_id: str,
     ) -> None:
         """
         确保会话存在
@@ -589,8 +897,8 @@ class MentorService:
                     "roadmap_id": request.context.roadmap_id,
                     "concept_id": request.context.concept_id,
                     "title": title,
-                    "agent_type": request.agent_type,
-                    "model_id": request.model_id or settings.MENTOR_AGENT_MODEL,
+                    "agent_type": resolved_agent_type,
+                    "model_id": model_id,
                 },
             )
 
@@ -599,11 +907,14 @@ class MentorService:
         *,
         current_user: User,
         request: MentorChatRequest,
+        model_id: str,
         session_id: str,
         trace_id: str,
         user_message_id: str,
         assistant_message_id: str,
         assistant_message: str,
+        assistant_content_parts: list[dict] | None,
+        agent_context: MentorChatAgentContext,
     ) -> None:
         """
         同步持久化本轮聊天消息与会话元数据
@@ -614,7 +925,15 @@ class MentorService:
         - 因此这里先同步落库，确保首轮流式回答结束后即可被历史接口读取
         """
         assistant_message = self._sanitize_assistant_message(assistant_message)
-        model_id = request.model_id or settings.MENTOR_AGENT_MODEL
+        user_message_metadata = self._build_message_metadata(
+            request=request,
+            agent_context=agent_context,
+        )
+        assistant_message_metadata = self._build_message_metadata(
+            request=request,
+            agent_context=agent_context,
+            content_parts=assistant_content_parts,
+        )
 
         async with async_session_maker.begin() as session:
             persisted_user_message = await chat_message_crud.get(session, user_message_id)
@@ -625,13 +944,11 @@ class MentorService:
                     session_id=session_id,
                     role="user",
                     content=request.message,
-                    agent_type=request.agent_type,
+                    agent_type=agent_context.agent_kind,
                     model_id=model_id,
                     trace_id=trace_id,
-                    message_metadata={
-                        "roadmap_id": request.context.roadmap_id,
-                        "concept_id": request.context.concept_id,
-                    },
+                    message_metadata=user_message_metadata,
+                    intent_type=agent_context.agent_kind,
                 )
 
             persisted_assistant_message = await chat_message_crud.get(session, assistant_message_id)
@@ -642,13 +959,11 @@ class MentorService:
                     session_id=session_id,
                     role="assistant",
                     content=assistant_message,
-                    agent_type=request.agent_type,
+                    agent_type=agent_context.agent_kind,
                     model_id=model_id,
                     trace_id=trace_id,
-                    message_metadata={
-                        "roadmap_id": request.context.roadmap_id,
-                        "concept_id": request.context.concept_id,
-                    },
+                    message_metadata=assistant_message_metadata,
+                    intent_type=agent_context.agent_kind,
                 )
 
             message_count = await chat_message_crud.count_by_session(session, session_id)
@@ -659,7 +974,7 @@ class MentorService:
                 last_message_preview=assistant_message[:120],
                 title=request.context.concept_title or request.message[:20],
                 model_id=model_id,
-                agent_type=request.agent_type,
+                agent_type=agent_context.agent_kind,
             )
 
     async def _dispatch_memory_job(
@@ -667,11 +982,16 @@ class MentorService:
         *,
         current_user: User,
         request: MentorChatRequest,
+        model_id: str,
+        resolved_model_name: str,
+        provider: str,
         session_id: str,
         trace_id: str,
+        langfuse_trace_id: str,
         user_message_id: str,
         assistant_message_id: str,
         assistant_message: str,
+        agent_context: MentorChatAgentContext,
     ) -> None:
         """
         投递异步记忆任务并写入任务审计记录
@@ -685,50 +1005,198 @@ class MentorService:
             "session_id": session_id,
             "roadmap_id": request.context.roadmap_id,
             "concept_id": request.context.concept_id,
-            "agent_type": request.agent_type,
-            "model_id": request.model_id or settings.MENTOR_AGENT_MODEL,
+            "agent_type": agent_context.agent_kind,
+            "agent_kind": agent_context.agent_kind,
+            "qa_style": agent_context.qa_style,
+            "emotion_label": agent_context.emotion.label,
+            "emotion_summary": agent_context.emotion.summary,
+            "intent_type": agent_context.agent_kind,
+            "model_id": model_id,
             "trace_id": trace_id,
+            "langfuse_trace_id": langfuse_trace_id,
             "user_message": request.message,
             "assistant_message": assistant_message,
             "context": request.context.model_dump(),
         }
 
-        try:
-            celery_result = celery_app.send_task(
-                "mentor.persist_and_extract_memory",
-                kwargs=payload,
-            )
-        except Exception as exc:
-            logger.exception("mentor_memory_job_dispatch_failed", error=str(exc), session_id=session_id)
+        dispatch_metadata = build_mentor_trace_metadata(
+            external_trace_id=trace_id,
+            user_id=current_user.id,
+            session_id=session_id,
+            roadmap_id=request.context.roadmap_id,
+            concept_id=request.context.concept_id,
+            agent_type=agent_context.agent_kind,
+            model=resolved_model_name,
+            provider=provider,
+            queue_name="mentor_persist",
+            job_id=payload["job_id"],
+            extra_metadata={
+                "intent_type": agent_context.agent_kind,
+                "qa_style": agent_context.qa_style,
+                "emotion_label": agent_context.emotion.label,
+            },
+        )
+        dispatch_input = {
+            "job_id": payload["job_id"],
+            "session_id": session_id,
+            "message_id": user_message_id,
+            "assistant_message_id": assistant_message_id,
+            "queue_name": "mentor_persist",
+        }
+
+        with start_langfuse_observation(
+            name="mentor.memory_job.dispatch",
+            as_type="span",
+            input=dispatch_input,
+            metadata=dispatch_metadata,
+        ):
+            try:
+                celery_result = celery_app.send_task(
+                    "mentor.persist_and_extract_memory",
+                    kwargs=payload,
+                )
+            except Exception as exc:
+                logger.exception("mentor_memory_job_dispatch_failed", error=str(exc), session_id=session_id)
+                update_current_span_safely(
+                    output={"status": "dispatch_failed"},
+                    metadata={"error_type": type(exc).__name__},
+                    level="ERROR",
+                    status_message=str(exc),
+                )
+                async with async_session_maker.begin() as session:
+                    created_job = await mentor_memory_job_crud.create_job(
+                        session,
+                        job_id=payload["job_id"],
+                        message_id=payload["message_id"],
+                        user_id=current_user.id,
+                        session_id=session_id,
+                        payload=payload,
+                        celery_task_id=None,
+                    )
+                    await mentor_memory_job_crud.mark_failed(
+                        session,
+                        job_id=created_job.job_id,
+                        last_error=str(exc),
+                        retry_count=0,
+                        dead_letter=False,
+                    )
+                return
+
             async with async_session_maker.begin() as session:
-                created_job = await mentor_memory_job_crud.create_job(
+                await mentor_memory_job_crud.create_job(
                     session,
                     job_id=payload["job_id"],
                     message_id=payload["message_id"],
                     user_id=current_user.id,
                     session_id=session_id,
                     payload=payload,
-                    celery_task_id=None,
+                    celery_task_id=celery_result.id,
                 )
-                await mentor_memory_job_crud.mark_failed(
-                    session,
-                    job_id=created_job.job_id,
-                    last_error=str(exc),
-                    retry_count=0,
-                    dead_letter=False,
-                )
+
+            update_current_span_safely(
+                output={
+                    "status": "queued",
+                    "celery_task_id": celery_result.id,
+                }
+            )
+
+    @staticmethod
+    def _append_text_content_part(content_parts: list[dict], text: str) -> None:
+        """
+        追加文本内容片段，并自动合并相邻文本块
+        """
+        if not text:
             return
 
-        async with async_session_maker.begin() as session:
-            await mentor_memory_job_crud.create_job(
-                session,
-                job_id=payload["job_id"],
-                message_id=payload["message_id"],
-                user_id=current_user.id,
-                session_id=session_id,
-                payload=payload,
-                celery_task_id=celery_result.id,
-            )
+        if content_parts and content_parts[-1].get("type") == "text":
+            content_parts[-1]["text"] = f"{content_parts[-1].get('text', '')}{text}"
+            return
+
+        content_parts.append(
+            {
+                "type": "text",
+                "text": text,
+            }
+        )
+
+    @staticmethod
+    def _append_thinking_content_part(content_parts: list[dict], text: str) -> None:
+        """
+        追加思考内容片段，并自动合并相邻思考块
+        """
+        if not text:
+            return
+
+        if content_parts and content_parts[-1].get("type") == "thinking":
+            content_parts[-1]["text"] = f"{content_parts[-1].get('text', '')}{text}"
+            return
+
+        content_parts.append(
+            {
+                "type": "thinking",
+                "text": text,
+            }
+        )
+
+    @staticmethod
+    def _upsert_tool_content_part(
+        content_parts: list[dict],
+        *,
+        tool_call_id: str,
+        tool_name: str,
+        arguments: dict,
+        state: str,
+        result: str | None = None,
+        is_error: bool = False,
+    ) -> None:
+        """
+        更新或创建工具内容片段，确保历史回放顺序与实时流一致
+        """
+        for part in content_parts:
+            if part.get("type") == "tool-call" and part.get("toolCallId") == tool_call_id:
+                part["toolName"] = tool_name
+                part["arguments"] = arguments
+                part["state"] = state
+                if result is not None:
+                    part["result"] = result
+                part["isError"] = is_error
+                return
+
+        content_parts.append(
+            {
+                "type": "tool-call",
+                "toolCallId": tool_call_id,
+                "toolName": tool_name,
+                "arguments": arguments,
+                "state": state,
+                "result": result,
+                "isError": is_error,
+            }
+        )
+
+    @staticmethod
+    def _build_message_metadata(
+        *,
+        request: MentorChatRequest,
+        agent_context: MentorChatAgentContext,
+        content_parts: list[dict] | None = None,
+    ) -> dict:
+        """
+        构建消息元数据，供前端 hydration 与埋点使用
+        """
+        metadata = {
+            "roadmapId": request.context.roadmap_id,
+            "conceptId": request.context.concept_id,
+            "agentKind": agent_context.agent_kind,
+            "agentType": agent_context.agent_kind,
+            "qaStyle": agent_context.qa_style,
+            "emotionLabel": agent_context.emotion.label,
+            "emotionSummary": agent_context.emotion.summary,
+            "intentType": agent_context.agent_kind,
+        }
+        if content_parts:
+            metadata["contentParts"] = content_parts
+        return metadata
 
     @staticmethod
     def _build_learning_profile(current_user: User) -> str | None:
@@ -760,6 +1228,12 @@ class MentorService:
             return ""
 
         normalized_content = cls.MARKDOWN_HORIZONTAL_RULE_PATTERN.sub("", normalized_content)
+        normalized_content = cls.EMOJI_PATTERN.sub("", normalized_content)
+        normalized_content = cls.DOUBLE_BACKTICK_WRAPPED_INLINE_CODE_PATTERN.sub(
+            r"`\1`",
+            normalized_content,
+        )
+        normalized_content = cls.DOUBLE_BACKTICK_INLINE_CODE_PATTERN.sub(r"`\1`", normalized_content)
         normalized_content = cls._normalize_inline_markdown_spacing(
             normalized_content,
             pattern=cls.INLINE_BOLD_PATTERN,

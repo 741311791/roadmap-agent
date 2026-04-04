@@ -92,9 +92,13 @@ class AgentFactory:
         # ============================================================
         # 1. 注册搜索工具
         # ============================================================
+        from app.tools.search.context7_docs_tool import Context7DocsTool
+        from app.tools.search.tavily_extract_tool import TavilyExtractTool
         from app.tools.search.web_search_router import WebSearchRouter
         
         self.tool_registry.register(WebSearchRouter())
+        self.tool_registry.register(TavilyExtractTool())
+        self.tool_registry.register(Context7DocsTool())
         
         # ============================================================
         # 2. 注册 Mentor 工具
@@ -176,6 +180,7 @@ class AgentFactory:
             model_name=self.settings.ARCHITECT_MODEL,
             base_url=self.settings.ARCHITECT_BASE_URL,
             api_key=self.settings.ARCHITECT_API_KEY,
+            tool_registry=self.tool_registry,
         )
     
     def create_structure_validator(self) -> StructureValidatorProtocol:
@@ -381,29 +386,119 @@ class AgentFactory:
     # Learning & Mentor Agents（学习与导师）
     # ============================================================
 
-    def create_mentor_agent(
+    def create_qa_agent(
         self,
         *,
-        agent_type: str = "tutoring",
         model_name: str | None = None,
+        runtime_config=None,
     ):
         """
-        创建 AI 伴学助手 Agent
+        创建答疑 Agent
 
         Args:
-            agent_type: AI 伴学助手模式
             model_name: 指定模型 ID；为空时使用默认配置
 
         Returns:
-            MentorAgent 实例
+            QaAgent 实例
         """
-        from app.agents.mentor_agent import MentorAgent
+        from app.agents.qa_agent import QaAgent
+        from app.schemas.mentor_model import MentorModelRuntimeConfig
 
-        return MentorAgent(
-            self.settings,
-            agent_type=agent_type,
-            model_name=model_name,
+        resolved_runtime_config = runtime_config or MentorModelRuntimeConfig(
+            model_id=(model_name or self.settings.MENTOR_AGENT_MODEL).strip(),
+            display_name=(model_name or self.settings.MENTOR_AGENT_MODEL).strip(),
+            provider=self.settings.MENTOR_AGENT_PROVIDER,
+            model_name=(model_name or self.settings.MENTOR_AGENT_MODEL).strip(),
+            base_url=self.settings.MENTOR_AGENT_BASE_URL,
+            api_key=self.settings.get_mentor_agent_api_key,
+            supports_streaming=True,
+            supports_structured_output=True,
+            supports_tools=True,
+            supports_thinking=False,
+            source="fallback",
         )
+
+        return QaAgent(
+            self.settings,
+            runtime_config=resolved_runtime_config,
+            tool_registry=self.tool_registry,
+        )
+
+    def create_guide_agent(
+        self,
+        *,
+        model_name: str | None = None,
+        runtime_config=None,
+    ):
+        """
+        创建导学 Agent 占位实现
+        """
+        from app.agents.guide_agent import GuideAgent
+        from app.schemas.mentor_model import MentorModelRuntimeConfig
+
+        resolved_runtime_config = runtime_config or MentorModelRuntimeConfig(
+            model_id=(model_name or self.settings.MENTOR_AGENT_MODEL).strip(),
+            display_name=(model_name or self.settings.MENTOR_AGENT_MODEL).strip(),
+            provider=self.settings.MENTOR_AGENT_PROVIDER,
+            model_name=(model_name or self.settings.MENTOR_AGENT_MODEL).strip(),
+            base_url=self.settings.MENTOR_AGENT_BASE_URL,
+            api_key=self.settings.get_mentor_agent_api_key,
+            supports_streaming=True,
+            supports_structured_output=False,
+            supports_tools=False,
+            supports_thinking=False,
+            source="fallback",
+        )
+
+        return GuideAgent(
+            self.settings,
+            runtime_config=resolved_runtime_config,
+        )
+
+    def create_quiz_agent(
+        self,
+        *,
+        model_name: str | None = None,
+        runtime_config=None,
+    ):
+        """
+        创建测验 Agent 占位实现
+        """
+        from app.agents.quiz_agent import QuizAgent
+        from app.schemas.mentor_model import MentorModelRuntimeConfig
+
+        resolved_runtime_config = runtime_config or MentorModelRuntimeConfig(
+            model_id=(model_name or self.settings.MENTOR_AGENT_MODEL).strip(),
+            display_name=(model_name or self.settings.MENTOR_AGENT_MODEL).strip(),
+            provider=self.settings.MENTOR_AGENT_PROVIDER,
+            model_name=(model_name or self.settings.MENTOR_AGENT_MODEL).strip(),
+            base_url=self.settings.MENTOR_AGENT_BASE_URL,
+            api_key=self.settings.get_mentor_agent_api_key,
+            supports_streaming=True,
+            supports_structured_output=False,
+            supports_tools=False,
+            supports_thinking=False,
+            source="fallback",
+        )
+
+        return QuizAgent(
+            self.settings,
+            runtime_config=resolved_runtime_config,
+        )
+
+    def create_mentor_mode_resolver_agent(self, runtime_config=None):
+        """
+        创建 AI 伴学助手回答模式解析 Agent
+
+        Args:
+            无
+
+        Returns:
+            MentorModeResolverAgent 实例
+        """
+        from app.agents.mentor_mode_resolver_agent import MentorModeResolverAgent
+
+        return MentorModeResolverAgent(self.settings, runtime_config=runtime_config)
 
 
 # ============================================================

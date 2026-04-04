@@ -115,7 +115,11 @@ class Concept(BaseModel):
     concept_id: str
     name: str = Field(..., description="概念名称，如 'React Hooks 原理'")
     description: str = Field(..., description="简短描述（1-2 句话）")
-    estimated_hours: float = Field(..., ge=0.5, description="预估学习时长（小时）")
+    estimated_hours: float = Field(
+        ...,
+        ge=1 / 60,
+        description="预估学习时长（小时）。课程架构阶段生成的 Concept 应控制在 10 分钟以内。",
+    )
     prerequisites: List[str] = Field(default=[], description="前置概念 ID 列表")
     difficulty: Literal["easy", "medium", "hard"] = "medium"
     keywords: List[str] = Field(default=[], description="关键词标签")
@@ -479,7 +483,12 @@ class SimplifiedConcept(BaseModel):
     concept_id: str
     name: str = Field(..., description="概念名称，如 'React Hooks 原理'")
     description: str = Field(..., description="简短描述（1-2 句话）")
-    estimated_hours: float = Field(..., ge=0.5, description="预估学习时长（小时）")
+    estimated_hours: float = Field(
+        ...,
+        ge=1 / 60,
+        le=10 / 60,
+        description="预估学习时长（小时），必须控制在 10 分钟以内。",
+    )
     prerequisites: List[str] = Field(default=[], description="前置概念 ID 列表")
     difficulty: Literal["easy", "medium", "hard"] = "medium"
     keywords: List[str] = Field(default=[], description="关键词标签")
@@ -1030,5 +1039,154 @@ class LearningNote(BaseModel):
     tags: List[str] = []
     created_at: datetime
     updated_at: datetime
+
+
+# ============================================================
+# 8. 产品路书公开页模型
+# ============================================================
+
+RoadmapMilestoneStatus = Literal["active", "completed", "upcoming"]
+RoadmapFeatureStatus = Literal["released", "in_progress", "planned"]
+PlanningItemStatus = Literal["open", "accepted", "rejected"]
+
+
+class PublicRoadmapFeature(BaseModel):
+    """
+    产品路书公开功能卡片
+
+    Args:
+        id: 功能记录 ID
+        linear_id: Linear 功能 ID
+        milestone_id: 所属里程碑 ID
+        title: 功能标题
+        description: 功能描述
+        status: 功能状态
+        demo_url: 演示视频链接
+        labels: 标签列表
+        linear_url: Linear Issue 链接
+        sort_order: 排序权重
+    """
+    id: int = Field(..., description="功能记录 ID")
+    linear_id: str = Field(..., description="Linear 功能 ID")
+    milestone_id: int | None = Field(None, description="所属里程碑 ID")
+    title: str = Field(..., description="功能标题")
+    description: str | None = Field(None, description="功能描述")
+    status: RoadmapFeatureStatus = Field(..., description="功能状态")
+    demo_url: str | None = Field(None, description="演示视频链接")
+    labels: List[str] = Field(default_factory=list, description="标签列表")
+    linear_url: str | None = Field(None, description="Linear Issue 链接")
+    sort_order: int = Field(default=0, description="排序权重")
+
+
+class PublicRoadmapMilestone(BaseModel):
+    """
+    产品路书公开里程碑
+
+    Args:
+        id: 里程碑记录 ID
+        linear_id: Linear 里程碑 ID
+        title: 里程碑标题
+        description: 里程碑描述
+        status: 里程碑状态
+        start_date: 开始时间
+        end_date: 结束时间
+        sort_order: 排序权重
+        features: 里程碑下的功能列表
+    """
+    id: int = Field(..., description="里程碑记录 ID")
+    linear_id: str = Field(..., description="Linear 里程碑 ID")
+    title: str = Field(..., description="里程碑标题")
+    description: str | None = Field(None, description="里程碑描述")
+    status: RoadmapMilestoneStatus = Field(..., description="里程碑状态")
+    start_date: datetime | None = Field(None, description="开始时间")
+    end_date: datetime | None = Field(None, description="结束时间")
+    sort_order: int = Field(default=0, description="排序权重")
+    features: List[PublicRoadmapFeature] = Field(default_factory=list, description="功能卡片列表")
+
+
+class PublicRoadmapDataResponse(BaseModel):
+    """
+    产品路书公开页数据响应
+
+    Args:
+        milestones: 时间轴里程碑列表
+        upcoming_features: 已进入规划但未开始开发的功能列表
+    """
+    milestones: List[PublicRoadmapMilestone] = Field(default_factory=list, description="时间轴里程碑列表")
+    upcoming_features: List[PublicRoadmapFeature] = Field(default_factory=list, description="规划中功能列表")
+
+
+class PlanningItemCreateRequest(BaseModel):
+    """
+    待规划需求创建请求
+
+    Args:
+        title: 需求标题
+        description: 需求描述
+        submitter_email: 提交者邮箱
+    """
+    title: str = Field(..., min_length=1, max_length=255, description="需求标题")
+    description: str | None = Field(None, max_length=2000, description="需求描述")
+    submitter_email: str | None = Field(None, max_length=255, description="提交者邮箱")
+
+
+class PublicPlanningItem(BaseModel):
+    """
+    待规划需求公开响应
+
+    Args:
+        id: 需求 ID
+        title: 需求标题
+        description: 需求描述
+        vote_count: 当前票数
+        status: 需求状态
+        created_at: 创建时间
+    """
+    id: int = Field(..., description="需求 ID")
+    title: str = Field(..., description="需求标题")
+    description: str | None = Field(None, description="需求描述")
+    vote_count: int = Field(..., description="当前票数")
+    status: PlanningItemStatus = Field(..., description="需求状态")
+    created_at: datetime = Field(..., description="创建时间")
+
+
+class PublicPlanningItemListResponse(BaseModel):
+    """
+    待规划需求列表响应
+
+    Args:
+        items: 需求列表
+        total: 需求总数
+    """
+    items: List[PublicPlanningItem] = Field(default_factory=list, description="需求列表")
+    total: int = Field(..., description="需求总数")
+
+
+class PlanningItemVoteResponse(BaseModel):
+    """
+    待规划需求投票结果
+
+    Args:
+        item_id: 需求 ID
+        vote_count: 最新票数
+        already_voted: 是否已投过票
+    """
+    item_id: int = Field(..., description="需求 ID")
+    vote_count: int = Field(..., description="最新票数")
+    already_voted: bool = Field(..., description="是否已经投过票")
+
+
+class RoadmapSyncResponse(BaseModel):
+    """
+    产品路书同步结果响应
+
+    Args:
+        milestone_count: 里程碑数量
+        feature_count: 功能数量
+        upcoming_feature_count: 规划中功能数量
+    """
+    milestone_count: int = Field(..., description="里程碑数量")
+    feature_count: int = Field(..., description="功能数量")
+    upcoming_feature_count: int = Field(..., description="规划中功能数量")
 
 

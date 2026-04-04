@@ -9,7 +9,7 @@
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from sqlmodel import SQLModel, Field, Column, JSON
-from sqlalchemy import Text, DateTime, UniqueConstraint, String, text, Index, ForeignKey
+from sqlalchemy import Boolean, Text, DateTime, UniqueConstraint, String, text, Index, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, DeclarativeBase
 from fastapi_users.db import SQLAlchemyBaseUserTable
 import uuid
@@ -868,6 +868,127 @@ class HumanReviewFeedback(SQLModel, table=True):
     )
 
 
+class UserFeedback(SQLModel, table=True):
+    """
+    用户产品反馈记录表。
+
+    存储用户在产品内主动提交或被动触发弹窗提交的反馈，
+    并记录与 Linear Issue 的映射关系，便于后续分析与补偿。
+    """
+
+    __tablename__ = "user_feedbacks"
+    __table_args__ = (
+        Index("idx_user_feedbacks_user_created_at", "user_id", "created_at"),
+        Index("idx_user_feedbacks_status_created_at", "submission_status", "created_at"),
+    )
+
+    feedback_id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        primary_key=True,
+        description="反馈记录唯一标识"
+    )
+    user_id: str = Field(
+        index=True,
+        description="用户 ID"
+    )
+    username_snapshot: str = Field(
+        default="",
+        description="提交时的用户名快照"
+    )
+    email_snapshot: str = Field(
+        default="",
+        description="提交时的邮箱快照"
+    )
+
+    category: str = Field(
+        max_length=32,
+        description="反馈分类"
+    )
+    rating: int = Field(
+        description="用户评分"
+    )
+    summary: str = Field(
+        sa_column=Column(String(200)),
+        description="反馈标题"
+    )
+    details: str = Field(
+        sa_column=Column(Text),
+        description="详细反馈或复现步骤"
+    )
+    page_url: str = Field(
+        sa_column=Column(String(2000)),
+        description="反馈提交页面 URL"
+    )
+    context_type: str = Field(
+        max_length=64,
+        description="触发场景"
+    )
+    roadmap_id: Optional[str] = Field(
+        default=None,
+        index=True,
+        description="关联路线图 ID"
+    )
+    concept_id: Optional[str] = Field(
+        default=None,
+        index=True,
+        description="关联 Concept ID"
+    )
+    task_id: Optional[str] = Field(
+        default=None,
+        index=True,
+        description="关联任务 ID"
+    )
+
+    screenshot_filename: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String(255), nullable=True),
+        description="原始截图文件名"
+    )
+    screenshot_asset_url: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String(2000), nullable=True),
+        description="Linear 托管后的截图地址"
+    )
+
+    submission_status: str = Field(
+        default="pending",
+        max_length=32,
+        description="提交状态：pending | submitted | failed"
+    )
+    error_message: Optional[str] = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
+        description="提交失败原因"
+    )
+
+    linear_issue_id: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String(64), nullable=True),
+        description="Linear Issue UUID"
+    )
+    linear_issue_identifier: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String(64), nullable=True),
+        description="Linear Issue 短标识"
+    )
+    linear_issue_url: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String(500), nullable=True),
+        description="Linear Issue 链接"
+    )
+
+    created_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False)),
+        description="创建时间（北京时间）"
+    )
+    updated_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False)),
+        description="更新时间（北京时间）"
+    )
+
+
 class EditPlanRecord(SQLModel, table=True):
     """
     修改计划记录表
@@ -965,6 +1086,141 @@ class EditPlanRecord(SQLModel, table=True):
 # 伴学Agent相关表
 # ============================================================
 
+class MentorModelConfig(SQLModel, table=True):
+    """
+    Mentor 模型注册表
+
+    设计说明：
+    - `model_id` 是前端与运行时使用的稳定标识，不直接暴露数据库自增主键
+    - `model_name` 原样保存并透传给 OpenAI 兼容 SDK，不基于前缀做代码映射
+    - `api_key_encrypted` 只存密文，运行时解密后再使用
+    - `scope + owner_user_id` 为后续用户自定义模型预留能力
+    """
+
+    __tablename__ = "mentor_model_configs"
+    __table_args__ = (
+        Index("idx_mentor_model_configs_scope_owner", "scope", "owner_user_id"),
+        Index("idx_mentor_model_configs_active_visible", "is_active", "is_visible"),
+        Index(
+            "uix_mentor_model_configs_system_default",
+            "is_default",
+            unique=True,
+            postgresql_where=text("is_default = true AND scope = 'system'"),
+        ),
+    )
+
+    model_id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        primary_key=True,
+        description="模型注册表唯一 ID"
+    )
+    display_name: str = Field(
+        sa_column=Column(String(120), nullable=False),
+        description="模型展示名称"
+    )
+    description: Optional[str] = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
+        description="模型说明"
+    )
+    provider: str = Field(
+        default="openai",
+        sa_column=Column(String(64), nullable=False, server_default="openai"),
+        description="模型提供商标识（主要用于观测与速率限制）"
+    )
+    model_name: str = Field(
+        sa_column=Column(String(255), nullable=False),
+        description="实际传给 OpenAI 兼容接口的模型名"
+    )
+    base_url: str = Field(
+        sa_column=Column(String(500), nullable=False),
+        description="OpenAI 兼容网关地址"
+    )
+    api_key_encrypted: str = Field(
+        sa_column=Column(Text, nullable=False),
+        description="加密后的 API Key"
+    )
+    is_active: bool = Field(
+        default=True,
+        sa_column=Column(Boolean, nullable=False, server_default=text("true")),
+        description="是否启用"
+    )
+    is_visible: bool = Field(
+        default=True,
+        sa_column=Column(Boolean, nullable=False, server_default=text("true")),
+        description="是否在 Mentor 前端可见"
+    )
+    is_default: bool = Field(
+        default=False,
+        sa_column=Column(Boolean, nullable=False, server_default=text("false")),
+        description="是否为默认模型"
+    )
+    supports_streaming: bool = Field(
+        default=True,
+        sa_column=Column(Boolean, nullable=False, server_default=text("true")),
+        description="是否支持流式输出"
+    )
+    supports_structured_output: bool = Field(
+        default=True,
+        sa_column=Column(Boolean, nullable=False, server_default=text("true")),
+        description="是否支持结构化输出"
+    )
+    supports_tools: bool = Field(
+        default=False,
+        sa_column=Column(Boolean, nullable=False, server_default=text("false")),
+        description="是否支持工具调用"
+    )
+    supports_thinking: bool = Field(
+        default=False,
+        sa_column=Column(Boolean, nullable=False, server_default=text("false")),
+        description="是否支持深度思考流式输出"
+    )
+    scope: str = Field(
+        default="system",
+        sa_column=Column(String(32), nullable=False, server_default="system"),
+        description="作用域：system/user"
+    )
+    owner_user_id: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String(36), nullable=True),
+        description="用户自定义模型所属用户 ID"
+    )
+    test_status: str = Field(
+        default="untested",
+        sa_column=Column(String(32), nullable=False, server_default="untested"),
+        description="测试状态：untested/passed/failed"
+    )
+    last_tested_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=False), nullable=True),
+        description="最后测试时间"
+    )
+    last_test_error: Optional[str] = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
+        description="最近一次测试错误"
+    )
+    created_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(
+            DateTime(timezone=False),
+            nullable=False,
+            server_default=text("CURRENT_TIMESTAMP")
+        ),
+        description="创建时间"
+    )
+    updated_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(
+            DateTime(timezone=False),
+            nullable=False,
+            server_default=text("CURRENT_TIMESTAMP"),
+            onupdate=beijing_now
+        ),
+        description="更新时间"
+    )
+
+
 class ChatSession(SQLModel, table=True):
     """
     聊天会话表
@@ -1016,6 +1272,91 @@ class ChatSession(SQLModel, table=True):
     updated_at: datetime = Field(
         default_factory=beijing_now,
         sa_column=Column(DateTime(timezone=False))
+    )
+
+
+class RoadmapChatThread(SQLModel, table=True):
+    """
+    Deer-Flow 路线图聊天线程映射表
+
+    存储主应用业务实体与 Deer-Flow thread 的绑定关系，
+    让主应用始终掌握线程归属、权限边界和业务上下文。
+    """
+
+    __tablename__ = "roadmap_chat_threads"
+    __table_args__ = (
+        Index("idx_roadmap_chat_threads_user_roadmap_updated", "user_id", "roadmap_id", "updated_at"),
+        Index("idx_roadmap_chat_threads_user_concept_updated", "user_id", "concept_id", "updated_at"),
+    )
+
+    thread_id: str = Field(
+        primary_key=True,
+        description="Deer-Flow 线程 ID"
+    )
+    user_id: str = Field(index=True, description="用户 ID")
+    roadmap_id: Optional[str] = Field(
+        default=None,
+        index=True,
+        description="关联的路线图 ID；空表示独立 DeerFlow 线程",
+    )
+    stage_id: Optional[str] = Field(
+        default=None,
+        index=True,
+        description="关联的阶段 ID"
+    )
+    task_id: Optional[str] = Field(
+        default=None,
+        index=True,
+        description="关联的任务 ID"
+    )
+    concept_id: Optional[str] = Field(
+        default=None,
+        index=True,
+        description="关联的概念 ID"
+    )
+    title: Optional[str] = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
+        description="线程标题"
+    )
+    source: str = Field(
+        default="deer_flow",
+        index=True,
+        description="线程来源"
+    )
+    assistant_id: Optional[str] = Field(
+        default=None,
+        description="最近一次使用的 Deer-Flow assistant ID"
+    )
+    model_id: Optional[str] = Field(
+        default=None,
+        description="最近一次使用的模型注册表 ID"
+    )
+    message_count: int = Field(default=0, description="当前线程消息数量")
+    last_message_preview: Optional[str] = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
+        description="最后一条消息预览"
+    )
+    metadata_json: Optional[dict] = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+        description="扩展元数据"
+    )
+    created_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False)),
+        description="创建时间"
+    )
+    updated_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False)),
+        description="更新时间"
+    )
+    last_message_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=False), nullable=True),
+        description="最后消息时间"
     )
 
 
@@ -1338,5 +1679,204 @@ class TavilyAPIKey(SQLModel, table=True):
             onupdate=beijing_now
         ),
         description="最后更新时间"
+    )
+
+
+# ============================================================
+# 产品路书公开页相关表
+# ============================================================
+
+class RoadmapMilestone(SQLModel, table=True):
+    """
+    产品路书里程碑表
+
+    缓存 Linear 的 Cycle / Project 级别信息，
+    作为公开路线图页面的时间轴大节点。
+    """
+    __tablename__ = "roadmap_milestones"
+    __table_args__ = (
+        Index("idx_roadmap_milestones_status_sort", "status", "sort_order"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True, description="自增主键")
+    linear_id: str = Field(
+        index=True,
+        unique=True,
+        max_length=64,
+        description="Linear 里程碑 ID"
+    )
+    title: str = Field(max_length=255, description="里程碑标题")
+    description: Optional[str] = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
+        description="里程碑描述"
+    )
+    status: str = Field(
+        default="active",
+        max_length=32,
+        description="里程碑状态：active, completed, upcoming"
+    )
+    start_date: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=False), nullable=True),
+        description="开始时间"
+    )
+    end_date: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=False), nullable=True),
+        description="结束时间"
+    )
+    sort_order: int = Field(default=0, description="排序权重")
+    created_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False)),
+        description="创建时间"
+    )
+    updated_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False)),
+        description="更新时间"
+    )
+
+
+class RoadmapFeature(SQLModel, table=True):
+    """
+    产品路书功能卡片表
+
+    缓存 Linear Issue 级别信息，
+    作为里程碑下的可展开功能卡片。
+    """
+    __tablename__ = "roadmap_features"
+    __table_args__ = (
+        Index("idx_roadmap_features_milestone_sort", "milestone_id", "sort_order"),
+        Index("idx_roadmap_features_status_sort", "status", "sort_order"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True, description="自增主键")
+    linear_id: str = Field(
+        index=True,
+        unique=True,
+        max_length=64,
+        description="Linear 功能 ID"
+    )
+    milestone_id: Optional[int] = Field(
+        default=None,
+        foreign_key="roadmap_milestones.id",
+        description="所属里程碑 ID"
+    )
+    title: str = Field(max_length=255, description="功能标题")
+    description: Optional[str] = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
+        description="功能描述"
+    )
+    status: str = Field(
+        default="planned",
+        max_length=32,
+        description="功能状态：released, in_progress, planned"
+    )
+    demo_url: Optional[str] = Field(
+        default=None,
+        max_length=512,
+        description="演示视频链接（YouTube / Bilibili）"
+    )
+    labels: list = Field(
+        default_factory=list,
+        sa_column=Column(JSON),
+        description="标签列表"
+    )
+    linear_url: Optional[str] = Field(
+        default=None,
+        max_length=512,
+        description="Linear Issue 链接"
+    )
+    sort_order: int = Field(default=0, description="排序权重")
+    created_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False)),
+        description="创建时间"
+    )
+    updated_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False)),
+        description="更新时间"
+    )
+
+
+class PlanningItem(SQLModel, table=True):
+    """
+    待规划需求表
+
+    存储访客提交的待规划功能想法，
+    并按票数进行排序展示。
+    """
+    __tablename__ = "planning_items"
+    __table_args__ = (
+        Index("idx_planning_items_status_vote", "status", "vote_count"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True, description="自增主键")
+    title: str = Field(max_length=255, description="需求标题")
+    description: Optional[str] = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
+        description="需求描述"
+    )
+    submitter_email: Optional[str] = Field(
+        default=None,
+        max_length=255,
+        description="提交者邮箱（可选）"
+    )
+    vote_count: int = Field(default=0, description="票数")
+    status: str = Field(
+        default="open",
+        max_length=32,
+        description="需求状态：open, accepted, rejected"
+    )
+    created_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False)),
+        description="创建时间"
+    )
+    updated_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False)),
+        description="更新时间"
+    )
+
+
+class PlanningVote(SQLModel, table=True):
+    """
+    待规划需求投票记录表
+
+    使用访客指纹防止同一浏览器或来源重复投票。
+    """
+    __tablename__ = "planning_votes"
+    __table_args__ = (
+        UniqueConstraint(
+            "planning_item_id",
+            "voter_fingerprint",
+            name="uq_planning_votes_item_fingerprint",
+        ),
+        Index("idx_planning_votes_item_created", "planning_item_id", "created_at"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True, description="自增主键")
+    planning_item_id: int = Field(
+        sa_column=Column(
+            ForeignKey("planning_items.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        ),
+        description="需求 ID"
+    )
+    voter_fingerprint: str = Field(
+        max_length=128,
+        description="访客投票指纹（SHA256）"
+    )
+    created_at: datetime = Field(
+        default_factory=beijing_now,
+        sa_column=Column(DateTime(timezone=False)),
+        description="投票时间"
     )
 

@@ -41,7 +41,7 @@ cd "$(dirname "$0")/.."
 uv run celery -A app.core.celery_app worker \
     --loglevel=info \
     --concurrency=2 \
-    --pool=prefork \
+    --pool=solo \
     --hostname=mentor-persist@%h \
     --max-tasks-per-child=300 \
     --queues=mentor_persist

@@ -146,6 +146,7 @@ celery_app.conf.update(
         "app.tasks.capability_analysis_tasks",  # 技术能力分析任务
         "app.tasks.content_generation_tasks",  # ✅ 内容生成任务
         "app.tasks.mentor_memory_tasks",  # AI 伴学助手记忆任务
+        "app.tasks.linear_sync_tasks",  # 产品路书 Linear 同步任务
     ),
 )
 
@@ -375,6 +376,11 @@ celery_app.conf.beat_schedule = {
     'mentor-reflection': {
         'task': 'mentor.run_reflection',
         'schedule': crontab(hour=3, minute=30),
+    },
+    # 每 30 分钟同步一次产品路书数据
+    'sync-public-roadmap': {
+        'task': 'roadmap.sync_public',
+        'schedule': 1800.0,
     },
 }
 

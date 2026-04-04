@@ -21,6 +21,7 @@ from app.schemas.mentor import (
     MentorSessionResponse,
     MentorWarmupRequest,
 )
+from app.schemas.mentor_model import MentorModelPublicListResponse
 from app.services.learning.mentor_service import MentorService, get_mentor_service
 
 logger = structlog.get_logger()
@@ -91,6 +92,27 @@ async def warmup_mentor_context(
     return response_base.success(data={"status": "warming_up"})
 
 
+@router.get("/models", response_model=ResponseSchemaModel[MentorModelPublicListResponse])
+async def list_mentor_models(
+    db: CurrentSession,
+    current_user: CurrentActiveUser,
+    service: CurrentMentorService,
+) -> ResponseSchemaModel[MentorModelPublicListResponse]:
+    """
+    获取 Mentor 可用模型列表
+    """
+    items, default_model_id = await service.list_available_models(
+        db,
+        user_id=current_user.id,
+    )
+    return response_base.success(
+        data=MentorModelPublicListResponse(
+            items=items,
+            default_model_id=default_model_id,
+        )
+    )
+
+
 async def _run_warmup_background(
     *,
     user_id: str,
@@ -136,7 +158,7 @@ async def create_mentor_session(
         roadmap_id=payload.roadmap_id,
         concept_id=payload.concept_id,
         title=payload.title,
-        agent_type=payload.agent_type,
+        agent_type=payload.agent_kind,
         model_id=payload.model_id,
     )
     return response_base.success(data=_serialize_session(chat_session))
@@ -318,13 +340,16 @@ def _serialize_session(chat_session: ChatSession) -> MentorSessionResponse:
     """
     序列化会话响应
     """
+
+    normalized_agent_kind = _normalize_agent_kind(chat_session.agent_type)
     return MentorSessionResponse(
         session_id=chat_session.session_id,
         user_id=chat_session.user_id,
         roadmap_id=chat_session.roadmap_id,
         concept_id=chat_session.concept_id,
         title=chat_session.title,
-        agent_type=chat_session.agent_type,
+        agent_kind=normalized_agent_kind,
+        qa_style="casual" if normalized_agent_kind == "qa" else None,
         model_id=chat_session.model_id,
         message_count=chat_session.message_count,
         last_message_preview=chat_session.last_message_preview,
@@ -337,14 +362,18 @@ def _serialize_message(chat_message: ChatMessage) -> MentorChatMessageResponse:
     """
     序列化消息响应
     """
+    metadata = chat_message.message_metadata or {}
+    normalized_agent_kind = _normalize_agent_kind(chat_message.agent_type, allow_none=True)
     return MentorChatMessageResponse(
         message_id=chat_message.message_id,
         session_id=chat_message.session_id,
         role=chat_message.role,
         content=chat_message.content,
-        agent_type=chat_message.agent_type,
+        agent_kind=normalized_agent_kind,
+        qa_style=metadata.get("qaStyle") or metadata.get("qa_style"),
         model_id=chat_message.model_id,
         trace_id=chat_message.trace_id,
+        message_metadata=chat_message.message_metadata,
         created_at=chat_message.created_at,
     )
 
@@ -367,3 +396,18 @@ def _serialize_memory_job(job: MentorMemoryJob) -> MentorMemoryJobResponse:
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
+
+
+def _normalize_agent_kind(agent_type: str | None, *, allow_none: bool = False) -> Literal["qa", "guide", "quiz"] | None:
+    """
+    兼容历史 `agent_type` 值，统一映射到新的 `agent_kind`
+    """
+
+    normalized_agent_type = (agent_type or "").strip().lower()
+    if normalized_agent_type in {"qa", "guide", "quiz"}:
+        return normalized_agent_type
+
+    if normalized_agent_type in {"company", "tutoring"}:
+        return "qa"
+
+    return None if allow_none else "qa"

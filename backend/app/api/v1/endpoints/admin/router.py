@@ -6,7 +6,7 @@
 - ✅ waitlist公开接口独立注册
 """
 from fastapi import APIRouter
-from . import users, monitoring, customer_emails
+from . import users, monitoring, customer_emails, mentor_models, roadmap
 from .waitlist import router_admin as waitlist_admin_router, router_public as waitlist_public_router
 from . import tavily
 
@@ -16,6 +16,8 @@ router = APIRouter(prefix="/admin", tags=["Platform Admin"])
 router.include_router(users.router)
 router.include_router(waitlist_admin_router)
 router.include_router(tavily.router)
+router.include_router(mentor_models.router)
+router.include_router(roadmap.router)
 router.include_router(monitoring.router)
 router.include_router(customer_emails.router)
 

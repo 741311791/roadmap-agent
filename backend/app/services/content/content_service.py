@@ -19,6 +19,7 @@ from app.agents.quiz_generator import QuizGeneratorAgent
 from app.schemas.roadmap import ConceptRetryRequest, ConceptRetryResponse
 from app.models.domain import (
     Concept, TutorialGenerationInput, ResourceRecommendationInput, QuizGenerationInput,
+    TutorialGenerationOutput, ResourceRecommendationOutput, QuizGenerationOutput,
     S3DownloadRequest, LearningPreferences,
 )
 from app.models.database import (
@@ -446,43 +447,38 @@ class ContentService:
             result: 生成结果
         """
         if content_type == "tutorial":
-            # TutorialMetadata 要求 title/summary/content_url/estimated_completion_time
-            # 这些字段来自 TutorialGenerationOutput.model_dump()
-            await self.tutorial_crud.create(session, obj_in={
-                "tutorial_id": result.get("tutorial_id"),
+            # 重新生成必须走 CRUD 的 save_tutorial，才能正确处理版本切换和 is_latest。
+            tutorial_output = TutorialGenerationOutput.model_validate({
+                **result,
                 "concept_id": concept_id,
-                "roadmap_id": roadmap_id,
-                "title": result.get("title"),
-                "summary": result.get("summary"),
-                "content_url": result.get("content_url"),
-                "content_status": "completed",
-                "content_version": result.get("content_version", 1),
-                "is_latest": True,
-                "estimated_completion_time": result.get("estimated_completion_time", 0),
             })
+            await self.tutorial_crud.save_tutorial(
+                session=session,
+                tutorial_output=tutorial_output,
+                roadmap_id=roadmap_id,
+            )
         elif content_type == "resources":
-            # ResourceRecommendationMetadata 需要 id/resources/resources_count/search_queries_used
-            await self.resource_crud.create(session, obj_in={
-                "id": result.get("id"),
+            # 资源重生成需要 UPSERT，避免重复插入相同 concept 的记录。
+            resource_output = ResourceRecommendationOutput.model_validate({
+                **result,
                 "concept_id": concept_id,
-                "roadmap_id": roadmap_id,
-                "resources": result.get("resources", []),
-                "resources_count": len(result.get("resources", [])),
-                "search_queries_used": result.get("search_queries_used", []),
             })
+            await self.resource_crud.save_resource_recommendation(
+                session=session,
+                resource_output=resource_output,
+                roadmap_id=roadmap_id,
+            )
         elif content_type == "quiz":
-            # QuizMetadata 需要 quiz_id/questions/total_questions 及难度分布
-            questions = result.get("questions", [])
-            await self.quiz_crud.create(session, obj_in={
-                "quiz_id": result.get("quiz_id"),
+            # 测验表对 (roadmap_id, concept_id) 有唯一约束，必须走 save_quiz 的 UPSERT。
+            quiz_output = QuizGenerationOutput.model_validate({
+                **result,
                 "concept_id": concept_id,
-                "roadmap_id": roadmap_id,
-                "questions": questions,
-                "total_questions": result.get("total_questions", len(questions)),
-                "easy_count": sum(1 for q in questions if q.get("difficulty") == "easy"),
-                "medium_count": sum(1 for q in questions if q.get("difficulty") == "medium"),
-                "hard_count": sum(1 for q in questions if q.get("difficulty") == "hard"),
             })
+            await self.quiz_crud.save_quiz(
+                session=session,
+                quiz_output=quiz_output,
+                roadmap_id=roadmap_id,
+            )
         
         logger.info(
             "content_metadata_saved",

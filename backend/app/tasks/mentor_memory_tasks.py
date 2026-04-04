@@ -7,6 +7,13 @@ import structlog
 from sqlalchemy import func, select
 
 from app.config.settings import settings
+from app.core.observability import (
+    build_mentor_trace_metadata,
+    create_langfuse_trace_id,
+    flush_langfuse,
+    start_langfuse_observation,
+    update_current_span_safely,
+)
 from app.core.celery_app import celery_app
 from app.crud.crud_chat import chat_message_crud, chat_session_crud
 from app.crud.crud_mentor_memory_job import mentor_memory_job_crud
@@ -31,17 +38,50 @@ def persist_and_extract_memory_task(self, **payload) -> dict:
     """
     归档消息、更新短期记忆并派发长期记忆提炼任务
     """
-    try:
-        result = run_async_in_worker_loop(
-            _persist_and_extract_memory_async(
-                payload=payload,
-                celery_task_id=self.request.id,
+    langfuse_trace_id = payload.get("langfuse_trace_id") or create_langfuse_trace_id(self.request.id)
+    task_metadata = build_mentor_trace_metadata(
+        external_trace_id=payload.get("trace_id", self.request.id),
+        user_id=payload.get("user_id"),
+        session_id=payload.get("session_id"),
+        roadmap_id=payload.get("roadmap_id"),
+        concept_id=payload.get("concept_id"),
+        agent_type=payload.get("agent_type"),
+        model=payload.get("model_id"),
+        celery_task_id=self.request.id,
+        queue_name="mentor_persist",
+        job_id=payload.get("job_id"),
+    )
+    with start_langfuse_observation(
+        name="mentor.persist_and_extract_memory",
+        as_type="span",
+        trace_id=langfuse_trace_id,
+        input={
+            "job_id": payload.get("job_id"),
+            "message_id": payload.get("message_id"),
+            "assistant_message_id": payload.get("assistant_message_id"),
+        },
+        metadata=task_metadata,
+    ):
+        try:
+            result = run_async_in_worker_loop(
+                _persist_and_extract_memory_async(
+                    payload=payload,
+                    celery_task_id=self.request.id,
+                )
             )
-        )
-        return result
-    except Exception as exc:
-        logger.exception("mentor_persist_task_failed", error=str(exc), payload=payload)
-        raise
+            update_current_span_safely(output=result)
+            return result
+        except Exception as exc:
+            logger.exception("mentor_persist_task_failed", error=str(exc), payload=payload)
+            update_current_span_safely(
+                output={"success": False},
+                metadata={"error_type": type(exc).__name__},
+                level="ERROR",
+                status_message=str(exc),
+            )
+            raise
+        finally:
+            flush_langfuse()
 
 
 @celery_app.task(
@@ -54,38 +94,78 @@ def extract_long_term_memory_task(self, **payload) -> dict:
     """
     提炼长期记忆
     """
-    try:
-        return run_async_in_worker_loop(
-            _extract_long_term_memory_async(
-                payload=payload,
-                retry_count=self.request.retries,
+    langfuse_trace_id = payload.get("langfuse_trace_id") or create_langfuse_trace_id(self.request.id)
+    task_metadata = build_mentor_trace_metadata(
+        external_trace_id=payload.get("trace_id", self.request.id),
+        user_id=payload.get("user_id"),
+        session_id=payload.get("session_id"),
+        roadmap_id=payload.get("roadmap_id"),
+        concept_id=payload.get("concept_id"),
+        agent_type=payload.get("agent_type"),
+        model=payload.get("model_id"),
+        celery_task_id=self.request.id,
+        queue_name="mentor_memory",
+        job_id=payload.get("job_id"),
+        extra_metadata={"retry_count": int(self.request.retries or 0)},
+    )
+    with start_langfuse_observation(
+        name="mentor.extract_long_term_memory",
+        as_type="span",
+        trace_id=langfuse_trace_id,
+        input={
+            "job_id": payload.get("job_id"),
+            "message_id": payload.get("message_id"),
+            "retry_count": int(self.request.retries or 0),
+        },
+        metadata=task_metadata,
+    ):
+        try:
+            result = run_async_in_worker_loop(
+                _extract_long_term_memory_async(
+                    payload=payload,
+                    retry_count=self.request.retries,
+                )
             )
-        )
-    except Exception as exc:
-        retry_count = int(self.request.retries or 0)
-        is_dead_letter = retry_count >= int(self.max_retries or 0)
+            update_current_span_safely(output=result)
+            return result
+        except Exception as exc:
+            retry_count = int(self.request.retries or 0)
+            is_dead_letter = retry_count >= int(self.max_retries or 0)
 
-        run_async_in_worker_loop(
-            _mark_memory_job_failed_async(
-                job_id=payload["job_id"],
-                last_error=str(exc),
+            run_async_in_worker_loop(
+                _mark_memory_job_failed_async(
+                    job_id=payload["job_id"],
+                    last_error=str(exc),
+                    retry_count=retry_count + 1,
+                    dead_letter=is_dead_letter,
+                )
+            )
+
+            update_current_span_safely(
+                output={
+                    "success": False,
+                    "dead_letter": is_dead_letter,
+                    "retry_count": retry_count + 1,
+                },
+                metadata={"error_type": type(exc).__name__},
+                level="ERROR",
+                status_message=str(exc),
+            )
+
+            if is_dead_letter:
+                logger.exception("mentor_memory_task_dead_letter", error=str(exc), payload=payload)
+                raise
+
+            countdown = min(2 ** (retry_count + 1), 60)
+            logger.warning(
+                "mentor_memory_task_retrying",
                 retry_count=retry_count + 1,
-                dead_letter=is_dead_letter,
+                countdown=countdown,
+                error=str(exc),
             )
-        )
-
-        if is_dead_letter:
-            logger.exception("mentor_memory_task_dead_letter", error=str(exc), payload=payload)
-            raise
-
-        countdown = min(2 ** (retry_count + 1), 60)
-        logger.warning(
-            "mentor_memory_task_retrying",
-            retry_count=retry_count + 1,
-            countdown=countdown,
-            error=str(exc),
-        )
-        raise self.retry(exc=exc, countdown=countdown)
+            raise self.retry(exc=exc, countdown=countdown)
+        finally:
+            flush_langfuse()
 
 
 @celery_app.task(
@@ -98,11 +178,34 @@ def run_mentor_reflection_task(self) -> dict:
     """
     长对话 reflection 定时任务
     """
-    try:
-        return run_async_in_worker_loop(_run_reflection_async())
-    except Exception as exc:
-        logger.exception("mentor_reflection_task_failed", error=str(exc))
-        raise
+    langfuse_trace_id = create_langfuse_trace_id(self.request.id)
+    with start_langfuse_observation(
+        name="mentor.run_reflection",
+        as_type="span",
+        trace_id=langfuse_trace_id,
+        input={"celery_task_id": self.request.id},
+        metadata=build_mentor_trace_metadata(
+            external_trace_id=self.request.id,
+            celery_task_id=self.request.id,
+            queue_name="mentor_memory",
+            extra_metadata={"source": "mentor_reflection"},
+        ),
+    ):
+        try:
+            result = run_async_in_worker_loop(_run_reflection_async())
+            update_current_span_safely(output=result)
+            return result
+        except Exception as exc:
+            logger.exception("mentor_reflection_task_failed", error=str(exc))
+            update_current_span_safely(
+                output={"success": False},
+                metadata={"error_type": type(exc).__name__},
+                level="ERROR",
+                status_message=str(exc),
+            )
+            raise
+        finally:
+            flush_langfuse()
 
 
 async def _persist_and_extract_memory_async(
@@ -223,10 +326,25 @@ async def _persist_and_extract_memory_async(
     # celery_app.send_task 是同步阻塞调用，在 async 协程中直接调用会阻塞事件循环线程，
     # 导致所有后续任务永远无法被处理。必须通过 run_in_executor 在线程池中执行。
     loop = asyncio.get_running_loop()
-    await loop.run_in_executor(
-        None,
-        lambda: celery_app.send_task("mentor.extract_long_term_memory", kwargs=payload),
-    )
+    with start_langfuse_observation(
+        name="mentor.memory_job.enqueue_extraction",
+        as_type="span",
+        input={"job_id": payload["job_id"]},
+        metadata=build_mentor_trace_metadata(
+            external_trace_id=payload["trace_id"],
+            user_id=payload["user_id"],
+            session_id=payload["session_id"],
+            roadmap_id=payload["roadmap_id"],
+            concept_id=payload.get("concept_id"),
+            queue_name="mentor_memory",
+            job_id=payload["job_id"],
+        ),
+    ):
+        await loop.run_in_executor(
+            None,
+            lambda: celery_app.send_task("mentor.extract_long_term_memory", kwargs=payload),
+        )
+        update_current_span_safely(output={"status": "queued"})
     return {"success": True, "job_id": payload["job_id"]}
 
 
@@ -260,20 +378,44 @@ async def _extract_long_term_memory_async(*, payload: dict, retry_count: int) ->
             )
 
         memory_service = get_memory_service()
-        result = await memory_service.add_memory(
-            user_id=payload["user_id"],
-            messages=[
-                {"role": "user", "content": payload["user_message"]},
-                {"role": "assistant", "content": payload["assistant_message"]},
-            ],
-            metadata={
-                "source": "mentor_chat",
-                "session_id": payload["session_id"],
-                "roadmap_id": payload["roadmap_id"],
-                "concept_id": payload.get("concept_id"),
-                "trace_id": payload["trace_id"],
+        with start_langfuse_observation(
+            name="mentor.memory.add_long_term_memory",
+            as_type="span",
+            input={
+                "job_id": payload["job_id"],
+                "message_count": 2,
             },
-        )
+            metadata=build_mentor_trace_metadata(
+                external_trace_id=payload["trace_id"],
+                user_id=payload["user_id"],
+                session_id=payload["session_id"],
+                roadmap_id=payload["roadmap_id"],
+                concept_id=payload.get("concept_id"),
+                model=payload.get("model_id"),
+                job_id=payload["job_id"],
+                extra_metadata={"source": "mentor_chat"},
+            ),
+        ):
+            result = await memory_service.add_memory(
+                user_id=payload["user_id"],
+                messages=[
+                    {"role": "user", "content": payload["user_message"]},
+                    {"role": "assistant", "content": payload["assistant_message"]},
+                ],
+                metadata={
+                    "source": "mentor_chat",
+                    "session_id": payload["session_id"],
+                    "roadmap_id": payload["roadmap_id"],
+                    "concept_id": payload.get("concept_id"),
+                    "trace_id": payload["trace_id"],
+                },
+            )
+            update_current_span_safely(
+                output={
+                    "success": result.get("success", False),
+                    "enabled": result.get("enabled", False),
+                }
+            )
         if not result.get("success"):
             raise RuntimeError(result.get("error") or "Mem0 写入失败")
 
@@ -358,16 +500,35 @@ async def _run_reflection_async() -> dict:
                 {"role": item.role, "content": item.content}
                 for item in messages[-10:]
             ]
-            memory_result = await memory_service.add_memory(
-                user_id=candidate.user_id,
-                messages=condensed_messages,
-                metadata={
-                    "source": "mentor_reflection",
+            with start_langfuse_observation(
+                name="mentor.memory.reflection_add_memory",
+                as_type="span",
+                input={
                     "session_id": candidate.session_id,
-                    "roadmap_id": candidate.roadmap_id,
-                    "concept_id": candidate.concept_id,
+                    "message_count": len(condensed_messages),
                 },
-            )
+                metadata=build_mentor_trace_metadata(
+                    external_trace_id=candidate.session_id,
+                    user_id=candidate.user_id,
+                    session_id=candidate.session_id,
+                    roadmap_id=candidate.roadmap_id,
+                    concept_id=candidate.concept_id,
+                    extra_metadata={"source": "mentor_reflection"},
+                ),
+            ):
+                memory_result = await memory_service.add_memory(
+                    user_id=candidate.user_id,
+                    messages=condensed_messages,
+                    metadata={
+                        "source": "mentor_reflection",
+                        "session_id": candidate.session_id,
+                        "roadmap_id": candidate.roadmap_id,
+                        "concept_id": candidate.concept_id,
+                    },
+                )
+                update_current_span_safely(
+                    output={"success": memory_result.get("success", False)}
+                )
             reflection_results.append(
                 {
                     "session_id": candidate.session_id,

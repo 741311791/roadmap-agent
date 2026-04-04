@@ -1,9 +1,10 @@
 """用户路由"""
 from fastapi import APIRouter
-from . import profile
+from . import feedback, profile
 
 router = APIRouter(tags=["Users"])
 
-# 只包含用户画像管理
+# 包含用户画像与反馈管理
 router.include_router(profile.router)
+router.include_router(feedback.router)
 

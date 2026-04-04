@@ -9,6 +9,13 @@
 - 每周可投入时间：{{ available_hours_per_week }} 小时
 - 学习动机：{{ motivation }}
 - 输出语言：{{ primary_language }}
+{% if external_references_text %}
+
+[2.5. External References]
+以下外部参考来自较权威的网站，仅用于帮助你校准主题覆盖范围、学习顺序和术语表达：
+
+{{ external_references_text }}
+{% endif %}
 
 [3. Previous Stages]
 你只需要参考前序 Stage，不需要重复规划整张路线图：
@@ -27,24 +34,11 @@
 
 [5. Constraints & Rules]
 **结构要求：**
-- Module 数量：此 Stage 包含 **2-3 个** Module，绝不超过 3 个
-- Concept 数量：每个 Module 包含 **2-3 个** Concept，绝不超过 3 个
 - 相近的小知识点、同一工作流中的连续步骤、同一主题下的零散语法点，必须优先合并成一个更完整的 Concept
 - Concept 的职责是承载一个可学习的能力单元，而不是承载单个过细碎的知识点
-{% if total_stages == 3 %}
-{% if current_stage_order < 3 %}
-- 当前 Stage 的 Concept 总数控制在 **7 个以内**
-{% else %}
-- 当前 Stage 的 Concept 总数控制在 **6 个以内**
-{% endif %}
-- 整张路线图的 Concept 总数控制在 **20 个以内**
-{% elif total_stages == 2 %}
-- 当前 Stage 的 Concept 总数控制在 **10 个以内**
-- 整张路线图的 Concept 总数控制在 **20 个以内**
-{% else %}
-- 当前 Stage 的 Concept 总数控制在 **20 个以内**
-{% endif %}
-- 所有 Concept 的预计时长之和应接近该 Stage 预计总时长（{{ stage_estimated_hours }} 小时，允许 ±15% 差异）
+- Module 和 Concept 数量不设固定上限，但必须保持结构清晰，避免机械拆分或无意义堆砌
+- `estimated_hours` 是微学习单元时长，**每个 Concept 必须小于等于 10/60 小时（10 分钟）**
+- `stage_estimated_hours` 是该 Stage 的整体规划时长，不要求当前输出的 Concept 时长总和严格贴合
 - 内容必须聚焦在核心重点：{{ focus_areas | join("、") }}
 - 直接输出结构化结果所需内容，不要输出额外解释、思考过程或 Markdown 代码块
 
@@ -68,9 +62,8 @@
 - **hard**：深入底层机制、复杂场景、需要架构思维
 
 **时长参考：**
-- easy Concept：0.5-2 小时
-- medium Concept：2-4 小时
-- hard Concept：4-8 小时
+- 所有 Concept：1-10 分钟（即 `estimated_hours` 必须在 0.0167 到 0.1667 之间）
+- 难度影响的是认知复杂度与前置关系，不再对应更长的单个 Concept 时长
 
 **用户适配要求：**
 {% if current_stage_order == 1 %}
@@ -93,35 +86,23 @@
 - `name`：必须等于 `{{ stage_name }}`
 - `description`：使用给定的 Stage 描述或在不改变语义前提下轻微润色
 - `order`：必须等于 `{{ current_stage_order }}`
-- `modules`：2-3 个 Module 列表
+- `modules`：Module 列表
   - `module_id`：按 `mod-{{ current_stage_order }}-X` 递增
   - `name`：模块名称
   - `description`：1-2 句说明模块目标
-  - `concepts`：2-3 个 Concept 列表
+  - `concepts`：Concept 列表
     - `concept_id`：按 `c-{{ current_stage_order }}-模块号-概念号` 命名
     - `name`：概念名称
     - `description`：1-2 句说明学什么以及为什么重要
-    - `estimated_hours`：数值，符合难度标准
+    - `estimated_hours`：数值，必须小于等于 `10/60`
     - `prerequisites`：无前置时返回空列表
     - `difficulty`：只能是 `easy` / `medium` / `hard`
     - `keywords`：至少 3 个关键词
 
 [7. Quality Checklist]
 输出前请自检：
-- [ ] 是否生成了 2-3 个 Module？
-- [ ] 每个 Module 是否只有 2-3 个 Concept？
-{% if total_stages == 3 %}
-{% if current_stage_order < 3 %}
-- [ ] 当前 Stage 的 Concept 总数是否不超过 7 个？
-{% else %}
-- [ ] 当前 Stage 的 Concept 总数是否不超过 6 个？
-{% endif %}
-- [ ] 是否仍然保证整张路线图总 Concept 数量不超过 20 个？
-{% elif total_stages == 2 %}
-- [ ] 当前 Stage 的 Concept 总数是否不超过 10 个？
-- [ ] 是否仍然保证整张路线图总 Concept 数量不超过 20 个？
-{% endif %}
-- [ ] 所有 Concept 时长之和是否接近 {{ stage_estimated_hours }} 小时（±15%）？
+- [ ] Module 和 Concept 的拆分是否清晰且不过度碎片化？
+- [ ] 每个 Concept 的 `estimated_hours` 是否都小于等于 `10/60`？
 - [ ] Module ID 命名是否符合规范（mod-{{ current_stage_order }}-X）？
 - [ ] Concept ID 命名是否符合规范（c-{{ current_stage_order }}-X-X）？
 - [ ] 前置概念 ID 是否合法（只引用更早的 Stage 或本 Stage 内更早的 Concept）？

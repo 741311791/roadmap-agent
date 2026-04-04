@@ -2,7 +2,6 @@
 AI 伴学助手长期记忆服务
 """
 import asyncio
-import json
 from functools import cached_property
 from typing import Any
 from urllib.parse import quote, unquote
@@ -59,13 +58,12 @@ class MemoryService:
         """
         构建 Mem0 配置
 
-        优先使用外部注入的 JSON 配置，避免在代码里硬编码向量库细节。
+        运行参数来自环境变量，长期记忆 Prompt 统一从 backend/prompts 目录读取。
         """
-        config_json = settings.get_mem0_config_json
-        if not config_json:
+        config = settings.get_mem0_config
+        if not config:
             return None
 
-        config = json.loads(config_json)
         vector_store = config.setdefault("vector_store", {})
         vector_config = vector_store.setdefault("config", {})
         if "database_url" in vector_config and "connection_string" not in vector_config:
@@ -111,8 +109,8 @@ class MemoryService:
             return None
 
         self._patch_mem0_openai_embedder()
-        config = self._build_mem0_config()
         try:
+            config = self._build_mem0_config()
             if config:
                 self._memory_client = memory_cls.from_config(config)
             else:

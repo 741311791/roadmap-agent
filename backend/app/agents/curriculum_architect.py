@@ -22,6 +22,7 @@ from app.models.domain import (
     Concept,
 )
 from app.config.settings import settings
+from app.tools.registry import ToolRegistry
 import structlog
 from pydantic import BaseModel, Field
 from typing import Dict, List, Set, Tuple
@@ -70,6 +71,8 @@ class CurriculumArchitectAgent(BaseAgent):
 
     OUTLINE_PROMPT_TEMPLATE = "curriculum_architect_outline.j2"
     STAGE_PROMPT_TEMPLATE = "curriculum_architect_stage.j2"
+    MIN_CONCEPT_HOURS = 1 / 60
+    MAX_CONCEPT_HOURS = 10 / 60
     
     def __init__(
         self,
@@ -78,6 +81,7 @@ class CurriculumArchitectAgent(BaseAgent):
         model_name: str | None = None,
         base_url: str | None = None,
         api_key: str | None = None,
+        tool_registry: ToolRegistry | None = None,
     ):
         super().__init__(
             agent_id=agent_id,
@@ -87,6 +91,7 @@ class CurriculumArchitectAgent(BaseAgent):
             api_key=api_key or settings.ARCHITECT_API_KEY,
             temperature=0.1,
         )
+        self.tool_registry = tool_registry
     
     def _convert_to_full_framework(self, simplified: SimplifiedRoadmapFramework) -> RoadmapFramework:
         """
@@ -127,7 +132,10 @@ class CurriculumArchitectAgent(BaseAgent):
                 concept_id=s_concept.concept_id,
                 name=s_concept.name,
                 description=s_concept.description,
-                estimated_hours=s_concept.estimated_hours,
+                estimated_hours=min(
+                    max(s_concept.estimated_hours, self.MIN_CONCEPT_HOURS),
+                    self.MAX_CONCEPT_HOURS,
+                ),
                 prerequisites=s_concept.prerequisites,
                 difficulty=s_concept.difficulty,
                 keywords=s_concept.keywords,
@@ -390,7 +398,158 @@ class CurriculumArchitectAgent(BaseAgent):
             
             # Roadmap ID（关键！必须保持一致）
             "roadmap_id": intent.roadmap_id,
+            "external_references_text": "",
         }
+
+    def _resolve_authoritative_domains(self, key_technologies: list[str]) -> list[str]:
+        """
+        为当前技术栈推断权威参考站点。
+
+        Args:
+            key_technologies: 关键技术栈列表
+
+        Returns:
+            去重后的权威域名列表
+        """
+        domain_map = {
+            "python": ["docs.python.org", "fastapi.tiangolo.com"],
+            "javascript": ["developer.mozilla.org", "nodejs.org"],
+            "typescript": ["typescriptlang.org", "developer.mozilla.org"],
+            "react": ["react.dev", "developer.mozilla.org"],
+            "next.js": ["nextjs.org", "react.dev"],
+            "nextjs": ["nextjs.org", "react.dev"],
+            "node.js": ["nodejs.org", "developer.mozilla.org"],
+            "node": ["nodejs.org", "developer.mozilla.org"],
+            "express": ["expressjs.com", "developer.mozilla.org"],
+            "fastapi": ["fastapi.tiangolo.com", "docs.python.org"],
+            "django": ["docs.djangoproject.com", "docs.python.org"],
+            "flask": ["flask.palletsprojects.com", "docs.python.org"],
+            "postgresql": ["postgresql.org"],
+            "postgres": ["postgresql.org"],
+            "mysql": ["dev.mysql.com"],
+            "docker": ["docs.docker.com"],
+            "kubernetes": ["kubernetes.io"],
+            "aws": ["docs.aws.amazon.com"],
+            "azure": ["learn.microsoft.com"],
+            "gcp": ["cloud.google.com"],
+            "vue": ["vuejs.org"],
+            "angular": ["angular.dev"],
+            "java": ["docs.oracle.com"],
+            "spring": ["spring.io"],
+            "go": ["go.dev"],
+            "rust": ["doc.rust-lang.org"],
+        }
+
+        domains: list[str] = []
+        for technology in key_technologies:
+            normalized = technology.strip().lower()
+            for keyword, mapped_domains in domain_map.items():
+                if keyword in normalized:
+                    domains.extend(mapped_domains)
+
+        seen_domains: set[str] = set()
+        unique_domains: list[str] = []
+        for domain in domains:
+            if domain in seen_domains:
+                continue
+            seen_domains.add(domain)
+            unique_domains.append(domain)
+
+        return unique_domains[:6]
+
+    async def _collect_external_references(self, prompt_context: dict) -> str:
+        """
+        收集权威网站上的学习路径参考摘要。
+
+        设计目标：
+        - 只做少量、集中式检索，避免并行 Stage 任务重复搜索消耗 token
+        - 优先保留官方文档或高可信站点结果
+        - 仅对少量结果执行 web_fetch，控制上下文长度
+
+        Args:
+            prompt_context: 已整理好的 Prompt 上下文
+
+        Returns:
+            可直接注入 Prompt 的参考摘要文本
+        """
+        if not self.tool_registry:
+            return ""
+
+        include_domains = self._resolve_authoritative_domains(
+            prompt_context["key_technologies"]
+        )
+        query_seed = ", ".join(prompt_context["key_technologies"][:3]).strip()
+        search_queries = [
+            f"{prompt_context['parsed_goal']} learning path",
+            f"{query_seed or prompt_context['user_goal']} official getting started guide",
+        ]
+
+        collected_results: list[dict[str, str]] = []
+        seen_urls: set[str] = set()
+
+        for query in search_queries:
+            search_result = await self.tool_registry.execute_tool(
+                name="web_search",
+                arguments={
+                    "query": query,
+                    "max_results": 3,
+                    "search_depth": "advanced",
+                    "language": prompt_context["primary_language"],
+                    "include_domains": include_domains or None,
+                    "content_type": "documentation",
+                },
+            )
+            if isinstance(search_result, str) or not hasattr(search_result, "results"):
+                continue
+
+            for result in search_result.results:
+                url = (result.get("url") or "").strip()
+                if not url or url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                collected_results.append(result)
+                if len(collected_results) >= 3:
+                    break
+
+            if len(collected_results) >= 3:
+                break
+
+        if not collected_results:
+            return ""
+
+        fetched_summaries: dict[str, str] = {}
+        for result in collected_results[:2]:
+            url = (result.get("url") or "").strip()
+            fetch_result = await self.tool_registry.execute_tool(
+                name="web_fetch",
+                arguments={
+                    "url": url,
+                    "extract_depth": "basic",
+                    "format": "text",
+                },
+            )
+            if isinstance(fetch_result, str) or not hasattr(fetch_result, "content"):
+                continue
+
+            normalized_content = " ".join(fetch_result.content.split())
+            if normalized_content:
+                fetched_summaries[url] = normalized_content[:280]
+
+        lines: list[str] = []
+        for index, result in enumerate(collected_results, start=1):
+            title = (result.get("title") or "Untitled").strip()
+            url = (result.get("url") or "").strip()
+            snippet = (result.get("snippet") or "").strip()
+            fetched_summary = fetched_summaries.get(url)
+
+            lines.append(f"{index}. {title}")
+            lines.append(f"   URL: {url}")
+            if snippet:
+                lines.append(f"   摘要: {snippet}")
+            if fetched_summary:
+                lines.append(f"   提炼: {fetched_summary}")
+
+        return "\n".join(lines)
     
     # ============================================================
     # Plan-and-Execute 并行生成方法
@@ -482,6 +641,7 @@ class CurriculumArchitectAgent(BaseAgent):
             "available_hours_per_week": prompt_context["available_hours_per_week"],
             "motivation": prompt_context["motivation"],
             "primary_language": prompt_context["primary_language"],
+            "external_references_text": prompt_context.get("external_references_text", ""),
             "stage_id": planned_stage.stage_id,
             "stage_name": planned_stage.name,
             "stage_description": planned_stage.description,
@@ -495,9 +655,7 @@ class CurriculumArchitectAgent(BaseAgent):
             ),
         }
 
-    async def _plan_roadmap_outline(
-        self, input_data: CurriculumDesignInput
-    ) -> "RoadmapOutline":
+    async def _plan_roadmap_outline(self, prompt_context: dict) -> "RoadmapOutline":
         """
         第一阶段（Planner）：生成路线图 Stage 级大纲
 
@@ -511,11 +669,10 @@ class CurriculumArchitectAgent(BaseAgent):
         Returns:
             RoadmapOutline: Stage 级大纲，供并行 Stage 生成阶段使用
         """
-        roadmap_id = input_data.intent_analysis.roadmap_id
+        roadmap_id = prompt_context["roadmap_id"]
 
         logger.info("plan_execute_planning_outline", roadmap_id=roadmap_id)
 
-        prompt_context = self._prepare_prompt_context(input_data)
         system_prompt = self._load_system_prompt(
             self.OUTLINE_PROMPT_TEMPLATE,
             **prompt_context,
@@ -673,16 +830,20 @@ class CurriculumArchitectAgent(BaseAgent):
         """
         roadmap_id = input_data.intent_analysis.roadmap_id
         prompt_context = self._prepare_prompt_context(input_data)
+        prompt_context["external_references_text"] = await self._collect_external_references(
+            prompt_context
+        )
 
         logger.info(
             "plan_execute_started",
             roadmap_id=roadmap_id,
             mode="plan_and_execute",
             tech_stack_count=len(input_data.intent_analysis.key_technologies),
+            has_external_references=bool(prompt_context["external_references_text"]),
         )
 
         # ============ 阶段 1: Planner ============
-        outline = await self._plan_roadmap_outline(input_data)
+        outline = await self._plan_roadmap_outline(prompt_context)
         # ============ 阶段 2: 并行 Stage 生成 ============
         logger.info(
             "plan_execute_stage_fanout_started",

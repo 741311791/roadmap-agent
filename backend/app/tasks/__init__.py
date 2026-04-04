@@ -27,6 +27,7 @@ from app.tasks.content_generation_tasks import (
     # ✅ 已删除废弃任务：generate_concept_content_task, finalize_content_generation
     # 改为使用 LangGraph 子图自动编排
 )
+from app.tasks.linear_sync_tasks import sync_public_roadmap_task
 
 __all__ = [
     "batch_write_logs",
@@ -38,6 +39,7 @@ __all__ = [
     "generate_cover_image_task",
     "retry_single_content",
     "generate_all_content_task",
+    "sync_public_roadmap_task",
     # ✅ 已删除：generate_concept_content_task, finalize_content_generation
 ]
 
