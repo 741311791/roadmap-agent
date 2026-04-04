@@ -98,3 +98,11 @@ frontend/.vite/
 out/
 *.tsbuildinfo
 
+# DeerFlow：独立 Git 仓库，在 fork 内跟进上游；不纳入主仓库
+deer-flow/
+
+# Playwright MCP 本地快照
+.playwright-mcp/
+
+# Best Practice
+best-practice/

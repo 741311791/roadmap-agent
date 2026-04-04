@@ -10,12 +10,14 @@ Roadmap Agent — 基于多 Agent 协作的个性化学习路线图生成系统�
 | `frontend-next/` | Next.js 14 + TypeScript 前端（npm） |
 | `prompts/` | Jinja2 Prompt 模板 |
 | `Makefile` | 统一开发命令入口 |
+| `deer-flow/` | **不纳入本仓库**（见 `.gitignore`）。需自行克隆你的 DeerFlow fork，并在该仓库内跟进官方 `upstream` 同步 |
 
 ## 快速参考
 
 - **后端开发命令**: 参见 `Makefile` 中的 `dev-backend`, `test`, `lint`, `format` 等 targets
 - **前端开发命令**: 参见 `frontend-next/AGENTS.md`
 - **数据库迁移**: `cd backend && uv run alembic upgrade head`
+- **DeerFlow 网关**：在主仓库根目录旁单独维护。示例：`git clone git@github.com:<你的用户名>/deer-flow.git deer-flow`，日常在其中的 `roadmap-agent-main` 分支合并 `upstream/main`；规范见 `.cursor/rules/deer-flow-upstream-sync-rule.mdc`
 
 ## Cursor Cloud specific instructions
 
