@@ -19,6 +19,7 @@ export * from './content';
 export * from './learning';
 export * from './chat';
 export * from './admin';
+export * from './feedback';
 
 // ============================================================
 // 命名空间导出（推荐使用）
@@ -32,6 +33,7 @@ export { contentApi } from './content';
 export { learningApi } from './learning';
 export { chatApi } from './chat';
 export { adminApi } from './admin';
+export { feedbackApi } from './feedback';
 
 // ============================================================
 // 重新导出常用类型（从生成的类型中和本地定义）

@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { getUserProfile, getRoadmapStatus, type UserProfileData, type TaskStatusResponse } from '@/lib/api/endpoints';
+import { buildGenerationFeedbackRoadmapHref } from '@/lib/feedback/feedback-events';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import { useRoadmapGeneration } from '@/lib/hooks/api/use-roadmap-generation';
 import { useAuthStore } from '@/lib/store/auth-store';
@@ -153,7 +154,7 @@ export default function NewRoadmapClient() {
           // 如果任务已完成或部分失败，跳转到路线图详情页
           if ((taskStatus === TaskStatus.COMPLETED || taskStatus === TaskStatus.PARTIAL_FAILURE) && status.roadmap_id) {
             console.log('[NewRoadmap] Task finished with status:', taskStatus, 'Navigating to roadmap:', status.roadmap_id);
-            router.push(`/roadmap/${status.roadmap_id}`);
+            router.push(buildGenerationFeedbackRoadmapHref(status.roadmap_id, resumeTaskId));
             return;
           }
           

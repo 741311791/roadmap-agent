@@ -25,6 +25,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Target, Clock, TrendingUp, Lightbulb, Loader2, ChevronLeft, ChevronRight, ArrowRight } from 'lucide-react';
+import { buildGenerationFeedbackRoadmapHref } from '@/lib/feedback/feedback-events';
 import { cn } from '@/lib/utils';
 import type { Stage, RoadmapFramework } from '@/types/generated/models';
 import { isAfterIntentAnalysis, isAfterCurriculumDesign, getStepDescription } from '@/lib/constants/workflow-steps';
@@ -529,7 +530,7 @@ export function CoreDisplayArea({
     }
 
     startNavigatingToRoadmap(() => {
-      router.push(`/roadmap/${roadmapId}`);
+      router.push(buildGenerationFeedbackRoadmapHref(roadmapId, taskId));
     });
   };
   

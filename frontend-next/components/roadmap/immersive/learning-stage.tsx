@@ -6,10 +6,11 @@ import { cn, stripRoadmapPrefix } from '@/lib/utils';
 import type { Concept, LearningPreferences, QuizQuestion } from '@/types/generated/models';
 import type { ResourcesResponse, QuizResponse } from '@/types/generated';
 import { updateConceptProgress, submitQuizAttempt } from '@/lib/api/endpoints';
+import { promptConceptFeedback } from '@/lib/feedback/feedback-events';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import { useResources } from '@/lib/hooks/api/use-resources';
 import { useQuiz } from '@/lib/hooks/api/use-quiz';
-import { FailedContentAlert } from '@/components/common/retry-content-button';
+import { RetryContentButton } from '@/components/common/retry-content-button';
 import { GeneratingContentLoader } from '@/components/common/generating-content-loader';
 import { 
   Sparkles, 
@@ -42,7 +43,6 @@ import rehypeHighlight from 'rehype-highlight';
 import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
-import 'highlight.js/styles/github-dark.css';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
@@ -491,18 +491,10 @@ function ResourceList({
   resources, 
   isLoading, 
   error,
-  roadmapId,
-  conceptId,
-  userPreferences,
-  onRetrySuccess
 }: { 
   resources: ResourcesResponse['resources'];
   isLoading: boolean;
   error: string | null;
-  roadmapId?: string;
-  conceptId?: string;
-  userPreferences?: LearningPreferences;
-  onRetrySuccess?: () => void;
 }) {
   const t = useTranslations('roadmapDetail');
   
@@ -528,21 +520,6 @@ function ResourceList({
   }
 
   if (!resources || !Array.isArray(resources) || resources.length === 0) {
-    // 如果有重试所需的参数，显示重试按钮
-    if (roadmapId && conceptId && userPreferences) {
-      return (
-        <FailedContentAlert
-          roadmapId={roadmapId}
-          conceptId={conceptId}
-          contentType="resources"
-          preferences={userPreferences}
-          message="学习资源暂未生成"
-          onSuccess={onRetrySuccess}
-        />
-      );
-    }
-    
-    // 否则显示默认的空状态提示
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center">
         <div className="w-16 h-16 rounded-full bg-stone-100 flex items-center justify-center mb-4">
@@ -558,15 +535,6 @@ function ResourceList({
 
   return (
     <div className="space-y-3">
-      <div className="mb-6">
-        <h2 className="text-xl font-serif font-bold text-foreground mb-2">
-          {t('curatedResourcesTitle')}
-        </h2>
-        <p className="text-sm text-muted-foreground">
-          {t('resourcesCount', { count: resources.length })}
-        </p>
-      </div>
-
       {/* 资源列表 */}
       <div className="space-y-2.5">
         {resources.map((resource, index) => (
@@ -785,16 +753,12 @@ function QuizList({
   error,
   roadmapId,
   conceptId,
-  userPreferences,
-  onRetrySuccess
 }: { 
   quiz: QuizResponse | null;
   isLoading: boolean;
   error: string | null;
   roadmapId?: string;
   conceptId?: string;
-  userPreferences?: LearningPreferences;
-  onRetrySuccess?: () => void;
 }) {
   const t = useTranslations('roadmapDetail');
   const [answers, setAnswers] = useState<Record<string, number[]>>({});
@@ -901,21 +865,6 @@ function QuizList({
   }
 
   if (!quiz || !quiz.questions || quiz.questions.length === 0) {
-    // 如果有重试所需的参数，显示重试按钮
-    if (roadmapId && conceptId && userPreferences) {
-      return (
-        <FailedContentAlert
-          roadmapId={roadmapId}
-          conceptId={conceptId}
-          contentType="quiz"
-          preferences={userPreferences}
-          message="测验题目暂未生成"
-          onSuccess={onRetrySuccess}
-        />
-      );
-    }
-    
-    // 否则显示默认的空状态提示
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center">
         <div className="w-16 h-16 rounded-full bg-stone-100 flex items-center justify-center mb-4">
@@ -934,64 +883,32 @@ function QuizList({
 
   return (
     <div className="space-y-5">
-      {/* Quiz Header - 高端杂志风格 */}
-      <div className="mb-8 pb-6 border-b border-sage-100">
-        <div className="flex items-center gap-3 mb-3">
-          <div className="w-10 h-10 rounded-xl bg-sage-600 flex items-center justify-center">
-            <Sparkles className="w-5 h-5 text-white" />
-          </div>
-          <div>
-            <h2 className="text-2xl font-serif font-bold text-foreground">
-              {t('knowledgeCheck')}
-            </h2>
-            <p className="text-sm text-muted-foreground">
-              {t('questionsCount', { count: quiz.total_questions })}
-            </p>
+      {/* Score Display - 完成后的优雅展示 */}
+      {allAnswered && (
+        <div className="mb-8 p-6 rounded-2xl bg-gradient-to-br from-sage-50 via-white to-sage-50/50 border border-sage-200 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="w-14 h-14 rounded-xl bg-sage-600 flex items-center justify-center shadow-sm">
+                <Award className="w-7 h-7 text-white" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-muted-foreground mb-0.5">{t('quizComplete')}</p>
+                <p className="text-3xl font-serif font-bold text-sage-800">
+                  {score.correct}<span className="text-lg text-muted-foreground font-normal">/{score.total}</span>
+                </p>
+              </div>
+            </div>
+            <div className="text-right">
+              <p className="text-4xl font-serif font-bold text-sage-700">
+                {scorePercentage}%
+              </p>
+              <p className="text-xs text-muted-foreground mt-1 uppercase tracking-wider">
+                {scorePercentage >= 80 ? t('excellent') : scorePercentage >= 60 ? t('goodJob') : t('keepLearning')}
+              </p>
+            </div>
           </div>
         </div>
-        
-        {/* Progress Bar - 优雅的进度显示 */}
-        {submittedQuestions.size > 0 && !allAnswered && (
-          <div className="mt-4 flex items-center gap-4">
-            <div className="flex-1 h-1.5 bg-sage-100 rounded-full overflow-hidden">
-              <div 
-                className="h-full bg-gradient-to-r from-sage-500 to-sage-600 transition-all duration-700 ease-out"
-                style={{ width: `${(submittedQuestions.size / quiz.total_questions) * 100}%` }}
-              />
-            </div>
-            <span className="text-sm font-medium text-sage-700 tabular-nums min-w-[3rem] text-right">
-              {submittedQuestions.size}/{quiz.total_questions}
-            </span>
-          </div>
-        )}
-
-        {/* Score Display - 完成后的优雅展示 */}
-        {allAnswered && (
-          <div className="mt-6 p-6 rounded-2xl bg-gradient-to-br from-sage-50 via-white to-sage-50/50 border border-sage-200 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="w-14 h-14 rounded-xl bg-sage-600 flex items-center justify-center shadow-sm">
-                  <Award className="w-7 h-7 text-white" />
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground mb-0.5">{t('quizComplete')}</p>
-                  <p className="text-3xl font-serif font-bold text-sage-800">
-                    {score.correct}<span className="text-lg text-muted-foreground font-normal">/{score.total}</span>
-                  </p>
-                </div>
-              </div>
-              <div className="text-right">
-                <p className="text-4xl font-serif font-bold text-sage-700">
-                  {scorePercentage}%
-                </p>
-                <p className="text-xs text-muted-foreground mt-1 uppercase tracking-wider">
-                  {scorePercentage >= 80 ? t('excellent') : scorePercentage >= 60 ? t('goodJob') : t('keepLearning')}
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
+      )}
 
       {/* Questions */}
       {quiz.questions.map((question, index) => {
@@ -1038,6 +955,8 @@ function QuizList({
 interface LearningStageProps {
   /** 当前选中的概念 */
   concept: Concept | null;
+  /** 当前概念是否处于锁定状态 */
+  isLocked?: boolean;
   /** 自定义样式类名 */
   className?: string;
   /** 教程 Markdown 内容 */
@@ -1064,7 +983,16 @@ interface LearningStageProps {
  * - 显示测验题目
  * - 提供"标记完成"操作
  */
-export function LearningStage({ concept, className, tutorialContent, tutorialLoading, roadmapId, userPreferences, onRetrySuccess }: LearningStageProps) {
+export function LearningStage({
+  concept,
+  isLocked = false,
+  className,
+  tutorialContent,
+  tutorialLoading,
+  roadmapId,
+  userPreferences,
+  onRetrySuccess,
+}: LearningStageProps) {
   const t = useTranslations('roadmapDetail');
   const [activeFormat, setActiveFormat] = useState<LearningFormat>('immersive-text');
   
@@ -1079,7 +1007,7 @@ export function LearningStage({ concept, className, tutorialContent, tutorialLoa
     error: resourcesError 
   } = useResources(
     roadmapId, 
-    (activeFormat === 'learning-resources' && concept?.resources_id) ? concept.concept_id : undefined
+    (!isLocked && activeFormat === 'learning-resources' && concept?.resources_id) ? concept.concept_id : undefined
   );
 
   const { 
@@ -1088,7 +1016,7 @@ export function LearningStage({ concept, className, tutorialContent, tutorialLoa
     error: quizError 
   } = useQuiz(
     roadmapId,
-    (activeFormat === 'quiz' && concept?.quiz_id) ? concept.concept_id : undefined
+    (!isLocked && activeFormat === 'quiz' && concept?.quiz_id) ? concept.concept_id : undefined
   );
   
   // 检测内容生成状态
@@ -1105,6 +1033,51 @@ export function LearningStage({ concept, className, tutorialContent, tutorialLoa
   const quizFailed = concept?.quiz_status === 'failed';
   const quizGenerating = concept?.quiz_status === 'pending' || concept?.quiz_status === 'generating';
   const quizPending = concept?.quiz_status === 'pending' || concept?.quiz_status === 'generating';
+  const hasTutorialContent = Boolean(tutorialContent?.trim());
+  const hasResourcesContent = Boolean(resources?.resources?.length);
+  const hasQuizContent = Boolean(quiz?.questions?.length);
+
+  const canRegenerateContent = Boolean(roadmapId && concept && userPreferences && !isLocked);
+  const activeContentType = activeFormat === 'immersive-text'
+    ? 'tutorial'
+    : activeFormat === 'learning-resources'
+      ? 'resources'
+      : activeFormat === 'quiz'
+        ? 'quiz'
+        : null;
+  const isActiveContentGenerating = activeContentType === 'tutorial'
+    ? tutorialGenerating || tutorialPending
+    : activeContentType === 'resources'
+      ? resourcesGenerating || resourcesPending
+      : activeContentType === 'quiz'
+        ? quizGenerating || quizPending
+        : false;
+
+  /**
+   * 渲染内容重新生成按钮
+   */
+  const renderFooterRegenerateButton = () => {
+    if (!activeContentType || !canRegenerateContent || !roadmapId || !concept || !userPreferences) {
+      return null;
+    }
+
+    return (
+      <RetryContentButton
+        key={activeContentType}
+        roadmapId={roadmapId}
+        conceptId={concept.concept_id}
+        contentType={activeContentType}
+        preferences={userPreferences}
+        onSuccess={() => onRetrySuccess?.()}
+        variant="ghost"
+        size="sm"
+        label="Regenerate"
+        disabled={isActiveContentGenerating}
+        loading={isActiveContentGenerating}
+        className="border-0 bg-transparent px-0 text-sage-700 shadow-none hover:bg-transparent hover:text-sage-900"
+      />
+    );
+  };
   
   // Extract TOC from markdown content
   const tocItems = useMemo(() => {
@@ -1122,7 +1095,7 @@ export function LearningStage({ concept, className, tutorialContent, tutorialLoa
   // 检查是否有正在进行的重试任务 + 僵尸状态检测
   // 当切换到对应tab或concept变化时，检查backend是否有active task
   useEffect(() => {
-    if (!roadmapId || !concept) return;
+    if (!roadmapId || !concept || isLocked) return;
 
     let isMounted = true; // 防止组件卸载后更新状态
 
@@ -1193,7 +1166,7 @@ export function LearningStage({ concept, className, tutorialContent, tutorialLoa
     return () => {
       isMounted = false; // 清理函数：标记组件已卸载
     };
-  }, [roadmapId, concept?.concept_id, activeFormat]);
+  }, [roadmapId, concept?.concept_id, activeFormat, isLocked]);
 
   // Compute concept completion status
   const isConceptCompleted = concept ? (conceptProgressMap[concept.concept_id] || false) : false;
@@ -1207,6 +1180,14 @@ export function LearningStage({ concept, className, tutorialContent, tutorialLoa
       const newStatus = !isConceptCompleted;
       await updateConceptProgress(roadmapId, concept.concept_id, { is_completed: newStatus });
       updateProgressInStore(concept.concept_id, newStatus);
+      if (newStatus) {
+        promptConceptFeedback({
+          roadmapId,
+          conceptId: concept.concept_id,
+          conceptName: stripRoadmapPrefix(concept.name),
+          delayMs: 800,
+        });
+      }
     } catch (error) {
       console.error('Failed to toggle concept completion:', error);
     } finally {
@@ -1223,6 +1204,26 @@ export function LearningStage({ concept, className, tutorialContent, tutorialLoa
           </div>
           <p className="font-serif text-lg text-foreground">{t('selectConcept')}</p>
           <p className="text-sm mt-2 text-muted-foreground">{t('chooseFromRail')}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (isLocked) {
+    return (
+      <div className={cn("h-full flex items-center justify-center bg-background px-6", className)}>
+        <div className="max-w-lg text-center">
+          <div className="w-16 h-16 rounded-full bg-stone-100 mx-auto flex items-center justify-center mb-4 border border-stone-200">
+            <Lock className="w-8 h-8 text-stone-500" />
+          </div>
+          <p className="font-serif text-2xl text-foreground">{t('lockedConceptTitle')}</p>
+          <p className="text-sm mt-3 text-muted-foreground leading-6">
+            {t('lockedConceptDescription')}
+          </p>
+          <div className="mt-6 inline-flex items-center gap-2 rounded-full border border-sage-200 bg-sage-50 px-4 py-2 text-xs text-sage-700">
+            <Star className="h-3.5 w-3.5" />
+            <span>{t('lockedConceptCallout')}</span>
+          </div>
         </div>
       </div>
     );
@@ -1252,19 +1253,7 @@ export function LearningStage({ concept, className, tutorialContent, tutorialLoa
                 />
               )}
               
-              {tutorialGenerating || tutorialPending ? (
-                /* 教程正在生成中 */
-                <GeneratingContentLoader contentType="tutorial" />
-              ) : tutorialFailed && roadmapId && concept && userPreferences ? (
-                /* 教程生成失败，显示重试按钮 */
-                <FailedContentAlert
-                  roadmapId={roadmapId}
-                  conceptId={concept.concept_id}
-                  contentType="tutorial"
-                  preferences={userPreferences}
-                  onSuccess={() => onRetrySuccess?.()}
-                />
-              ) : tutorialContent ? (
+              {hasTutorialContent ? (
                 /* 编辑风格的文章排版 - 浅色主题 */
                 <article className="prose prose-stone max-w-none 
                   prose-headings:font-serif prose-headings:tracking-tight prose-headings:text-foreground
@@ -1363,6 +1352,19 @@ export function LearningStage({ concept, className, tutorialContent, tutorialLoa
                     {tutorialContent}
                   </ReactMarkdown>
                 </article>
+              ) : tutorialGenerating || tutorialPending ? (
+                /* 教程正在生成中，且当前没有可展示的旧内容 */
+                <GeneratingContentLoader contentType="tutorial" />
+              ) : tutorialFailed ? (
+                <div className="flex flex-col items-center justify-center py-20 text-center">
+                  <div className="w-16 h-16 rounded-full bg-red-50 flex items-center justify-center mb-4">
+                    <AlertCircle className="w-8 h-8 text-red-400" />
+                  </div>
+                  <h3 className="text-lg font-medium text-stone-700 mb-2">教程内容生成失败</h3>
+                  <p className="text-sm text-stone-500 max-w-md">
+                    请使用底部按钮重新生成当前内容
+                  </p>
+                </div>
               ) : (
                 <div className="space-y-4">
                   <div className="h-4 bg-muted rounded w-3/4 animate-pulse" />
@@ -1376,44 +1378,56 @@ export function LearningStage({ concept, className, tutorialContent, tutorialLoa
 
           {/* Placeholder for other formats */}
           {activeFormat === 'learning-resources' && (
-            resourcesGenerating || resourcesPending ? (
-              /* 资源推荐正在生成中 */
-              <GeneratingContentLoader contentType="resources" />
-            ) : resourcesFailed && roadmapId && concept && userPreferences ? (
-              /* 资源推荐生成失败，显示重试按钮 */
-              <FailedContentAlert
-                roadmapId={roadmapId}
-                conceptId={concept.concept_id}
-                contentType="resources"
-                preferences={userPreferences}
-                  onSuccess={() => onRetrySuccess?.()}
+            hasResourcesContent ? (
+              <ResourceList 
+                resources={(resources?.resources || []) as any}
+                isLoading={resourcesLoading}
+                error={resourcesError?.message || null}
               />
+            ) : resourcesGenerating || resourcesPending ? (
+              /* 资源推荐正在生成中，且当前没有可展示的旧内容 */
+              <GeneratingContentLoader contentType="resources" />
+            ) : resourcesFailed ? (
+              <div className="flex flex-col items-center justify-center py-20 text-center">
+                <div className="w-16 h-16 rounded-full bg-red-50 flex items-center justify-center mb-4">
+                  <AlertCircle className="w-8 h-8 text-red-400" />
+                </div>
+                <h3 className="text-lg font-medium text-stone-700 mb-2">{t('failedToLoadResources')}</h3>
+                <p className="text-sm text-stone-500 max-w-md">
+                  请使用底部按钮重新生成当前内容
+                </p>
+              </div>
             ) : (
               <ResourceList 
                 resources={(resources?.resources || []) as any}
                 isLoading={resourcesLoading}
                 error={resourcesError?.message || null}
-                roadmapId={roadmapId}
-                conceptId={concept?.concept_id}
-                userPreferences={userPreferences}
-                onRetrySuccess={onRetrySuccess}
               />
             )
           )}
 
           {activeFormat === 'quiz' && (
-            quizGenerating || quizPending ? (
-              /* 测验正在生成中 */
-              <GeneratingContentLoader contentType="quiz" />
-            ) : quizFailed && roadmapId && concept && userPreferences ? (
-              /* 测验生成失败，显示重试按钮 */
-              <FailedContentAlert
+            hasQuizContent ? (
+              <QuizList 
+                quiz={(quiz ?? null) as any}
+                isLoading={quizLoading}
+                error={quizError?.message || null}
                 roadmapId={roadmapId}
-                conceptId={concept.concept_id}
-                contentType="quiz"
-                preferences={userPreferences}
-                  onSuccess={() => onRetrySuccess?.()}
+                conceptId={concept?.concept_id}
               />
+            ) : quizGenerating || quizPending ? (
+              /* 测验正在生成中，且当前没有可展示的旧内容 */
+              <GeneratingContentLoader contentType="quiz" />
+            ) : quizFailed ? (
+              <div className="flex flex-col items-center justify-center py-20 text-center">
+                <div className="w-16 h-16 rounded-full bg-red-50 flex items-center justify-center mb-4">
+                  <AlertCircle className="w-8 h-8 text-red-400" />
+                </div>
+                <h3 className="text-lg font-medium text-stone-700 mb-2">{t('failedToLoadQuiz')}</h3>
+                <p className="text-sm text-stone-500 max-w-md">
+                  请使用底部按钮重新生成当前内容
+                </p>
+              </div>
             ) : (
               <QuizList 
                 quiz={(quiz ?? null) as any}
@@ -1421,8 +1435,6 @@ export function LearningStage({ concept, className, tutorialContent, tutorialLoa
                 error={quizError?.message || null}
                 roadmapId={roadmapId}
                 conceptId={concept?.concept_id}
-                userPreferences={userPreferences}
-                onRetrySuccess={onRetrySuccess}
               />
             )
           )}
@@ -1468,26 +1480,29 @@ export function LearningStage({ concept, className, tutorialContent, tutorialLoa
             <div className="text-sm text-muted-foreground">
               {t('reachedEnd')}
             </div>
-            <Button 
-              variant="outline" 
-              className={cn(
-                "gap-2 transition-all",
-                isConceptCompleted 
-                  ? "border-green-300 bg-green-50 text-green-700 hover:bg-green-100 hover:border-green-400"
-                  : "border-sage-300 text-sage-700 hover:bg-sage-50 hover:text-sage-800 hover:border-sage-400"
-              )}
-              onClick={handleToggleComplete}
-              disabled={isTogglingProgress}
-            >
-              {isTogglingProgress ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : isConceptCompleted ? (
-                <CheckCircle2 className="w-4 h-4" />
-              ) : (
-                <Sparkles className="w-4 h-4" />
-              )}
-              {isConceptCompleted ? t('completed') : t('markComplete')}
-            </Button>
+            <div className="flex items-center gap-6">
+              {renderFooterRegenerateButton()}
+              <Button 
+                variant="ghost" 
+                className={cn(
+                  "gap-2 border-0 bg-transparent px-0 shadow-none hover:bg-transparent",
+                  isConceptCompleted 
+                    ? "text-green-700 hover:text-green-800"
+                    : "text-sage-700 hover:text-sage-900"
+                )}
+                onClick={handleToggleComplete}
+                disabled={isTogglingProgress}
+              >
+                {isTogglingProgress ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : isConceptCompleted ? (
+                  <CheckCircle2 className="w-4 h-4" />
+                ) : (
+                  <Sparkles className="w-4 h-4" />
+                )}
+                {isConceptCompleted ? t('completed') : t('markComplete')}
+              </Button>
+            </div>
           </div>
         </div>
       </ScrollArea>

@@ -212,6 +212,7 @@
     "waitlistManagement": "Waitlist Management",
     "customerEmailsManagement": "Customer Emails",
     "apiKeysManagement": "API Keys Management",
+    "mentorModelsManagement": "Mentor Models",
     "celeryMonitor": "Celery Monitor"
   },
   "userMenu": {
@@ -222,6 +223,7 @@
   },
   "marketing": {
     "home": "Home",
+    "roadmap": "Roadmap",
     "methodology": "Methodology",
     "pricing": "Pricing",
     "about": "About"
@@ -1113,6 +1115,11 @@
     "goodJob": "Good Job",
     "noQuizAvailable": "No Quiz Available",
     "quizGenerating": "Quiz questions are being generated. Please check back later.",
+    "lockedConceptShort": "Locked",
+    "lockedConceptHint": "Complete the available lesson first to unlock this concept later.",
+    "lockedConceptTitle": "This concept is locked for now",
+    "lockedConceptDescription": "We only open the first lesson at the start of the roadmap. Continue learning in order and the next concepts can be unlocked in future steps.",
+    "lockedConceptCallout": "Start with the first concept to begin your guided path.",
     "slidesComingSoon": "Interactive slides with voice narration will be available here. This feature is under development.",
     "audioComingSoon": "Podcast-style audio lessons will be available here. This feature is under development.",
     "mindmapComingSoon": "Visual knowledge graphs will be available here. This feature is under development.",
@@ -1207,22 +1214,22 @@
     "turboModeDesc": "Skip structure validation — faster generation, straight to review"
   },
   "mentor": {
-    "title": "AI Mentor",
+    "title": "Learning Assistant",
     "collapse": "Collapse",
-    "expand": "Expand AI Mentor",
-    "agent": "Agent",
+    "expand": "Expand learning assistant",
+    "agent": "Support style",
     "model": "Model",
     "newThread": "New thread",
     "history": "History",
     "currentChapter": "Current chapter",
     "noChapter": "No chapter selected",
-    "placeholder": "Ask about the current chapter...",
-    "emptyStateTitle": "Ask about the current chapter",
-    "emptyStateDesc": "Read the tutorial on the left and ask for an explanation, a comparison, or a guided walkthrough whenever something feels unclear.",
+    "placeholder": "Ask directly, or let me guide you through the next step...",
+    "emptyStateTitle": "Ask directly, or let me guide you forward",
+    "emptyStateDesc": "When something feels unclear, ask right away. If you want to move systematically, I can suggest the next step, turn this into practice, or start the first action with you.",
     "you": "You",
-    "mentor": "Mentor",
+    "mentor": "Learning Assistant",
     "jumpToLatest": "Jump to latest",
-    "preparing": "Preparing mentor workspace...",
+    "preparing": "Preparing learning assistant workspace...",
     "threadHistory": "Thread history",
     "historyDescRoadmap": "Only show roadmap-level conversations for this roadmap.",
     "historyDescConcept": "Only show conversations for the current chapter.",
@@ -1241,8 +1248,156 @@
     "deleteThreadSuccess": "Conversation deleted",
     "deleteThreadFailed": "Failed to delete conversation",
     "deleteThreadStreaming": "A conversation that is still generating cannot be deleted",
+    "currentMode": "Current style:",
+    "modeAuto": "Auto",
+    "modeAnswer": "Direct answer",
+    "modeGuide": "Guide me forward",
+    "modePractice": "Practice mode",
+    "quickActionAnswer": "Direct answer",
+    "quickActionGuide": "Guide me forward",
+    "quickActionNextStep": "Give me the next step",
+    "quickActionFollowUp": "Keep going",
+    "quickActionPractice": "Switch to practice",
+    "quickActionAnswerPrompt": "Please answer my current question directly and use one short example.",
+    "quickActionGuidePrompt": "Do not just explain it. Guide me forward step by step.",
+    "quickActionNextStepPrompt": "Based on the current chapter, tell me the most valuable next step to start now.",
+    "quickActionFollowUpPrompt": "I want to keep digging into the last answer. Please continue.",
+    "quickActionPracticePrompt": "Turn the current topic into a very short practice exercise and guide me with it.",
     "agentCompany": "Companion Agent",
     "agentTutoring": "Tutoring Agent",
-    "freeLimited": "Free Limited"
+    "freeLimited": "Free Limited",
+    "thinkingProcess": "Thinking Process",
+    "hideSteps": "Hide Steps",
+    "showSteps": "Show Steps",
+    "toolWriteTodos": "Update To-do list"
+  },
+  "feedback": {
+    "launcherAriaLabel": "Open feedback",
+    "launcherEyebrow": "Share",
+    "launcherTitle": "Feedback",
+    "eyebrows": {
+      "manual": "Open channel",
+      "generationCompleted": "Roadmap delivered",
+      "conceptCompleted": "Fresh finish"
+    },
+    "titles": {
+      "manual": "Tell us what is getting in your way.",
+      "generationCompleted": "How did this roadmap generation feel?",
+      "conceptCompleted": "How did {conceptName} feel to learn?"
+    },
+    "descriptions": {
+      "manual": "Your notes go straight into Linear with your account context, current page, and optional screenshot.",
+      "generationCompleted": "Rate the generation result and tell us what should be sharper, smoother, or more trustworthy.",
+      "conceptCompleted": "We want to know whether the concept felt clear, useful, and appropriately paced."
+    },
+    "defaults": {
+      "thisConcept": "this concept"
+    },
+    "ratingLabel": "Rating",
+    "ratingAriaLabel": "{value} stars",
+    "summaryLabel": "One-line summary",
+    "summaryPlaceholder": "Example: The roadmap is strong, but stage pacing feels off.",
+    "detailsLabel": "Details or reproduction steps",
+    "detailsPlaceholders": {
+      "manual": "What happened, what did you expect, and how can we reproduce it?",
+      "generationCompleted": "Tell us what looked right, what felt wrong, and which step or stage should be improved.",
+      "conceptCompleted": "Tell us whether the explanation, examples, quiz, or resources felt useful."
+    },
+    "categoryLabel": "Category",
+    "categories": {
+      "bug": "Bug",
+      "improvement": "Improvement",
+      "question": "Question",
+      "newFeature": "New Feature"
+    },
+    "screenshotLabel": "Screenshot",
+    "screenshotHint": "Optional. Upload a PNG, JPEG, WEBP, or GIF up to 10MB. We will proxy it to Linear for you.",
+    "selectedFile": "Selected: {fileName}",
+    "capturedContext": "Captured context",
+    "contextRows": {
+      "trigger": "Trigger: {value}",
+      "pageUrl": "Page URL: {value}",
+      "taskId": "Task ID: {value}",
+      "roadmapId": "Roadmap ID: {value}",
+      "conceptId": "Concept ID: {value}"
+    },
+    "cancel": "Cancel",
+    "submit": "Send to Linear",
+    "submitting": "Sending...",
+    "success": "Thanks. Your feedback has been sent to Linear.",
+    "errors": {
+      "summaryRequired": "Please add a short summary.",
+      "detailsRequired": "Please describe the issue or steps to reproduce it.",
+      "ratingRequired": "Please choose a rating.",
+      "invalidScreenshotType": "Please upload an image file.",
+      "invalidScreenshotSize": "Screenshot must be 10MB or smaller.",
+      "submitFailed": "Failed to submit feedback. Please try again."
+    }
+  },
+  "publicRoadmap": {
+    "timeline": {
+      "eyebrow": "Linear powered roadmap",
+      "title": "What we've built<br></br><highlight>and where we're going</highlight>",
+      "description": "A living product roadmap for milestones, shipped features, active work, and the ideas that users want next.",
+      "currentIndicator": "Currently building",
+      "loadMoreMilestones": "Load {count} more milestones",
+      "allMilestonesLoaded": "All milestones loaded",
+      "tbd": "TBD",
+      "stats": {
+        "milestones": "Milestones",
+        "featuresShipped": "Features shipped",
+        "inProgress": "In progress",
+        "plannedNext": "Planned next"
+      }
+    },
+    "status": {
+      "released": "Released",
+      "inProgress": "In progress",
+      "planned": "Planned"
+    },
+    "feature": {
+      "moreDetailsSoon": "More details for this feature will be published soon.",
+      "openInLinear": "Open in Linear"
+    },
+    "media": {
+      "demoPendingTitle": "Demo pending",
+      "demoPendingDescription": "A media link will appear here once the demo is published.",
+      "platformDemo": "{platform} demo",
+      "clickToPlay": "Click to play"
+    },
+    "upcoming": {
+      "eyebrow": "On the horizon",
+      "title": "Coming next",
+      "description": "Work already in motion, plus the next confirmed features lining up behind it."
+    },
+    "voting": {
+      "eyebrow": "Community voice",
+      "title": "Shape <highlight>our roadmap</highlight>",
+      "description": "Browse what users want next, vote for the biggest opportunities, and submit your own ideas to influence the backlog.",
+      "submitIdea": "Submit idea",
+      "vote": "Vote",
+      "voted": "Voted",
+      "votes": "{count} votes"
+    },
+    "ideaModal": {
+      "title": "Submit your idea",
+      "description": "Tell us what would make the roadmap more valuable for you or your team.",
+      "featureTitleLabel": "Feature title",
+      "featureTitlePlaceholder": "Export roadmap as PDF",
+      "detailLabel": "Description",
+      "detailPlaceholder": "Describe the workflow or problem this would solve.",
+      "emailLabel": "Email (optional)",
+      "emailPlaceholder": "you@example.com",
+      "cancel": "Cancel",
+      "submitting": "Submitting...",
+      "submit": "Submit idea"
+    },
+    "toast": {
+      "voteRecorded": "Vote recorded",
+      "alreadyVoted": "You already voted for this idea",
+      "voteFailed": "Vote failed, please try again",
+      "ideaSubmitted": "Idea submitted",
+      "ideaSubmitFailed": "Idea submission failed"
+    }
   }
 }

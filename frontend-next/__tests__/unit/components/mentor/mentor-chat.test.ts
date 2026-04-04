@@ -9,7 +9,6 @@ import {
   type MentorChatStreamEvent,
 } from "@/components/mentor/mentor-api";
 import {
-  MENTOR_MODEL_OPTIONS,
   type MentorChapterContext,
 } from "@/components/mentor/types";
 import { API_PREFIX } from "@/lib/constants";
@@ -22,6 +21,11 @@ const CHAPTER_CONTEXT: MentorChapterContext = {
   conceptSummary: "当前章节聚焦 useEffect 与 useMemo。",
 };
 
+const TEST_MODEL_OPTIONS = [
+  { id: "google/gemini-3.1-pro-preview" },
+  { id: "anthropic/claude-sonnet-4" },
+];
+
 function buildSseResponseBody(modelId: string): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   const frames = [
@@ -32,6 +36,28 @@ function buildSseResponseBody(modelId: string): ReadableStream<Uint8Array> {
       user_message_id: "user-message-1",
       assistant_message_id: "assistant-message-1",
       model_id: modelId,
+    })}\n\n`,
+    `data: ${JSON.stringify({
+      type: "thinking",
+      delta: "先分析需求",
+    })}\n\n`,
+    `data: ${JSON.stringify({
+      type: "tool_start",
+      tool_call_id: "tool-1",
+      tool_name: "web_search",
+      arguments: {
+        query: "React Hooks",
+      },
+    })}\n\n`,
+    `data: ${JSON.stringify({
+      type: "tool_result",
+      tool_call_id: "tool-1",
+      tool_name: "web_search",
+      arguments: {
+        query: "React Hooks",
+      },
+      result: "Found latest React Hooks docs",
+      is_error: false,
     })}\n\n`,
     `data: ${JSON.stringify({
       type: "delta",
@@ -58,13 +84,14 @@ describe("mentor chat stream models", () => {
     vi.spyOn(authService, "getCurrentUserId").mockReturnValue("user-123");
   });
 
-  it.each(MENTOR_MODEL_OPTIONS)(
+  it.each(TEST_MODEL_OPTIONS)(
     "should build /mentor/chat payload with model $id",
     (modelOption) => {
       const payload = buildMentorChatRequest({
         message: "请解释这个章节",
         remoteSessionId: "session-remote-1",
-        agentType: "tutoring",
+        agentKind: "qa",
+        qaStyle: "casual",
         modelId: modelOption.id,
         chapterContext: CHAPTER_CONTEXT,
       });
@@ -72,7 +99,8 @@ describe("mentor chat stream models", () => {
       expect(payload).toEqual({
         message: "请解释这个章节",
         session_id: "session-remote-1",
-        agent_type: "tutoring",
+        agent_kind: "qa",
+        qa_style: "casual",
         model_id: modelOption.id,
         context: {
           roadmap_id: "roadmap-1",
@@ -85,7 +113,7 @@ describe("mentor chat stream models", () => {
     }
   );
 
-  it.each(MENTOR_MODEL_OPTIONS)(
+  it.each(TEST_MODEL_OPTIONS)(
     "should stream /mentor/chat with model $id",
     async (modelOption) => {
       const fetchMock = vi.fn().mockResolvedValue({
@@ -97,7 +125,8 @@ describe("mentor chat stream models", () => {
       const payload: MentorChatRequestPayload = buildMentorChatRequest({
         message: "请解释这个章节",
         remoteSessionId: "session-remote-1",
-        agentType: "company",
+        agentKind: "qa",
+        qaStyle: "casual",
         modelId: modelOption.id,
         chapterContext: CHAPTER_CONTEXT,
       });
@@ -133,6 +162,28 @@ describe("mentor chat stream models", () => {
           user_message_id: "user-message-1",
           assistant_message_id: "assistant-message-1",
           model_id: modelOption.id,
+        },
+        {
+          type: "thinking",
+          delta: "先分析需求",
+        },
+        {
+          type: "tool_start",
+          tool_call_id: "tool-1",
+          tool_name: "web_search",
+          arguments: {
+            query: "React Hooks",
+          },
+        },
+        {
+          type: "tool_result",
+          tool_call_id: "tool-1",
+          tool_name: "web_search",
+          arguments: {
+            query: "React Hooks",
+          },
+          result: "Found latest React Hooks docs",
+          is_error: false,
         },
         {
           type: "delta",

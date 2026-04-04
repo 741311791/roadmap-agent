@@ -26,6 +26,7 @@ import {
   Megaphone,
   Key,
   Activity,
+  MessageSquarePlus,
 } from 'lucide-react';
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import { useAuthStore } from '@/lib/store/auth-store';
@@ -284,6 +285,13 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
                 isCollapsed={isCollapsed}
               />
               <NavItem
+                icon={Bot}
+                label={t('admin.mentorModelsManagement')}
+                href="/admin/mentor-models"
+                active={isActive('/admin/mentor-models')}
+                isCollapsed={isCollapsed}
+              />
+              <NavItem
                 icon={Activity}
                 label={t('admin.celeryMonitor')}
                 href="/admin/celery-monitor"
@@ -356,6 +364,30 @@ export function LeftSidebar({ className }: LeftSidebarProps) {
           )}
         </nav>
       </ScrollArea>
+
+      {/* Feedback 入口 — 位于导航区下方、用户菜单上方 */}
+      {isCollapsed ? (
+        <div className="flex justify-center px-2 py-2">
+          <Tooltip text="Feedback">
+            <Link
+              href="/feedback"
+              className="flex h-9 w-9 items-center justify-center rounded-lg text-sage-500 transition-colors hover:bg-sage-50 hover:text-sage-700"
+            >
+              <MessageSquarePlus size={16} />
+            </Link>
+          </Tooltip>
+        </div>
+      ) : (
+        <div className="px-2 py-2">
+          <Link
+            href="/feedback"
+            className="flex items-center gap-3 rounded-lg px-3 py-2 text-sage-600 transition-colors hover:bg-sage-50 hover:text-sage-800"
+          >
+            <MessageSquarePlus size={16} className="shrink-0" />
+            <span className="text-sm font-medium">Feedback</span>
+          </Link>
+        </div>
+      )}
 
       {/* User Footer */}
       <div className="p-4 border-t border-border/5">

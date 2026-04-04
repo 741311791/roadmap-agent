@@ -1,6 +1,10 @@
 import { API_PREFIX } from "@/lib/constants";
 import { apiClient } from "@/lib/api/client";
 import { authService } from "@/lib/services/auth-service";
+import type {
+  MentorAgentKind,
+  MentorQaStyle,
+} from "@/components/mentor/types";
 
 /**
  * MentorMessageRole - 后端导师消息角色
@@ -24,7 +28,8 @@ export interface MentorChatContextPayload {
 export interface MentorChatRequestPayload {
   message: string;
   session_id?: string;
-  agent_type: "company" | "tutoring";
+  agent_kind: MentorAgentKind;
+  qa_style: MentorQaStyle;
   model_id: string;
   context: MentorChatContextPayload;
 }
@@ -38,7 +43,8 @@ export interface MentorSessionDto {
   roadmap_id: string;
   concept_id?: string | null;
   title?: string | null;
-  agent_type: "company" | "tutoring";
+  agent_kind: MentorAgentKind;
+  qa_style?: MentorQaStyle | null;
   model_id?: string | null;
   message_count: number;
   last_message_preview?: string | null;
@@ -54,9 +60,11 @@ export interface MentorMessageDto {
   session_id: string;
   role: MentorMessageRole;
   content: string;
-  agent_type?: "company" | "tutoring" | null;
+  agent_kind?: MentorAgentKind | null;
+  qa_style?: MentorQaStyle | null;
   model_id?: string | null;
   trace_id?: string | null;
+  message_metadata?: Record<string, unknown> | null;
   created_at: string;
 }
 
@@ -82,14 +90,40 @@ export interface MentorMessageListDto {
 }
 
 /**
+ * MentorModelDto - Mentor 可选模型 DTO
+ */
+export interface MentorModelDto {
+  model_id: string;
+  display_name: string;
+  description?: string | null;
+  provider: string;
+  is_default: boolean;
+  supports_thinking?: boolean;
+  supports_reasoning_effort?: boolean;
+}
+
+/**
+ * MentorModelListDto - Mentor 模型列表 DTO
+ */
+export interface MentorModelListDto {
+  items: MentorModelDto[];
+  default_model_id?: string | null;
+}
+
+/**
  * MentorChatMetaEvent - 流式 meta 事件
  */
 export interface MentorChatMetaEvent {
   type: "meta";
   session_id: string;
   trace_id: string;
+  langfuse_trace_id?: string;
   user_message_id: string;
   assistant_message_id: string;
+  agent_kind?: MentorAgentKind;
+  qa_style?: MentorQaStyle | null;
+  emotion_label?: string;
+  emotion_summary?: string;
 }
 
 /**
@@ -98,6 +132,36 @@ export interface MentorChatMetaEvent {
 export interface MentorChatDeltaEvent {
   type: "delta";
   delta: string;
+}
+
+/**
+ * MentorChatThinkingEvent - 流式思考增量事件
+ */
+export interface MentorChatThinkingEvent {
+  type: "thinking";
+  delta: string;
+}
+
+/**
+ * MentorChatToolStartEvent - 工具开始事件
+ */
+export interface MentorChatToolStartEvent {
+  type: "tool_start";
+  tool_call_id: string;
+  tool_name: string;
+  arguments: Record<string, unknown>;
+}
+
+/**
+ * MentorChatToolResultEvent - 工具结果事件
+ */
+export interface MentorChatToolResultEvent {
+  type: "tool_result";
+  tool_call_id: string;
+  tool_name: string;
+  arguments: Record<string, unknown>;
+  result: string;
+  is_error?: boolean;
 }
 
 /**
@@ -114,6 +178,9 @@ export interface MentorChatErrorEvent {
 export type MentorChatStreamEvent =
   | MentorChatMetaEvent
   | MentorChatDeltaEvent
+  | MentorChatThinkingEvent
+  | MentorChatToolStartEvent
+  | MentorChatToolResultEvent
   | MentorChatErrorEvent;
 
 /**
@@ -234,6 +301,14 @@ export async function listMentorMessages(sessionId: string): Promise<MentorMessa
   );
 
   return data.items;
+}
+
+/**
+ * listMentorModels - 获取 Mentor 可用模型列表
+ */
+export async function listMentorModels(): Promise<MentorModelListDto> {
+  const { data } = await apiClient.get<MentorModelListDto>("/learning/mentor/models");
+  return data;
 }
 
 /**

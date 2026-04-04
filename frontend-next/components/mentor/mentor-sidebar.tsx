@@ -13,6 +13,20 @@ import { Bot, PanelRightClose } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 
+import { DeerFlowTodoList } from "@/components/deerflow-chat-test/deerflow-todo-list";
+import type { DeerFlowTodo } from "@/components/deerflow-chat-test/deerflow-thread-context";
+import {
+  extractTodosFromDeerFlowThreadMessages,
+  mapDeerFlowMessagesToThreadMessages,
+  mapDeerFlowThreadToThreadRecord,
+} from "@/components/mentor/mentor-deerflow-adapter";
+import {
+  deleteMentorDeerFlowThread,
+  listMentorDeerFlowMessages,
+  listMentorDeerFlowModels,
+  listMentorDeerFlowThreads,
+  warmupMentorDeerFlowContext,
+} from "@/components/mentor/mentor-deerflow-api";
 import {
   mapMentorMessagesToThreadMessages,
   mapMentorSessionToThreadRecord,
@@ -20,19 +34,30 @@ import {
 import {
   deleteMentorSession,
   listMentorMessages,
+  listMentorModels,
   listMentorSessions,
+  type MentorModelDto,
+  type MentorChatMetaEvent,
   warmupMentorContext,
 } from "@/components/mentor/mentor-api";
 import { MentorComposer } from "@/components/mentor/mentor-composer";
 import { MentorThread } from "@/components/mentor/mentor-thread";
 import { MentorThreadHistory } from "@/components/mentor/mentor-thread-history";
 import type {
-  MentorAgentType,
+  MentorAgentKind,
   MentorChapterContext,
+  MentorModelOption,
+  MentorQaStyle,
+  MentorQuickAction,
 } from "@/components/mentor/types";
-import { DEFAULT_MENTOR_MODEL_ID, normalizeMentorModelId } from "@/components/mentor/types";
+import { ensureMentorModelOption } from "@/components/mentor/types";
+import { useMentorDeerFlowRuntime } from "@/components/mentor/use-mentor-deerflow-runtime";
 import { useMentorRuntime } from "@/components/mentor/use-mentor-runtime";
 import { useMentorThreads } from "@/components/mentor/use-mentor-threads";
+import { cn } from "@/lib/utils";
+
+const ENABLE_DEERFLOW_MENTOR =
+  process.env.NEXT_PUBLIC_ENABLE_DEERFLOW_MENTOR === "true";
 
 interface MentorSidebarProps {
   roadmapId: string;
@@ -46,7 +71,8 @@ interface MentorThreadStateSyncProps {
 
 interface MentorRuntimeShellProps {
   threadId: string;
-  agentType: MentorAgentType;
+  agentKind: MentorAgentKind;
+  qaStyle: MentorQaStyle;
   modelId: string;
   remoteSessionId?: string;
   chapterContext: MentorChapterContext;
@@ -54,14 +80,24 @@ interface MentorRuntimeShellProps {
   onMessagesChange: (messages: ThreadMessageLike[]) => void;
   onNewThread: () => void;
   onOpenHistory: () => void;
-  onAgentChange: (agentType: MentorAgentType) => void;
+  onAgentKindChange: (agentKind: MentorAgentKind) => void;
+  onQaStyleChange: (qaStyle: MentorQaStyle) => void;
+  modelOptions: MentorModelOption[];
+  isModelsLoading?: boolean;
   onModelChange: (modelId: string) => void;
+  onQuickAction: (action: MentorQuickAction) => void;
   onSessionBound: (params: { sessionId: string; traceId?: string }) => void;
+  onMetaEvent: (event: MentorChatMetaEvent) => void;
   onRuntimeStateChange: (params: {
     status: "idle" | "streaming" | "error";
     errorMessage?: string;
     traceId?: string;
   }) => void;
+}
+
+interface QueuedMentorAction {
+  nonce: string;
+  action: MentorQuickAction;
 }
 
 /**
@@ -90,11 +126,25 @@ function buildChapterContext(roadmapId: string, activeConcept: Concept | null): 
 }
 
 /**
+ * mapMentorModelDtoToOption - 将后端模型 DTO 映射为前端下拉项
+ */
+function mapMentorModelDtoToOption(model: MentorModelDto): MentorModelOption {
+  return {
+    id: model.model_id,
+    label: model.display_name,
+    description: model.description ?? undefined,
+    provider: model.provider,
+    isDefault: model.is_default,
+  };
+}
+
+/**
  * MentorRuntimeShell - 按线程实例化 assistant-ui runtime
  */
 function MentorRuntimeShell({
   threadId,
-  agentType,
+  agentKind,
+  qaStyle,
   modelId,
   remoteSessionId,
   chapterContext,
@@ -102,20 +152,57 @@ function MentorRuntimeShell({
   onMessagesChange,
   onNewThread,
   onOpenHistory,
-  onAgentChange,
+  onAgentKindChange,
+  onQaStyleChange,
+  modelOptions,
+  isModelsLoading = false,
   onModelChange,
+  onQuickAction,
   onSessionBound,
+  onMetaEvent,
   onRuntimeStateChange,
 }: MentorRuntimeShellProps) {
+  const [queuedAction, setQueuedAction] = useState<QueuedMentorAction | null>(null);
+
+  /**
+   * handleQuickActionSelect - 统一处理所有快捷动作点击
+   */
+  const handleQuickActionSelect = useCallback(
+    (action: MentorQuickAction) => {
+      setQueuedAction({
+        nonce: crypto.randomUUID(),
+        action,
+      });
+      onQuickAction(action);
+    },
+    [onQuickAction]
+  );
+
+  /**
+   * handleRuntimeStateChangeForward - 转发运行状态并清空一次性意图提示
+   */
+  const handleRuntimeStateChangeForward = useCallback(
+    (params: {
+      status: "idle" | "streaming" | "error";
+      errorMessage?: string;
+      traceId?: string;
+    }) => {
+      onRuntimeStateChange(params);
+    },
+    [onRuntimeStateChange]
+  );
+
   const runtime = useMentorRuntime({
-    agentType,
+    agentKind,
+    qaStyle,
     modelId,
     threadId,
     remoteSessionId,
     chapterContext,
     initialMessages,
     onSessionBound,
-    onRuntimeStateChange,
+    onMetaEvent,
+    onRuntimeStateChange: handleRuntimeStateChangeForward,
   });
 
   return (
@@ -123,13 +210,21 @@ function MentorRuntimeShell({
       <MentorThreadStateSync onMessagesChange={onMessagesChange} />
 
       <MentorThread
+        onQuickAction={handleQuickActionSelect}
         footer={
           <MentorComposer
             threadId={threadId}
             chapterName={chapterContext.conceptName}
-            agentType={agentType}
+            agentKind={agentKind}
+            qaStyle={qaStyle}
             modelId={modelId}
-            onAgentChange={onAgentChange}
+            modelOptions={modelOptions}
+            isModelsLoading={isModelsLoading}
+            queuedAction={queuedAction}
+            onQueuedActionConsumed={() => setQueuedAction(null)}
+            onQuickAction={handleQuickActionSelect}
+            onAgentKindChange={onAgentKindChange}
+            onQaStyleChange={onQaStyleChange}
             onModelChange={onModelChange}
             onNewThread={onNewThread}
             onOpenHistory={onOpenHistory}
@@ -141,15 +236,155 @@ function MentorRuntimeShell({
 }
 
 /**
+ * MentorDeerFlowRuntimeShell - Deer-Flow 模式下的 assistant-ui runtime 壳层
+ */
+function MentorDeerFlowRuntimeShell({
+  threadId,
+  agentKind,
+  qaStyle,
+  modelId,
+  remoteSessionId,
+  chapterContext,
+  initialMessages,
+  onMessagesChange,
+  onNewThread,
+  onOpenHistory,
+  onAgentKindChange,
+  onQaStyleChange,
+  modelOptions,
+  isModelsLoading = false,
+  onModelChange,
+  onQuickAction,
+  onSessionBound,
+  onRuntimeStateChange,
+}: Omit<MentorRuntimeShellProps, "onMetaEvent">) {
+  const [queuedAction, setQueuedAction] = useState<QueuedMentorAction | null>(null);
+  const [deerFlowTodos, setDeerFlowTodos] = useState<DeerFlowTodo[]>(() =>
+    extractTodosFromDeerFlowThreadMessages(initialMessages)
+  );
+
+  const handleTodosSnapshot = useCallback((nextTodos: DeerFlowTodo[]) => {
+    setDeerFlowTodos(nextTodos);
+  }, []);
+
+  /**
+   * 历史消息补拉或父级刷新 initialMessages 时，从已持久化的 write_todos 恢复列表；
+   * 仅在解析到非空时写入，避免流式中途尚无工具片段时清空 onTodosSnapshot 已更新的状态。
+   */
+  useEffect(() => {
+    const parsed = extractTodosFromDeerFlowThreadMessages(initialMessages);
+    if (parsed.length > 0) {
+      setDeerFlowTodos(parsed);
+    }
+  }, [initialMessages]);
+
+  const handleQuickActionSelect = useCallback(
+    (action: MentorQuickAction) => {
+      setQueuedAction({
+        nonce: crypto.randomUUID(),
+        action,
+      });
+      onQuickAction(action);
+    },
+    [onQuickAction]
+  );
+
+  const runtime = useMentorDeerFlowRuntime({
+    agentKind,
+    qaStyle,
+    modelId,
+    threadId,
+    remoteSessionId,
+    chapterContext,
+    initialMessages,
+    onSessionBound,
+    onRuntimeStateChange,
+    onTodosSnapshot: handleTodosSnapshot,
+  });
+
+  return (
+    <AssistantRuntimeProvider runtime={runtime}>
+      <MentorThreadStateSync onMessagesChange={onMessagesChange} />
+
+      <MentorThread
+        onQuickAction={handleQuickActionSelect}
+        footer={
+          <div
+            className={cn(
+              "mx-auto w-full max-w-2xl px-0 pb-1",
+              deerFlowTodos.length > 0 &&
+                "overflow-hidden rounded-xl border border-border/60 bg-background shadow-sm"
+            )}
+          >
+            {deerFlowTodos.length > 0 ? (
+              <>
+                <DeerFlowTodoList
+                  combinedCardStack
+                  className="shrink-0"
+                  hidden={false}
+                  todos={deerFlowTodos}
+                />
+                <MentorComposer
+                  isDockedWithTodosAbove
+                  className="shrink-0"
+                  threadId={threadId}
+                  chapterName={chapterContext.conceptName}
+                  agentKind={agentKind}
+                  qaStyle={qaStyle}
+                  modelId={modelId}
+                  modelOptions={modelOptions}
+                  isModelsLoading={isModelsLoading}
+                  queuedAction={queuedAction}
+                  onQueuedActionConsumed={() => setQueuedAction(null)}
+                  onQuickAction={handleQuickActionSelect}
+                  onAgentKindChange={onAgentKindChange}
+                  onQaStyleChange={onQaStyleChange}
+                  onModelChange={onModelChange}
+                  onNewThread={onNewThread}
+                  onOpenHistory={onOpenHistory}
+                />
+              </>
+            ) : (
+              <MentorComposer
+                className="shrink-0"
+                threadId={threadId}
+                chapterName={chapterContext.conceptName}
+                agentKind={agentKind}
+                qaStyle={qaStyle}
+                modelId={modelId}
+                modelOptions={modelOptions}
+                isModelsLoading={isModelsLoading}
+                queuedAction={queuedAction}
+                onQueuedActionConsumed={() => setQueuedAction(null)}
+                onQuickAction={handleQuickActionSelect}
+                onAgentKindChange={onAgentKindChange}
+                onQaStyleChange={onQaStyleChange}
+                onModelChange={onModelChange}
+                onNewThread={onNewThread}
+                onOpenHistory={onOpenHistory}
+              />
+            )}
+          </div>
+        }
+      />
+    </AssistantRuntimeProvider>
+  );
+}
+
+/**
  * MentorSidebar - AI 伴学右侧侧栏
  */
 export function MentorSidebar({ roadmapId, activeConcept, onCollapse }: MentorSidebarProps) {
+  const isDeerFlowMentorEnabled = ENABLE_DEERFLOW_MENTOR;
   const chapterContext = useMemo(
     () => buildChapterContext(roadmapId, activeConcept),
     [activeConcept, roadmapId]
   );
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [deletingThreadId, setDeletingThreadId] = useState<string | null>(null);
+  const [modelOptions, setModelOptions] = useState<MentorModelOption[]>([]);
+  const [defaultModelId, setDefaultModelId] = useState("");
+  const [isModelsLoading, setIsModelsLoading] = useState(true);
   const [runtimeRevision, setRuntimeRevision] = useState(0);
   const runtimeThreadIdRef = useRef<string | null>(null);
   const runtimeInitialMessagesRef = useRef<ThreadMessageLike[]>([]);
@@ -171,9 +406,15 @@ export function MentorSidebar({ roadmapId, activeConcept, onCollapse }: MentorSi
   } = useMentorThreads({
     roadmapId,
     activeChapterContext: chapterContext,
+    defaultModelId,
   });
-  const selectedAgentType: MentorAgentType = currentThread?.agentType ?? "company";
-  const selectedModelId = normalizeMentorModelId(currentThread?.modelId || DEFAULT_MENTOR_MODEL_ID);
+  const selectedAgentKind: MentorAgentKind = currentThread?.agentKind ?? "qa";
+  const selectedQaStyle: MentorQaStyle = currentThread?.qaStyle ?? "casual";
+  const effectiveModelOptions = useMemo(
+    () => ensureMentorModelOption(modelOptions, currentThread?.modelId),
+    [currentThread?.modelId, modelOptions]
+  );
+  const selectedModelId = currentThread?.modelId || defaultModelId || effectiveModelOptions[0]?.id || "";
 
   /**
    * hydrateThreadMessages - 从后端刷新线程消息并重建 runtime
@@ -192,14 +433,24 @@ export function MentorSidebar({ roadmapId, activeConcept, onCollapse }: MentorSi
       }
 
       try {
-        const messages = await listMentorMessages(params.remoteSessionId);
-        const mappedMessages = mapMentorMessagesToThreadMessages(messages);
+        let messageCount = 0;
+        let mappedMessages: ThreadMessageLike[] = [];
+
+        if (isDeerFlowMentorEnabled) {
+          const messages = await listMentorDeerFlowMessages(params.remoteSessionId);
+          mappedMessages = mapDeerFlowMessagesToThreadMessages(messages);
+          messageCount = messages.length;
+        } else {
+          const messages = await listMentorMessages(params.remoteSessionId);
+          mappedMessages = mapMentorMessagesToThreadMessages(messages);
+          messageCount = messages.length;
+        }
 
         updateThread({
           id: params.threadId,
           patch: {
             messages: mappedMessages,
-            messageCount: messages.length,
+            messageCount,
             isHydrated: true,
             status: "idle",
             lastError: undefined,
@@ -223,20 +474,78 @@ export function MentorSidebar({ roadmapId, activeConcept, onCollapse }: MentorSi
         console.error("[MentorSidebar] Failed to hydrate mentor thread:", error);
       }
     },
-    [currentThreadId, setThreadStatus, updateThread]
+    [currentThreadId, isDeerFlowMentorEnabled, setThreadStatus, updateThread]
   );
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    async function loadMentorModels() {
+      try {
+        setIsModelsLoading(true);
+        const response = isDeerFlowMentorEnabled
+          ? await listMentorDeerFlowModels()
+          : await listMentorModels();
+        if (isCancelled) {
+          return;
+        }
+
+        const nextOptions = response.items.map(mapMentorModelDtoToOption);
+        setModelOptions(nextOptions);
+        setDefaultModelId(response.default_model_id ?? nextOptions[0]?.id ?? "");
+      } catch (error) {
+        if (isCancelled) {
+          return;
+        }
+        console.error("[MentorSidebar] Failed to load mentor models:", error);
+        toast.error("Failed to load mentor models.");
+      } finally {
+        if (!isCancelled) {
+          setIsModelsLoading(false);
+        }
+      }
+    }
+
+    void loadMentorModels();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [isDeerFlowMentorEnabled]);
+
+  useEffect(() => {
+    if (!currentThread || currentThread.modelId || !defaultModelId) {
+      return;
+    }
+
+    updateThread({
+      id: currentThread.id,
+      patch: {
+        modelId: defaultModelId,
+      },
+    });
+  }, [currentThread, defaultModelId, updateThread]);
 
   /**
    * 当 sidebar 挂载或用户切换到新章节时，预热 Redis 缓存。
    * fire-and-forget：失败静默处理，不影响任何 UI 状态。
    */
   useEffect(() => {
+    if (isDeerFlowMentorEnabled) {
+      void warmupMentorDeerFlowContext({
+        roadmap_id: roadmapId,
+        concept_id: chapterContext.conceptId,
+        concept_title: chapterContext.conceptName,
+      });
+      return;
+    }
+
     void warmupMentorContext({
       roadmap_id: roadmapId,
       concept_id: chapterContext.conceptId,
       concept_title: chapterContext.conceptName,
     });
-  }, [roadmapId, chapterContext.conceptId, chapterContext.conceptName]);
+  }, [chapterContext.conceptId, chapterContext.conceptName, isDeerFlowMentorEnabled, roadmapId]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -246,16 +555,35 @@ export function MentorSidebar({ roadmapId, activeConcept, onCollapse }: MentorSi
      */
     async function loadRemoteSessions() {
       try {
-        const sessions = await listMentorSessions({
-          roadmapId,
-          conceptId: chapterContext.conceptId,
-        });
-        if (isCancelled) {
-          return;
-        }
+        let nextThreads = [];
 
-        upsertRemoteThreads(
-          sessions.map((session) => {
+        if (isDeerFlowMentorEnabled) {
+          const sessions = await listMentorDeerFlowThreads({
+            roadmapId,
+            conceptId: chapterContext.conceptId,
+          });
+          nextThreads = sessions.map((session) => {
+            const thread = mapDeerFlowThreadToThreadRecord(session);
+
+            if (session.concept_id && session.concept_id === chapterContext.conceptId) {
+              return {
+                ...thread,
+                chapterContext: {
+                  ...thread.chapterContext,
+                  conceptName: chapterContext.conceptName,
+                  conceptSummary: chapterContext.conceptSummary,
+                },
+              };
+            }
+
+            return thread;
+          });
+        } else {
+          const sessions = await listMentorSessions({
+            roadmapId,
+            conceptId: chapterContext.conceptId,
+          });
+          nextThreads = sessions.map((session) => {
             const thread = mapMentorSessionToThreadRecord(session);
 
             if (session.concept_id && session.concept_id === chapterContext.conceptId) {
@@ -270,8 +598,13 @@ export function MentorSidebar({ roadmapId, activeConcept, onCollapse }: MentorSi
             }
 
             return thread;
-          })
-        );
+          });
+        }
+        if (isCancelled) {
+          return;
+        }
+
+        upsertRemoteThreads(nextThreads);
       } catch (error) {
         console.error("[MentorSidebar] Failed to load mentor sessions:", error);
       }
@@ -282,7 +615,14 @@ export function MentorSidebar({ roadmapId, activeConcept, onCollapse }: MentorSi
     return () => {
       isCancelled = true;
     };
-  }, [chapterContext.conceptId, chapterContext.conceptName, chapterContext.conceptSummary, roadmapId, upsertRemoteThreads]);
+  }, [
+    chapterContext.conceptId,
+    chapterContext.conceptName,
+    chapterContext.conceptSummary,
+    isDeerFlowMentorEnabled,
+    roadmapId,
+    upsertRemoteThreads,
+  ]);
 
   useEffect(() => {
     hasAutoSelectedSyncedThreadRef.current = false;
@@ -378,6 +718,25 @@ export function MentorSidebar({ roadmapId, activeConcept, onCollapse }: MentorSi
     });
   };
 
+  /**
+   * handleMetaEvent - 同步后端返回的自动路由结果
+   */
+  const handleMetaEvent = (event: MentorChatMetaEvent) => {
+    if (!currentThread) {
+      return;
+    }
+
+    updateThread({
+      id: currentThread.id,
+      patch: {
+        agentKind: event.agent_kind ?? currentThread.agentKind,
+        qaStyle: event.qa_style ?? currentThread.qaStyle,
+        emotionLabel: event.emotion_label ?? currentThread.emotionLabel,
+        emotionSummary: event.emotion_summary ?? currentThread.emotionSummary,
+      },
+    });
+  };
+
   const handleRuntimeStateChange = (params: {
     status: "idle" | "streaming" | "error";
     errorMessage?: string;
@@ -410,31 +769,48 @@ export function MentorSidebar({ roadmapId, activeConcept, onCollapse }: MentorSi
     });
   };
 
-  const runtimeKey = `${currentThread?.id ?? "new"}:${selectedAgentType}:${selectedModelId}:${runtimeRevision}`;
+  const runtimeKey = `${currentThread?.id ?? "new"}:${selectedAgentKind}:${selectedQaStyle}:${selectedModelId}:${runtimeRevision}`;
 
   /**
    * handleCreateThread - 创建新线程并切换到该线程
    */
   const handleCreateThread = () => {
     createThread({
-      agentType: selectedAgentType,
+      agentKind: selectedAgentKind,
+      qaStyle: selectedQaStyle,
       modelId: selectedModelId,
       chapterContext,
     });
   };
 
   /**
-   * handleAgentChange - 切换当前线程的 Agent
+   * handleAgentKindChange - 切换当前线程的聊天 Agent
    */
-  const handleAgentChange = (nextAgentType: MentorAgentType) => {
-    if (!currentThread || nextAgentType === currentThread.agentType) {
+  const handleAgentKindChange = (nextAgentKind: MentorAgentKind) => {
+    if (!currentThread || nextAgentKind === currentThread.agentKind) {
       return;
     }
 
     updateThread({
       id: currentThread.id,
       patch: {
-        agentType: nextAgentType,
+        agentKind: nextAgentKind,
+      },
+    });
+  };
+
+  /**
+   * handleQaStyleChange - 切换答疑风格
+   */
+  const handleQaStyleChange = (nextQaStyle: MentorQaStyle) => {
+    if (!currentThread || nextQaStyle === currentThread.qaStyle) {
+      return;
+    }
+
+    updateThread({
+      id: currentThread.id,
+      patch: {
+        qaStyle: nextQaStyle,
       },
     });
   };
@@ -479,7 +855,11 @@ export function MentorSidebar({ roadmapId, activeConcept, onCollapse }: MentorSi
       setDeletingThreadId(threadId);
 
       if (targetThread.remoteSessionId) {
-        await deleteMentorSession(targetThread.remoteSessionId);
+        if (isDeerFlowMentorEnabled) {
+          await deleteMentorDeerFlowThread(targetThread.remoteSessionId);
+        } else {
+          await deleteMentorSession(targetThread.remoteSessionId);
+        }
       }
 
       deleteThread(threadId);
@@ -521,22 +901,52 @@ export function MentorSidebar({ roadmapId, activeConcept, onCollapse }: MentorSi
       </div>
 
       <div className="min-h-0 flex-1">
-        <MentorRuntimeShell
-          key={runtimeKey}
-          threadId={currentThreadId}
-          agentType={selectedAgentType}
-          modelId={selectedModelId}
-          remoteSessionId={currentThread.remoteSessionId}
-          chapterContext={currentThread.chapterContext}
-          initialMessages={runtimeInitialMessagesRef.current}
-          onMessagesChange={replaceCurrentThreadMessages}
-          onNewThread={handleCreateThread}
-          onOpenHistory={() => setIsHistoryOpen(true)}
-          onAgentChange={handleAgentChange}
-          onModelChange={handleModelChange}
-          onSessionBound={handleSessionBound}
-          onRuntimeStateChange={handleRuntimeStateChange}
-        />
+        {isDeerFlowMentorEnabled ? (
+          <MentorDeerFlowRuntimeShell
+            key={runtimeKey}
+            threadId={currentThreadId}
+            agentKind={selectedAgentKind}
+            qaStyle={selectedQaStyle}
+            modelId={selectedModelId}
+            remoteSessionId={currentThread.remoteSessionId}
+            chapterContext={currentThread.chapterContext}
+            initialMessages={runtimeInitialMessagesRef.current}
+            onMessagesChange={replaceCurrentThreadMessages}
+            onNewThread={handleCreateThread}
+            onOpenHistory={() => setIsHistoryOpen(true)}
+            onAgentKindChange={handleAgentKindChange}
+            onQaStyleChange={handleQaStyleChange}
+            modelOptions={effectiveModelOptions}
+            isModelsLoading={isModelsLoading}
+            onModelChange={handleModelChange}
+            onQuickAction={() => undefined}
+            onSessionBound={handleSessionBound}
+            onRuntimeStateChange={handleRuntimeStateChange}
+          />
+        ) : (
+          <MentorRuntimeShell
+            key={runtimeKey}
+            threadId={currentThreadId}
+            agentKind={selectedAgentKind}
+            qaStyle={selectedQaStyle}
+            modelId={selectedModelId}
+            remoteSessionId={currentThread.remoteSessionId}
+            chapterContext={currentThread.chapterContext}
+            initialMessages={runtimeInitialMessagesRef.current}
+            onMessagesChange={replaceCurrentThreadMessages}
+            onNewThread={handleCreateThread}
+            onOpenHistory={() => setIsHistoryOpen(true)}
+            onAgentKindChange={handleAgentKindChange}
+            onQaStyleChange={handleQaStyleChange}
+            modelOptions={effectiveModelOptions}
+            isModelsLoading={isModelsLoading}
+            onModelChange={handleModelChange}
+            onQuickAction={() => undefined}
+            onSessionBound={handleSessionBound}
+            onMetaEvent={handleMetaEvent}
+            onRuntimeStateChange={handleRuntimeStateChange}
+          />
+        )}
       </div>
 
       <MentorThreadHistory

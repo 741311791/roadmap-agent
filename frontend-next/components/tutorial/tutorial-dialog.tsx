@@ -17,7 +17,6 @@ import { getLatestTutorial, downloadTutorialContent, getResourcesByConceptId, ge
 import { useRoadmapStore } from '@/lib/store/roadmap-store';
 import { useAuthStore } from '@/lib/store/auth-store';
 import type { LearningPreferences } from '@/types/generated/models';
-import 'highlight.js/styles/github-dark.css';
 
 interface TutorialDialogProps {
   roadmapId: string;

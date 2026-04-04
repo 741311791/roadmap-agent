@@ -128,6 +128,13 @@ const config: Config = {
           '50%': { 'background-position': '100% 100%' },
           '100%': { 'background-position': '0% 0%' },
         },
+        /** Deer-Flow 官方 StreamingIndicator 同款圆点跳动 */
+        bouncing: {
+          to: {
+            opacity: '0.1',
+            transform: 'translateY(-8px)',
+          },
+        },
       },
       animation: {
         'accordion-down': 'accordion-down 0.2s ease-out',
@@ -138,6 +145,7 @@ const config: Config = {
         'pulse-subtle': 'pulse-subtle 2s ease-in-out infinite',
         'pulse-slow': 'pulse-slow 2.5s ease-in-out infinite',
         'shine': 'shine var(--duration) infinite linear',
+        bouncing: 'bouncing 0.5s infinite alternate',
       },
     },
   },

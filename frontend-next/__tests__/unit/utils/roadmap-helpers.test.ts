@@ -3,10 +3,12 @@
  */
 
 import {
-  isConceptIdValid,
+  calculateRoadmapProgress,
   findConceptById,
   getAllConceptIds,
-  calculateRoadmapProgress,
+  getInitialUnlockedConceptId,
+  isConceptIdValid,
+  isSequentialConceptLocked,
 } from '@/lib/utils/roadmap-helpers';
 import type { RoadmapFramework, Concept, Module, Stage } from '@/types/generated/models';
 
@@ -224,6 +226,23 @@ describe('roadmap-helpers', () => {
         ],
       };
       expect(calculateRoadmapProgress(completedRoadmap)).toBe(100);
+    });
+  });
+
+  describe('sequential unlock helpers', () => {
+    it('应该返回第一个可学习的 Concept ID', () => {
+      expect(getInitialUnlockedConceptId(mockRoadmap)).toBe('concept_1');
+    });
+
+    it('应该只将第一个 Concept 视为未锁定', () => {
+      expect(isSequentialConceptLocked(mockRoadmap, 'concept_1')).toBe(false);
+      expect(isSequentialConceptLocked(mockRoadmap, 'concept_2')).toBe(true);
+      expect(isSequentialConceptLocked(mockRoadmap, 'stage_2:module_2:concept_3')).toBe(true);
+    });
+
+    it('应该在空路线图时安全返回', () => {
+      expect(getInitialUnlockedConceptId(null)).toBeNull();
+      expect(isSequentialConceptLocked(null, 'concept_1')).toBe(false);
     });
   });
 });

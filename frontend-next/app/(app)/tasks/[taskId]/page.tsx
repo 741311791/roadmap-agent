@@ -34,6 +34,7 @@ import { limitLogsByStep, getLogStatsByStep } from '@/lib/utils/log-grouping';
 import { extractRoadmapConceptStates } from '@/lib/utils/roadmap-concept-state';
 import { WorkflowStep, mapToDisplayStep } from '@/lib/constants/workflow-steps';
 import { getTaskStatusFromProgressEvent } from '@/lib/utils/task-progress-status';
+import { promptGenerationFeedback } from '@/lib/feedback/feedback-events';
 import { cn } from '@/lib/utils';
 import { TaskStatus } from '@/types/generated/constants';
 import type { TaskStatusType } from '@/types/generated/constants';
@@ -1113,6 +1114,13 @@ export default function TaskDetailPage() {
         step: WorkflowStep.COMPLETED,
       });
       reconcileTerminalTaskArtifacts();
+
+      // 延迟弹出反馈，避免与完成态 UI 同时出现造成打断。
+      promptGenerationFeedback({
+        taskId,
+        roadmapId: event?.roadmap_id || roadmapIdRef.current,
+        delayMs: 1400,
+      });
       
       // ✅ 修复：不添加临时日志，避免重复
       // 完成状态的日志会从数据库查询获取

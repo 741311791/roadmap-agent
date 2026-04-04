@@ -212,6 +212,7 @@
     "waitlistManagement": "候补名单管理",
     "customerEmailsManagement": "客户邮件管理",
     "apiKeysManagement": "API密钥管理",
+    "mentorModelsManagement": "Mentor模型管理",
     "celeryMonitor": "Celery监控"
   },
   "userMenu": {
@@ -222,6 +223,7 @@
   },
   "marketing": {
     "home": "首页",
+    "roadmap": "路书",
     "methodology": "方法论",
     "pricing": "定价",
     "about": "关于"
@@ -1113,6 +1115,11 @@
     "goodJob": "做得不错",
     "noQuizAvailable": "暂无可用测验",
     "quizGenerating": "测验题目正在生成中。请稍后查看。",
+    "lockedConceptShort": "锁定",
+    "lockedConceptHint": "请先完成当前可学习的内容，后续概念会在未来步骤中逐步解锁。",
+    "lockedConceptTitle": "这个概念暂时还不能学习",
+    "lockedConceptDescription": "路线图开始时只会开放第一个学习单元。请先沿着当前入口学习，后续概念会在后续步骤中逐步解锁。",
+    "lockedConceptCallout": "先从第一个 Concept 开始，进入你的顺序学习路径。",
     "slidesComingSoon": "交互式幻灯片和语音讲解功能即将推出。此功能正在开发中。",
     "audioComingSoon": "播客风格音频课程即将推出。此功能正在开发中。",
     "mindmapComingSoon": "可视化知识图谱即将推出。此功能正在开发中。",
@@ -1207,22 +1214,22 @@
     "turboModeDesc": "跳过结构验证，加速生成，直接进入审核环节"
   },
   "mentor": {
-    "title": "AI 伴学",
+    "title": "学习助手",
     "collapse": "收起",
-    "expand": "展开 AI 伴学",
-    "agent": "助手",
+    "expand": "展开学习助手",
+    "agent": "帮助方式",
     "model": "模型",
     "newThread": "新建对话",
     "history": "历史会话",
     "currentChapter": "当前章节",
     "noChapter": "未选择章节",
-    "placeholder": "针对当前章节提问...",
-    "emptyStateTitle": "针对当前章节提问",
-    "emptyStateDesc": "阅读左侧教程，遇到不明白的地方随时提问，获取解释、对比或引导式讲解。",
+    "placeholder": "你可以直接提问，或让我带你继续学下去...",
+    "emptyStateTitle": "你可以直接提问，我也可以主动带你学",
+    "emptyStateDesc": "卡住时随时问我；想系统推进时，我也可以根据当前章节帮你安排下一步、带你练习，或直接开始第一步。",
     "you": "你",
-    "mentor": "AI 伴学",
+    "mentor": "学习助手",
     "jumpToLatest": "跳转到最新",
-    "preparing": "正在准备伴学工作区...",
+    "preparing": "正在准备学习助手工作区...",
     "threadHistory": "历史会话",
     "historyDescRoadmap": "仅显示当前路线图级别的历史会话。",
     "historyDescConcept": "仅显示当前章节内容的历史会话。",
@@ -1241,8 +1248,156 @@
     "deleteThreadSuccess": "历史会话已删除",
     "deleteThreadFailed": "删除历史会话失败",
     "deleteThreadStreaming": "正在生成回复的会话暂时不能删除",
+    "currentMode": "当前方式：",
+    "modeAuto": "自动判断",
+    "modeAnswer": "直接回答",
+    "modeGuide": "带我学下去",
+    "modePractice": "练一练",
+    "quickActionAnswer": "直接回答",
+    "quickActionGuide": "带我学下去",
+    "quickActionNextStep": "给我下一步",
+    "quickActionFollowUp": "继续追问",
+    "quickActionPractice": "切成练习模式",
+    "quickActionAnswerPrompt": "请直接回答我当前最困惑的点，并用一个简短例子讲清楚。",
+    "quickActionGuidePrompt": "请不要只解释，直接带我按步骤学下去。",
+    "quickActionNextStepPrompt": "结合当前章节，请直接告诉我现在最值得开始的下一步。",
+    "quickActionFollowUpPrompt": "我想继续追问刚才的问题，请接着往下讲。",
+    "quickActionPracticePrompt": "请把当前内容变成一个很短的小练习来带我学。",
     "agentCompany": "伴学 Agent",
     "agentTutoring": "导学 Agent",
-    "freeLimited": "限免"
+    "freeLimited": "限免",
+    "thinkingProcess": "思考过程",
+    "hideSteps": "隐藏步骤",
+    "showSteps": "展开步骤",
+    "toolWriteTodos": "更新 To-do 列表"
+  },
+  "feedback": {
+    "launcherAriaLabel": "打开反馈入口",
+    "launcherEyebrow": "反馈",
+    "launcherTitle": "告诉我们",
+    "eyebrows": {
+      "manual": "随时反馈",
+      "generationCompleted": "路线图已生成",
+      "conceptCompleted": "刚学完一节"
+    },
+    "titles": {
+      "manual": "告诉我们，哪里还不够顺。",
+      "generationCompleted": "这次路线图生成体验怎么样？",
+      "conceptCompleted": "学完 {conceptName} 后，你的感受如何？"
+    },
+    "descriptions": {
+      "manual": "你的反馈会连同账号信息、当前页面和可选截图一起直接进入 Linear。",
+      "generationCompleted": "请为这次生成结果打分，并告诉我们哪里还不够准、不够顺或不够可靠。",
+      "conceptCompleted": "我们想知道这个 Concept 是否讲得清楚、节奏合适、内容有帮助。"
+    },
+    "defaults": {
+      "thisConcept": "这个 Concept"
+    },
+    "ratingLabel": "评分",
+    "ratingAriaLabel": "{value} 星",
+    "summaryLabel": "一句话总结",
+    "summaryPlaceholder": "例如：整体不错，但阶段节奏偏乱。",
+    "detailsLabel": "详细说明 / 复现步骤",
+    "detailsPlaceholders": {
+      "manual": "请描述发生了什么、你原本期待什么，以及我们如何复现。",
+      "generationCompleted": "请告诉我们哪些地方好，哪些地方不对，以及应该改进哪个阶段或步骤。",
+      "conceptCompleted": "请告诉我们讲解、示例、测验或学习资源分别哪里有帮助、哪里还可以更好。"
+    },
+    "categoryLabel": "分类",
+    "categories": {
+      "bug": "Bug",
+      "improvement": "Improvement",
+      "question": "Question",
+      "newFeature": "New Feature"
+    },
+    "screenshotLabel": "截图",
+    "screenshotHint": "可选。支持 PNG、JPEG、WEBP、GIF，大小不超过 10MB。系统会通过后端代理上传到 Linear。",
+    "selectedFile": "已选择：{fileName}",
+    "capturedContext": "自动采集的上下文",
+    "contextRows": {
+      "trigger": "触发来源：{value}",
+      "pageUrl": "页面 URL：{value}",
+      "taskId": "任务 ID：{value}",
+      "roadmapId": "路线图 ID：{value}",
+      "conceptId": "Concept ID：{value}"
+    },
+    "cancel": "取消",
+    "submit": "提交到 Linear",
+    "submitting": "提交中...",
+    "success": "感谢反馈，已成功提交到 Linear。",
+    "errors": {
+      "summaryRequired": "请填写一句话总结。",
+      "detailsRequired": "请填写详细说明或复现步骤。",
+      "ratingRequired": "请选择评分。",
+      "invalidScreenshotType": "请上传图片格式的截图。",
+      "invalidScreenshotSize": "截图大小不能超过 10MB。",
+      "submitFailed": "提交反馈失败，请稍后再试。"
+    }
+  },
+  "publicRoadmap": {
+    "timeline": {
+      "eyebrow": "Linear 驱动路书",
+      "title": "我们已经做了什么<br></br><highlight>接下来要做什么</highlight>",
+      "description": "一份持续更新的产品路书，公开展示里程碑、已上线功能、进行中的工作，以及用户最想要的下一步。",
+      "currentIndicator": "当前正在构建",
+      "loadMoreMilestones": "继续加载 {count} 个里程碑",
+      "allMilestonesLoaded": "已全部加载",
+      "tbd": "待定",
+      "stats": {
+        "milestones": "里程碑",
+        "featuresShipped": "已上线功能",
+        "inProgress": "进行中",
+        "plannedNext": "接下来规划"
+      }
+    },
+    "status": {
+      "released": "已发布",
+      "inProgress": "进行中",
+      "planned": "规划中"
+    },
+    "feature": {
+      "moreDetailsSoon": "更详细的功能说明会在后续公开发布。",
+      "openInLinear": "在 Linear 中打开"
+    },
+    "media": {
+      "demoPendingTitle": "演示暂未发布",
+      "demoPendingDescription": "演示链接发布后会展示在这里。",
+      "platformDemo": "{platform} 演示",
+      "clickToPlay": "点击播放"
+    },
+    "upcoming": {
+      "eyebrow": "未来规划",
+      "title": "Coming next",
+      "description": "已经启动的工作，以及紧接着排进来的下一批确定功能。"
+    },
+    "voting": {
+      "eyebrow": "社区声音",
+      "title": "一起塑造<highlight>我们的路书</highlight>",
+      "description": "看看用户最想要什么，为最值得优先推进的方向投票，也可以提交你自己的想法进入待办池。",
+      "submitIdea": "提交想法",
+      "vote": "投票",
+      "voted": "已投票",
+      "votes": "{count} 票"
+    },
+    "ideaModal": {
+      "title": "提交你的想法",
+      "description": "告诉我们，什么功能会让这份路书对你或你的团队更有价值。",
+      "featureTitleLabel": "功能标题",
+      "featureTitlePlaceholder": "例如：导出路线图为 PDF",
+      "detailLabel": "详细说明",
+      "detailPlaceholder": "描述它会优化什么流程，或者解决什么问题。",
+      "emailLabel": "邮箱（可选）",
+      "emailPlaceholder": "you@example.com",
+      "cancel": "取消",
+      "submitting": "提交中...",
+      "submit": "提交想法"
+    },
+    "toast": {
+      "voteRecorded": "投票成功",
+      "alreadyVoted": "你已经为这个想法投过票了",
+      "voteFailed": "投票失败，请稍后重试",
+      "ideaSubmitted": "想法已提交",
+      "ideaSubmitFailed": "提交想法失败"
+    }
   }
 }

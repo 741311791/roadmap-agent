@@ -20,6 +20,7 @@ export function Footer() {
   
   const navigation = {
     product: [
+      { name: tMarketing('roadmap'), href: '/roadmap' },
       { name: tMarketing('methodology'), href: '/methodology' },
       { name: tMarketing('pricing'), href: '/pricing' },
       { name: tMarketing('about'), href: '/about' },

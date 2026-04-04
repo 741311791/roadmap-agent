@@ -1,9 +1,19 @@
 import type { ThreadMessageLike } from "@assistant-ui/react";
 
 /**
- * MentorAgentType - 侧栏 Agent 类型
+ * MentorAgentKind - 聊天页固定 Agent 类型
  */
-export type MentorAgentType = "company" | "tutoring";
+export type MentorAgentKind = "qa" | "guide" | "quiz";
+
+/**
+ * MentorAgentType - 兼容旧命名
+ */
+export type MentorAgentType = MentorAgentKind;
+
+/**
+ * MentorQaStyle - 答疑风格
+ */
+export type MentorQaStyle = "casual" | "serious";
 
 /**
  * MentorChapterContext - 当前章节上下文
@@ -16,6 +26,48 @@ export interface MentorChapterContext {
 }
 
 /**
+ * MentorToolState - 工具调用状态
+ */
+export type MentorToolState = "running" | "completed";
+
+/**
+ * MentorTextContentPart - 文本内容片段
+ */
+export interface MentorTextContentPart {
+  type: "text";
+  text: string;
+}
+
+/**
+ * MentorThinkingContentPart - 思考内容片段
+ */
+export interface MentorThinkingContentPart {
+  type: "thinking";
+  text: string;
+}
+
+/**
+ * MentorToolCallContentPart - 工具调用内容片段
+ */
+export interface MentorToolCallContentPart {
+  type: "tool-call";
+  toolCallId: string;
+  toolName: string;
+  arguments?: Record<string, unknown>;
+  state: MentorToolState;
+  result?: string | null;
+  isError?: boolean;
+}
+
+/**
+ * MentorContentPart - Mentor 消息内容片段
+ */
+export type MentorContentPart =
+  | MentorTextContentPart
+  | MentorThinkingContentPart
+  | MentorToolCallContentPart;
+
+/**
  * MentorMessageMetadata - 导师消息扩展元数据
  */
 export interface MentorMessageMetadata {
@@ -23,11 +75,27 @@ export interface MentorMessageMetadata {
   sessionId?: string;
   messageId?: string;
   traceId?: string;
+  langfuseTraceId?: string;
   assistantMessageId?: string;
-  agentType?: MentorAgentType;
+  agentKind?: MentorAgentKind;
+  agentType?: MentorAgentKind;
+  qaStyle?: MentorQaStyle;
   modelId?: string;
+  emotionLabel?: string;
+  emotionSummary?: string;
   responseDurationMs?: number;
+  contentParts?: MentorContentPart[];
   [key: string]: unknown;
+}
+
+/**
+ * MentorQuickAction - 快捷动作配置
+ */
+export interface MentorQuickAction {
+  id: string;
+  label: string;
+  prompt: string;
+  autoSend?: boolean;
 }
 
 /**
@@ -36,7 +104,10 @@ export interface MentorMessageMetadata {
 export interface MentorModelOption {
   id: string;
   label: string;
-  isLimitedFree?: boolean;
+  description?: string;
+  provider?: string;
+  isDefault?: boolean;
+  isUnavailable?: boolean;
 }
 
 /**
@@ -48,9 +119,8 @@ export type MentorThreadStatus = "idle" | "streaming" | "error";
  * MentorAgentOption - 可选 Agent 配置
  */
 export interface MentorAgentOption {
-  id: MentorAgentType;
+  id: MentorAgentKind;
   label: string;
-  promptTemplate: string;
   description: string;
 }
 
@@ -60,13 +130,16 @@ export interface MentorAgentOption {
 export interface MentorThreadRecord {
   id: string;
   title: string;
-  agentType: MentorAgentType;
+  agentKind: MentorAgentKind;
+  qaStyle: MentorQaStyle;
   modelId: string;
   chapterContext: MentorChapterContext;
   messages: ThreadMessageLike[];
   messageCount?: number;
   remoteSessionId?: string;
   lastTraceId?: string;
+  emotionLabel?: string;
+  emotionSummary?: string;
   status: MentorThreadStatus;
   lastError?: string;
   isHydrated: boolean;
@@ -80,62 +153,62 @@ export interface MentorThreadRecord {
 export const MAX_MENTOR_THREAD_HISTORY = 10;
 
 /**
- * DEFAULT_MENTOR_MODEL_ID - 默认导师模型
- */
-export const DEFAULT_MENTOR_MODEL_ID = "google/gemini-3-flash-preview";
-
-/**
- * SUPPORTED_MENTOR_MODEL_IDS - 当前后端已验证可用的导师模型
- */
-export const SUPPORTED_MENTOR_MODEL_IDS = [
-  "google/gemini-3.1-pro-preview",
-  "google/gemini-3-flash-preview",
-] as const;
-
-/**
- * normalizeMentorModelId - 将不可用模型回退到默认模型
- */
-export function normalizeMentorModelId(modelId?: string | null): string {
-  if (!modelId) {
-    return DEFAULT_MENTOR_MODEL_ID;
-  }
-
-  return SUPPORTED_MENTOR_MODEL_IDS.includes(
-    modelId as (typeof SUPPORTED_MENTOR_MODEL_IDS)[number]
-  )
-    ? modelId
-    : DEFAULT_MENTOR_MODEL_ID;
-}
-
-/**
  * MENTOR_AGENT_OPTIONS - Agent 下拉选项
  */
 export const MENTOR_AGENT_OPTIONS: MentorAgentOption[] = [
   {
-    id: "company",
-    label: "Companion Agent",
-    promptTemplate: "backend/prompts/company_agent.j2",
-    description: "Patient explanations with examples and analogies.",
+    id: "qa",
+    label: "Answer",
+    description: "Direct Q&A with tool support and memory.",
   },
   {
-    id: "tutoring",
-    label: "Tutoring Agent",
-    promptTemplate: "backend/prompts/tutorin_agent.j2",
-    description: "Guided questions with a Socratic teaching style.",
+    id: "guide",
+    label: "Guide",
+    description: "Coming soon: guided learning flow.",
+  },
+  {
+    id: "quiz",
+    label: "Quiz",
+    description: "Coming soon: adaptive chapter quizzes.",
   },
 ];
 
 /**
- * MENTOR_MODEL_OPTIONS - 模型下拉选项
+ * QA_STYLE_OPTIONS - 答疑风格选项
  */
-export const MENTOR_MODEL_OPTIONS: MentorModelOption[] = [
-  {
-    id: "google/gemini-3.1-pro-preview",
-    label: "Gemini 3.1 Pro Preview",
-    isLimitedFree: true,
-  },
-  {
-    id: "google/gemini-3-flash-preview",
-    label: "Gemini 3 Flash Preview",
-  },
+export const QA_STYLE_OPTIONS: Array<{ id: MentorQaStyle; label: string }> = [
+  { id: "casual", label: "Casual" },
+  { id: "serious", label: "Serious" },
 ];
+
+/**
+ * ensureMentorModelOption - 确保当前模型在下拉列表中可见
+ *
+ * 为什么这样做：
+ * - 历史线程可能引用了已下线或当前用户无权限访问的模型
+ * - 不能静默回退到默认模型，否则用户会误以为历史消息来自另一模型
+ */
+export function ensureMentorModelOption(
+  options: MentorModelOption[],
+  modelId?: string | null
+): MentorModelOption[] {
+  const normalizedModelId = modelId?.trim();
+  if (!normalizedModelId) {
+    return options;
+  }
+
+  const hasCurrentModel = options.some((option) => option.id === normalizedModelId);
+  if (hasCurrentModel) {
+    return options;
+  }
+
+  return [
+    {
+      id: normalizedModelId,
+      label: normalizedModelId,
+      description: "Unavailable model",
+      isUnavailable: true,
+    },
+    ...options,
+  ];
+}

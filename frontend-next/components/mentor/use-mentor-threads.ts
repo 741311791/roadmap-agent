@@ -4,24 +4,23 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ThreadMessageLike } from "@assistant-ui/react";
 
 import type {
-  MentorAgentType,
+  MentorAgentKind,
   MentorChapterContext,
+  MentorQaStyle,
   MentorThreadRecord,
   MentorThreadStatus,
 } from "@/components/mentor/types";
-import {
-  DEFAULT_MENTOR_MODEL_ID,
-  MAX_MENTOR_THREAD_HISTORY,
-  normalizeMentorModelId,
-} from "@/components/mentor/types";
+import { MAX_MENTOR_THREAD_HISTORY } from "@/components/mentor/types";
 
 interface UseMentorThreadsOptions {
   roadmapId: string;
   activeChapterContext: MentorChapterContext;
+  defaultModelId?: string;
 }
 
 interface CreateMentorThreadOptions {
-  agentType: MentorAgentType;
+  agentKind: MentorAgentKind;
+  qaStyle: MentorQaStyle;
   modelId: string;
   chapterContext: MentorChapterContext;
   messages?: ThreadMessageLike[];
@@ -80,8 +79,20 @@ function createThreadId(): string {
  * normalizeMessageLike - 规范化消息结构，避免 Date 在 JSON 中丢失类型
  */
 function normalizeMessageLike(message: ThreadMessageLike): ThreadMessageLike {
+  const normalizedContent =
+    typeof message.content === "string"
+      ? message.content
+      : message.content.map((part) => {
+          if ("type" in part && part.type === "reasoning") {
+            return part;
+          }
+
+          return part;
+        });
+
   return {
     ...message,
+    content: normalizedContent,
     createdAt: message.createdAt ? new Date(message.createdAt) : undefined,
   };
 }
@@ -173,8 +184,9 @@ function createMentorThreadRecord(options: CreateMentorThreadOptions): MentorThr
   return {
     id: createThreadId(),
     title,
-    agentType: options.agentType,
-    modelId: normalizeMentorModelId(options.modelId),
+    agentKind: options.agentKind,
+    qaStyle: options.qaStyle,
+    modelId: options.modelId,
     chapterContext: options.chapterContext,
     messages,
     status: "idle",
@@ -207,10 +219,14 @@ function parseStoredThreads(rawValue: string | null, roadmapId: string): MentorT
           roadmapId,
         },
         messages: normalizeMessages((thread.messages ?? []) as ThreadMessageLike[]),
+        agentKind: thread.agentKind ?? "qa",
+        qaStyle: thread.qaStyle ?? "casual",
         messageCount: thread.messageCount ?? thread.messages?.length ?? 0,
-        modelId: normalizeMentorModelId(thread.modelId),
+        modelId: thread.modelId ?? "",
         remoteSessionId: thread.remoteSessionId ?? undefined,
         lastTraceId: thread.lastTraceId ?? undefined,
+        emotionLabel: thread.emotionLabel ?? undefined,
+        emotionSummary: thread.emotionSummary ?? undefined,
         status: thread.status ?? ("idle" as MentorThreadStatus),
         lastError: thread.lastError ?? undefined,
         isHydrated: thread.isHydrated ?? false,
@@ -224,10 +240,14 @@ function parseStoredThreads(rawValue: string | null, roadmapId: string): MentorT
 /**
  * createDefaultThread - 为当前章节作用域创建默认空线程
  */
-function createDefaultThread(chapterContext: MentorChapterContext): MentorThreadRecord {
+function createDefaultThread(
+  chapterContext: MentorChapterContext,
+  defaultModelId: string = ""
+): MentorThreadRecord {
   return createMentorThreadRecord({
-    agentType: "company",
-    modelId: DEFAULT_MENTOR_MODEL_ID,
+    agentKind: "qa",
+    qaStyle: "casual",
+    modelId: defaultModelId,
     chapterContext,
   });
 }
@@ -238,6 +258,7 @@ function createDefaultThread(chapterContext: MentorChapterContext): MentorThread
 export function useMentorThreads({
   roadmapId,
   activeChapterContext,
+  defaultModelId = "",
 }: UseMentorThreadsOptions) {
   const [threads, setThreads] = useState<MentorThreadRecord[]>([]);
   const [currentThreadIdsByScope, setCurrentThreadIdsByScope] = useState<Record<string, string | null>>(
@@ -293,13 +314,13 @@ export function useMentorThreads({
       return;
     }
 
-    const nextThread = createDefaultThread(activeChapterContext);
+    const nextThread = createDefaultThread(activeChapterContext, defaultModelId);
     setThreads((previousThreads) => sortAndLimitThreads([nextThread, ...previousThreads]));
     setCurrentThreadIdsByScope((previousMap) => ({
       ...previousMap,
       [activeScopeKey]: nextThread.id,
     }));
-  }, [activeChapterContext, activeScopeKey, currentThread, scopedThreads]);
+  }, [activeChapterContext, activeScopeKey, currentThread, defaultModelId, scopedThreads]);
 
   /**
    * createThread - 新建线程并切换为当前线程
@@ -444,7 +465,8 @@ export function useMentorThreads({
               existingThread.messages.length > 0 || existingThread.title !== "New thread"
                 ? existingThread.title
                 : remoteThread.title,
-            agentType: existingThread.agentType || remoteThread.agentType,
+            agentKind: existingThread.agentKind || remoteThread.agentKind,
+            qaStyle: existingThread.qaStyle ?? remoteThread.qaStyle ?? "casual",
             modelId: existingThread.modelId || remoteThread.modelId,
             chapterContext: {
               ...remoteThread.chapterContext,
@@ -453,6 +475,8 @@ export function useMentorThreads({
             },
             messageCount: existingThread.messageCount ?? remoteThread.messageCount,
             remoteSessionId: remoteThread.remoteSessionId,
+            emotionLabel: existingThread.emotionLabel ?? remoteThread.emotionLabel,
+            emotionSummary: existingThread.emotionSummary ?? remoteThread.emotionSummary,
             updatedAt: Math.max(existingThread.updatedAt, remoteThread.updatedAt),
           };
         });

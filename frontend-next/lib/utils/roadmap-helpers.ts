@@ -72,6 +72,48 @@ export function getAllConceptIds(roadmap: RoadmapFramework | null): string[] {
 }
 
 /**
+ * 获取顺序学习模式下默认解锁的第一个 Concept ID
+ *
+ * @param roadmap - 路线图框架
+ * @returns 第一个可学习的 Concept ID；若不存在则返回 null
+ */
+export function getInitialUnlockedConceptId(roadmap: RoadmapFramework | null): string | null {
+  if (!roadmap || !roadmap.stages) return null;
+
+  const sortedStages = [...roadmap.stages].sort((a, b) => a.order - b.order);
+  for (const stage of sortedStages) {
+    for (const mod of stage.modules || []) {
+      const firstConcept = mod.concepts?.[0];
+      if (firstConcept) {
+        return firstConcept.concept_id;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * 判断当前 Concept 在顺序学习模式下是否处于锁定状态
+ *
+ * 当前规则：
+ * - 只有第一个 Concept 默认可学
+ * - 其余 Concept 统一展示为锁定态，等待后续真实解锁规则接入
+ *
+ * @param roadmap - 路线图框架
+ * @param conceptId - 要判断的 Concept ID
+ * @returns 如果处于锁定状态则返回 true
+ */
+export function isSequentialConceptLocked(
+  roadmap: RoadmapFramework | null,
+  conceptId: string
+): boolean {
+  const initialUnlockedConceptId = getInitialUnlockedConceptId(roadmap);
+  if (!initialUnlockedConceptId) return false;
+  return conceptId !== initialUnlockedConceptId;
+}
+
+/**
  * 计算路线图的整体完成度
  * 
  * @param roadmap - 路线图框架

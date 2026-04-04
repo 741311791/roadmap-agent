@@ -28,7 +28,14 @@ import { Loader2, AlertCircle, ArrowLeft, Menu, Bot } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
-import { isConceptIdValid, findConceptById, calculateRoadmapProgress } from '@/lib/utils/roadmap-helpers';
+import {
+  calculateRoadmapProgress,
+  findConceptById,
+  getInitialUnlockedConceptId,
+  isConceptIdValid,
+  isSequentialConceptLocked,
+} from '@/lib/utils/roadmap-helpers';
+import { promptGenerationFeedback } from '@/lib/feedback/feedback-events';
 
 /**
  * RoadmapDetailPage - 沉浸式路线图详情页
@@ -67,13 +74,19 @@ export default function RoadmapDetailPage() {
     error: roadmapError,
     refetch: refetchRoadmap
   } = useRoadmap(roadmapId);
+  const selectedConceptLocked = selectedConceptId
+    ? isSequentialConceptLocked((roadmapData as RoadmapFramework) ?? null, selectedConceptId)
+    : false;
 
   // Data Fetching - 教程内容（带缓存）
   const { 
     data: tutorialData,
     isLoading: tutorialLoading,
     error: tutorialError
-  } = useTutorial(roadmapId, selectedConceptId || undefined);
+  } = useTutorial(
+    roadmapId,
+    selectedConceptId && !selectedConceptLocked ? selectedConceptId : undefined
+  );
 
   // Local State
   const [activeTask, setActiveTask] = useState<{ taskId: string; status: string; taskType?: string } | null>(null);
@@ -98,24 +111,39 @@ export default function RoadmapDetailPage() {
     if (!roadmapData) return;
     
     const conceptIdFromUrl = searchParams.get('concept');
+    const defaultConceptId = getInitialUnlockedConceptId(roadmapData as RoadmapFramework);
+    const nextConceptId = conceptIdFromUrl && isConceptIdValid(roadmapData as RoadmapFramework, conceptIdFromUrl)
+      ? conceptIdFromUrl
+      : defaultConceptId;
     
-    // 只在 URL 参数与当前 state 不一致时才更新
-    if (conceptIdFromUrl !== selectedConceptId) {
-      if (conceptIdFromUrl) {
-        // URL 中有 concept 参数，验证并选中
-        if (isConceptIdValid(roadmapData as RoadmapFramework, conceptIdFromUrl)) {
-          console.log('[RoadmapDetail] Syncing concept from URL:', conceptIdFromUrl);
-          selectConcept(conceptIdFromUrl);
-        } else {
-          console.warn('[RoadmapDetail] Invalid concept ID in URL:', conceptIdFromUrl);
-        }
-      } else {
-        // URL 中没有 concept 参数，清空选中状态
-        console.log('[RoadmapDetail] Clearing concept selection (no URL param)');
-        selectConcept(null);
-      }
+    // 只在 URL 推导出的 concept 与当前 state 不一致时才更新
+    if (nextConceptId !== selectedConceptId) {
+      console.log('[RoadmapDetail] Syncing concept from URL/default:', nextConceptId);
+      selectConcept(nextConceptId ?? null);
     }
   }, [roadmapData, searchParams, selectedConceptId, selectConcept]);
+
+  // 当用户从生成完成链路直接进入路线图页时，补一次反馈弹窗兜底。
+  useEffect(() => {
+    const feedbackSource = searchParams.get('feedbackSource');
+    const feedbackTaskId = searchParams.get('feedbackTaskId');
+    if (feedbackSource !== 'generation_completed' || !feedbackTaskId) {
+      return;
+    }
+
+    promptGenerationFeedback({
+      taskId: feedbackTaskId,
+      roadmapId,
+      delayMs: 900,
+    });
+
+    const nextParams = new URLSearchParams(searchParams.toString());
+    nextParams.delete('feedbackSource');
+    nextParams.delete('feedbackTaskId');
+    const nextQuery = nextParams.toString();
+    const nextUrl = nextQuery ? `/roadmap/${roadmapId}?${nextQuery}` : `/roadmap/${roadmapId}`;
+    router.replace(nextUrl, { scroll: false });
+  }, [roadmapId, router, searchParams]);
 
   // 1.6. Concept 选择处理器：直接更新 URL（而不是直接更新 state）
   // URL 变化会通过上面的 effect 自动同步到 state，避免循环
@@ -214,6 +242,9 @@ export default function RoadmapDetailPage() {
   // Helper: Calculate overall progress
   const overallProgress = calculateRoadmapProgress(currentRoadmap);
   const activeConcept = getActiveConcept();
+  const activeConceptLocked = activeConcept
+    ? isSequentialConceptLocked(currentRoadmap, activeConcept.concept_id)
+    : false;
 
   // Loading State
   if (roadmapLoading) {
@@ -320,6 +351,7 @@ export default function RoadmapDetailPage() {
           <ResizablePanel defaultSize={55} className="min-w-[320px]">
             <LearningStage
               concept={activeConcept}
+              isLocked={activeConceptLocked}
               tutorialContent={tutorialData?.full_content}
               tutorialLoading={tutorialLoading}
               roadmapId={roadmapId}

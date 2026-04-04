@@ -10,12 +10,13 @@ import type {
   MentorSessionDto,
 } from "@/components/mentor/mentor-api";
 import type {
-  MentorAgentType,
+  MentorAgentKind,
   MentorChapterContext,
+  MentorContentPart,
   MentorMessageMetadata,
+  MentorQaStyle,
   MentorThreadRecord,
 } from "@/components/mentor/types";
-import { normalizeMentorModelId } from "@/components/mentor/types";
 
 /**
  * MentorStreamMetadata - 导师流式元数据
@@ -24,28 +25,117 @@ export interface MentorStreamMetadata {
   threadId: string;
   sessionId?: string;
   traceId?: string;
+  langfuseTraceId?: string;
   assistantMessageId?: string;
   modelId: string;
-  agentType: MentorAgentType;
+  agentKind: MentorAgentKind;
+  qaStyle: MentorQaStyle;
+  emotionLabel?: string;
+  emotionSummary?: string;
   responseDurationMs?: number;
+}
+
+/**
+ * normalizeMentorContentParts - 规范化 Mentor 内容片段
+ */
+export function normalizeMentorContentParts(params: {
+  contentParts?: MentorContentPart[];
+  fallbackText?: string;
+}): MentorContentPart[] {
+  const normalizedParts: MentorContentPart[] = [];
+  for (const part of params.contentParts ?? []) {
+    if (part.type === "text" || part.type === "thinking") {
+      if (!part.text.length) {
+        continue;
+      }
+      normalizedParts.push({
+        type: part.type,
+        text: part.text,
+      });
+      continue;
+    }
+
+    if (!part.toolCallId || !part.toolName) {
+      continue;
+    }
+
+    normalizedParts.push({
+      type: "tool-call",
+      toolCallId: part.toolCallId,
+      toolName: part.toolName,
+      arguments: part.arguments,
+      state: part.state,
+      result: part.result,
+      isError: part.isError,
+    });
+  }
+
+  if (normalizedParts.length > 0) {
+    return normalizedParts;
+  }
+
+  const fallbackText = params.fallbackText?.trim();
+  if (!fallbackText) {
+    return [];
+  }
+
+  return [
+    {
+      type: "text",
+      text: fallbackText,
+    },
+  ];
+}
+
+/**
+ * toAssistantUiContent - 转换为 assistant-ui 可消费的 content 数组
+ */
+function toAssistantUiContent(contentParts: MentorContentPart[]) {
+  return contentParts.map((part) => {
+    if (part.type === "thinking") {
+      return {
+        type: "reasoning",
+        text: part.text,
+      };
+    }
+
+    return part;
+  }) as unknown as ChatModelRunResult["content"];
 }
 
 /**
  * mapMentorMessageToThreadMessage - 将后端消息映射为 assistant-ui 消息
  */
 export function mapMentorMessageToThreadMessage(message: MentorMessageDto): ThreadMessageLike {
+  const rawMetadata = (message.message_metadata ?? {}) as Record<string, unknown>;
   const metadata: MentorMessageMetadata = {
     sessionId: message.session_id,
     messageId: message.message_id,
     traceId: message.trace_id ?? undefined,
-    agentType: message.agent_type ?? undefined,
+    agentKind: message.agent_kind ?? undefined,
+    agentType: message.agent_kind ?? undefined,
+    qaStyle: message.qa_style ?? undefined,
     modelId: message.model_id ?? undefined,
+    emotionLabel:
+      (rawMetadata.emotionLabel as string | undefined) ??
+      (rawMetadata.emotion_label as string | undefined),
+    emotionSummary:
+      (rawMetadata.emotionSummary as string | undefined) ??
+      (rawMetadata.emotion_summary as string | undefined),
+    contentParts:
+      (rawMetadata.contentParts as MentorContentPart[] | undefined) ??
+      (rawMetadata.content_parts as MentorContentPart[] | undefined),
   };
+  const contentParts = normalizeMentorContentParts({
+    contentParts: metadata.contentParts,
+    fallbackText: message.content,
+  });
+  metadata.contentParts = contentParts;
 
   return {
     id: message.message_id,
     role: message.role,
-    content: message.content,
+    content: toAssistantUiContent(contentParts) ?? "",
     createdAt: new Date(message.created_at),
     metadata: {
       custom: metadata,
@@ -72,8 +162,9 @@ export function mapMentorSessionToThreadRecord(session: MentorSessionDto): Mento
   return {
     id: `mentor-session-${session.session_id}`,
     title: session.title?.trim() || fallbackTitle,
-    agentType: session.agent_type,
-    modelId: normalizeMentorModelId(session.model_id),
+    agentKind: session.agent_kind,
+    qaStyle: session.qa_style ?? "casual",
+    modelId: session.model_id ?? "",
     chapterContext: {
       roadmapId: session.roadmap_id,
       conceptId: session.concept_id ?? undefined,
@@ -94,14 +185,16 @@ export function mapMentorSessionToThreadRecord(session: MentorSessionDto): Mento
 export function buildMentorChatRequest(params: {
   message: string;
   remoteSessionId?: string;
-  agentType: MentorAgentType;
+  agentKind: MentorAgentKind;
+  qaStyle: MentorQaStyle;
   modelId: string;
   chapterContext: MentorChapterContext;
 }): MentorChatRequestPayload {
   return {
     message: params.message,
     session_id: params.remoteSessionId,
-    agent_type: params.agentType,
+    agent_kind: params.agentKind,
+    qa_style: params.qaStyle,
     model_id: params.modelId,
     context: {
       roadmap_id: params.chapterContext.roadmapId,
@@ -117,26 +210,30 @@ export function buildMentorChatRequest(params: {
  * buildMentorAssistantMessage - 构建 assistant-ui 可消费的流式消息快照
  */
 export function buildMentorAssistantMessage(params: {
-  content: string;
+  contentParts: MentorContentPart[];
   metadata: MentorStreamMetadata;
 }): ChatModelRunResult {
+  const contentParts = normalizeMentorContentParts({
+    contentParts: params.contentParts,
+  });
   const metadata: MentorMessageMetadata = {
     threadId: params.metadata.threadId,
     sessionId: params.metadata.sessionId,
     traceId: params.metadata.traceId,
+    langfuseTraceId: params.metadata.langfuseTraceId,
     assistantMessageId: params.metadata.assistantMessageId,
     modelId: params.metadata.modelId,
-    agentType: params.metadata.agentType,
+    agentKind: params.metadata.agentKind,
+    agentType: params.metadata.agentKind,
+    qaStyle: params.metadata.qaStyle,
+    emotionLabel: params.metadata.emotionLabel,
+    emotionSummary: params.metadata.emotionSummary,
     responseDurationMs: params.metadata.responseDurationMs,
+    contentParts,
   };
 
   return {
-    content: [
-      {
-        type: "text",
-        text: params.content,
-      },
-    ],
+    content: toAssistantUiContent(contentParts),
     metadata: {
       custom: metadata,
     },
@@ -149,7 +246,8 @@ export function buildMentorAssistantMessage(params: {
 export function buildMentorStreamMetadata(params: {
   threadId: string;
   modelId: string;
-  agentType: MentorAgentType;
+  agentKind: MentorAgentKind;
+  qaStyle: MentorQaStyle;
   metaEvent?: MentorChatMetaEvent;
   responseDurationMs?: number;
 }): MentorStreamMetadata {
@@ -157,9 +255,13 @@ export function buildMentorStreamMetadata(params: {
     threadId: params.threadId,
     sessionId: params.metaEvent?.session_id,
     traceId: params.metaEvent?.trace_id,
+    langfuseTraceId: params.metaEvent?.langfuse_trace_id,
     assistantMessageId: params.metaEvent?.assistant_message_id,
     modelId: params.modelId,
-    agentType: params.agentType,
+    agentKind: params.metaEvent?.agent_kind ?? params.agentKind,
+    qaStyle: params.metaEvent?.qa_style ?? params.qaStyle,
+    emotionLabel: params.metaEvent?.emotion_label,
+    emotionSummary: params.metaEvent?.emotion_summary,
     responseDurationMs: params.responseDurationMs,
   };
 }

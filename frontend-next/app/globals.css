@@ -412,6 +412,12 @@
   animation: shine 2s infinite;
 }
 
+/* 让 highlight.js 的背景透明，由代码块容器统一控制背景色 */
+pre code.hljs {
+  background: transparent;
+  padding: 0;
+}
+
 /* KaTeX 公式在窄容器中允许横向滚动，避免被裁切 */
 .katex-display {
   overflow-x: auto;
@@ -421,5 +427,20 @@
 
 .katex-display > .katex {
   min-width: fit-content;
+}
+
+/* Blinking Cursor for Streaming Markdown */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.streaming-active > *:last-child::after {
+  content: '▋';
+  display: inline-block;
+  margin-left: 4px;
+  animation: blink 1s step-end infinite;
+  color: currentColor;
+  vertical-align: baseline;
 }
 

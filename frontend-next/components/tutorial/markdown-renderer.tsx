@@ -9,9 +9,6 @@ import { CodeBlock } from './code-block';
 import { MermaidDiagram } from './mermaid-diagram';
 import { cn } from '@/lib/utils';
 
-// Import highlight.js styles
-import 'highlight.js/styles/github-dark.css';
-
 interface MarkdownRendererProps {
   content: string;
   className?: string;
@@ -30,7 +27,7 @@ interface MarkdownRendererProps {
  */
 export function MarkdownRenderer({ content, className }: MarkdownRendererProps) {
   return (
-    <div className={cn('prose prose-slate dark:prose-invert max-w-none', className)}>
+    <div className={cn('prose prose-slate dark:prose-invert max-w-none prose-code:before:content-[\'\'] prose-code:after:content-[\'\']', className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex, rehypeHighlight]}
@@ -212,7 +209,7 @@ export function CompactMarkdownRenderer({
   return (
     <div
       className={cn(
-        'prose prose-sm prose-slate dark:prose-invert max-w-none',
+        'prose prose-sm prose-slate dark:prose-invert max-w-none prose-code:before:content-[\'\'] prose-code:after:content-[\'\']',
         `line-clamp-${maxLines}`,
         className
       )}

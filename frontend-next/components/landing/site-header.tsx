@@ -34,6 +34,7 @@ export function SiteHeader() {
 
   const navLinks = [
     { name: t('marketing.home'), href: '/' },
+    { name: t('marketing.roadmap'), href: '/roadmap' },
     { name: t('marketing.methodology'), href: '/methodology' },
     { name: t('marketing.pricing'), href: '/pricing' },
     { name: t('marketing.about'), href: '/about' },

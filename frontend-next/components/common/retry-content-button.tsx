@@ -37,6 +37,12 @@ interface RetryContentButtonProps {
   size?: 'default' | 'sm' | 'lg' | 'icon';
   /** 是否显示文字 */
   showLabel?: boolean;
+  /** 自定义按钮文案 */
+  label?: string;
+  /** 是否禁用 */
+  disabled?: boolean;
+  /** 是否显示加载态 */
+  loading?: boolean;
 }
 
 const CONTENT_TYPE_LABELS: Record<ContentType, string> = {
@@ -72,6 +78,9 @@ export function RetryContentButton({
   variant = 'outline',
   size = 'sm',
   showLabel = true,
+  label,
+  disabled = false,
+  loading = false,
 }: RetryContentButtonProps) {
   const [isRetrying, setIsRetrying] = useState(false);
   const { updateConceptStatus } = useRoadmapStore();
@@ -87,6 +96,13 @@ export function RetryContentButton({
       }
     };
   }, []);
+
+  /**
+   * 当按钮切换到其他内容类型时，清理本地重试态，避免跨 Tab 串状态。
+   */
+  useEffect(() => {
+    setIsRetrying(false);
+  }, [roadmapId, conceptId, contentType]);
 
   const handleRetry = async () => {
     setIsRetrying(true);
@@ -224,21 +240,23 @@ export function RetryContentButton({
     }
   };
 
+  const isLoading = isRetrying || loading;
+
   return (
     <Button
       variant={variant}
       size={size}
       onClick={handleRetry}
-      disabled={isRetrying}
+      disabled={isLoading || disabled}
       className={cn('gap-2', className)}
     >
-      {isRetrying ? (
+      {isLoading ? (
         <Loader2 className="w-4 h-4 animate-spin" />
       ) : (
         <RefreshCw className="w-4 h-4" />
       )}
       {showLabel && (
-        <span>{isRetrying ? 'Retrying...' : CONTENT_TYPE_LABELS[contentType]}</span>
+        <span>{isLoading ? 'Retrying...' : (label || CONTENT_TYPE_LABELS[contentType])}</span>
       )}
     </Button>
   );

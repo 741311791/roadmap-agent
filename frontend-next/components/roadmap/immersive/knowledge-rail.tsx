@@ -4,7 +4,7 @@ import React, { useEffect, useMemo } from 'react';
 import { useTranslations } from 'next-intl';
 import { cn, stripRoadmapPrefix } from '@/lib/utils';
 import type { Stage, Module, Concept } from '@/types/generated/models';
-import { CheckCircle2, Circle, ChevronRight, ChevronDown, ChevronLeft, Sparkles } from 'lucide-react';
+import { CheckCircle2, Circle, ChevronRight, ChevronDown, ChevronLeft, Lock, Sparkles } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
@@ -13,6 +13,7 @@ import { UserMenu } from '@/components/user-menu';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Button } from '@/components/ui/button';
+import { getInitialUnlockedConceptId } from '@/lib/utils/roadmap-helpers';
 
 /**
  * KnowledgeRailProps - 知识导航栏组件属性
@@ -51,6 +52,10 @@ export function KnowledgeRail({
 }: KnowledgeRailProps) {
   const t = useTranslations('roadmapDetail');
   const [expandedModules, setExpandedModules] = React.useState<Set<string>>(new Set());
+  const initialUnlockedConceptId = useMemo(
+    () => getInitialUnlockedConceptId((roadmap as any) ?? null),
+    [roadmap]
+  );
 
   // 计算包含活跃概念的模块ID列表
   const modulesWithActiveConcept = useMemo(() => {
@@ -187,6 +192,7 @@ export function KnowledgeRail({
                   stage={stage}
                   expandedModules={expandedModules}
                   activeConceptId={activeConceptId}
+                  initialUnlockedConceptId={initialUnlockedConceptId}
                   onToggleModule={toggleModule}
                   onSelectConcept={onSelectConcept}
                 />
@@ -210,6 +216,7 @@ interface StageItemProps {
   stage: Stage;
   expandedModules: Set<string>;
   activeConceptId: string | null;
+  initialUnlockedConceptId: string | null;
   onToggleModule: (moduleId: string) => void;
   onSelectConcept: (conceptId: string) => void;
 }
@@ -218,6 +225,7 @@ function StageItem({
   stage, 
   expandedModules, 
   activeConceptId, 
+  initialUnlockedConceptId,
   onToggleModule, 
   onSelectConcept 
 }: StageItemProps) {
@@ -244,6 +252,7 @@ function StageItem({
             module={module}
             isExpanded={expandedModules.has(module.module_id)}
             activeConceptId={activeConceptId}
+            initialUnlockedConceptId={initialUnlockedConceptId}
             onToggle={() => onToggleModule(module.module_id)}
             onSelectConcept={onSelectConcept}
           />
@@ -260,6 +269,7 @@ interface ModuleItemProps {
   module: Module;
   isExpanded: boolean;
   activeConceptId: string | null;
+  initialUnlockedConceptId: string | null;
   onToggle: () => void;
   onSelectConcept: (conceptId: string) => void;
 }
@@ -268,6 +278,7 @@ function ModuleItem({
   module, 
   isExpanded, 
   activeConceptId, 
+  initialUnlockedConceptId,
   onToggle, 
   onSelectConcept 
 }: ModuleItemProps) {
@@ -304,6 +315,10 @@ function ModuleItem({
               key={concept.concept_id}
               concept={concept}
               isActive={concept.concept_id === activeConceptId}
+              isLocked={
+                initialUnlockedConceptId !== null &&
+                concept.concept_id !== initialUnlockedConceptId
+              }
               onSelect={() => onSelectConcept(concept.concept_id)}
             />
           ))}
@@ -319,21 +334,32 @@ function ModuleItem({
 interface ConceptItemProps {
   concept: Concept;
   isActive: boolean;
+  isLocked: boolean;
   onSelect: () => void;
 }
 
-function ConceptItem({ concept, isActive, onSelect }: ConceptItemProps) {
+function ConceptItem({ concept, isActive, isLocked, onSelect }: ConceptItemProps) {
+  const t = useTranslations('roadmapDetail');
   const { conceptProgressMap } = useRoadmapStore();
   const isCompleted = conceptProgressMap[concept.concept_id] || false;
 
   return (
     <button
-      onClick={onSelect}
+      onClick={() => {
+        if (!isLocked) {
+          onSelect();
+        }
+      }}
+      disabled={isLocked}
+      title={isLocked ? t('lockedConceptHint') : undefined}
+      aria-disabled={isLocked}
       className={cn(
         "w-full text-left px-3 py-2 rounded-md text-xs transition-all flex items-center gap-2 relative overflow-hidden",
         isActive
           ? "bg-sage-100 text-sage-800 border border-sage-200"
-          : "text-muted-foreground hover:text-foreground hover:bg-sage-50/50"
+          : isLocked
+            ? "text-muted-foreground/70 bg-stone-50/80 cursor-not-allowed"
+            : "text-muted-foreground hover:text-foreground hover:bg-sage-50/50"
       )}
     >
       {/* Active Indicator Bar */}
@@ -342,7 +368,9 @@ function ConceptItem({ concept, isActive, onSelect }: ConceptItemProps) {
       )}
 
       {/* Status Icon */}
-      {isCompleted ? (
+      {isLocked ? (
+        <Lock className="w-3 h-3 shrink-0 text-stone-400" />
+      ) : isCompleted ? (
         <CheckCircle2 className={cn(
           "w-3 h-3 shrink-0",
           isActive ? "text-sage-600" : "text-sage-400"
@@ -353,6 +381,11 @@ function ConceptItem({ concept, isActive, onSelect }: ConceptItemProps) {
       
       {/* Concept Name */}
       <span className="truncate">{stripRoadmapPrefix(concept.name)}</span>
+      {isLocked && (
+        <span className="ml-auto text-[10px] uppercase tracking-wide text-stone-400">
+          {t('lockedConceptShort')}
+        </span>
+      )}
     </button>
   );
 }
