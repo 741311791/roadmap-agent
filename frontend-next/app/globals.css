@@ -75,6 +75,11 @@
     /* Shape Design Tokens */
     --radius: 0.5rem;
     /* Rounded-md - subtle, not pill */
+
+    /* Streamdown 代码块外壳（与 shadcn sidebar 语义一致，对齐 DeerFlow 官方） */
+    --sidebar: 35 20% 90%;
+    --sidebar-foreground: 25 15% 15%;
+    --sidebar-border: 30 15% 85%;
   }
 
   /* Dark mode tokens */
@@ -98,6 +103,26 @@
     --border: 24 10% 20%;
     --input: 24 10% 20%;
     --ring: 40 20% 99%;
+
+    --sidebar: 24 10% 15%;
+    --sidebar-foreground: 40 20% 98%;
+    --sidebar-border: 24 10% 22%;
+  }
+
+  /**
+   * Deer-Flow 测试页专用：将 ghost / 菜单选中 / 附件条等使用的 accent 从全局 sage 改为中性暖灰，
+   * 与 shadcn 默认「muted 系 hover」一致；子树内打开的 Portal 节点需单独挂上此类名以继承变量。
+   */
+  .deerflow-chat-test-interaction-scope {
+    --accent: 35 16% 90%;
+    --accent-foreground: 25 14% 18%;
+    --ring: 215 16% 47%;
+  }
+
+  .dark .deerflow-chat-test-interaction-scope {
+    --accent: 24 10% 18%;
+    --accent-foreground: 40 20% 98%;
+    --ring: 215 20% 65%;
   }
 
 }
@@ -442,5 +467,47 @@ pre code.hljs {
   animation: blink 1s step-end infinite;
   color: currentColor;
   vertical-align: baseline;
+}
+
+/**
+ * Streamdown 表格 / 代码块与 Mermaid 外壳：在支持悬停的精细指针设备上，工具栏默认隐藏，
+ * 仅在鼠标移入整块卡片或键盘焦点在块内时显示；触摸设备保持常显，避免无法操作。
+ */
+@media (hover: hover) and (pointer: fine) {
+  [data-streamdown="table-wrapper"] > div.flex.items-center.justify-end.gap-1 {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 150ms ease;
+  }
+
+  [data-streamdown="table-wrapper"]:hover > div.flex.items-center.justify-end.gap-1,
+  [data-streamdown="table-wrapper"]:focus-within > div.flex.items-center.justify-end.gap-1 {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  [data-streamdown="code-block"] [data-streamdown="code-block-actions"] {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 150ms ease;
+  }
+
+  [data-streamdown="code-block"]:hover [data-streamdown="code-block-actions"],
+  [data-streamdown="code-block"]:focus-within [data-streamdown="code-block-actions"] {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .deerflow-mermaid-shell > :first-child {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 150ms ease;
+  }
+
+  .deerflow-mermaid-shell:hover > :first-child,
+  .deerflow-mermaid-shell:focus-within > :first-child {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 

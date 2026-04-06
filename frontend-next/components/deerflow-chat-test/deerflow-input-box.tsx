@@ -10,7 +10,6 @@ import {
   PlusIcon,
   RocketIcon,
   SparklesIcon,
-  XIcon,
   ZapIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -81,11 +80,7 @@ interface DeerFlowInputBoxProps {
   mode: DeerFlowInputMode;
   onModeChange: (mode: DeerFlowInputMode) => void;
   isNewThread?: boolean;
-  followupSuggestions?: string[];
-  isFollowupsLoading?: boolean;
   onStop?: () => void;
-  onFollowupClick?: (suggestion: string) => void;
-  onDismissFollowups?: () => void;
   onSubmit: (message: PromptInputMessage) => void | Promise<void>;
   /** 为 true 时与上方 To-dos 同属一块圆角卡片：去掉顶圆角与独立边框/阴影 */
   isDockedWithTodosAbove?: boolean;
@@ -94,6 +89,9 @@ interface DeerFlowInputBoxProps {
 /** 与独立输入框外轮廓一致，供测试页 To-dos + 输入区一体包裹 */
 export const DEERFLOW_INPUT_OUTER_CARD_CLASSNAME =
   "overflow-hidden rounded-[22px] border border-black/[0.08] bg-white shadow-[0_12px_40px_-24px_rgba(15,23,42,0.2)] transition-all duration-300 ease-out";
+
+/** 覆盖全局 sage accent，使本页及挂此类的 Portal 内交互底色的中性灰（见 globals.css） */
+export const DEERFLOW_TEST_INTERACTION_SCOPE_CLASS = "deerflow-chat-test-interaction-scope";
 
 const MODE_LABELS: Record<DeerFlowInputMode, string> = {
   flash: "闪速",
@@ -109,7 +107,7 @@ const MODE_DESCRIPTIONS: Record<DeerFlowInputMode, string> = {
   ultra: "继承自 Pro 模式，可调用子代理分工协作，适合复杂多步骤任务，能力最强",
 };
 
-/** 下拉选中态：必须与 bg-accent 成对使用，否则 accent-foreground 与 popover 底色同为浅色会不可读 */
+/** 下拉选中态：与作用域内中性 accent 成对使用（见 DEERFLOW_TEST_INTERACTION_SCOPE_CLASS） */
 const MODE_MENU_ITEM_SELECTED = "bg-accent text-accent-foreground";
 const MODE_MENU_ITEM_NORMAL = "text-muted-foreground/70";
 
@@ -150,11 +148,7 @@ export function DeerFlowInputBox({
   mode,
   onModeChange,
   isNewThread = false,
-  followupSuggestions = [],
-  isFollowupsLoading = false,
   onStop,
-  onFollowupClick,
-  onDismissFollowups,
   onSubmit,
   isDockedWithTodosAbove = false,
 }: DeerFlowInputBoxProps) {
@@ -171,11 +165,7 @@ export function DeerFlowInputBox({
         mode={mode}
         onModeChange={onModeChange}
         isNewThread={isNewThread}
-        followupSuggestions={followupSuggestions}
-        isFollowupsLoading={isFollowupsLoading}
         onStop={onStop}
-        onFollowupClick={onFollowupClick}
-        onDismissFollowups={onDismissFollowups}
         onSubmit={onSubmit}
         isDockedWithTodosAbove={isDockedWithTodosAbove}
       />
@@ -197,11 +187,7 @@ function DeerFlowInputBoxInner({
   mode,
   onModeChange,
   isNewThread = false,
-  followupSuggestions = [],
-  isFollowupsLoading = false,
   onStop,
-  onFollowupClick,
-  onDismissFollowups,
   onSubmit,
   isDockedWithTodosAbove = false,
 }: DeerFlowInputBoxProps) {
@@ -217,8 +203,6 @@ function DeerFlowInputBoxInner({
     () => getResolvedMode(mode, supportsThinking),
     [mode, supportsThinking]
   );
-  const displaySuggestions = isNewThread ? DEFAULT_SUGGESTIONS : followupSuggestions;
-
   /**
    * 与官方一致：textarea 在 absolute 层，InputGroup 在仅有 footer 时高度塌缩会导致工具栏盖住输入区。
    * 为 [data-slot=input-group] 预留最小高度，保证可点击、可聚焦。
@@ -264,7 +248,7 @@ function DeerFlowInputBoxInner({
   );
 
   /**
-   * handleSuggestionClick - 处理首屏建议与追问建议点击
+   * handleSuggestionClick - 处理新对话首屏建议点击
    */
   const handleSuggestionClick = useCallback(
     (suggestion: string) => {
@@ -280,10 +264,9 @@ function DeerFlowInputBoxInner({
       }
 
       textInput.setInput(suggestion);
-      onFollowupClick?.(suggestion);
       window.setTimeout(() => requestFormSubmit(), 0);
     },
-    [onFollowupClick, requestFormSubmit, status, textInput]
+    [requestFormSubmit, status, textInput]
   );
 
   /**
@@ -296,11 +279,10 @@ function DeerFlowInputBoxInner({
     }
 
     textInput.setInput(pendingSuggestion);
-    onFollowupClick?.(pendingSuggestion);
     setPendingSuggestion(null);
     setConfirmOpen(false);
     window.setTimeout(() => requestFormSubmit(), 0);
-  }, [onFollowupClick, pendingSuggestion, requestFormSubmit, textInput]);
+  }, [pendingSuggestion, requestFormSubmit, textInput]);
 
   /**
    * confirmAppendAndSend - 在原输入后追加建议并自动发送
@@ -313,11 +295,10 @@ function DeerFlowInputBoxInner({
 
     const currentValue = textInput.value.trim();
     textInput.setInput(currentValue ? `${currentValue}\n${pendingSuggestion}` : pendingSuggestion);
-    onFollowupClick?.(pendingSuggestion);
     setPendingSuggestion(null);
     setConfirmOpen(false);
     window.setTimeout(() => requestFormSubmit(), 0);
-  }, [onFollowupClick, pendingSuggestion, requestFormSubmit, textInput]);
+  }, [pendingSuggestion, requestFormSubmit, textInput]);
 
   return (
     <div ref={promptRootRef} className="relative w-full">
@@ -361,7 +342,9 @@ function DeerFlowInputBoxInner({
                   {MODE_LABELS[visibleMode]}
                 </span>
               </PromptInputActionMenuTrigger>
-              <PromptInputActionMenuContent className="w-80">
+              <PromptInputActionMenuContent
+                className={cn(DEERFLOW_TEST_INTERACTION_SCOPE_CLASS, "w-80")}
+              >
                 <div className="px-2 py-1 text-xs font-medium text-muted-foreground">
                   Mode
                 </div>
@@ -487,7 +470,9 @@ function DeerFlowInputBoxInner({
                   )}
                 </PromptInputButton>
               </ModelSelectorTrigger>
-              <ModelSelectorContent className="sm:max-w-lg">
+              <ModelSelectorContent
+                className={cn(DEERFLOW_TEST_INTERACTION_SCOPE_CLASS, "sm:max-w-lg")}
+              >
                 <ModelSelectorInput placeholder="Search models..." />
                 <ModelSelectorList className="max-h-[min(420px,52vh)] scroll-py-2 p-2">
                   {models.length === 0 ? (
@@ -549,25 +534,17 @@ function DeerFlowInputBoxInner({
         </PromptInputFooter>
       </PromptInput>
 
-      {displaySuggestions.length > 0 ? (
-        <div
-          className={cn(
-            "flex items-center justify-center",
-            isNewThread ? "mt-8" : "mt-4"
-          )}
-        >
+      {isNewThread && DEFAULT_SUGGESTIONS.length > 0 ? (
+        <div className="mt-8 flex items-center justify-center">
           <DeerFlowSuggestionRow
-            isLoading={isFollowupsLoading}
-            isNewThread={isNewThread}
-            onDismiss={onDismissFollowups}
             onSuggestionClick={handleSuggestionClick}
-            suggestions={displaySuggestions}
+            suggestions={DEFAULT_SUGGESTIONS}
           />
         </div>
       ) : null}
 
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <DialogContent>
+        <DialogContent className={DEERFLOW_TEST_INTERACTION_SCOPE_CLASS}>
           <DialogHeader>
             <DialogTitle>Use this follow-up?</DialogTitle>
             <DialogDescription>
@@ -610,47 +587,31 @@ function AddAttachmentsButton() {
 }
 
 /**
- * DeerFlowSuggestionRow - 首屏建议与追问建议行
+ * DeerFlowSuggestionRow - 新对话首屏快捷建议行
  */
 function DeerFlowSuggestionRow({
   suggestions,
-  isLoading,
-  isNewThread,
   onSuggestionClick,
-  onDismiss,
 }: {
   suggestions: string[];
-  isLoading: boolean;
-  isNewThread: boolean;
   onSuggestionClick: (suggestion: string) => void;
-  onDismiss?: () => void;
 }) {
-  if (isLoading && !isNewThread) {
-    return (
-      <div className="rounded-full border border-slate-200/80 bg-white/85 px-4 py-2 text-xs text-slate-500 shadow-sm backdrop-blur">
-        Generating follow-up suggestions...
-      </div>
-    );
-  }
-
   if (suggestions.length === 0) {
     return null;
   }
 
   return (
     <div className="flex flex-wrap items-center justify-center gap-2">
-      {isNewThread ? (
-        <Button
-          className="rounded-full border-black/[0.08] bg-white px-4 text-xs font-normal text-slate-600 shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:bg-white"
-          onClick={() => onSuggestionClick("给我一个有趣但实用的研究任务。")}
-          size="sm"
-          type="button"
-          variant="outline"
-        >
-          <SparklesIcon className="mr-1.5 size-4" />
-          Surprise me
-        </Button>
-      ) : null}
+      <Button
+        className="rounded-full border-black/[0.08] bg-white px-4 text-xs font-normal text-slate-600 shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:bg-white"
+        onClick={() => onSuggestionClick("给我一个有趣但实用的研究任务。")}
+        size="sm"
+        type="button"
+        variant="outline"
+      >
+        <SparklesIcon className="mr-1.5 size-4" />
+        Surprise me
+      </Button>
       {suggestions.map((suggestion) => (
         <Button
           key={suggestion}
@@ -663,47 +624,38 @@ function DeerFlowSuggestionRow({
           {suggestion}
         </Button>
       ))}
-      {isNewThread ? (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              className="rounded-full border-black/[0.08] bg-white px-4 text-xs font-normal text-slate-600 shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:bg-white"
-              size="sm"
-              type="button"
-              variant="outline"
-            >
-              <PlusIcon className="mr-1.5 size-4" />
-              Create
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start">
-            <DropdownMenuGroup>
-              {DEFAULT_CREATE_SUGGESTIONS.map((suggestion) =>
-                suggestion === "---" ? (
-                  <DropdownMenuSeparator key={suggestion} />
-                ) : (
-                  <DropdownMenuItem
-                    key={suggestion}
-                    onClick={() => onSuggestionClick(suggestion)}
-                  >
-                    {suggestion}
-                  </DropdownMenuItem>
-                )
-              )}
-            </DropdownMenuGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      ) : onDismiss ? (
-        <Button
-          className="rounded-full px-3 text-xs text-slate-500"
-          onClick={onDismiss}
-          size="sm"
-          type="button"
-          variant="outline"
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            className="rounded-full border-black/[0.08] bg-white px-4 text-xs font-normal text-slate-600 shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:bg-white"
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            <PlusIcon className="mr-1.5 size-4" />
+            Create
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="start"
+          className={DEERFLOW_TEST_INTERACTION_SCOPE_CLASS}
         >
-          <XIcon className="size-4" />
-        </Button>
-      ) : null}
+          <DropdownMenuGroup>
+            {DEFAULT_CREATE_SUGGESTIONS.map((suggestion) =>
+              suggestion === "---" ? (
+                <DropdownMenuSeparator key={suggestion} />
+              ) : (
+                <DropdownMenuItem
+                  key={suggestion}
+                  onClick={() => onSuggestionClick(suggestion)}
+                >
+                  {suggestion}
+                </DropdownMenuItem>
+              )
+            )}
+          </DropdownMenuGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }

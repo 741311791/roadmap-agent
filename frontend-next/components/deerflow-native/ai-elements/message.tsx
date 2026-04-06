@@ -1,7 +1,10 @@
 "use client";
 
 import type { HTMLAttributes } from "react";
-import { RichStreamdown } from "@/components/markdown/rich-streamdown";
+import {
+  RichStreamdown,
+  type DeerFlowMarkdownProfile,
+} from "@/components/markdown/rich-streamdown";
 import { cn } from "@/lib/utils";
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
@@ -47,18 +50,22 @@ export const MessageContent = ({
 export function MessageText({
   className,
   children,
+  markdownProfile = "assistant",
 }: {
   className?: string;
   children: string;
+  /** 用户气泡与官方一致时使用 `human`（无 GFM 自动链接）；助手正文使用 `assistant` */
+  markdownProfile?: DeerFlowMarkdownProfile;
 }) {
   return (
-    <div
+    <RichStreamdown
       className={cn(
-        "prose prose-sm max-w-none dark:prose-invert prose-code:before:content-[''] prose-code:after:content-['']",
+        "size-full max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
         className
       )}
+      markdownProfile={markdownProfile}
     >
-      <RichStreamdown>{children}</RichStreamdown>
-    </div>
+      {children}
+    </RichStreamdown>
   );
 }

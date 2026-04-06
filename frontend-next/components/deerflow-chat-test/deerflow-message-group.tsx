@@ -26,6 +26,7 @@ import {
 } from "@/components/deerflow-native/ai-elements/chain-of-thought";
 import type { DeerFlowChatMessagePart } from "@/components/deerflow-chat-test/deerflow-chat-state";
 import { parseTodosPayload } from "@/components/deerflow-chat-test/deerflow-chat-state";
+import type { DeerFlowTodo } from "@/components/deerflow-chat-test/deerflow-thread-context";
 import { Button } from "@/components/ui/button";
 import {
   Collapsible,
@@ -167,10 +168,15 @@ function ToolCallStepView({
   step,
   isLast = false,
   isLoading = false,
+  threadTodosFallback = [],
+  allowThreadTodosFallback = false,
 }: {
   step: CoTToolCallStep;
   isLast?: boolean;
   isLoading?: boolean;
+  /** 流式阶段 messages-tuple 可能未带全 write_todos 参数时，用线程级 todos（来自 values 事件）补全展示。 */
+  threadTodosFallback?: DeerFlowTodo[];
+  allowThreadTodosFallback?: boolean;
 }) {
   const { name, args, result } = step;
 
@@ -364,7 +370,14 @@ function ToolCallStepView({
   if (name === "write_todos") {
     const todosFromArgs = parseTodosPayload(args.todos ?? args);
     const todosFromResult = typeof result === "string" ? parseTodosPayload(result) : [];
-    const todos = todosFromArgs.length > 0 ? todosFromArgs : todosFromResult;
+    const parsed =
+      todosFromArgs.length > 0 ? todosFromArgs : todosFromResult;
+    const todos =
+      parsed.length > 0
+        ? parsed
+        : allowThreadTodosFallback && threadTodosFallback.length > 0
+          ? threadTodosFallback
+          : [];
     return (
       <ToolCallChainStep isLast={isLast} isLoading={isLoading} icon={ListTodoIcon} label="更新任务列表">
         {todos.length > 0 ? (
@@ -411,10 +424,14 @@ export function DeerFlowMessageGroup({
   className,
   parts,
   isLoading = false,
+  threadTodosFallback = [],
+  allowThreadTodosFallback = false,
 }: {
   className?: string;
   parts: DeerFlowChatMessagePart[];
   isLoading?: boolean;
+  threadTodosFallback?: DeerFlowTodo[];
+  allowThreadTodosFallback?: boolean;
 }) {
   const steps = useMemo(() => convertPartsToCoTSteps(parts), [parts]);
   const [showAbove, setShowAbove] = useState(false);
@@ -489,13 +506,21 @@ export function DeerFlowMessageGroup({
                 ) : (
                   <ToolCallStepView
                     key={step.id}
+                    allowThreadTodosFallback={allowThreadTodosFallback}
                     isLoading={isLoading}
                     step={step}
+                    threadTodosFallback={threadTodosFallback}
                   />
                 ),
               )
             : null}
-          <ToolCallStepView isLast isLoading={isLoading} step={lastToolCallStep as CoTToolCallStep} />
+          <ToolCallStepView
+            allowThreadTodosFallback={allowThreadTodosFallback}
+            isLast
+            isLoading={isLoading}
+            step={lastToolCallStep as CoTToolCallStep}
+            threadTodosFallback={threadTodosFallback}
+          />
         </ChainOfThoughtContent>
       ) : (
         <ChainOfThoughtContent className="px-4 pb-2">
@@ -510,7 +535,13 @@ export function DeerFlowMessageGroup({
                 }
               />
             ) : (
-              <ToolCallStepView key={step.id} isLoading={isLoading} step={step} />
+              <ToolCallStepView
+                key={step.id}
+                allowThreadTodosFallback={allowThreadTodosFallback}
+                isLoading={isLoading}
+                step={step}
+                threadTodosFallback={threadTodosFallback}
+              />
             ),
           )}
         </ChainOfThoughtContent>

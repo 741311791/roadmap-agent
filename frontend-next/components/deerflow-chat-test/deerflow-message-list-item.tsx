@@ -6,11 +6,9 @@ import {
   BoxesIcon,
   CheckCircle2,
   ChevronDown,
-  CopyIcon,
   Loader2,
   Sparkles,
 } from "lucide-react";
-import { toast } from "sonner";
 
 import { partitionAssistantParts } from "@/components/deerflow-chat-test/deerflow-assistant-segments";
 import { DeerFlowArtifactFileList } from "@/components/deerflow-chat-test/deerflow-artifact-file-list";
@@ -18,18 +16,17 @@ import type { DeerFlowChatMessage } from "@/components/deerflow-chat-test/deerfl
 import { extractMessagePlainText } from "@/components/deerflow-chat-test/deerflow-chat-state";
 import { DeerFlowMessageGroup } from "@/components/deerflow-chat-test/deerflow-message-group";
 import { DeerFlowStreamingIndicator } from "@/components/deerflow-chat-test/deerflow-streaming-indicator";
+import { useDeerFlowThread } from "@/components/deerflow-chat-test/deerflow-thread-context";
 import {
   Message,
   MessageContent,
   MessageText,
 } from "@/components/deerflow-native/ai-elements/message";
-import { Button } from "@/components/ui/button";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { cn } from "@/lib/utils";
 
 /**
  * 单条 Deer-Flow 消息（对齐官方 MessageListItem + MessageGroup 组合渲染）。
@@ -59,47 +56,19 @@ export function DeerFlowMessageListItem({
 }
 
 /**
- * 用户消息行：与官方 `message-list-item` 一致，仅 `ml-auto` + `w-fit` 气泡与底部工具条复制。
+ * 用户消息行：`ml-auto` + `w-fit` 气泡（测试页不提供悬停复制，避免与「仅复制最终正文」需求混淆）。
  */
 function DeerFlowUserMessageRow({ message }: { message: DeerFlowChatMessage }) {
   const plain = extractMessagePlainText(message);
 
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(plain);
-      toast.success("已复制");
-    } catch {
-      toast.error("复制失败");
-    }
-  };
-
   return (
-    <Message
-      className="group/conversation-message relative w-full pb-10"
-      from="user"
-    >
+    <Message className="w-full" from="user">
       <div className="ml-auto flex w-full max-w-[min(100%,48rem)] flex-col items-end gap-2">
         {plain ? (
           <MessageContent className="w-fit max-w-full">
-            <MessageText>{plain}</MessageText>
+            <MessageText markdownProfile="human">{plain}</MessageText>
           </MessageContent>
         ) : null}
-      </div>
-      <div
-        className={cn(
-          "pointer-events-none absolute right-0 -bottom-9 left-0 z-20 flex justify-end opacity-0 transition-opacity delay-200 duration-300",
-          "group-hover/conversation-message:pointer-events-auto group-hover/conversation-message:opacity-100"
-        )}
-      >
-        <Button
-          className="h-8 w-8"
-          size="icon"
-          type="button"
-          variant="ghost"
-          onClick={() => void handleCopy()}
-        >
-          <CopyIcon className="size-4" />
-        </Button>
       </div>
     </Message>
   );
@@ -117,6 +86,8 @@ function DeerFlowAssistantMessageRow({
   threadId?: string;
   isLoading: boolean;
 }) {
+  const { thread } = useDeerFlowThread();
+  const threadTodosFallback = thread.todos ?? [];
   /**
    * 同一条助手消息在流式合并后可能包含多个 cot 段（例如 task 会 flush 出「主流程工具链 → 子任务 → 子流程工具链」）。
    * 若对每个 MessageGroup 都传入线程级 isLoading，则每一段都会在「本段最后一步」上显示转圈，造成「读取文件」与「检索资料」同时加载的错觉。
@@ -133,34 +104,18 @@ function DeerFlowAssistantMessageRow({
     }
     return { segments: segs, lastCotSegmentIndex: lastCot };
   }, [message.parts]);
-  const plain = extractMessagePlainText(message);
   const showStreamingPlaceholder =
     Boolean(message.isStreaming) && message.parts.length === 0;
 
-  const handleCopyAssistant = async () => {
-    const text =
-      plain ||
-      message.parts
-        .filter((p) => p.type === "thinking")
-        .map((p) => p.text)
-        .join("\n\n");
-    try {
-      await navigator.clipboard.writeText(text);
-      toast.success("已复制");
-    } catch {
-      toast.error("复制失败");
-    }
-  };
-
   return (
-    <Message className="group/conversation-message relative w-full" from="assistant">
+    <Message className="w-full" from="assistant">
       <MessageContent className="w-full max-w-[min(100%,48rem)]">
         <div className="text-muted-foreground mb-2 flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.16em]">
           <Bot className="h-3.5 w-3.5" />
           Deer-Flow
         </div>
 
-        <div className="relative w-full space-y-6">
+        <div className="w-full space-y-6">
           {(() => {
             /**
              * 分段 key 使用「该段在 message.parts 中的起始下标」，避免流式过程中因插入 text / present_files
@@ -174,12 +129,14 @@ function DeerFlowAssistantMessageRow({
                 return (
                   <DeerFlowMessageGroup
                     key={stableKey}
+                    allowThreadTodosFallback={message.isStreaming === true}
                     isLoading={
                       isLoading &&
                       message.isStreaming === true &&
                       index === lastCotSegmentIndex
                     }
                     parts={segment.parts}
+                    threadTodosFallback={threadTodosFallback}
                   />
                 );
               }
@@ -221,9 +178,7 @@ function DeerFlowAssistantMessageRow({
               partsOffset += 1;
               return (
                 <div key={stableKey} className="w-full">
-                  <div className="prose prose-sm dark:prose-invert max-w-none">
-                    <MessageText>{segment.part.text}</MessageText>
-                  </div>
+                  <MessageText>{segment.part.text}</MessageText>
                 </div>
               );
             });
@@ -234,18 +189,6 @@ function DeerFlowAssistantMessageRow({
               <DeerFlowStreamingIndicator size="sm" variant="labeled" />
             </div>
           ) : null}
-
-          <div className="pointer-events-none absolute right-0 bottom-0 z-20 flex justify-end opacity-0 transition-opacity delay-200 duration-300 group-hover/conversation-message:pointer-events-auto group-hover/conversation-message:opacity-100">
-            <Button
-              className="h-8 w-8"
-              size="icon"
-              type="button"
-              variant="ghost"
-              onClick={() => void handleCopyAssistant()}
-            >
-              <CopyIcon className="size-4" />
-            </Button>
-          </div>
         </div>
 
         <div className="text-muted-foreground mt-3 text-[11px]">

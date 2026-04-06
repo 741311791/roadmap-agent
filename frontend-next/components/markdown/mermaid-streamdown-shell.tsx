@@ -75,7 +75,7 @@ export function MermaidStreamdownShell({
     <TooltipProvider delayDuration={300}>
       <div
         className={cn(
-          "border-border/60 my-4 overflow-hidden rounded-lg border border-slate-200 bg-[#FAFAFA] shadow-sm"
+          "deerflow-mermaid-shell border-border/60 my-4 overflow-hidden rounded-lg border border-slate-200 bg-[#FAFAFA] shadow-sm"
         )}
       >
         <div className="flex justify-end gap-0.5 border-b border-slate-200/80 bg-white/95 px-1.5 py-1 backdrop-blur-sm">

@@ -47,6 +47,15 @@ from app.schemas.mentor_model import MentorModelPublicItem
 
 logger = structlog.get_logger()
 
+# 伴学与独立实验室共用的 /runs/stream 行为：
+# - on_disconnect=cancel：前端刷新/关闭导致后端关闭上游 SSE 时，网关会取消未完成的 Run，避免线程一直处于 active。
+# - multitask_strategy=interrupt：若仍有残留进行中的 Run（例如断开检测延迟），新消息会先中断旧 Run 再启动，避免 409 Conflict。
+_DEERFLOW_RUN_STREAM_OPTIONS: dict[str, object] = {
+    "stream_mode": ["messages-tuple", "values"],
+    "on_disconnect": "cancel",
+    "multitask_strategy": "interrupt",
+}
+
 
 @dataclass(slots=True)
 class DeerFlowMentorChatStreamContext:
@@ -672,8 +681,7 @@ class DeerFlowProxyService:
             },
             "metadata": prepared.metadata,
             "context": prepared.runtime_context,
-            "stream_mode": ["messages-tuple", "values"],
-            "on_disconnect": "continue",
+            **_DEERFLOW_RUN_STREAM_OPTIONS,
         }
 
         request_url = f"/api/threads/{thread.thread_id}/runs/stream"
@@ -802,8 +810,7 @@ class DeerFlowProxyService:
             },
             "metadata": prepared.metadata,
             "context": prepared.runtime_context,
-            "stream_mode": ["messages-tuple", "values"],
-            "on_disconnect": "continue",
+            **_DEERFLOW_RUN_STREAM_OPTIONS,
         }
 
         request_url = f"/api/threads/{thread.thread_id}/runs/stream"

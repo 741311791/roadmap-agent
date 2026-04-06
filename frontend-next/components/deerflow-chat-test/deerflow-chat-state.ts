@@ -70,7 +70,13 @@ function normalizeTodoItem(todo: unknown): DeerFlowTodo | null {
   }
 
   const candidate = todo as Record<string, unknown>;
-  const content = typeof candidate.content === "string" ? candidate.content.trim() : "";
+  // 上游与模型可能使用 content / title / task 等键表示待办正文，需一并兼容。
+  const content =
+    (typeof candidate.content === "string" && candidate.content.trim()) ||
+    (typeof candidate.title === "string" && candidate.title.trim()) ||
+    (typeof candidate.task === "string" && candidate.task.trim()) ||
+    (typeof candidate.description === "string" && candidate.description.trim()) ||
+    "";
   if (!content) {
     return null;
   }
@@ -202,6 +208,33 @@ export interface DeerFlowValuesPayload {
 }
 
 /**
+ * 将 LangGraph / 网关下发的 values SSE 数据规范为扁平快照（兼容外层再包一层 `values`）。
+ *
+ * Args:
+ *   data: 单帧 `values` 事件的 JSON 载荷
+ *
+ * Returns:
+ *   扁平后的快照；无法识别时返回 null
+ */
+export function normalizeDeerFlowStreamValuesPayload(data: unknown): DeerFlowValuesPayload | null {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return null;
+  }
+
+  const obj = data as Record<string, unknown>;
+  if ("messages" in obj || "todos" in obj || "title" in obj) {
+    return obj as DeerFlowValuesPayload;
+  }
+
+  const inner = obj.values;
+  if (inner && typeof inner === "object" && !Array.isArray(inner)) {
+    return inner as DeerFlowValuesPayload;
+  }
+
+  return null;
+}
+
+/**
  * 从 Deer-Flow content 中提取纯文本。
  */
 export function extractSerializedMessageText(content: unknown): string {
@@ -321,6 +354,52 @@ export function extractTodosFromThreadMetadata(metadata: unknown): DeerFlowTodo[
 
   const candidate = metadata as Record<string, unknown>;
   return parseTodosPayload(candidate.todos ?? candidate.todo_list ?? candidate.todoList);
+}
+
+/**
+ * 判断 LangGraph `values` 流式帧是否携带待办字段（避免用无 todos 键的快照误清空上一帧列表）。
+ */
+export function hasTodosFieldInStreamValuesPayload(data: unknown): boolean {
+  if (!data || typeof data !== "object") {
+    return false;
+  }
+
+  const root = data as Record<string, unknown>;
+  if ("todos" in root || "todo_list" in root || "todoList" in root) {
+    return true;
+  }
+
+  const nested = root.values;
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    const values = nested as Record<string, unknown>;
+    return "todos" in values || "todo_list" in values || "todoList" in values;
+  }
+
+  return false;
+}
+
+/**
+ * 从 `values` SSE 载荷解析线程级 todos（与官方 thread.values.todos 对齐，兼容一层 values 包裹）。
+ */
+export function extractTodosFromStreamValuesPayload(data: unknown): DeerFlowTodo[] {
+  if (!data || typeof data !== "object") {
+    return [];
+  }
+
+  const root = data as Record<string, unknown>;
+  if ("todos" in root || "todo_list" in root || "todoList" in root) {
+    return parseTodosPayload(root.todos ?? root.todo_list ?? root.todoList);
+  }
+
+  const nested = root.values;
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    const values = nested as Record<string, unknown>;
+    if ("todos" in values || "todo_list" in values || "todoList" in values) {
+      return parseTodosPayload(values.todos ?? values.todo_list ?? values.todoList);
+    }
+  }
+
+  return [];
 }
 
 /**
@@ -982,55 +1061,6 @@ export function finalizeStreamingMessages(
         }
       : message
   );
-}
-
-/**
- * buildFollowupSuggestions - 基于最近一轮问答生成追问建议
- */
-export function buildFollowupSuggestions(
-  messages: DeerFlowChatMessage[]
-): string[] {
-  const latestUserMessage = [...messages].reverse().find((message) => message.role === "user");
-  const latestAssistantMessage = [...messages]
-    .reverse()
-    .find((message) => message.role === "assistant");
-
-  const latestUserText = latestUserMessage ? extractMessagePlainText(latestUserMessage) : "";
-  const latestAssistantText = latestAssistantMessage
-    ? extractMessagePlainText(latestAssistantMessage)
-    : "";
-  const normalizedAssistantText = latestAssistantText.toLowerCase();
-  const normalizedUserText = latestUserText.toLowerCase();
-
-  const suggestions = new Set<string>();
-
-  if (normalizedAssistantText.includes("example") || normalizedUserText.includes("example")) {
-    suggestions.add("Can you show a smaller example for this?");
-  } else {
-    suggestions.add("Can you give me a concrete example for this step?");
-  }
-
-  if (
-    normalizedAssistantText.includes("practice") ||
-    normalizedAssistantText.includes("exercise") ||
-    normalizedUserText.includes("practice")
-  ) {
-    suggestions.add("Can you turn this into a short checklist for me?");
-  } else {
-    suggestions.add("What should I practice next based on this?");
-  }
-
-  if (
-    normalizedAssistantText.includes("summary") ||
-    normalizedAssistantText.includes("key") ||
-    normalizedUserText.includes("summary")
-  ) {
-    suggestions.add("What should I explore next on this topic?");
-  } else {
-    suggestions.add("Can you summarize the key takeaways in three bullets?");
-  }
-
-  return Array.from(suggestions).slice(0, 3);
 }
 
 /**

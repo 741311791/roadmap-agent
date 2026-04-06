@@ -41,6 +41,9 @@ import { cn } from "@/lib/utils";
 
 /**
  * Markdown / HTML 预览区（与官方 `ArtifactFilePreview` 行为对齐）。
+ *
+ * 注意：不得再包一层 `prose`，否则 typography 会对 Streamdown 代码块内的 `pre`
+ * 叠加背景与圆角，与 Streamdown 自带的外壳形成「多重卡片」视觉。
  */
 function DeerFlowArtifactPreviewPane({
   content,
@@ -51,10 +54,10 @@ function DeerFlowArtifactPreviewPane({
 }) {
   if (language === "markdown") {
     return (
-      <div className="min-h-0 flex-1 overflow-auto bg-[#FAFAFA] px-4 py-4">
-        <div className="prose prose-slate prose-sm max-w-none text-slate-800 prose-headings:text-slate-900 prose-p:text-slate-800 prose-li:text-slate-800 prose-strong:text-slate-900 prose-code:before:content-[''] prose-code:after:content-['']">
-          <RichStreamdown mode="static">{content}</RichStreamdown>
-        </div>
+      <div className="min-h-0 flex-1 overflow-auto bg-background px-4 py-4 text-foreground">
+        <RichStreamdown className="size-full" mode="static">
+          {content}
+        </RichStreamdown>
       </div>
     );
   }

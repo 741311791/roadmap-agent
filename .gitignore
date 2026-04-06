@@ -104,5 +104,3 @@ deer-flow/
 # Playwright MCP 本地快照
 .playwright-mcp/
 
-# Best Practice
-best-practice/

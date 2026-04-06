@@ -2,16 +2,18 @@ import { describe, expect, it } from "vitest";
 
 import {
   applyStreamMessageChunk,
-  buildFollowupSuggestions,
   coerceDeerFlowToolArgumentsToRecord,
   coalesceConsecutiveAssistantMessages,
   createOptimisticAssistantPlaceholder,
   createOptimisticUserMessage,
   extractDeerFlowToolCallArguments,
   extractTodosFromMessages,
+  extractTodosFromStreamValuesPayload,
   extractTodosFromThreadMetadata,
   extractArtifactsFromMessages,
+  hasTodosFieldInStreamValuesPayload,
   finalizeStreamingMessages,
+  normalizeDeerFlowStreamValuesPayload,
   normalizeMessageEventPayload,
   upsertAssistantDraftFromValues,
 } from "@/components/deerflow-chat-test/deerflow-chat-state";
@@ -24,6 +26,18 @@ describe("extractDeerFlowToolCallArguments", () => {
       function: { name: "read_file", arguments: '{"path":"/tmp/a.md"}' },
     });
     expect(coerceDeerFlowToolArgumentsToRecord(raw)).toEqual({ path: "/tmp/a.md" });
+  });
+});
+
+describe("normalizeDeerFlowStreamValuesPayload", () => {
+  it("should unwrap nested values wrapper", () => {
+    const inner = { messages: [{ type: "ai", id: "a1" }] };
+    expect(normalizeDeerFlowStreamValuesPayload({ values: inner })).toEqual(inner);
+  });
+
+  it("should pass through flat snapshots", () => {
+    const flat = { messages: [], todos: [] };
+    expect(normalizeDeerFlowStreamValuesPayload(flat)).toEqual(flat);
   });
 });
 
@@ -351,29 +365,6 @@ describe("stream helpers", () => {
     ]);
   });
 
-  it("should build local follow-up suggestions from the latest turn", () => {
-    const suggestions = buildFollowupSuggestions([
-      {
-        id: "user-1",
-        role: "user",
-        createdAt: new Date().toISOString(),
-        parts: [{ type: "text", text: "Can you give me an example?" }],
-      },
-      {
-        id: "assistant-1",
-        role: "assistant",
-        createdAt: new Date().toISOString(),
-        parts: [{ type: "text", text: "Here is an example and a short summary." }],
-      },
-    ]);
-
-    expect(suggestions).toEqual([
-      "Can you show a smaller example for this?",
-      "What should I practice next based on this?",
-      "What should I explore next on this topic?",
-    ]);
-  });
-
   it("should extract todos from write_todos tool arguments", () => {
     const todos = extractTodosFromMessages([
       {
@@ -414,6 +405,39 @@ describe("stream helpers", () => {
       { id: "todo-1", content: "Open new thread", status: "completed" },
       { id: "todo-2", content: "Send first message", status: "pending" },
     ]);
+  });
+});
+
+describe("extractTodosFromStreamValuesPayload", () => {
+  it("should read todos from LangGraph values root", () => {
+    const todos = extractTodosFromStreamValuesPayload({
+      todos: [{ id: "a", content: "One", status: "pending" }],
+    });
+    expect(todos).toEqual([{ id: "a", content: "One", status: "pending" }]);
+  });
+
+  it("should map title to content when content is absent", () => {
+    const todos = extractTodosFromStreamValuesPayload({
+      todos: [{ id: "b", title: "Titled item", status: "in_progress" }],
+    });
+    expect(todos).toEqual([{ id: "b", content: "Titled item", status: "in_progress" }]);
+  });
+
+  it("should read nested values.todos", () => {
+    const todos = extractTodosFromStreamValuesPayload({
+      values: { todos: [{ id: "c", content: "Nested", status: "pending" }] },
+    });
+    expect(todos).toEqual([{ id: "c", content: "Nested", status: "pending" }]);
+  });
+});
+
+describe("hasTodosFieldInStreamValuesPayload", () => {
+  it("returns false when no todos keys", () => {
+    expect(hasTodosFieldInStreamValuesPayload({ messages: [] })).toBe(false);
+  });
+
+  it("returns true when todos key exists", () => {
+    expect(hasTodosFieldInStreamValuesPayload({ todos: [] })).toBe(true);
   });
 });
 

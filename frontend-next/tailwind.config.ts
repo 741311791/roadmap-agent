@@ -6,6 +6,8 @@ const config: Config = {
     './app/**/*.{js,ts,jsx,tsx,mdx}',
     './components/**/*.{js,ts,jsx,tsx,mdx}',
     './lib/**/*.{js,ts,jsx,tsx,mdx}',
+    // Streamdown 在 dist 内拼接 Tailwind 类名，需纳入扫描（与官方 DeerFlow 对 streamdown 的 @source 一致）
+    './node_modules/streamdown/dist/**/*.js',
   ],
   theme: {
     extend: {
@@ -43,6 +45,12 @@ const config: Config = {
         card: {
           DEFAULT: 'hsl(var(--card))',
           foreground: 'hsl(var(--card-foreground))',
+        },
+        /** Streamdown 代码块工具栏/外壳使用 bg-sidebar、border-sidebar（shadcn 语义） */
+        sidebar: {
+          DEFAULT: 'hsl(var(--sidebar))',
+          foreground: 'hsl(var(--sidebar-foreground))',
+          border: 'hsl(var(--sidebar-border))',
         },
         // Custom Sage Green Palette
         sage: {
